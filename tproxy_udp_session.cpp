@@ -239,7 +239,7 @@ void tproxy_udp_session::stop()
 
 boost::asio::awaitable<udp_enqueue_result> tproxy_udp_session::enqueue_packet(std::vector<std::uint8_t> payload)
 {
-    if (stopped_)
+    if (stopped_.load(std::memory_order_relaxed))
     {
         co_return udp_enqueue_result::kClosed;
     }
@@ -258,7 +258,7 @@ boost::asio::awaitable<udp_enqueue_result> tproxy_udp_session::enqueue_packet(st
         co_await packet_channel_.async_send(boost::system::error_code{}, std::move(payload), boost::asio::as_tuple(boost::asio::use_awaitable));
     if (send_ec)
     {
-        if (stopped_ || send_ec == boost::asio::error::operation_aborted || send_ec == boost::asio::error::bad_descriptor ||
+        if (stopped_.load(std::memory_order_relaxed) || send_ec == boost::asio::error::operation_aborted || send_ec == boost::asio::error::bad_descriptor ||
             send_ec == boost::asio::experimental::error::channel_errors::channel_closed)
         {
             co_return udp_enqueue_result::kClosed;
@@ -453,7 +453,7 @@ boost::asio::awaitable<std::shared_ptr<mux_tunnel_impl>> tproxy_udp_session::wai
 
     for (;;)
     {
-        if (stopped_)
+        if (stopped_.load(std::memory_order_relaxed))
         {
             ec = boost::asio::error::operation_aborted;
             co_return nullptr;
@@ -650,7 +650,7 @@ boost::asio::awaitable<void> tproxy_udp_session::proxy_to_client()
 boost::asio::awaitable<void> tproxy_udp_session::idle_watchdog()
 {
     const auto idle_timeout_ms = timeout_io::timeout_seconds_to_milliseconds(cfg_.timeout.idle);
-    while (!stopped_)
+    while (!stopped_.load(std::memory_order_relaxed))
     {
         idle_timer_.expires_after(std::chrono::seconds(1));
         const auto [wait_ec] = co_await idle_timer_.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
@@ -670,7 +670,7 @@ boost::asio::awaitable<bool> tproxy_udp_session::send_to_client(const boost::asi
                                                                 const std::uint8_t* payload,
                                                                 const std::size_t payload_len)
 {
-    if (stopped_)
+    if (stopped_.load(std::memory_order_relaxed))
     {
         co_return false;
     }
@@ -684,7 +684,7 @@ boost::asio::awaitable<bool> tproxy_udp_session::send_to_client(const boost::asi
         {
             ec = boost::asio::error::operation_aborted;
         }
-        if (stopped_ || is_normal_close_error(ec))
+        if (stopped_.load(std::memory_order_relaxed) || is_normal_close_error(ec))
         {
             co_return false;
         }
@@ -696,7 +696,7 @@ boost::asio::awaitable<bool> tproxy_udp_session::send_to_client(const boost::asi
         co_await reply_socket->async_send_to(boost::asio::buffer(payload, payload_len), client_endpoint_, boost::asio::as_tuple(boost::asio::use_awaitable));
     if (send_ec)
     {
-        if (stopped_ || is_normal_close_error(send_ec))
+        if (stopped_.load(std::memory_order_relaxed) || is_normal_close_error(send_ec))
         {
             co_return false;
         }
@@ -779,11 +779,10 @@ std::string tproxy_udp_session::endpoint_key(const boost::asio::ip::udp::endpoin
 
 void tproxy_udp_session::close_impl()
 {
-    if (stopped_)
+    if (stopped_.exchange(true, std::memory_order_relaxed))
     {
         return;
     }
-    stopped_ = true;
 
     idle_timer_.cancel();
     packet_channel_.close();
