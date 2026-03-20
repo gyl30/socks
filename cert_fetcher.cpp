@@ -231,6 +231,10 @@ bool parse_certificate_chain(const std::vector<std::uint8_t>& cert_msg, std::vec
         {
             return false;
         }
+        if (cert_len == 0)
+        {
+            return false;
+        }
         if (pos + cert_len + 2 > cert_list_end)
         {
             return false;
