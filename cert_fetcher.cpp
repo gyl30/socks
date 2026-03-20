@@ -762,8 +762,14 @@ bool cert_fetcher::fetch_session::process_handshake_message(const std::vector<st
             LOG_CTX_INFO(ctx_, "{} learned alpn {}", mux::log_event::kCert, *alpn);
             observed_material_.fingerprint.alpn = *alpn;
         }
-        if (!parse_encrypted_extension_types(
-                msg, observed_material_.encrypted_extension_types, &observed_material_.encrypted_extensions_padding_len))
+        std::vector<std::uint16_t> encrypted_extension_types;
+        std::optional<std::uint16_t> encrypted_extensions_padding_len;
+        if (parse_encrypted_extension_types(msg, encrypted_extension_types, &encrypted_extensions_padding_len))
+        {
+            observed_material_.encrypted_extension_types = std::move(encrypted_extension_types);
+            observed_material_.encrypted_extensions_padding_len = encrypted_extensions_padding_len;
+        }
+        else
         {
             LOG_CTX_WARN(ctx_, "{} parse encrypted extensions layout failed", mux::log_event::kCert);
         }
