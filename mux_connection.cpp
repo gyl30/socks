@@ -779,6 +779,8 @@ boost::asio::awaitable<void> mux_connection::send_async_with_timeout(mux_frame m
         LOG_TRACE("mux {} send frame stream {} cmd {} size {}", cid_, msg.h.stream_id, msg.h.command, msg.payload.size());
     }
 
+    const auto saved_stream_id = msg.h.stream_id;
+    const auto saved_command = msg.h.command;
     co_await timeout_io::wait_send_with_timeout<mux_frame>(*write_channel_, std::move(msg), timeout_sec, ec);
     if (ec)
     {
@@ -788,7 +790,7 @@ boost::asio::awaitable<void> mux_connection::send_async_with_timeout(mux_frame m
         }
         if (stream_reserved > 0)
         {
-            release_write_bytes(msg.h.stream_id, msg.h.command, stream_reserved);
+            release_write_bytes(saved_stream_id, saved_command, stream_reserved);
         }
         LOG_ERROR("mux {} send failed error {}", cid_, ec.message());
         co_return;
