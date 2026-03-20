@@ -434,6 +434,21 @@ boost::asio::awaitable<void> tproxy_client::on_udp_packet(boost::asio::ip::udp::
             co_return;
         }
 
+        session_it = udp_sessions_.find(key);
+        if (session_it != udp_sessions_.end())
+        {
+            const auto enqueue_result = session_it->second->try_enqueue_packet(std::move(payload));
+            if (enqueue_result == udp_enqueue_result::kEnqueued)
+            {
+                touch_udp_session(key);
+            }
+            else if (enqueue_result == udp_enqueue_result::kClosed)
+            {
+                erase_udp_session(key);
+            }
+            co_return;
+        }
+
         const auto weak_self = weak_from_this();
         auto session = std::make_shared<tproxy_udp_session>(io_context_,
                                                             tunnel_pool_,
