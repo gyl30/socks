@@ -1124,29 +1124,25 @@ std::vector<std::uint8_t> construct_certificate_verify(EVP_PKEY* signing_key, co
     to_sign.push_back(0x00);
     to_sign.insert(to_sign.end(), handshake_hash.begin(), handshake_hash.end());
 
-    EVP_MD_CTX* mctx = EVP_MD_CTX_new();
+    const openssl_ptrs::evp_md_ctx_ptr mctx(EVP_MD_CTX_new());
     if (mctx == nullptr)
     {
         return {};
     }
-    if (EVP_DigestSignInit(mctx, nullptr, nullptr, nullptr, signing_key) != 1)
+    if (EVP_DigestSignInit(mctx.get(), nullptr, nullptr, nullptr, signing_key) != 1)
     {
-        EVP_MD_CTX_free(mctx);
         return {};
     }
     std::size_t sig_len = 0;
-    if (EVP_DigestSign(mctx, nullptr, &sig_len, to_sign.data(), to_sign.size()) != 1 || sig_len == 0)
+    if (EVP_DigestSign(mctx.get(), nullptr, &sig_len, to_sign.data(), to_sign.size()) != 1 || sig_len == 0)
     {
-        EVP_MD_CTX_free(mctx);
         return {};
     }
     std::vector<std::uint8_t> signature(sig_len);
-    if (EVP_DigestSign(mctx, signature.data(), &sig_len, to_sign.data(), to_sign.size()) != 1)
+    if (EVP_DigestSign(mctx.get(), signature.data(), &sig_len, to_sign.data(), to_sign.size()) != 1)
     {
-        EVP_MD_CTX_free(mctx);
         return {};
     }
-    EVP_MD_CTX_free(mctx);
     signature.resize(sig_len);
 
     std::vector<std::uint8_t> body;
