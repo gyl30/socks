@@ -2004,8 +2004,16 @@ static std::vector<std::uint8_t> compose_server_hello_flight(const std::vector<s
             return true;
         }
 
+        const auto remaining = flight2_plain.size() - offset;
+        if (len > remaining)
+        {
+            ec = boost::asio::error::message_size;
+            return false;
+        }
+
+        const auto end = offset + len;
         std::vector<std::uint8_t> chunk(flight2_plain.begin() + static_cast<std::ptrdiff_t>(offset),
-                                        flight2_plain.begin() + static_cast<std::ptrdiff_t>(offset + len));
+                                        flight2_plain.begin() + static_cast<std::ptrdiff_t>(end));
         auto record =
             reality::tls_record_layer::encrypt_record(cipher, s_hs_keys.first, s_hs_keys.second, seq++, chunk, reality::kContentTypeHandshake, ec);
         if (ec)
