@@ -51,7 +51,7 @@ class tproxy_udp_session : public std::enable_shared_from_this<tproxy_udp_sessio
 
     void start();
     void stop();
-    [[nodiscard]] udp_enqueue_result try_enqueue_packet(std::vector<std::uint8_t> payload);
+    [[nodiscard]] boost::asio::awaitable<udp_enqueue_result> enqueue_packet(std::vector<std::uint8_t> payload);
 
    private:
     using packet_channel_type = boost::asio::experimental::concurrent_channel<void(boost::system::error_code, std::vector<std::uint8_t>)>;
