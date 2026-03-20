@@ -17,6 +17,7 @@
 #include <boost/asio/ip/udp.hpp>
 #include <boost/asio/socket_base.hpp>
 #include <boost/asio/use_awaitable.hpp>
+#include <boost/asio/experimental/channel_error.hpp>
 #include <boost/asio/experimental/awaitable_operators.hpp>
 
 #include <boost/system/errc.hpp>
@@ -236,11 +237,11 @@ void tproxy_udp_session::stop()
     close_impl();
 }
 
-udp_enqueue_result tproxy_udp_session::try_enqueue_packet(std::vector<std::uint8_t> payload)
+boost::asio::awaitable<udp_enqueue_result> tproxy_udp_session::enqueue_packet(std::vector<std::uint8_t> payload)
 {
     if (stopped_)
     {
-        return udp_enqueue_result::kClosed;
+        co_return udp_enqueue_result::kClosed;
     }
 
     if (payload.size() > kMaxUdpPacketSize)
@@ -250,26 +251,31 @@ udp_enqueue_result tproxy_udp_session::try_enqueue_packet(std::vector<std::uint8
                      log_event::kMux,
                      payload.size(),
                      kMaxUdpPacketSize);
-        return udp_enqueue_result::kDroppedOverflow;
+        co_return udp_enqueue_result::kDroppedOverflow;
     }
-    if (!packet_channel_.try_send(boost::system::error_code{}, std::move(payload)))
+
+    const auto [send_ec] =
+        co_await packet_channel_.async_send(boost::system::error_code{}, std::move(payload), boost::asio::as_tuple(boost::asio::use_awaitable));
+    if (send_ec)
     {
-        if (stopped_)
+        if (stopped_ || send_ec == boost::asio::error::operation_aborted || send_ec == boost::asio::error::bad_descriptor ||
+            send_ec == boost::asio::experimental::error::channel_errors::channel_closed)
         {
-            return udp_enqueue_result::kClosed;
+            co_return udp_enqueue_result::kClosed;
         }
 
         LOG_CTX_WARN(ctx_,
-                     "{} drop udp packet because session queue is full client {}:{} target {}:{}",
+                     "{} enqueue udp packet failed {} client {}:{} target {}:{}",
                      log_event::kMux,
+                     send_ec.message(),
                      client_endpoint_.address().to_string(),
                      client_endpoint_.port(),
                      target_endpoint_.address().to_string(),
                      target_endpoint_.port());
-        return udp_enqueue_result::kDroppedOverflow;
+        co_return udp_enqueue_result::kClosed;
     }
     last_activity_time_ms_ = timeout_io::now_ms();
-    return udp_enqueue_result::kEnqueued;
+    co_return udp_enqueue_result::kEnqueued;
 }
 
 boost::asio::awaitable<void> tproxy_udp_session::run()
