@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <cstring>
 #include <iterator>
+#include <limits>
 #include <optional>
 #include <algorithm>
 
@@ -1138,6 +1139,10 @@ std::vector<std::uint8_t> construct_certificate_verify(EVP_PKEY* signing_key, co
     {
         return {};
     }
+    if (sig_len > std::numeric_limits<std::uint16_t>::max())
+    {
+        return {};
+    }
     std::vector<std::uint8_t> signature(sig_len);
     if (EVP_DigestSign(mctx.get(), signature.data(), &sig_len, to_sign.data(), to_sign.size()) != 1)
     {
@@ -1147,7 +1152,7 @@ std::vector<std::uint8_t> construct_certificate_verify(EVP_PKEY* signing_key, co
 
     std::vector<std::uint8_t> body;
     message_builder::push_u16(body, 0x0807);
-    message_builder::push_u16(body, static_cast<std::uint16_t>(signature.size()));
+    message_builder::push_u16(body, static_cast<std::uint16_t>(sig_len));
     message_builder::push_bytes(body, signature);
     message_builder::push_u24(msg, static_cast<std::uint32_t>(body.size()));
     message_builder::push_bytes(msg, body);
