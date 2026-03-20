@@ -413,8 +413,12 @@ boost::asio::awaitable<void> remote_udp_session::udp_to_mux()
             LOG_CTX_WARN(ctx_, "{} send udp packet to mux failed {}", log_event::kMux, ec.message());
             break;
         }
-        peer->expires_at = now_ms + kUdpCacheTtlMs;
-        last_activity_time_ms_ = timeout_io::now_ms();
+        const auto refresh_now_ms = timeout_io::now_ms();
+        if (auto* refreshed_peer = allowed_reply_peers_.get(normalized_ep); refreshed_peer != nullptr)
+        {
+            refreshed_peer->expires_at = refresh_now_ms + kUdpCacheTtlMs;
+        }
+        last_activity_time_ms_ = refresh_now_ms;
         ctx_.add_tx_bytes(pkt_size);
     }
     LOG_CTX_DEBUG(ctx_, "{} udp recv loop stopped", log_event::kMux);
