@@ -1017,22 +1017,35 @@ std::vector<std::uint8_t> construct_encrypted_extensions(const std::string& alpn
     std::vector<std::uint8_t> padding_ext;
     if (include_padding)
     {
+        constexpr std::size_t kMaxExtensionsLen = 65535;
+        std::size_t padding_budget = 0;
+        if (alpn_ext.size() + 4 <= kMaxExtensionsLen)
+        {
+            padding_budget = kMaxExtensionsLen - alpn_ext.size() - 4;
+        }
+
         std::uint16_t resolved_padding_len = 0;
         if (padding_len.has_value())
         {
-            resolved_padding_len = *padding_len;
+            resolved_padding_len = static_cast<std::uint16_t>(
+                std::min<std::size_t>(static_cast<std::size_t>(*padding_len), padding_budget));
         }
         else
         {
             static thread_local std::mt19937 gen(std::random_device{}());
             std::uniform_int_distribution<std::uint16_t> dist(10, 100);
-            resolved_padding_len = dist(gen);
+            resolved_padding_len = static_cast<std::uint16_t>(
+                std::min<std::size_t>(static_cast<std::size_t>(dist(gen)), padding_budget));
         }
-        message_builder::push_u16(padding_ext, tls_consts::ext::kPadding);
-        message_builder::push_u16(padding_ext, resolved_padding_len);
-        for (std::uint16_t i = 0; i < resolved_padding_len; ++i)
+
+        if (padding_budget > 0)
         {
-            padding_ext.push_back(0x00);
+            message_builder::push_u16(padding_ext, tls_consts::ext::kPadding);
+            message_builder::push_u16(padding_ext, resolved_padding_len);
+            for (std::uint16_t i = 0; i < resolved_padding_len; ++i)
+            {
+                padding_ext.push_back(0x00);
+            }
         }
     }
 
