@@ -749,7 +749,9 @@ std::vector<std::vector<std::uint8_t>> build_reality_certificate_chain(const std
     }
 
     const auto& cached_chain = site_material_snapshot->material->certificate_chain;
-    cert_chain.insert(cert_chain.end(), cached_chain.begin(), cached_chain.end());
+    const auto cached_begin =
+        (!cached_chain.empty() && cached_chain.front() == leaf_cert_der) ? cached_chain.begin() + 1 : cached_chain.begin();
+    cert_chain.insert(cert_chain.end(), cached_begin, cached_chain.end());
     return cert_chain;
 }
 
