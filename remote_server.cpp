@@ -1608,7 +1608,7 @@ boost::asio::awaitable<void> remote_server::handle(boost::asio::io_context& io,
     auto& ctx = reality_ctx.ctx;
     auto& client_hello_wire = reality_ctx.client_hello_record;
     auto& client_hello_handshake = reality_ctx.client_hello_handshake;
-    auto fallback = [&](const char* reason) -> boost::asio::awaitable<void> { co_await fallback_to_target_site(reality_ctx, reason); };
+    auto fallback = [this, &reality_ctx](const char* reason) -> boost::asio::awaitable<void> { co_await fallback_to_target_site(reality_ctx, reason); };
     LOG_CTX_INFO(ctx, "{} accepted {}", log_event::kConnInit, ctx.connection_info());
     boost::system::error_code ec;
     // tls handshake
