@@ -682,10 +682,11 @@ boost::asio::awaitable<bool> cert_fetcher::fetch_session::collect_site_material(
     if (saw_certificate_)
     {
         LOG_CTX_WARN(ctx_, "{} server finished not observed before fetch stopped", mux::log_event::kCert);
-        co_return true;
     }
-
-    LOG_CTX_WARN(ctx_, "{} certificate not found", mux::log_event::kCert);
+    else
+    {
+        LOG_CTX_WARN(ctx_, "{} certificate not found", mux::log_event::kCert);
+    }
     co_return false;
 }
 
