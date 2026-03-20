@@ -437,7 +437,8 @@ boost::asio::awaitable<void> tproxy_client::on_udp_packet(boost::asio::ip::udp::
         session_it = udp_sessions_.find(key);
         if (session_it != udp_sessions_.end())
         {
-            const auto enqueue_result = session_it->second->try_enqueue_packet(std::move(payload));
+            auto session = session_it->second;
+            const auto enqueue_result = co_await session->enqueue_packet(std::move(payload));
             if (enqueue_result == udp_enqueue_result::kEnqueued)
             {
                 touch_udp_session(key);
@@ -465,7 +466,7 @@ boost::asio::awaitable<void> tproxy_client::on_udp_packet(boost::asio::ip::udp::
                                                                     self->erase_udp_session(key);
                                                                 }
                                                             });
-        const auto enqueue_result = session->try_enqueue_packet(std::move(payload));
+        const auto enqueue_result = co_await session->enqueue_packet(std::move(payload));
         if (enqueue_result != udp_enqueue_result::kEnqueued)
         {
             co_return;
@@ -486,7 +487,8 @@ boost::asio::awaitable<void> tproxy_client::on_udp_packet(boost::asio::ip::udp::
     }
     else
     {
-        const auto enqueue_result = session_it->second->try_enqueue_packet(std::move(payload));
+        auto session = session_it->second;
+        const auto enqueue_result = co_await session->enqueue_packet(std::move(payload));
         if (enqueue_result == udp_enqueue_result::kEnqueued)
         {
             touch_udp_session(key);
