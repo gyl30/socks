@@ -14,6 +14,7 @@
 #include <boost/asio/ip/address.hpp>
 #include <boost/asio/ip/v6_only.hpp>
 #include <boost/asio/socket_base.hpp>
+#include <boost/asio/post.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/redirect_error.hpp>
 #include <boost/asio/cancellation_signal.hpp>
@@ -81,8 +82,9 @@ socks_client::socks_client(io_context_pool& pool, const config& cfg)
     : cfg_(cfg),
       ioc_(pool.get_io_context()),
       pool_(pool),
+      groups_(pool),
       router_(std::make_shared<mux::router>()),
-      tunnel_pool_(std::make_shared<client_tunnel_pool>(pool, cfg, group_))
+      tunnel_pool_(std::make_shared<client_tunnel_pool>(pool, cfg, groups_))
 {
 }
 
@@ -124,7 +126,7 @@ int socks_client::start()
 
     tunnel_pool->start();
 
-    boost::asio::co_spawn(ioc_, accept_loop(), group_.adapt(boost::asio::detached));
+    boost::asio::co_spawn(ioc_, accept_loop(), groups_.get(ioc_).adapt(boost::asio::detached));
     return 0;
 }
 
@@ -134,6 +136,7 @@ boost::asio::awaitable<void> socks_client::accept_loop()
     for (;;)
     {
         auto& socket_io = pool_.get_io_context();
+        auto& socket_group = groups_.get(socket_io);
         boost::asio::ip::tcp::socket socket(socket_io);
         co_await acceptor_.async_accept(socket, boost::asio::redirect_error(boost::asio::use_awaitable, ec));
         if (ec == boost::asio::error::operation_aborted)
@@ -173,7 +176,7 @@ boost::asio::awaitable<void> socks_client::accept_loop()
             LOG_WARN("failed to set no delay on local socket {}", ec.message());
         }
         const std::uint32_t sid = tunnel_pool_->next_session_id();
-        std::make_shared<socks_session>(std::move(socket), socket_io, tunnel_pool_, router_, sid, cfg_, group_)->start();
+        std::make_shared<socks_session>(std::move(socket), socket_io, tunnel_pool_, router_, sid, cfg_, socket_group)->start();
     }
     LOG_INFO("local socks5 acceptor stopped");
 }
@@ -199,17 +202,13 @@ void socks_client::stop()
             {
                 self->tunnel_pool_->stop();
             }
-            self->group_.emit(::boost::asio::cancellation_type::all);
+            self->groups_.emit_all(::boost::asio::cancellation_type::all);
         });
 }
 
 boost::asio::awaitable<void> socks_client::wait_stopped()
 {
-    const auto [ec] = co_await group_.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
-    if (ec)
-    {
-        LOG_ERROR("socks client wait stopped failed {}", ec.message());
-    }
+    co_await groups_.async_wait_all();
 }
 
 }    // namespace mux
