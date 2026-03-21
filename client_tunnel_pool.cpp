@@ -1774,12 +1774,12 @@ void prepare_socket_for_connect(boost::asio::ip::tcp::socket& socket,
 
 }    // namespace
 
-client_tunnel_pool::client_tunnel_pool(io_context_pool& pool, const config& cfg, task_group& group)
+client_tunnel_pool::client_tunnel_pool(io_context_pool& pool, const config& cfg, task_group_registry& groups)
     : sni_(cfg.reality.sni),
       remote_host_(cfg.outbound.host),
       remote_port_(std::to_string(cfg.outbound.port)),
       cfg_(cfg),
-      group_(group),
+      groups_(groups),
       pool_(pool),
       max_handshake_records_(cfg.limits.max_handshake_records),
       tunnel_pool_(cfg.limits.max_connections)
@@ -1798,10 +1798,11 @@ void client_tunnel_pool::start()
     for (std::uint32_t i = 0; i < cfg_.limits.max_connections; ++i)
     {
         boost::asio::io_context& io = pool_.get_io_context();
+        auto& group = groups_.get(io);
         boost::asio::co_spawn(
             io,
             [this, i, io = &io, self]() -> boost::asio::awaitable<void> { co_await connect_remote_loop(i, *io); },
-            group_.adapt(boost::asio::detached));
+            group.adapt(boost::asio::detached));
     }
 }
 
@@ -1927,7 +1928,7 @@ std::shared_ptr<mux_tunnel_impl> client_tunnel_pool::build_tunnel(boost::asio::i
     }
 
     reality_engine re(s_app_keys.first, s_app_keys.second, c_app_keys.first, c_app_keys.second, handshake_ret.cipher);
-    return std::make_shared<mux_tunnel_impl>(std::move(socket), io_context, std::move(re), cfg_, group_, cid, trace_id);
+    return std::make_shared<mux_tunnel_impl>(std::move(socket), io_context, std::move(re), cfg_, groups_.get(io_context), cid, trace_id);
 }
 
 boost::asio::awaitable<void> client_tunnel_pool::run_real_certificate_fallback(

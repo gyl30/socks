@@ -9,6 +9,7 @@
 
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
+#include <boost/asio/post.hpp>
 #include <boost/asio/as_tuple.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/asio/redirect_error.hpp>
@@ -277,6 +278,8 @@ void monitor_server::stop()
 
 boost::asio::awaitable<void> monitor_server::wait_stopped()
 {
+    co_await boost::asio::post(ioc_, boost::asio::use_awaitable);
+
     const auto [ec] = co_await group_.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
     if (ec)
     {
