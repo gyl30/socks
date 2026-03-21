@@ -66,6 +66,17 @@ void io_context_pool::shutdown()
     work_guards_.clear();
 }
 
+std::vector<boost::asio::io_context*> io_context_pool::all_io_contexts() const
+{
+    std::vector<boost::asio::io_context*> out;
+    out.reserve(io_contexts_.size());
+    for (const auto& io_context : io_contexts_)
+    {
+        out.push_back(io_context.get());
+    }
+    return out;
+}
+
 boost::asio::io_context& io_context_pool::get_io_context()
 {
     const std::size_t index = next_io_context_.fetch_add(1, std::memory_order_relaxed) % io_contexts_.size();

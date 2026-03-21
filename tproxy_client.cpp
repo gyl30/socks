@@ -20,6 +20,7 @@
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/address.hpp>
 #include <boost/asio/ip/v6_only.hpp>
+#include <boost/asio/post.hpp>
 #include <boost/asio/socket_base.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/system/error_code.hpp>
@@ -141,8 +142,9 @@ void open_udp_listener(boost::asio::ip::udp::socket& socket, const std::string& 
 tproxy_client::tproxy_client(io_context_pool& pool, const config& cfg)
     : cfg_(cfg),
       io_context_(pool.get_io_context()),
+      groups_(pool),
       router_(std::make_shared<router>()),
-      tunnel_pool_(std::make_shared<client_tunnel_pool>(pool, cfg, group_)),
+      tunnel_pool_(std::make_shared<client_tunnel_pool>(pool, cfg, groups_)),
       tcp_acceptor_(io_context_)
 {
 }
@@ -170,11 +172,11 @@ void tproxy_client::start()
     tunnel_pool_->start();
     if (cfg_.tproxy.tcp_port != 0)
     {
-        boost::asio::co_spawn(io_context_, [self]() { return self->accept_tcp_loop(); }, group_.adapt(boost::asio::detached));
+        boost::asio::co_spawn(io_context_, [self]() { return self->accept_tcp_loop(); }, groups_.get(io_context_).adapt(boost::asio::detached));
     }
     if (cfg_.tproxy.udp_port != 0)
     {
-        boost::asio::co_spawn(io_context_, [self]() { return self->accept_udp_loop(); }, group_.adapt(boost::asio::detached));
+        boost::asio::co_spawn(io_context_, [self]() { return self->accept_udp_loop(); }, groups_.get(io_context_).adapt(boost::asio::detached));
     }
 }
 
@@ -219,17 +221,13 @@ void tproxy_client::stop()
                 self->tunnel_pool_->stop();
             }
 
-            self->group_.emit(boost::asio::cancellation_type::all);
+            self->groups_.emit_all(boost::asio::cancellation_type::all);
         });
 }
 
 boost::asio::awaitable<void> tproxy_client::wait_stopped()
 {
-    const auto [ec] = co_await group_.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
-    if (ec)
-    {
-        LOG_ERROR("tproxy client wait stopped failed {}", ec.message());
-    }
+    co_await groups_.async_wait_all();
 }
 
 boost::asio::awaitable<void> tproxy_client::accept_tcp_loop()
@@ -292,7 +290,8 @@ void tproxy_client::on_tcp_socket(boost::asio::ip::tcp::socket&& socket)
     }
 
     const std::uint32_t sid = tunnel_pool_->next_session_id();
-    std::make_shared<tproxy_tcp_session>(std::move(socket), io_context_, tunnel_pool_, router_, sid, cfg_, group_)->start();
+    auto& owner_group = groups_.get(io_context_);
+    std::make_shared<tproxy_tcp_session>(std::move(socket), io_context_, tunnel_pool_, router_, sid, cfg_, owner_group)->start();
 }
 
 boost::asio::awaitable<void> tproxy_client::accept_udp_loop()
@@ -458,7 +457,7 @@ boost::asio::awaitable<void> tproxy_client::on_udp_packet(boost::asio::ip::udp::
                                                             route,
                                                             ctx,
                                                             cfg_,
-                                                            group_,
+                                                            groups_.get(io_context_),
                                                             [weak_self, key]()
                                                             {
                                                                 if (const auto self = weak_self.lock(); self != nullptr)

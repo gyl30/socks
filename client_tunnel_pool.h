@@ -26,7 +26,7 @@ extern "C"
 #include "config.h"
 #include "ch_parser.h"
 #include "mux_tunnel.h"
-#include "task_group.h"
+#include "task_group_registry.h"
 #include "context_pool.h"
 #include "reality_core.h"
 
@@ -43,7 +43,7 @@ class connection_context;
 class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_pool>
 {
    public:
-    client_tunnel_pool(io_context_pool& pool, const config& cfg, task_group& group);
+    client_tunnel_pool(io_context_pool& pool, const config& cfg, task_group_registry& groups);
 
     void start();
 
@@ -175,7 +175,7 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
     std::string remote_host_;
     std::string remote_port_;
     const config& cfg_;
-    task_group& group_;
+    task_group_registry& groups_;
     io_context_pool& pool_;
     std::vector<std::uint8_t> short_id_bytes_;
     std::atomic<std::uint32_t> next_tunnel_index_{0};

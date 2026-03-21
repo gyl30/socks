@@ -21,7 +21,7 @@
 
 #include "config.h"
 #include "ch_parser.h"
-#include "task_group.h"
+#include "task_group_registry.h"
 #include "mux_tunnel.h"
 #include "transcript.h"
 #include "log_context.h"
@@ -74,13 +74,16 @@ class remote_server : public std::enable_shared_from_this<remote_server>
                                                         const server_handshake_res& response,
                                                         boost::system::error_code& ec) const;
 
-    boost::asio::awaitable<void> process_stream_request(boost::asio::io_context& io,std::shared_ptr<mux_tunnel_impl> tunnel, const connection_context& ctx, mux_frame frame);
+    boost::asio::awaitable<void> process_stream_request(boost::asio::io_context& io,
+                                                           std::shared_ptr<mux_tunnel_impl> tunnel,
+                                                           const connection_context& ctx,
+                                                           mux_frame frame);
 
    private:
     const config& cfg_;
     io_context_pool& pool_;
     boost::asio::io_context& io_context_;
-    task_group group_{io_context_};
+    task_group_registry groups_;
     boost::asio::ip::tcp::acceptor acceptor_{io_context_};
     std::vector<std::uint8_t> private_key_;
     std::vector<std::uint8_t> short_id_bytes_;
