@@ -1781,6 +1781,10 @@ boost::asio::awaitable<void> remote_server::handle(boost::asio::io_context& io,
         co_await fallback("client_hello_message_too_short");
         co_return;
     }
+    if (!verify_replay_guard(replay_cache_, reality_ctx))
+    {
+        co_return;
+    }
     reality_ctx.transcript.update(client_hello_handshake);
     auto response = co_await perform_handshake_response(reality_ctx, ec);
     if (ec)
@@ -1789,10 +1793,6 @@ boost::asio::awaitable<void> remote_server::handle(boost::asio::io_context& io,
     }
     co_await verify_client_finished(reality_ctx, response, ec);
     if (ec)
-    {
-        co_return;
-    }
-    if (!verify_replay_guard(replay_cache_, reality_ctx))
     {
         co_return;
     }
