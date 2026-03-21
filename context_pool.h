@@ -27,6 +27,8 @@ class io_context_pool
 
     void stop();
 
+    [[nodiscard]] std::vector<boost::asio::io_context*> all_io_contexts() const;
+
     [[nodiscard]] boost::asio::io_context& get_io_context();
 
    private:
