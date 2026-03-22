@@ -39,6 +39,8 @@ REFLECT_STRUCT(mux::config::timeout_t, read, write, connect, idle);
 REFLECT_STRUCT(mux::config::reality_t, sni, fingerprint, replay_cache_max_entries, private_key, public_key, short_id);
 REFLECT_STRUCT(mux::config::limits_t,
                max_connections,
+               client_session_max_connections,
+               tunnel_connections,
                max_buffer,
                max_streams,
                max_handshake_records);
