@@ -279,7 +279,7 @@ void tproxy_client::on_tcp_socket(boost::asio::ip::tcp::socket&& socket)
     }
 
     auto& stats = statistics::instance();
-    if (stats.active_connections() >= cfg_.limits.max_connections)
+    if (stats.active_connections() >= resolve_client_session_max_connections(cfg_.limits))
     {
         stats.inc_connection_limit_rejected();
         boost::system::error_code close_ec;
@@ -400,7 +400,7 @@ boost::asio::awaitable<void> tproxy_client::on_udp_packet(boost::asio::ip::udp::
     if (session_it == udp_sessions_.end())
     {
         auto& stats = statistics::instance();
-        if (stats.active_connections() >= cfg_.limits.max_connections)
+        if (stats.active_connections() >= resolve_client_session_max_connections(cfg_.limits))
         {
             stats.inc_connection_limit_rejected();
             LOG_WARN("tproxy udp connection limit reached drop packet");
