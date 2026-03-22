@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <chrono>
 #include <memory>
 #include <string>
@@ -303,7 +304,10 @@ boost::asio::awaitable<void> remote_tcp_session::upstream()
     boost::system::error_code ec;
     for (;;)
     {
-        const auto frame = co_await stream_->async_read(ec);
+        const auto read_timeout = (cfg_.timeout.idle == 0)
+                                      ? cfg_.timeout.read
+                                      : std::max(cfg_.timeout.read, cfg_.timeout.idle + 2);
+        const auto frame = co_await stream_->async_read(read_timeout, ec);
         if (ec)
         {
             LOG_CTX_INFO(ctx_, "{} upstream stream read finished {}", log_event::kMux, ec.message());
