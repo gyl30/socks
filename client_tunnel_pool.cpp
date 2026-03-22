@@ -1782,7 +1782,7 @@ client_tunnel_pool::client_tunnel_pool(io_context_pool& pool, const config& cfg,
       groups_(groups),
       pool_(pool),
       max_handshake_records_(cfg.limits.max_handshake_records),
-      tunnel_pool_(cfg.limits.max_connections)
+      tunnel_pool_(resolve_tunnel_connections(cfg.limits))
 {
     boost::algorithm::unhex(cfg.reality.public_key, std::back_inserter(server_pub_key_));
     boost::algorithm::unhex(cfg.reality.short_id, std::back_inserter(short_id_bytes_));
@@ -1791,11 +1791,12 @@ client_tunnel_pool::client_tunnel_pool(io_context_pool& pool, const config& cfg,
 
 void client_tunnel_pool::start()
 {
-    LOG_INFO("client pool starting target {} port {} with {} connections", remote_host_, remote_port_, cfg_.limits.max_connections);
+    const auto tunnel_connections = resolve_tunnel_connections(cfg_.limits);
+    LOG_INFO("client pool starting target {} port {} with {} connections", remote_host_, remote_port_, tunnel_connections);
 
     auto self = shared_from_this();
 
-    for (std::uint32_t i = 0; i < cfg_.limits.max_connections; ++i)
+    for (std::uint32_t i = 0; i < tunnel_connections; ++i)
     {
         boost::asio::io_context& io = pool_.get_io_context();
         auto& group = groups_.get(io);
@@ -2160,10 +2161,11 @@ boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::
     while (true)
     {
         const std::uint32_t cid = next_conn_id_.fetch_add(1, std::memory_order_relaxed);
+        const auto tunnel_connections = resolve_tunnel_connections(cfg_.limits);
         connection_context ctx;
         ctx.new_trace_id();
         ctx.conn_id(cid);
-        LOG_CTX_INFO(ctx, "{} init conn {}/{} to {} {}", log_event::kConnInit, index + 1, cfg_.limits.max_connections, remote_host_, remote_port_);
+        LOG_CTX_INFO(ctx, "{} init conn {}/{} to {} {}", log_event::kConnInit, index + 1, tunnel_connections, remote_host_, remote_port_);
         // step 1 create sockst
         const auto socket = std::make_shared<boost::asio::ip::tcp::socket>(io_context);
         // step 2 connect remote

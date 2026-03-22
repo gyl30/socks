@@ -63,6 +63,8 @@ struct config
     struct limits_t
     {
         std::uint32_t max_connections = 5;
+        std::uint32_t client_session_max_connections = 0;
+        std::uint32_t tunnel_connections = 0;
         std::uint64_t max_buffer = 10L * 1024 * 1024;
         std::uint32_t max_streams = 1024;
         std::uint32_t max_handshake_records = 256;
@@ -104,6 +106,16 @@ struct config_error
 [[nodiscard]] constexpr std::uint32_t normalize_max_connections(const std::uint32_t max_connections)
 {
     return (max_connections == 0) ? 1U : max_connections;
+}
+
+[[nodiscard]] constexpr std::uint32_t resolve_client_session_max_connections(const config::limits_t& limits)
+{
+    return normalize_max_connections(limits.client_session_max_connections == 0 ? limits.max_connections : limits.client_session_max_connections);
+}
+
+[[nodiscard]] constexpr std::uint32_t resolve_tunnel_connections(const config::limits_t& limits)
+{
+    return normalize_max_connections(limits.tunnel_connections == 0 ? limits.max_connections : limits.tunnel_connections);
 }
 
 [[nodiscard]] std::expected<config, config_error> parse_config_with_error(const std::string& filename);

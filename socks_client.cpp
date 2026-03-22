@@ -159,7 +159,7 @@ boost::asio::awaitable<void> socks_client::accept_loop()
         }
 
         auto& stats = statistics::instance();
-        if (stats.active_connections() >= cfg_.limits.max_connections)
+        if (stats.active_connections() >= resolve_client_session_max_connections(cfg_.limits))
         {
             stats.inc_connection_limit_rejected();
             boost::system::error_code close_ec;
