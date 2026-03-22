@@ -42,7 +42,7 @@ class mux_stream : public std::enable_shared_from_this<mux_stream>
     const config& cfg_;
     std::atomic<std::uint64_t> tx_bytes_{0};
     std::atomic<std::uint64_t> rx_bytes_{0};
-    static constexpr std::size_t kMaxPendingBytes = 256 * 1024;
+    static constexpr std::uint64_t kDefaultMaxPendingBytes = 256 * 1024ULL;
     std::atomic<std::uint64_t> pending_bytes_{0};
     std::weak_ptr<mux_connection> connection_;
     boost::asio::experimental::concurrent_channel<void(boost::system::error_code, mux_frame)> recv_channel_;
