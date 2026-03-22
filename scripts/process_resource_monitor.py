@@ -57,6 +57,20 @@ def sample_process(pid):
     }
 
 
+def append_time_series(proc_summary, sample, sample_time):
+    proc_summary["time_series"].append(
+        {
+            "t_ms": int((sample_time - proc_summary["start_time"]) * 1000),
+            "rss_kb": sample["rss_kb"],
+            "hwm_kb": sample["hwm_kb"],
+            "vm_size_kb": sample["vm_size_kb"],
+            "threads": sample["threads"],
+            "fd_count": sample["fd_count"],
+            "cpu_seconds": sample["cpu_seconds"],
+        }
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(description="Sample process resource usage from /proc")
     parser.add_argument("--pid", action="append", required=True, help="label:pid")
@@ -79,6 +93,7 @@ def main():
     }
 
     for label, pid in targets.items():
+        sample_time = time.time()
         initial_sample = sample_process(pid)
         summary["processes"][label] = {
             "pid": pid,
@@ -92,7 +107,11 @@ def main():
             "cpu_seconds_start": initial_sample["cpu_seconds"],
             "cpu_seconds_end": initial_sample["cpu_seconds"],
             "samples": 1,
+            "sample_count": 1,
+            "start_time": sample_time,
+            "time_series": [],
         }
+        append_time_series(summary["processes"][label], initial_sample, sample_time)
 
     sleep_interval = args.interval_ms / 1000.0
     while running:
@@ -100,6 +119,7 @@ def main():
         for label, pid in targets.items():
             if not os.path.exists(f"/proc/{pid}"):
                 continue
+            sample_time = time.time()
             sample = sample_process(pid)
             proc_summary = summary["processes"][label]
             proc_summary["final"] = sample
@@ -110,11 +130,14 @@ def main():
             proc_summary["peak_fd_count"] = max(proc_summary["peak_fd_count"], sample["fd_count"])
             proc_summary["cpu_seconds_end"] = sample["cpu_seconds"]
             proc_summary["samples"] += 1
+            proc_summary["sample_count"] += 1
+            append_time_series(proc_summary, sample, sample_time)
 
     summary["finished_at"] = time.time()
     summary["duration_seconds"] = summary["finished_at"] - summary["started_at"]
     for proc_summary in summary["processes"].values():
         proc_summary["cpu_seconds_total"] = proc_summary["cpu_seconds_end"] - proc_summary["cpu_seconds_start"]
+        proc_summary.pop("start_time", None)
 
     with open(args.output, "w", encoding="utf-8") as handle:
         json.dump(summary, handle, indent=2, sort_keys=True)
