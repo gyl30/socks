@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <memory>
 #include <vector>
 #include <cstdint>
@@ -49,11 +50,14 @@ void mux_stream::close() { recv_channel_.close(); }
 boost::asio::awaitable<void> mux_stream::on_frame(mux_frame frame, boost::system::error_code& ec)
 {
     const auto payload_len = frame.payload.size();
+    const auto stream_pending_limit =
+        std::max<std::uint64_t>(kDefaultMaxPendingBytes, std::max<std::uint64_t>(1ULL, cfg_.limits.max_buffer / 4ULL));
     std::shared_ptr<mux_connection> connection;
     std::uint64_t reserved = 0;
     if (payload_len > 0)
     {
-        if (payload_len > kMaxPendingBytes || pending_bytes_ > kMaxPendingBytes - payload_len)
+        if (payload_len > stream_pending_limit ||
+            pending_bytes_.load(std::memory_order_relaxed) > stream_pending_limit - payload_len)
         {
             ec = boost::asio::error::timed_out;
             co_return;
