@@ -22,6 +22,26 @@ requests_per_worker="${REQUESTS_PER_WORKER:-1}"
 bytes_per_response="${BYTES_PER_RESPONSE:-4194304}"
 client_workers="${CLIENT_WORKERS:-2}"
 server_workers="${SERVER_WORKERS:-2}"
+max_connections="${MAX_CONNECTIONS:-8}"
+client_session_max_connections="${CLIENT_SESSION_MAX_CONNECTIONS:-0}"
+tunnel_connections="${TUNNEL_CONNECTIONS:-0}"
+server_max_connections="${SERVER_MAX_CONNECTIONS:-64}"
+read_timeout_sec="${READ_TIMEOUT_SEC:-10}"
+write_timeout_sec="${WRITE_TIMEOUT_SEC:-10}"
+connect_timeout_sec="${CONNECT_TIMEOUT_SEC:-5}"
+idle_timeout_sec="${IDLE_TIMEOUT_SEC:-60}"
+client_max_buffer="${CLIENT_MAX_BUFFER:-33554432}"
+server_max_buffer="${SERVER_MAX_BUFFER:-33554432}"
+client_max_streams="${CLIENT_MAX_STREAMS:-2048}"
+server_max_streams="${SERVER_MAX_STREAMS:-2048}"
+client_max_handshake_records="${CLIENT_MAX_HANDSHAKE_RECORDS:-256}"
+server_max_handshake_records="${SERVER_MAX_HANDSHAKE_RECORDS:-256}"
+heartbeat_enabled="${HEARTBEAT_ENABLED:-true}"
+heartbeat_idle_timeout="${HEARTBEAT_IDLE_TIMEOUT:-10}"
+heartbeat_min_interval="${HEARTBEAT_MIN_INTERVAL:-15}"
+heartbeat_max_interval="${HEARTBEAT_MAX_INTERVAL:-45}"
+heartbeat_min_padding="${HEARTBEAT_MIN_PADDING:-32}"
+heartbeat_max_padding="${HEARTBEAT_MAX_PADDING:-256}"
 monitor_interval_ms="${MONITOR_INTERVAL_MS:-100}"
 keep_artifacts="${KEEP_TEST_ARTIFACTS:-0}"
 
@@ -103,16 +123,16 @@ cat >"$tmp_dir/server.json" <<EOF
     "short_id": "$short_id"
   },
   "timeout": {
-    "read": 10,
-    "write": 10,
-    "connect": 5,
-    "idle": 60
+    "read": $read_timeout_sec,
+    "write": $write_timeout_sec,
+    "connect": $connect_timeout_sec,
+    "idle": $idle_timeout_sec
   },
   "limits": {
-    "max_connections": 64,
-    "max_buffer": 33554432,
-    "max_streams": 2048,
-    "max_handshake_records": 256
+    "max_connections": $server_max_connections,
+    "max_buffer": $server_max_buffer,
+    "max_streams": $server_max_streams,
+    "max_handshake_records": $server_max_handshake_records
   },
   "monitor": {
     "enabled": false,
@@ -153,24 +173,26 @@ cat >"$tmp_dir/client.json" <<EOF
     "short_id": "$short_id"
   },
   "timeout": {
-    "read": 10,
-    "write": 10,
-    "connect": 5,
-    "idle": 60
+    "read": $read_timeout_sec,
+    "write": $write_timeout_sec,
+    "connect": $connect_timeout_sec,
+    "idle": $idle_timeout_sec
   },
   "limits": {
-    "max_connections": 8,
-    "max_buffer": 33554432,
-    "max_streams": 2048,
-    "max_handshake_records": 256
+    "max_connections": $max_connections,
+    "client_session_max_connections": $client_session_max_connections,
+    "tunnel_connections": $tunnel_connections,
+    "max_buffer": $client_max_buffer,
+    "max_streams": $client_max_streams,
+    "max_handshake_records": $client_max_handshake_records
   },
   "heartbeat": {
-    "enabled": true,
-    "idle_timeout": 10,
-    "min_interval": 15,
-    "max_interval": 45,
-    "min_padding": 32,
-    "max_padding": 256
+    "enabled": $heartbeat_enabled,
+    "idle_timeout": $heartbeat_idle_timeout,
+    "min_interval": $heartbeat_min_interval,
+    "max_interval": $heartbeat_max_interval,
+    "min_padding": $heartbeat_min_padding,
+    "max_padding": $heartbeat_max_padding
   },
   "monitor": {
     "enabled": false,
@@ -195,6 +217,63 @@ with open(payload_path, "wb") as handle:
         remaining -= len(piece)
 PY
 
+wait_for_port() {
+    local host="$1"
+    local port="$2"
+    local name="$3"
+    shift 3
+    local owner_pids=("$@")
+    HOST="$host" PORT="$port" NAME="$name" OWNER_PIDS="${owner_pids[*]}" python3 - <<'PY'
+import os
+import sys
+import time
+
+host = os.environ["HOST"]
+port = int(os.environ["PORT"])
+name = os.environ["NAME"]
+owner_pids = [int(pid) for pid in os.environ.get("OWNER_PIDS", "").split() if pid]
+
+
+def port_is_listening(port):
+    for path in ("/proc/net/tcp", "/proc/net/tcp6"):
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                next(handle, None)
+                for line in handle:
+                    fields = line.split()
+                    if len(fields) < 4:
+                        continue
+                    local_address = fields[1]
+                    state = fields[3]
+                    if state != "0A":
+                        continue
+                    try:
+                        _addr_hex, port_hex = local_address.rsplit(":", 1)
+                    except ValueError:
+                        continue
+                    if int(port_hex, 16) == port:
+                        return True
+        except FileNotFoundError:
+            continue
+    return False
+
+
+deadline = time.time() + 10.0
+while time.time() < deadline:
+    for pid in owner_pids:
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            print(f"{name} owner process exited early", file=sys.stderr)
+            sys.exit(1)
+    if port_is_listening(port):
+        sys.exit(0)
+    time.sleep(0.1)
+print(f"timeout waiting for {name} {host}:{port}", file=sys.stderr)
+sys.exit(1)
+PY
+}
+
 python3 -m http.server "$http_port" --bind 127.0.0.1 --directory "$tmp_dir/http" >"$tmp_dir/http.log" 2>&1 &
 http_pid=$!
 pids+=("$http_pid")
@@ -203,48 +282,13 @@ pids+=("$http_pid")
 server_pid=$!
 pids+=("$server_pid")
 
+wait_for_port 127.0.0.1 "$server_port" "reality_server" "$server_pid"
+
 "$binary" -c "$tmp_dir/client.json" >"$tmp_dir/client.stdout.log" 2>&1 &
 client_pid=$!
 pids+=("$client_pid")
 
-wait_for_port() {
-    local host="$1"
-    local port="$2"
-    local name="$3"
-    HOST="$host" PORT="$port" NAME="$name" SERVER_PID="$server_pid" CLIENT_PID="$client_pid" python3 - <<'PY'
-import os
-import socket
-import sys
-import time
-
-host = os.environ["HOST"]
-port = int(os.environ["PORT"])
-name = os.environ["NAME"]
-deadline = time.time() + 10.0
-while time.time() < deadline:
-    for pid_env in ("SERVER_PID", "CLIENT_PID"):
-        pid = int(os.environ[pid_env])
-        try:
-            os.kill(pid, 0)
-        except OSError:
-            print(f"{name} owner process exited early", file=sys.stderr)
-            sys.exit(1)
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.settimeout(0.2)
-    try:
-        sock.connect((host, port))
-        sys.exit(0)
-    except OSError:
-        time.sleep(0.1)
-    finally:
-        sock.close()
-print(f"timeout waiting for {name} {host}:{port}", file=sys.stderr)
-sys.exit(1)
-PY
-}
-
-wait_for_port 127.0.0.1 "$server_port" "reality_server"
-wait_for_port 127.0.0.1 "$socks_port" "socks5_listener"
+wait_for_port 127.0.0.1 "$socks_port" "socks5_listener" "$server_pid" "$client_pid"
 
 python3 "$repo_root/scripts/process_resource_monitor.py" \
     --pid "client:$client_pid" \
