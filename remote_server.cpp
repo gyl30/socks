@@ -1631,6 +1631,12 @@ boost::asio::awaitable<void> remote_server::handle(boost::asio::io_context& io,
         co_return;
     }
     ctx.sni(reality_ctx.client_hello.sni);
+    if (reality_ctx.client_hello.malformed_extensions)
+    {
+        LOG_CTX_ERROR(ctx, "{} auth fail malformed extensions block", log_event::kAuth);
+        co_await fallback("malformed_extensions");
+        co_return;
+    }
     if (!verify_client_hello_sni(reality_ctx.client_hello, cfg_))
     {
         const auto client_sni = reality_ctx.client_hello.sni.empty() ? std::string("empty") : reality_ctx.client_hello.sni;

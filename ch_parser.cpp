@@ -209,15 +209,24 @@ void ch_parser::parse_extension_block(reader& r, client_hello_info& info)
     std::uint16_t ext_len = 0;
     if (!r.read_u16(ext_len))
     {
+        if (r.remaining() != 0)
+        {
+            info.malformed_extensions = true;
+        }
         return;
     }
 
     reader ext_r = r.slice(ext_len);
     if (!ext_r.valid())
     {
+        info.malformed_extensions = true;
         return;
     }
     parse_extensions(ext_r, info);
+    if (ext_r.remaining() != 0 || r.remaining() != 0)
+    {
+        info.malformed_extensions = true;
+    }
 }
 
 client_hello_info ch_parser::parse(const std::vector<std::uint8_t>& buf)
@@ -235,19 +244,27 @@ client_hello_info ch_parser::parse(const std::vector<std::uint8_t>& buf)
 
 void ch_parser::parse_extensions(reader& r, client_hello_info& info)
 {
-    while (r.remaining() >= 4)
+    while (r.remaining() != 0)
     {
+        if (r.remaining() < 4)
+        {
+            info.malformed_extensions = true;
+            return;
+        }
+
         std::uint16_t type = 0;
         std::uint16_t ext_len = 0;
         if (!read_extension_header(r, type, ext_len))
         {
-            break;
+            info.malformed_extensions = true;
+            return;
         }
 
         reader val = r.slice(ext_len);
         if (!val.valid())
         {
-            break;
+            info.malformed_extensions = true;
+            return;
         }
 
         if (type == reality::tls_consts::ext::kSni)
