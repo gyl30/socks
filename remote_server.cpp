@@ -1553,7 +1553,6 @@ boost::asio::awaitable<void> remote_server::refresh_site_material_loop()
 boost::asio::awaitable<void> remote_server::accept_loop()
 {
     auto self = shared_from_this();
-    boost::system::error_code ec;
     boost::asio::steady_timer retry_timer(io_context_);
     while (true)
     {
