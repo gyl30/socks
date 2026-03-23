@@ -68,6 +68,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     void release_write_bytes(std::uint32_t stream_id, std::uint8_t command, std::uint64_t bytes);
 
    private:
+    void stop_on_executor();
     boost::asio::awaitable<void> run_loop();
     boost::asio::awaitable<void> read_loop();
     boost::asio::awaitable<void> write_loop();

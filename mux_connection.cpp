@@ -456,6 +456,12 @@ void mux_connection::stop()
         return;
     }
 
+    auto self = shared_from_this();
+    boost::asio::dispatch(socket_.get_executor(), [self]() { self->stop_on_executor(); });
+}
+
+void mux_connection::stop_on_executor()
+{
     std::vector<std::shared_ptr<mux_stream>> streams_to_close;
     {
         std::lock_guard<std::mutex> lock(mutex_);
