@@ -67,7 +67,7 @@ class task_group_registry
         for (const auto& entry : groups_)
         {
             co_await boost::asio::post(*entry.io, boost::asio::use_awaitable);
-            const auto [ec] = co_await entry.group->async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
+            const auto ec = co_await entry.group->async_wait();
             if (ec && ec != boost::asio::error::operation_aborted)
             {
                 LOG_ERROR("task group registry wait failed {}", ec.message());

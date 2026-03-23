@@ -4,64 +4,88 @@
 #include <list>
 #include <memory>
 #include <mutex>
-#include <cstdio>
 #include <utility>
 #include <vector>
+
 #include <boost/asio.hpp>
-#include <boost/asio/consign.hpp>
 #include <boost/asio/as_tuple.hpp>
 #include <boost/asio/bind_cancellation_slot.hpp>
+#include <boost/asio/consign.hpp>
+#include <boost/asio/this_coro.hpp>
 
 class task_group
 {
-   public:
-    explicit task_group(boost::asio::io_context& exec) : cv_{exec, boost::asio::steady_timer::time_point::max()} {}
+   private:
+    using cancellation_signal_ptr = std::shared_ptr<::boost::asio::cancellation_signal>;
+    using cancellation_list = std::list<cancellation_signal_ptr>;
+    using waiter_ptr = std::shared_ptr<::boost::asio::steady_timer>;
+    using waiter_list = std::list<waiter_ptr>;
 
    public:
+    explicit task_group(boost::asio::io_context& exec) : exec_{exec.get_executor()} {}
+
     template <typename CompletionToken>
     auto adapt(CompletionToken&& completion_token)
     {
         auto lg = std::lock_guard<::std::mutex>{mtx_};
-        const bool was_empty = css_.empty();
         auto cs = css_.emplace(css_.end(), std::make_shared<::boost::asio::cancellation_signal>());
-        if (was_empty)
-        {
-            cv_.expires_at(::boost::asio::steady_timer::time_point::max());
-        }
 
         class remover
         {
+           private:
             task_group* tg_;
-            decltype(css_)::iterator cs_;
+            cancellation_list::iterator cs_;
 
            public:
-            remover(task_group* tg, decltype(css_)::iterator cs) : tg_{tg}, cs_{cs} {}
+            remover(task_group* tg, cancellation_list::iterator cs) : tg_{tg}, cs_{cs} {}
             remover(remover&& other) noexcept : tg_{::std::exchange(other.tg_, nullptr)}, cs_{other.cs_} {}
             ~remover()
             {
-                if (tg_)
+                if (tg_ == nullptr)
+                {
+                    return;
+                }
+
+                std::vector<waiter_ptr> snapshot;
                 {
                     auto lg = std::lock_guard<::std::mutex>{tg_->mtx_};
                     tg_->css_.erase(cs_);
                     if (tg_->css_.empty())
                     {
-                        tg_->cv_.expires_at(::boost::asio::steady_timer::time_point::min());
+                        snapshot.reserve(tg_->waiters_.size());
+                        for (const auto& waiter : tg_->waiters_)
+                        {
+                            snapshot.push_back(waiter);
+                        }
                     }
+                }
+
+                if (!snapshot.empty())
+                {
+                    auto exec = tg_->exec_;
+                    ::boost::asio::post(exec,
+                                        [snapshot = ::std::move(snapshot)]() mutable
+                                        {
+                                            for (const auto& waiter : snapshot)
+                                            {
+                                                waiter->cancel();
+                                            }
+                                        });
                 }
             }
         };
 
-        return boost::asio::bind_cancellation_slot((*cs)->slot(),
-                                                   boost::asio::consign(::std::forward<CompletionToken>(completion_token), remover{this, cs}));
+        return ::boost::asio::bind_cancellation_slot((*cs)->slot(),
+                                                     ::boost::asio::consign(::std::forward<CompletionToken>(completion_token), remover{this, cs}));
     }
 
     void emit(::boost::asio::cancellation_type type)
     {
-        std::vector<std::shared_ptr<::boost::asio::cancellation_signal>> snapshot;
+        std::vector<cancellation_signal_ptr> snapshot;
         {
             auto lg = std::lock_guard<::std::mutex>{mtx_};
             snapshot.reserve(css_.size());
-            for (auto& cs : css_)
+            for (const auto& cs : css_)
             {
                 snapshot.push_back(cs);
             }
@@ -72,51 +96,48 @@ class task_group
         }
     }
 
-    template <typename CompletionToken = boost::asio::default_completion_token_t<::boost::asio::any_io_executor>>
-    auto async_wait(CompletionToken&& completion_token = boost::asio::default_completion_token_t<::boost::asio::any_io_executor>{})
+    ::boost::asio::awaitable<::boost::system::error_code> async_wait()
     {
-        return boost::asio::async_compose<CompletionToken, void(::boost::system::error_code)>(
-            [this, scheduled = false](auto& self, boost::system::error_code ec = {}) mutable
+        auto cancel_state = co_await ::boost::asio::this_coro::cancellation_state;
+        co_await ::boost::asio::dispatch(exec_, ::boost::asio::use_awaitable);
+
+        if (cancel_state.cancelled() != ::boost::asio::cancellation_type::none)
+        {
+            co_return ::boost::asio::error::operation_aborted;
+        }
+
+        waiter_list::iterator waiter_it;
+        waiter_ptr waiter;
+        {
+            auto lg = std::lock_guard<::std::mutex>{mtx_};
+            if (css_.empty())
             {
-                if (!scheduled)
-                {
-                    self.reset_cancellation_state(::boost::asio::enable_total_cancellation());
-                }
+                co_return ::boost::system::error_code{};
+            }
+            waiter = std::make_shared<::boost::asio::steady_timer>(exec_, ::boost::asio::steady_timer::time_point::max());
+            waiter_it = waiters_.emplace(waiters_.end(), waiter);
+        }
 
-                if (!self.cancelled() && ec == boost::asio::error::operation_aborted)
-                {
-                    ec = {};
-                }
+        const auto [ec] = co_await waiter->async_wait(::boost::asio::as_tuple(::boost::asio::use_awaitable));
 
-                {
-                    auto lg = std::lock_guard<::std::mutex>{mtx_};
-                    if (!css_.empty() && !ec)
-                    {
-                        scheduled = true;
+        {
+            auto lg = std::lock_guard<::std::mutex>{mtx_};
+            waiters_.erase(waiter_it);
+        }
 
-                        auto slot = boost::asio::get_associated_cancellation_slot(self);
-                        return cv_.async_wait(::boost::asio::bind_cancellation_slot(
-                            slot, [s = std::move(self)](::boost::system::error_code cv_ec) mutable { std::move(s)(cv_ec); }));
-                    }
-                }
+        if (ec == ::boost::asio::error::operation_aborted && cancel_state.cancelled() == ::boost::asio::cancellation_type::none)
+        {
+            co_return ::boost::system::error_code{};
+        }
 
-                if (!::std::exchange(scheduled, true))
-                {
-                    auto slot = boost::asio::get_associated_cancellation_slot(self);
-                    return boost::asio::post(
-                        cv_.get_executor(),
-                        boost::asio::bind_cancellation_slot(slot, [s = std::move(self), ec]() mutable { std::move(s).complete(ec); }));
-                }
-
-                self.complete(ec);
-            },
-            completion_token,
-            cv_);
+        co_return ec;
     }
 
    private:
-    std::mutex mtx_;
-    boost::asio::steady_timer cv_;
-    std::list<std::shared_ptr<::boost::asio::cancellation_signal>> css_;
+    ::std::mutex mtx_;
+    ::boost::asio::any_io_executor exec_;
+    cancellation_list css_;
+    waiter_list waiters_;
 };
+
 #endif

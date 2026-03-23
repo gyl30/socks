@@ -282,7 +282,7 @@ boost::asio::awaitable<void> monitor_server::wait_stopped()
 {
     co_await boost::asio::post(ioc_, boost::asio::use_awaitable);
 
-    const auto [ec] = co_await group_.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
+    const auto ec = co_await group_.async_wait();
     if (ec)
     {
         LOG_ERROR("monitor server wait stopped failed {}", ec.message());
