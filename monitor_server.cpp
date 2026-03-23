@@ -10,6 +10,7 @@
 
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
+#include <boost/asio/error.hpp>
 #include <boost/asio/post.hpp>
 #include <boost/asio/as_tuple.hpp>
 #include <boost/asio/steady_timer.hpp>
