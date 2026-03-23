@@ -1,4 +1,5 @@
 #include <array>
+#include <cstdlib>
 #include <string>
 #include <chrono>
 #include <utility>
@@ -227,28 +228,28 @@ int monitor_server::start()
     if (ec)
     {
         LOG_ERROR("failed to parse address {}", ec.message());
-        return -1;
+        std::exit(EXIT_FAILURE);
     }
     endpoint.port(port_);
     if (acceptor_.open(endpoint.protocol(), ec); ec)
     {
         LOG_ERROR("failed to open acceptor {}", ec.message());
-        return -1;
+        std::exit(EXIT_FAILURE);
     }
     if (acceptor_.set_option(boost::asio::socket_base::reuse_address(true), ec); ec)
     {
         LOG_ERROR("failed to set reuse_address {}", ec.message());
-        return -1;
+        std::exit(EXIT_FAILURE);
     }
     if (acceptor_.bind(endpoint, ec); ec)
     {
         LOG_ERROR("failed to bind {}", ec.message());
-        return -1;
+        std::exit(EXIT_FAILURE);
     }
     if (acceptor_.listen(boost::asio::socket_base::max_listen_connections, ec); ec)
     {
         LOG_ERROR("failed to listen {}", ec.message());
-        return -1;
+        std::exit(EXIT_FAILURE);
     }
 
     LOG_INFO("monitor server listening on {}:{}", host_, port_);

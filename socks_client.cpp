@@ -1,4 +1,5 @@
 #include <chrono>
+#include <cstdlib>
 #include <memory>
 #include <string>
 #include <cstdint>
@@ -94,25 +95,25 @@ int socks_client::start()
     if (tunnel_pool == nullptr)
     {
         LOG_ERROR("tunnel pool unavailable");
-        return -1;
+        std::exit(EXIT_FAILURE);
     }
 
     auto router = router_;
     if (router == nullptr)
     {
         LOG_ERROR("router unavailable");
-        return -1;
+        std::exit(EXIT_FAILURE);
     }
 
     if (!router->load())
     {
         LOG_ERROR("failed to load router data");
-        return -1;
+        std::exit(EXIT_FAILURE);
     }
     if (!cfg_.socks.enabled)
     {
         LOG_INFO("socks client disabled");
-        return -1;
+        return 0;
     }
 
     boost::system::error_code ec;
@@ -120,7 +121,7 @@ int socks_client::start()
     if (ec)
     {
         LOG_ERROR("socks5 setup {}:{} failed {}", cfg_.socks.host, cfg_.socks.port, ec.message());
-        return -1;
+        std::exit(EXIT_FAILURE);
     }
     LOG_INFO("local socks5 listening on {}:{}", cfg_.socks.host, cfg_.socks.port);
 
