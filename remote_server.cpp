@@ -1,6 +1,7 @@
 #include <array>
 #include <ctime>
 #include <chrono>
+#include <cstdlib>
 #include <memory>
 #include <string>
 #include <vector>
@@ -1323,6 +1324,60 @@ remote_server::~remote_server()
 
 void remote_server::start()
 {
+    if (private_key_.size() != 32 || reality_cert_public_key_.size() != 32 || reality_cert_template_.empty())
+    {
+        LOG_ERROR("remote server initialization incomplete private_key={} cert_public_key={} cert_template={}",
+                  private_key_.size(),
+                  reality_cert_public_key_.size(),
+                  reality_cert_template_.size());
+        std::exit(EXIT_FAILURE);
+    }
+
+    boost::system::error_code ec;
+    const auto addr = boost::asio::ip::make_address(cfg_.inbound.host, ec);
+    if (ec)
+    {
+        LOG_ERROR("remote server parse listen address {} failed {}", cfg_.inbound.host, ec.message());
+        std::exit(EXIT_FAILURE);
+    }
+    const auto ep = boost::asio::ip::tcp::endpoint(addr, cfg_.inbound.port);
+    const bool enable_dual_stack = addr.is_v6() && addr.to_v6().is_unspecified();
+    ec = acceptor_.open(ep.protocol(), ec);
+    if (ec)
+    {
+        LOG_ERROR("remote server open listen socket {}:{} failed {}", cfg_.inbound.host, cfg_.inbound.port, ec.message());
+        std::exit(EXIT_FAILURE);
+    }
+    ec = acceptor_.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true), ec);
+    if (ec)
+    {
+        LOG_ERROR("remote server set reuse_address {}:{} failed {}", cfg_.inbound.host, cfg_.inbound.port, ec.message());
+        std::exit(EXIT_FAILURE);
+    }
+    if (enable_dual_stack)
+    {
+        ec = acceptor_.set_option(boost::asio::ip::v6_only(false), ec);
+        if (ec)
+        {
+            LOG_ERROR("remote server disable v6_only {}:{} failed {}", cfg_.inbound.host, cfg_.inbound.port, ec.message());
+            std::exit(EXIT_FAILURE);
+        }
+    }
+    ec = acceptor_.bind(ep, ec);
+    if (ec)
+    {
+        LOG_ERROR("remote server bind {}:{} failed {}", cfg_.inbound.host, cfg_.inbound.port, ec.message());
+        std::exit(EXIT_FAILURE);
+    }
+    ec = acceptor_.listen(boost::asio::socket_base::max_listen_connections, ec);
+    if (ec)
+    {
+        LOG_ERROR("remote server listen {}:{} failed {}", cfg_.inbound.host, cfg_.inbound.port, ec.message());
+        std::exit(EXIT_FAILURE);
+    }
+
+    LOG_INFO("remote server listening on {}:{}", cfg_.inbound.host, cfg_.inbound.port);
+
     auto& owner_group = groups_.get(io_context_);
     if (!cfg_.reality.sni.empty())
     {
@@ -1497,44 +1552,8 @@ boost::asio::awaitable<void> remote_server::refresh_site_material_loop()
 
 boost::asio::awaitable<void> remote_server::accept_loop()
 {
-    LOG_INFO("remote server listening for connections");
     auto self = shared_from_this();
     boost::system::error_code ec;
-    auto addr = boost::asio::ip::make_address(cfg_.inbound.host, ec);
-    if (ec)
-    {
-        co_return;
-    }
-    auto ep = boost::asio::ip::tcp::endpoint(addr, cfg_.inbound.port);
-    const bool enable_dual_stack = addr.is_v6() && addr.to_v6().is_unspecified();
-    ec = acceptor_.open(ep.protocol(), ec);
-    if (ec)
-    {
-        co_return;
-    }
-    ec = acceptor_.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true), ec);
-    if (ec)
-    {
-        co_return;
-    }
-    if (enable_dual_stack)
-    {
-        ec = acceptor_.set_option(boost::asio::ip::v6_only(false), ec);
-        if (ec)
-        {
-            co_return;
-        }
-    }
-    ec = acceptor_.bind(ep, ec);
-    if (ec)
-    {
-        co_return;
-    }
-    ec = acceptor_.listen(boost::asio::socket_base::max_listen_connections, ec);
-    if (ec)
-    {
-        co_return;
-    }
     boost::asio::steady_timer retry_timer(io_context_);
     while (true)
     {
