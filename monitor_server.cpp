@@ -11,6 +11,7 @@
 #include <boost/beast/http.hpp>
 #include <boost/asio/post.hpp>
 #include <boost/asio/as_tuple.hpp>
+#include <boost/asio/steady_timer.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/asio/redirect_error.hpp>
 
@@ -289,15 +290,32 @@ boost::asio::awaitable<void> monitor_server::wait_stopped()
 
 boost::asio::awaitable<void> monitor_server::accept_loop()
 {
-    boost::system::error_code ec;
     const auto self = shared_from_this();
+    boost::asio::steady_timer retry_timer(ioc_);
     for (;;)
     {
+        boost::system::error_code ec;
         auto s = co_await acceptor_.async_accept(boost::asio::redirect_error(boost::asio::use_awaitable, ec));
+        if (ec == boost::asio::error::operation_aborted || ec == boost::asio::error::bad_descriptor)
+        {
+            LOG_INFO("monitor accept loop stopped {}", ec.message());
+            break;
+        }
         if (ec)
         {
-            LOG_ERROR("accept error {}", ec.message());
-            break;
+            LOG_WARN("monitor accept error {} retry", ec.message());
+            retry_timer.expires_after(std::chrono::milliseconds(200));
+            const auto [wait_ec] = co_await retry_timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
+            if (wait_ec == boost::asio::error::operation_aborted)
+            {
+                LOG_INFO("monitor accept retry cancelled {}", wait_ec.message());
+                break;
+            }
+            if (wait_ec)
+            {
+                LOG_WARN("monitor accept retry wait error {}", wait_ec.message());
+            }
+            continue;
         }
         boost::asio::co_spawn(ioc_, handle_request(boost::beast::tcp_stream(std::move(s))), group_.adapt(boost::asio::detached));
     }
