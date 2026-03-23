@@ -82,6 +82,33 @@ std::string make_config_with_timeout_zero(const char* field)
     return buffer.GetString();
 }
 
+std::string make_config_with_replay_cache_zero()
+{
+    auto json = mux::dump_default_config();
+    rapidjson::Document doc;
+    doc.Parse(json.c_str());
+    if (doc.HasParseError())
+    {
+        fail("failed to parse default config json");
+    }
+    auto reality_it = doc.FindMember("reality");
+    if (reality_it == doc.MemberEnd() || !reality_it->value.IsObject())
+    {
+        fail("default config missing reality object");
+    }
+    auto field_it = reality_it->value.FindMember("replay_cache_max_entries");
+    if (field_it == reality_it->value.MemberEnd() || !field_it->value.IsUint())
+    {
+        fail("default config missing reality replay_cache_max_entries");
+    }
+    field_it->value.SetUint(0);
+
+    rapidjson::StringBuffer buffer;
+    rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
+    doc.Accept(writer);
+    return buffer.GetString();
+}
+
 void run_case(const char* field, const char* expected_path)
 {
     temp_file file;
@@ -95,6 +122,20 @@ void run_case(const char* field, const char* expected_path)
     require(parsed.error().path == expected_path, std::string("unexpected error path for ") + field + ": " + parsed.error().path);
 }
 
+void run_replay_cache_zero_case()
+{
+    temp_file file;
+    {
+        std::ofstream out(file.path());
+        out << make_config_with_replay_cache_zero();
+    }
+
+    const auto parsed = mux::parse_config_with_error(file.path());
+    require(!parsed.has_value(), "expected parse failure for replay_cache_max_entries");
+    require(parsed.error().path == "/reality/replay_cache_max_entries",
+            std::string("unexpected error path for replay_cache_max_entries: ") + parsed.error().path);
+}
+
 }    // namespace
 
 int main()
@@ -105,6 +146,7 @@ int main()
         run_case("write", "/timeout/write");
         run_case("connect", "/timeout/connect");
         run_case("idle", "/timeout/idle");
+        run_replay_cache_zero_case();
     }
     catch (const std::exception& e)
     {
@@ -112,6 +154,6 @@ int main()
         return 1;
     }
 
-    std::cout << "[PASS] config validation timeout zero rejected\n";
+    std::cout << "[PASS] config validation timeout and replay cache zero rejected\n";
     return 0;
 }
