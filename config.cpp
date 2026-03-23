@@ -296,6 +296,10 @@ constexpr std::uint32_t kHandshakeRecordsLimitMax = 256;
     {
         return std::unexpected(make_config_error("/reality/sni", "must be a valid ascii hostname when provided"));
     }
+    if (reality.replay_cache_max_entries == 0)
+    {
+        return std::unexpected(make_config_error("/reality/replay_cache_max_entries", "must be greater than 0"));
+    }
 
     return {};
 }
