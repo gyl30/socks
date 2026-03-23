@@ -107,8 +107,9 @@ boost::asio::ip::udp::endpoint make_v4_endpoint(const in_addr& addr, const std::
 boost::asio::ip::udp::endpoint make_v6_endpoint(const in6_addr& addr, const std::uint16_t port, const std::uint32_t scope_id)
 {
     boost::asio::ip::address_v6::bytes_type bytes{};
+    const auto normalized_scope_id = static_cast<boost::asio::ip::scope_id_type>(scope_id);
     std::memcpy(bytes.data(), &addr, bytes.size());
-    return {boost::asio::ip::address_v6(bytes, static_cast<unsigned long>(scope_id)), boost::endian::big_to_native(port)};
+    return {boost::asio::ip::address_v6(bytes, normalized_scope_id), boost::endian::big_to_native(port)};
 }
 
 #ifdef __linux__

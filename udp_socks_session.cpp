@@ -623,7 +623,7 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> udp_socks_session::resolv
         co_return boost::asio::ip::udp::endpoint{};
     }
     const auto expires_at = now_ms_value + kUdpCacheTtlMs;
-    resolved_targets_.put(key, endpoint_cache_entry{target, expires_at});
+    resolved_targets_.put(key, endpoint_cache_entry{target, expires_at, {}, false});
     co_return target;
 }
 

@@ -72,8 +72,9 @@ bool secure_string_equals(const std::string& lhs, const std::string& rhs)
 
 [[nodiscard]] bool is_valid_domain(const std::string& domain)
 {
-    for (const unsigned char c : domain)
+    for (const char ch : domain)
     {
+        const auto c = static_cast<std::uint8_t>(ch);
         if (!is_valid_domain_char(c))
         {
             return false;

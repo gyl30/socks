@@ -193,8 +193,9 @@ bool valid_sni_hostname(std::string_view hostname)
     std::size_t label_len = 0;
     bool label_has_content = false;
     bool label_ends_with_hyphen = false;
-    for (const unsigned char ch : hostname)
+    for (const char ch_value : hostname)
     {
+        const auto ch = static_cast<unsigned char>(ch_value);
         if (ch >= 0x80 || ch <= 0x20 || ch == 0x7F)
         {
             return false;
