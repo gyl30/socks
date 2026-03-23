@@ -1,6 +1,7 @@
 #include <chrono>
 #include <array>
 #include <cerrno>
+#include <cstdlib>
 #include <memory>
 #include <string>
 #include <vector>
@@ -159,13 +160,36 @@ void tproxy_client::start()
     if (!router_->load())
     {
         LOG_ERROR("failed to load router data");
-        return;
+        std::exit(EXIT_FAILURE);
     }
 
     if (cfg_.tproxy.tcp_port == 0 && cfg_.tproxy.udp_port == 0)
     {
         LOG_ERROR("tproxy tcp and udp ports are both zero");
-        return;
+        std::exit(EXIT_FAILURE);
+    }
+
+    boost::system::error_code ec;
+    if (cfg_.tproxy.tcp_port != 0)
+    {
+        open_tcp_listener(tcp_acceptor_, cfg_.tproxy.listen_host, cfg_.tproxy.tcp_port, ec);
+        if (ec)
+        {
+            LOG_ERROR("tproxy tcp listen failed {}", ec.message());
+            std::exit(EXIT_FAILURE);
+        }
+        LOG_INFO("tproxy tcp listening on {}:{}", cfg_.tproxy.listen_host, cfg_.tproxy.tcp_port);
+    }
+    if (cfg_.tproxy.udp_port != 0)
+    {
+        ec.clear();
+        open_udp_listener(udp_socket_, cfg_.tproxy.listen_host, cfg_.tproxy.udp_port, ec);
+        if (ec)
+        {
+            LOG_ERROR("tproxy udp listen failed {}", ec.message());
+            std::exit(EXIT_FAILURE);
+        }
+        LOG_INFO("tproxy udp listening on {}:{}", cfg_.tproxy.listen_host, cfg_.tproxy.udp_port);
     }
 
     auto self = shared_from_this();
@@ -233,13 +257,6 @@ boost::asio::awaitable<void> tproxy_client::wait_stopped()
 boost::asio::awaitable<void> tproxy_client::accept_tcp_loop()
 {
     boost::system::error_code ec;
-    open_tcp_listener(tcp_acceptor_, cfg_.tproxy.listen_host, cfg_.tproxy.tcp_port, ec);
-    if (ec)
-    {
-        LOG_ERROR("tproxy tcp listen failed {}", ec.message());
-        co_return;
-    }
-    LOG_INFO("tproxy tcp listening on {}:{}", cfg_.tproxy.listen_host, cfg_.tproxy.tcp_port);
 
     while (true)
     {
@@ -297,14 +314,6 @@ void tproxy_client::on_tcp_socket(boost::asio::ip::tcp::socket&& socket)
 boost::asio::awaitable<void> tproxy_client::accept_udp_loop()
 {
     boost::system::error_code ec;
-    open_udp_listener(udp_socket_, cfg_.tproxy.listen_host, cfg_.tproxy.udp_port, ec);
-    if (ec)
-    {
-        LOG_ERROR("tproxy udp listen failed {}", ec.message());
-        co_return;
-    }
-
-    LOG_INFO("tproxy udp listening on {}:{}", cfg_.tproxy.listen_host, cfg_.tproxy.udp_port);
     std::vector<std::uint8_t> payload(65535);
     std::array<char, CMSG_SPACE(sizeof(sockaddr_in6))> control{};
 
