@@ -10,8 +10,21 @@ import subprocess
 import sys
 
 
+def build_safe_git_env(repo_root):
+    env = os.environ.copy()
+    count_text = env.get("GIT_CONFIG_COUNT", "0")
+    try:
+        count = int(count_text)
+    except ValueError:
+        count = 0
+    env[f"GIT_CONFIG_KEY_{count}"] = "safe.directory"
+    env[f"GIT_CONFIG_VALUE_{count}"] = str(pathlib.Path(repo_root).resolve())
+    env["GIT_CONFIG_COUNT"] = str(count + 1)
+    return env
+
+
 def run_checked(args, cwd, capture_output=False):
-    result = subprocess.run(args, cwd=cwd, text=True, capture_output=capture_output)
+    result = subprocess.run(args, cwd=cwd, text=True, capture_output=capture_output, env=build_safe_git_env(cwd))
     if result.returncode != 0:
         stdout = result.stdout if result.stdout is not None else ""
         stderr = result.stderr if result.stderr is not None else ""
@@ -54,7 +67,7 @@ def resolve_base_sha(repo_root, base_sha):
 def ensure_commit_available(repo_root, sha):
     if not sha:
         return
-    probe = subprocess.run(["git", "cat-file", "-e", f"{sha}^{{commit}}"], cwd=repo_root, text=True)
+    probe = subprocess.run(["git", "cat-file", "-e", f"{sha}^{{commit}}"], cwd=repo_root, text=True, env=build_safe_git_env(repo_root))
     if probe.returncode == 0:
         return
     run_checked(["git", "fetch", "--depth=1", "origin", sha], repo_root)
