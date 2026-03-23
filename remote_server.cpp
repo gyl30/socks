@@ -1008,22 +1008,14 @@ boost::asio::awaitable<void> relay_fallback_data(
     boost::asio::ip::tcp::socket& dst,
     const connection_context& ctx,
     const config& cfg,
-    const char* direction,
-    const std::uint64_t fallback_start_ms)
+    const char* direction)
 {
     const auto fallback_timeout = cfg.timeout.idle;
     boost::system::error_code ec;
     std::vector<std::uint8_t> buf(kFallbackRelayBufferSize);
     for (;;)
     {
-        const auto read_timeout = timeout_io::remaining_timeout_seconds(fallback_start_ms, fallback_timeout, ec);
-        if (ec)
-        {
-            LOG_CTX_WARN(ctx, "{} stage={} overall timeout {}", log_event::kFallback, direction, ec.message());
-            close_tcp_socket(dst);
-            co_return;
-        }
-        const auto n = co_await timeout_io::wait_read_some_with_timeout(src, boost::asio::buffer(buf), read_timeout, ec);
+        const auto n = co_await timeout_io::wait_read_some_with_timeout(src, boost::asio::buffer(buf), fallback_timeout, ec);
         if (ec)
         {
             if (ec == boost::asio::error::eof)
@@ -1048,14 +1040,7 @@ boost::asio::awaitable<void> relay_fallback_data(
             co_return;
         }
 
-        const auto write_timeout = timeout_io::remaining_timeout_seconds(fallback_start_ms, fallback_timeout, ec);
-        if (ec)
-        {
-            LOG_CTX_WARN(ctx, "{} stage={} overall timeout {}", log_event::kFallback, direction, ec.message());
-            close_tcp_socket(dst);
-            co_return;
-        }
-        const auto written = co_await timeout_io::wait_write_with_timeout(dst, boost::asio::buffer(buf.data(), n), write_timeout, ec);
+        const auto written = co_await timeout_io::wait_write_with_timeout(dst, boost::asio::buffer(buf.data(), n), fallback_timeout, ec);
         if (ec)
         {
             record_fallback_write_failure(ec);
@@ -1282,9 +1267,8 @@ boost::asio::awaitable<void> remote_server::fallback_to_target_site(reality_cont
 
     using boost::asio::experimental::awaitable_operators::operator||;
     using boost::asio::experimental::awaitable_operators::operator&&;
-    const auto fallback_start_ms = timeout_io::now_ms();
-    co_await (relay_fallback_data(*reality_ctx.socket, upstream_socket, ctx, cfg_, "client_to_target", fallback_start_ms) &&
-              relay_fallback_data(upstream_socket, *reality_ctx.socket, ctx, cfg_, "target_to_client", fallback_start_ms));
+    co_await (relay_fallback_data(*reality_ctx.socket, upstream_socket, ctx, cfg_, "client_to_target") &&
+              relay_fallback_data(upstream_socket, *reality_ctx.socket, ctx, cfg_, "target_to_client"));
 
     LOG_CTX_INFO(ctx, "{} finished target={}:{}", log_event::kFallback, host, kFallbackTlsPort);
 }
