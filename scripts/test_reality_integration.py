@@ -335,7 +335,7 @@ def main():
         client_process = start_process([str(binary), "-c", str(temp_root / "client.json")], str(client_log))
         helper_processes.append(client_process)
 
-        wait_for_log_text(server_log, "remote server listening for connections", 20, "server log")
+        wait_for_log_text(server_log, f"remote server listening on 127.0.0.1:{server_port}", 20, "server log")
         wait_for_log_text(client_log, f"local socks5 listening on {socks_host}:{socks_port}", 20, "client log")
         wait_for_port(socks_host, socks_port, 20, "socks5 proxy")
 
