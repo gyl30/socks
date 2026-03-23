@@ -247,6 +247,10 @@ if(SOCKS_BUILD_TESTS)
   add_executable(mux_backpressure_test tests/mux_backpressure_test.cpp)
   target_link_libraries(mux_backpressure_test PRIVATE core)
   add_test(NAME mux_backpressure_test COMMAND mux_backpressure_test)
+
+  add_executable(config_validation_test tests/config_validation_test.cpp)
+  target_link_libraries(config_validation_test PRIVATE core)
+  add_test(NAME config_validation_test COMMAND config_validation_test)
 endif()
 
 if(ENABLE_FUZZ)

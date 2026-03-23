@@ -140,12 +140,13 @@
 
 语义：
 
-- `read/write/connect` 为 `0` 时禁用该类超时（`timeout_io.h`）。
-- `idle` 用于空闲回收 watchdog，必须大于 `0`，禁止配置为 `0`。
+- `read/write/connect/idle` 都必须大于 `0`，禁止配置为 `0`。
+- `read/write/connect` 控制对应 I/O 的单次超时。
+- `idle` 用于空闲回收 watchdog。
 
 注意：
 
-- 使用 MUX 时，`timeout.write` 禁止为 `0`，避免单个 stream 反压导致整条连接无进度。
+- `timeout.write` 禁止为 `0`，避免单个 stream 反压导致整条 MUX 连接无进度。
 - `timeout.idle` 禁止为 `0`，避免 UDP 会话等长时间不回收导致资源耗尽。
 
 ### `heartbeat`
