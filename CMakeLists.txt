@@ -251,6 +251,10 @@ if(SOCKS_BUILD_TESTS)
   add_executable(config_validation_test tests/config_validation_test.cpp)
   target_link_libraries(config_validation_test PRIVATE core)
   add_test(NAME config_validation_test COMMAND config_validation_test)
+
+  add_executable(task_group_registry_test tests/task_group_registry_test.cpp)
+  target_link_libraries(task_group_registry_test PRIVATE core)
+  add_test(NAME task_group_registry_test COMMAND task_group_registry_test)
 endif()
 
 if(ENABLE_FUZZ)
