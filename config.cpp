@@ -107,6 +107,18 @@ constexpr std::uint32_t kHandshakeRecordsLimitMax = 256;
 
 [[nodiscard]] std::expected<void, config_error> validate_timeout_config(const config::timeout_t& timeout)
 {
+    if (timeout.read == 0)
+    {
+        return std::unexpected(make_config_error("/timeout/read", "must be greater than 0"));
+    }
+    if (timeout.write == 0)
+    {
+        return std::unexpected(make_config_error("/timeout/write", "must be greater than 0"));
+    }
+    if (timeout.connect == 0)
+    {
+        return std::unexpected(make_config_error("/timeout/connect", "must be greater than 0"));
+    }
     if (timeout.idle == 0)
     {
         return std::unexpected(make_config_error("/timeout/idle", "must be greater than 0"));
