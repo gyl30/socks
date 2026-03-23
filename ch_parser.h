@@ -24,6 +24,7 @@ struct client_hello_info
     std::vector<std::uint8_t> secure_renegotiation;
     std::string sni;
     bool malformed_sni = false;
+    bool malformed_extensions = false;
     bool malformed_key_share = false;
     bool malformed_supported_groups = false;
     bool malformed_supported_versions = false;
