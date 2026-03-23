@@ -12,6 +12,7 @@
 #include <limits>
 #include <optional>
 #include <algorithm>
+#include <cctype>
 
 extern "C"
 {
