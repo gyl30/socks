@@ -17,8 +17,8 @@
 #include <boost/asio/experimental/concurrent_channel.hpp>
 
 #include "config.h"
-#include "lru_cache.h"
 #include "router.h"
+#include "lru_cache.h"
 #include "task_group.h"
 #include "mux_tunnel.h"
 #include "log_context.h"

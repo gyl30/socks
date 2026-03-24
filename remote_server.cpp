@@ -954,14 +954,14 @@ boost::asio::awaitable<void> connect_fallback_target(boost::asio::io_context& io
     if (ec)
     {
         record_fallback_resolve_failure(ec);
-        LOG_CTX_WARN(ctx, "{} stage=resolve target={}:{} error={}", log_event::kFallback, host, port, ec.message());
+        LOG_CTX_WARN(ctx, "{} stage resolve target {}:{} error {}", log_event::kFallback, host, port, ec.message());
         co_return;
     }
     if (endpoints.begin() == endpoints.end())
     {
         ec = boost::asio::error::host_not_found;
         record_fallback_resolve_failure(ec);
-        LOG_CTX_WARN(ctx, "{} stage=resolve target={}:{} error={}", log_event::kFallback, host, port, ec.message());
+        LOG_CTX_WARN(ctx, "{} stage resolve target {}:{} error {}", log_event::kFallback, host, port, ec.message());
         co_return;
     }
 
@@ -992,7 +992,7 @@ boost::asio::awaitable<void> connect_fallback_target(boost::asio::io_context& io
         if (!op_ec)
         {
             ec.clear();
-            LOG_CTX_INFO(ctx, "{} stage=connect target={}:{} connected", log_event::kFallback, host, port);
+            LOG_CTX_INFO(ctx, "{} stage connect target {}:{} connected", log_event::kFallback, host, port);
             co_return;
         }
 
@@ -1001,7 +1001,7 @@ boost::asio::awaitable<void> connect_fallback_target(boost::asio::io_context& io
 
     ec = last_ec;
     record_fallback_connect_failure(ec);
-    LOG_CTX_WARN(ctx, "{} stage=connect target={}:{} error={}", log_event::kFallback, host, port, ec.message());
+    LOG_CTX_WARN(ctx, "{} stage connect target {}:{} error {}", log_event::kFallback, host, port, ec.message());
     co_return;
 }
 
@@ -1026,13 +1026,13 @@ boost::asio::awaitable<void> relay_fallback_data(
                 shutdown_ec = dst.shutdown(boost::asio::ip::tcp::socket::shutdown_send, shutdown_ec);
                 if (shutdown_ec && shutdown_ec != boost::asio::error::not_connected)
                 {
-                    LOG_CTX_WARN(ctx, "{} stage={} shutdown send error {}", log_event::kFallback, direction, shutdown_ec.message());
+                    LOG_CTX_WARN(ctx, "{} stage {} shutdown send error {}", log_event::kFallback, direction, shutdown_ec.message());
                 }
                 co_return;
             }
             if (ec != boost::asio::error::eof && ec != boost::asio::error::operation_aborted && ec != boost::asio::error::connection_reset)
             {
-                LOG_CTX_WARN(ctx, "{} stage={} read error {}", log_event::kFallback, direction, ec.message());
+                LOG_CTX_WARN(ctx, "{} stage {} read error {}", log_event::kFallback, direction, ec.message());
             }
             close_tcp_socket(dst);
             co_return;
@@ -1046,14 +1046,14 @@ boost::asio::awaitable<void> relay_fallback_data(
         if (ec)
         {
             record_fallback_write_failure(ec);
-            LOG_CTX_WARN(ctx, "{} stage={} write error {}", log_event::kFallback, direction, ec.message());
+            LOG_CTX_WARN(ctx, "{} stage {} write error {}", log_event::kFallback, direction, ec.message());
             co_return;
         }
         if (written != n)
         {
             ec = boost::asio::error::fault;
             record_fallback_write_failure(ec);
-            LOG_CTX_WARN(ctx, "{} stage={} short write {} of {}", log_event::kFallback, direction, written, n);
+            LOG_CTX_WARN(ctx, "{} stage {} short write {} of {}", log_event::kFallback, direction, written, n);
             co_return;
         }
     }
@@ -1225,7 +1225,7 @@ boost::asio::awaitable<void> remote_server::fallback_to_target_site(reality_cont
     if (host.empty())
     {
         statistics::instance().inc_fallback_no_target();
-        LOG_CTX_WARN(ctx, "{} reason={} no fallback target", log_event::kFallback, reason);
+        LOG_CTX_WARN(ctx, "{} reason {} no fallback target", log_event::kFallback, reason);
         co_return;
     }
 
@@ -1236,7 +1236,7 @@ boost::asio::awaitable<void> remote_server::fallback_to_target_site(reality_cont
 
     ctx.set_target(host, kFallbackTlsPort);
     LOG_CTX_INFO(ctx,
-                 "{} reason={} target={}:{} client_hello_size={}",
+                 "{} reason {} target {}:{} client_hello_size {}",
                  log_event::kFallback,
                  reason,
                  host,
@@ -1263,7 +1263,7 @@ boost::asio::awaitable<void> remote_server::fallback_to_target_site(reality_cont
             ec = boost::asio::error::fault;
         }
         record_fallback_write_failure(ec);
-        LOG_CTX_WARN(ctx, "{} stage=initial_write target={}:{} error={}", log_event::kFallback, host, kFallbackTlsPort, ec.message());
+        LOG_CTX_WARN(ctx, "{} stage initial_write target {}:{} error {}", log_event::kFallback, host, kFallbackTlsPort, ec.message());
         co_return;
     }
 
@@ -1272,7 +1272,7 @@ boost::asio::awaitable<void> remote_server::fallback_to_target_site(reality_cont
     co_await (relay_fallback_data(*reality_ctx.socket, upstream_socket, ctx, cfg_, "client_to_target") &&
               relay_fallback_data(upstream_socket, *reality_ctx.socket, ctx, cfg_, "target_to_client"));
 
-    LOG_CTX_INFO(ctx, "{} finished target={}:{}", log_event::kFallback, host, kFallbackTlsPort);
+    LOG_CTX_INFO(ctx, "{} finished target {}:{}", log_event::kFallback, host, kFallbackTlsPort);
 }
 
 remote_server::remote_server(io_context_pool& pool, const config& cfg)
@@ -1297,7 +1297,7 @@ remote_server::remote_server(io_context_pool& pool, const config& cfg)
     std::uint8_t cert_public_key[32] = {};
     if (!reality::crypto_util::generate_ed25519_keypair(cert_public_key, reality_cert_private_key_.data()))
     {
-        LOG_ERROR("failed to generate REALITY certificate identity");
+        LOG_ERROR("failed to generate reality certificate identity");
         OPENSSL_cleanse(reality_cert_private_key_.data(), reality_cert_private_key_.size());
         return;
     }
@@ -1306,7 +1306,7 @@ remote_server::remote_server(io_context_pool& pool, const config& cfg)
         std::vector<std::uint8_t>(reality_cert_private_key_.begin(), reality_cert_private_key_.end()), ec);
     if (ec)
     {
-        LOG_ERROR("failed to build REALITY certificate template {}", ec.message());
+        LOG_ERROR("failed to build reality certificate template {}", ec.message());
         reality_cert_public_key_.clear();
         OPENSSL_cleanse(reality_cert_private_key_.data(), reality_cert_private_key_.size());
         return;
@@ -1327,7 +1327,7 @@ void remote_server::start()
 {
     if (private_key_.size() != 32 || reality_cert_public_key_.size() != 32 || reality_cert_template_.empty())
     {
-        LOG_ERROR("remote server initialization incomplete private_key={} cert_public_key={} cert_template={}",
+        LOG_ERROR("remote server initialization incomplete private key {} cert public key {} cert template {}",
                   private_key_.size(),
                   reality_cert_public_key_.size(),
                   reality_cert_template_.size());
@@ -1424,7 +1424,7 @@ bool remote_server::try_acquire_fallback_budget(const connection_context& ctx, c
     {
         statistics::instance().inc_fallback_rate_limited();
         LOG_CTX_WARN(ctx,
-                     "{} reason={} stage=rate_limit mode=concurrency active={} limit={}",
+                     "{} reason {} stage rate_limit mode concurrency active {} limit {}",
                      log_event::kFallback,
                      reason,
                      current_active,
@@ -1453,7 +1453,7 @@ bool remote_server::try_acquire_fallback_budget(const connection_context& ctx, c
         {
             statistics::instance().inc_fallback_rate_limited();
             LOG_CTX_WARN(ctx,
-                         "{} reason={} stage=rate_limit mode=tracker_capacity entries={} limit={}",
+                         "{} reason {} stage rate_limit mode tracker_capacity entries {} limit {}",
                          log_event::kFallback,
                          reason,
                          fallback_attempts_by_remote_.size(),
@@ -1476,7 +1476,7 @@ bool remote_server::try_acquire_fallback_budget(const connection_context& ctx, c
     {
         statistics::instance().inc_fallback_rate_limited();
         LOG_CTX_WARN(ctx,
-                     "{} reason={} stage=rate_limit mode=per_source remote={} attempts={} window_sec={} limit={}",
+                     "{} reason {} stage rate_limit mode per_source remote {} attempts {} window_sec {} limit {}",
                      log_event::kFallback,
                      reason,
                      remote_addr,
@@ -1498,7 +1498,7 @@ boost::asio::awaitable<void> remote_server::refresh_site_material_loop()
     const auto target_host = cfg_.reality.sni;
     if (target_host.empty())
     {
-        LOG_INFO("REALITY site material refresh disabled because reality.sni is empty");
+        LOG_INFO("reality site material refresh disabled because reality.sni is empty");
         co_return;
     }
 
@@ -1546,7 +1546,7 @@ boost::asio::awaitable<void> remote_server::refresh_site_material_loop()
         }
         if (timer_ec)
         {
-            LOG_WARN("REALITY site material refresh timer error {}", timer_ec.message());
+            LOG_WARN("reality site material refresh timer error {}", timer_ec.message());
         }
     }
 }
@@ -1661,7 +1661,7 @@ boost::asio::awaitable<void> remote_server::handle(boost::asio::io_context& io,
     if (!verify_client_hello_sni(reality_ctx.client_hello, cfg_))
     {
         const auto client_sni = reality_ctx.client_hello.sni.empty() ? std::string("empty") : reality_ctx.client_hello.sni;
-        LOG_CTX_WARN(ctx, "{} auth fail server name mismatch client={} expected={}", log_event::kAuth, client_sni, cfg_.reality.sni);
+        LOG_CTX_WARN(ctx, "{} auth fail server name mismatch client {} expected {}", log_event::kAuth, client_sni, cfg_.reality.sni);
         co_await fallback("server_name_mismatch");
         co_return;
     }
@@ -1675,7 +1675,7 @@ boost::asio::awaitable<void> remote_server::handle(boost::asio::io_context& io,
         reality_ctx.client_hello.malformed_renegotiation_info)
     {
         LOG_CTX_ERROR(ctx,
-                      "{} auth fail malformed tls13 extensions supported_groups={} supported_versions={} renegotiation_info={}",
+                      "{} auth fail malformed tls13 extensions supported groups {} supported versions {} renegotiation info {}",
                       log_event::kAuth,
                       reality_ctx.client_hello.malformed_supported_groups,
                       reality_ctx.client_hello.malformed_supported_versions,
@@ -1780,7 +1780,7 @@ boost::asio::awaitable<void> remote_server::handle(boost::asio::io_context& io,
         co_return;
     }
     LOG_CTX_INFO(ctx,
-                 "{} client_hello selected_key_share_group=0x{:04x} {} client_hybrid={} client_x25519={}",
+                 "{} client hello selected key share group 0x{:04x} {} client hybrid {} client x25519 {}",
                  log_event::kHandshake,
                  reality_ctx.key_share_group,
                  reality::named_group_name(reality_ctx.key_share_group),
@@ -2143,8 +2143,8 @@ boost::asio::awaitable<remote_server::server_handshake_res> remote_server::perfo
     const auto encrypted_handshake_record_sizes = select_encrypted_handshake_record_sizes(site_material_snapshot);
     const auto cert_chain_size = select_reality_certificate_chain_size(site_material_snapshot);
     LOG_CTX_INFO(ctx,
-                 "{} success_path_material cache={} certs={} group=0x{:04x} {} key_share_len={} cipher=0x{:04x} alpn='{}' sh_exts={} ee_exts={} "
-                 "ee_padding={} ee_padding_len={} ccs={} hs_records={}",
+                 "{} success path material cache {} certs {} group 0x{:04x} {} key share len {} cipher 0x{:04x} alpn '{}' sh exts {} ee exts {} "
+                 "ee padding {} ee padding len {} ccs {} hs records {}",
                  log_event::kHandshake,
                  site_material_snapshot.has_value(),
                  cert_chain_size,

@@ -1,10 +1,10 @@
 #ifndef CLIENT_TUNNEL_POOL_H
 #define CLIENT_TUNNEL_POOL_H
 
+#include <mutex>
 #include <memory>
 #include <string>
 #include <vector>
-#include <mutex>
 #include <atomic>
 #include <cstdint>
 #include <utility>
@@ -17,18 +17,13 @@
 #include <boost/asio/io_context.hpp>
 #include <boost/system/error_code.hpp>
 
-#include "reality_fingerprint.h"
-
-extern "C"
-{
-}
-
 #include "config.h"
 #include "ch_parser.h"
 #include "mux_tunnel.h"
-#include "task_group_registry.h"
 #include "context_pool.h"
 #include "reality_core.h"
+#include "reality_fingerprint.h"
+#include "task_group_registry.h"
 
 namespace reality
 {

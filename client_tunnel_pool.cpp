@@ -1942,7 +1942,7 @@ boost::asio::awaitable<void> client_tunnel_pool::run_real_certificate_fallback(
     if (!handshake_ret.negotiated_alpn.empty() && handshake_ret.negotiated_alpn != "http/1.1")
     {
         LOG_CTX_INFO(fallback_ctx,
-                     "{} stage=skip_request host={} negotiated_alpn={}",
+                     "{} stage skip_request host {} negotiated_alpn {}",
                      log_event::kFallback,
                      sni_,
                      handshake_ret.negotiated_alpn);
@@ -1956,14 +1956,14 @@ boost::asio::awaitable<void> client_tunnel_pool::run_real_certificate_fallback(
         reality::tls_key_schedule::derive_traffic_keys(handshake_ret.c_app_secret, ec, key_len, constants::crypto::kIvLen, handshake_ret.md);
     if (ec)
     {
-        LOG_CTX_WARN(fallback_ctx, "{} stage=derive_client_app_keys error={}", log_event::kFallback, ec.message());
+        LOG_CTX_WARN(fallback_ctx, "{} stage derive_client_app_keys error {}", log_event::kFallback, ec.message());
         co_return;
     }
     auto s_app_keys =
         reality::tls_key_schedule::derive_traffic_keys(handshake_ret.s_app_secret, ec, key_len, constants::crypto::kIvLen, handshake_ret.md);
     if (ec)
     {
-        LOG_CTX_WARN(fallback_ctx, "{} stage=derive_server_app_keys error={}", log_event::kFallback, ec.message());
+        LOG_CTX_WARN(fallback_ctx, "{} stage derive_server_app_keys error {}", log_event::kFallback, ec.message());
         co_return;
     }
 
@@ -1973,7 +1973,7 @@ boost::asio::awaitable<void> client_tunnel_pool::run_real_certificate_fallback(
     const auto ciphertext = engine.encrypt(request_bytes, ec);
     if (ec)
     {
-        LOG_CTX_WARN(fallback_ctx, "{} stage=encrypt_request error={}", log_event::kFallback, ec.message());
+        LOG_CTX_WARN(fallback_ctx, "{} stage encrypt_request error {}", log_event::kFallback, ec.message());
         co_return;
     }
 
@@ -1987,7 +1987,7 @@ boost::asio::awaitable<void> client_tunnel_pool::run_real_certificate_fallback(
             ec = boost::asio::error::fault;
         }
         LOG_CTX_WARN(fallback_ctx,
-                     "{} stage=write_request host={} bytes={} error={}",
+                     "{} stage write_request host {} bytes {} error {}",
                      log_event::kFallback,
                      sni_,
                      ciphertext.size(),
@@ -2010,7 +2010,7 @@ boost::asio::awaitable<void> client_tunnel_pool::run_real_certificate_fallback(
         const auto buf = engine.read_buffer(4096, ec);
         if (ec)
         {
-            LOG_CTX_WARN(fallback_ctx, "{} stage=read_response attempt={} error={}", log_event::kFallback, attempt + 1, ec.message());
+            LOG_CTX_WARN(fallback_ctx, "{} stage read_response attempt {} error {}", log_event::kFallback, attempt + 1, ec.message());
             co_return;
         }
         const auto n = co_await timeout_io::wait_read_some_with_timeout(socket, buf, read_timeout_sec, ec);
@@ -2021,7 +2021,7 @@ boost::asio::awaitable<void> client_tunnel_pool::run_real_certificate_fallback(
                 ec.clear();
                 break;
             }
-            LOG_CTX_WARN(fallback_ctx, "{} stage=read_response attempt={} error={}", log_event::kFallback, attempt + 1, ec.message());
+            LOG_CTX_WARN(fallback_ctx, "{} stage read_response attempt {} error {}", log_event::kFallback, attempt + 1, ec.message());
             co_return;
         }
         if (n == 0)
@@ -2061,7 +2061,7 @@ boost::asio::awaitable<void> client_tunnel_pool::run_real_certificate_fallback(
                     co_return;
                 }
 
-                LOG_CTX_DEBUG(fallback_ctx, "{} stage=read_response ignored_record_type={}", log_event::kFallback, type);
+                LOG_CTX_DEBUG(fallback_ctx, "{} stage read_response ignored_record_type {}", log_event::kFallback, type);
                 cb_ec.clear();
                 co_return;
             },
@@ -2074,7 +2074,7 @@ boost::asio::awaitable<void> client_tunnel_pool::run_real_certificate_fallback(
                 saw_alert = true;
                 break;
             }
-            LOG_CTX_WARN(fallback_ctx, "{} stage=process_response error={}", log_event::kFallback, process_ec.message());
+            LOG_CTX_WARN(fallback_ctx, "{} stage process_response error {}", log_event::kFallback, process_ec.message());
             co_return;
         }
     }
@@ -2083,7 +2083,7 @@ boost::asio::awaitable<void> client_tunnel_pool::run_real_certificate_fallback(
     if (saw_application_data)
     {
         LOG_CTX_INFO(fallback_ctx,
-                     "{} stage=lightweight_visit_complete status=\"{}\" tx_plain={}B rx_plain={}B header_complete={} alert={}",
+                     "{} stage lightweight_visit_complete status \"{}\" tx_plain {}B rx_plain {}B header_complete {} alert {}",
                      log_event::kFallback,
                      status_line.empty() ? "unknown" : status_line,
                      fallback_ctx.tx_bytes(),
@@ -2094,7 +2094,7 @@ boost::asio::awaitable<void> client_tunnel_pool::run_real_certificate_fallback(
     else
     {
         LOG_CTX_WARN(fallback_ctx,
-                     "{} stage=lightweight_visit_no_response tx_plain={}B alert={}",
+                     "{} stage lightweight_visit_no_response tx_plain {}B alert {}",
                      log_event::kFallback,
                      fallback_ctx.tx_bytes(),
                      saw_alert);
@@ -2111,7 +2111,7 @@ client_tunnel_pool::perform_reality_handshake_with_timeout(const std::shared_ptr
     if (!socket)
     {
         statistics::instance().inc_client_tunnel_pool_handshake_errors();
-        LOG_CTX_ERROR(ctx, "{} stage=handshake target={}:{} error=invalid_socket", log_event::kHandshake, remote_host_, remote_port_);
+        LOG_CTX_ERROR(ctx, "{} stage handshake target {}:{} error invalid_socket", log_event::kHandshake, remote_host_, remote_port_);
         ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
         co_return handshake_result{};
     }
@@ -2127,7 +2127,7 @@ client_tunnel_pool::perform_reality_handshake_with_timeout(const std::shared_ptr
         {
             stats.inc_client_tunnel_pool_handshake_errors();
         }
-        LOG_CTX_ERROR(ctx, "{} stage=handshake target={}:{} error={}", log_event::kHandshake, remote_host_, remote_port_, ec.message());
+        LOG_CTX_ERROR(ctx, "{} stage handshake target {}:{} error {}", log_event::kHandshake, remote_host_, remote_port_, ec.message());
     }
     co_return handshake_res;
 }
@@ -2141,7 +2141,7 @@ boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::
     {
         std::uniform_int_distribution<std::uint32_t> jitter_dist(0, retry_delay_ms / 4);
         const auto sleep_ms = retry_delay_ms + jitter_dist(reconnect_gen);
-        LOG_CTX_WARN(ctx, "{} stage={} retry_backoff={}ms", log_event::kConnInit, stage, sleep_ms);
+        LOG_CTX_WARN(ctx, "{} stage {} retry_backoff {}ms", log_event::kConnInit, stage, sleep_ms);
 
         boost::asio::steady_timer retry_timer(io_context);
         retry_timer.expires_after(std::chrono::milliseconds(sleep_ms));
@@ -2152,7 +2152,7 @@ boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::
         }
         if (wait_ec)
         {
-            LOG_CTX_WARN(ctx, "{} stage={} retry_backoff_wait_failed {}", log_event::kConnInit, stage, wait_ec.message());
+            LOG_CTX_WARN(ctx, "{} stage {} retry_backoff_wait_failed {}", log_event::kConnInit, stage, wait_ec.message());
         }
         retry_delay_ms = std::min(retry_delay_ms * 2, kReconnectMaxDelayMs);
         co_return true;
@@ -2176,7 +2176,7 @@ boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::
             {
                 break;
             }
-            LOG_CTX_ERROR(ctx, "{} stage=connect target={}:{} error={}", log_event::kConnInit, remote_host_, remote_port_, ec.message());
+            LOG_CTX_ERROR(ctx, "{} stage connect target {}:{} error {}", log_event::kConnInit, remote_host_, remote_port_, ec.message());
             if (!(co_await wait_before_retry(ctx, "connect")))
             {
                 break;
@@ -2200,7 +2200,7 @@ boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::
         }
 
         LOG_CTX_INFO(ctx,
-                     "{} handshake success cipher 0x{:04x} key_share_group=0x{:04x} {}",
+                     "{} handshake success cipher 0x{:04x} key share group 0x{:04x} {}",
                      log_event::kHandshake,
                      handshake_ret.cipher_suite,
                      handshake_ret.key_share_group,
@@ -2282,7 +2282,7 @@ boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::
             retry_delay_ms = kReconnectBaseDelayMs;
             continue;
         }
-        LOG_CTX_WARN(ctx, "{} stage=tunnel_closed short_lived={}ms backoff_before_retry", log_event::kConnInit, tunnel_alive_ms);
+        LOG_CTX_WARN(ctx, "{} stage tunnel_closed short_lived {}ms backoff before retry", log_event::kConnInit, tunnel_alive_ms);
         if (!(co_await wait_before_retry(ctx, "tunnel_closed")))
         {
             break;
@@ -2333,12 +2333,12 @@ boost::asio::awaitable<void> client_tunnel_pool::tcp_connect_remote(boost::asio:
     if (ec == boost::asio::error::timed_out)
     {
         stats.inc_client_tunnel_pool_connect_timeouts();
-        LOG_CTX_ERROR(ctx, "{} stage=connect target={}:{} timeout={}s", log_event::kConnInit, remote_host_, remote_port_, timeout_sec);
+        LOG_CTX_ERROR(ctx, "{} stage connect target {}:{} timeout {}s", log_event::kConnInit, remote_host_, remote_port_, timeout_sec);
     }
     else
     {
         stats.inc_client_tunnel_pool_connect_errors();
-        LOG_CTX_ERROR(ctx, "{} stage=connect target={}:{} error={}", log_event::kConnInit, remote_host_, remote_port_, ec.message());
+        LOG_CTX_ERROR(ctx, "{} stage connect target {}:{} error {}", log_event::kConnInit, remote_host_, remote_port_, ec.message());
     }
     co_return;
 }
@@ -2381,7 +2381,7 @@ boost::asio::awaitable<client_tunnel_pool::handshake_result> client_tunnel_pool:
     if (use_hybrid)
     {
         LOG_CTX_INFO(ctx,
-                     "{} client_hello keep fingerprint hybrid key_share group=0x{:04x} {} hybrid_share_len={} mlkem768_pub_len={}",
+                     "{} client hello keep fingerprint hybrid key share group 0x{:04x} {} hybrid share len {} mlkem768 pub len {}",
                      log_event::kHandshake,
                      reality::tls_consts::group::kX25519MLKEM768,
                      reality::named_group_name(reality::tls_consts::group::kX25519MLKEM768),
@@ -2391,7 +2391,7 @@ boost::asio::awaitable<client_tunnel_pool::handshake_result> client_tunnel_pool:
     else
     {
         // 没有 hybrid 指纹时严格保持原始指纹 不再动态插入额外 key share
-        LOG_CTX_INFO(ctx, "{} client_hello preserve fingerprint without forced hybrid key_share", log_event::kHandshake);
+        LOG_CTX_INFO(ctx, "{} client hello preserve fingerprint without forced hybrid key share", log_event::kHandshake);
     }
     reality::transcript trans;
     std::vector<std::uint8_t> auth_key;
@@ -2539,11 +2539,11 @@ boost::asio::awaitable<client_tunnel_pool::server_hello_res> client_tunnel_pool:
     }
 
     LOG_DEBUG("rx server hello size {}", sh_data.size());
-    LOG_CTX_INFO(ctx,
-                 "{} server_hello key_share_group=0x{:04x} {} key_share_len={}",
-                 log_event::kHandshake,
-                 server_hello.key_share.group,
-                 reality::named_group_name(server_hello.key_share.group),
+        LOG_CTX_INFO(ctx,
+                     "{} server hello key share group 0x{:04x} {} key share len {}",
+                     log_event::kHandshake,
+                     server_hello.key_share.group,
+                     reality::named_group_name(server_hello.key_share.group),
                  server_hello.key_share.data.size());
 
     auto handshake_shared_secret =

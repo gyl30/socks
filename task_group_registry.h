@@ -5,8 +5,8 @@
 #include <vector>
 #include <stdexcept>
 
-#include <boost/asio/error.hpp>
 #include <boost/asio/post.hpp>
+#include <boost/asio/error.hpp>
 #include <boost/asio/as_tuple.hpp>
 #include <boost/asio/use_awaitable.hpp>
 

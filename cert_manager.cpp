@@ -79,7 +79,7 @@ void site_material_manager::mark_fetch_started(const std::string& cache_key,
     ctx.trace_id(trace_id);
     ctx.sni(key);
 
-    LOG_CTX_INFO(ctx, "{} fetch started target={}:{}", mux::log_event::kCert, target_host, port);
+    LOG_CTX_INFO(ctx, "{} fetch started target {}:{}", mux::log_event::kCert, target_host, port);
 }
 
 void site_material_manager::set_material(const std::string& cache_key,
@@ -124,7 +124,7 @@ void site_material_manager::set_material(const std::string& cache_key,
     ctx.sni(key);
 
     LOG_CTX_INFO(ctx,
-                 "{} cached site material certs={} cert_msg={} alpn='{}' cipher=0x{:04x} sh_exts={} ee_exts={} ee_padding={} ccs={} hs_records={} groups={}",
+                 "{} cached site material certs {} cert_msg {} alpn '{}' cipher 0x{:04x} sh_exts {} ee_exts {} ee_padding {} ccs {} hs_records {} groups {}",
                  mux::log_event::kCert,
                  certs,
                  cert_msg,
@@ -171,7 +171,7 @@ void site_material_manager::set_fetch_failure(const std::string& cache_key,
     ctx.sni(key);
 
     LOG_CTX_WARN(ctx,
-                 "{} fetch failed target={}:{} stale_material={} error={}",
+                 "{} fetch failed target {}:{} stale_material {} error {}",
                  mux::log_event::kCert,
                  target_host,
                  port,

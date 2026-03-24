@@ -5,7 +5,6 @@
 #include <memory>
 #include <string>
 #include <cstdint>
-#include "task_group.h"
 
 #include <boost/asio.hpp>
 #include <boost/asio/ip/tcp.hpp>
@@ -13,6 +12,8 @@
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/asio/bind_cancellation_slot.hpp>
+
+#include "task_group.h"
 
 namespace mux
 {

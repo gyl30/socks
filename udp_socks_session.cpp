@@ -590,7 +590,7 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> udp_socks_session::resolv
     auto endpoints = co_await timeout_io::wait_resolve_with_timeout(resolver, host, std::to_string(port), cfg_.timeout.connect, ec);
     if (ec)
     {
-        LOG_CTX_WARN(ctx_, "{} udp direct resolve failed {}:{} error={}", log_event::kRoute, host, port, ec.message());
+        LOG_CTX_WARN(ctx_, "{} udp direct resolve failed {}:{} error {}", log_event::kRoute, host, port, ec.message());
         resolved_targets_.put(key, endpoint_cache_entry{{}, now_ms_value + kUdpNegativeCacheTtlMs, ec, true});
         co_return boost::asio::ip::udp::endpoint{};
     }
@@ -647,7 +647,7 @@ boost::asio::awaitable<void> udp_socks_session::forward_direct_packet(const sock
     {
         const auto direct_socket_ec = boost::system::error_code(boost::asio::error::address_family_not_supported);
         LOG_CTX_WARN(ctx_,
-                     "{} udp direct socket unavailable {}:{} error={}",
+                     "{} udp direct socket unavailable {}:{} error {}",
                      log_event::kRoute,
                      target.address().to_string(),
                      target.port(),
@@ -666,7 +666,7 @@ boost::asio::awaitable<void> udp_socks_session::forward_direct_packet(const sock
         else
         {
             LOG_CTX_WARN(
-                ctx_, "{} udp direct send failed {}:{} error={}", log_event::kRoute, target.address().to_string(), target.port(), send_ec.message());
+                ctx_, "{} udp direct send failed {}:{} error {}", log_event::kRoute, target.address().to_string(), target.port(), send_ec.message());
         }
         co_return;
     }
@@ -795,7 +795,7 @@ boost::asio::awaitable<void> udp_socks_session::forward_direct_reply_to_client(c
     if (ec)
     {
         LOG_CTX_WARN(ctx_,
-                     "{} udp direct reply failed {}:{} error={}",
+                     "{} udp direct reply failed {}:{} error {}",
                      log_event::kRoute,
                      client_addr_.address().to_string(),
                      client_addr_.port(),

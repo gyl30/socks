@@ -4,8 +4,8 @@
 #include <atomic>
 #include <memory>
 #include <string>
-#include <utility>
 #include <vector>
+#include <utility>
 #include <cstddef>
 #include <cstdint>
 
@@ -17,11 +17,11 @@
 #include <boost/system/error_code.hpp>
 
 #include "config.h"
+#include "net_utils.h"
+#include "lru_cache.h"
 #include "mux_tunnel.h"
 #include "log_context.h"
 #include "mux_protocol.h"
-#include "net_utils.h"
-#include "lru_cache.h"
 
 namespace mux
 {

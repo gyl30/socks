@@ -189,7 +189,7 @@ boost::asio::awaitable<void> remote_tcp_session::run(const syn_payload& syn)
         }
         const auto rep = map_connect_error_to_socks_rep(ec);
         LOG_CTX_WARN(ctx_,
-                     "{} resolve failed target {}:{} error={} rep={}",
+                     "{} resolve failed target {}:{} error {} rep {}",
                      log_event::kMux,
                      syn.addr,
                      syn.port,
@@ -201,7 +201,7 @@ boost::asio::awaitable<void> remote_tcp_session::run(const syn_payload& syn)
     if (resolve_res.begin() == resolve_res.end())
     {
         statistics::instance().inc_remote_session_resolve_errors();
-        LOG_CTX_WARN(ctx_, "{} resolve empty target {}:{} rep={}", log_event::kMux, syn.addr, syn.port, socks::kRepHostUnreach);
+        LOG_CTX_WARN(ctx_, "{} resolve empty target {}:{} rep {}", log_event::kMux, syn.addr, syn.port, socks::kRepHostUnreach);
         co_await send_fail_ack(socks::kRepHostUnreach);
         co_return;
     }
@@ -237,7 +237,7 @@ boost::asio::awaitable<void> remote_tcp_session::run(const syn_payload& syn)
         }
         const auto rep = map_connect_error_to_socks_rep(connect_ec);
         LOG_CTX_WARN(ctx_,
-                     "{} connect failed target {}:{} error={} rep={}",
+                     "{} connect failed target {}:{} error {} rep {}",
                      log_event::kMux,
                      syn.addr,
                      syn.port,
@@ -320,7 +320,7 @@ boost::asio::awaitable<void> remote_tcp_session::upstream()
         if (frame.h.command == mux::kCmdFin)
         {
             LOG_CTX_INFO(ctx_,
-                         "{} upstream recv control cmd={}({}) payload_size={}",
+                         "{} upstream recv control cmd {}({}) payload_size {}",
                          log_event::kMux,
                          frame.h.command,
                          mux_command_name(frame.h.command),
@@ -331,7 +331,7 @@ boost::asio::awaitable<void> remote_tcp_session::upstream()
         if (frame.h.command == mux::kCmdRst)
         {
             LOG_CTX_INFO(ctx_,
-                         "{} upstream recv control cmd={}({}) payload_size={}",
+                         "{} upstream recv control cmd {}({}) payload_size {}",
                          log_event::kMux,
                          frame.h.command,
                          mux_command_name(frame.h.command),
@@ -343,7 +343,7 @@ boost::asio::awaitable<void> remote_tcp_session::upstream()
         if (frame.h.command != mux::kCmdDat)
         {
             LOG_CTX_WARN(ctx_,
-                         "{} upstream unexpected cmd={}({}) payload_size={}",
+                         "{} upstream unexpected cmd {}({}) payload_size {}",
                          log_event::kMux,
                          frame.h.command,
                          mux_command_name(frame.h.command),

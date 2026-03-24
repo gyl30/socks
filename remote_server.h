@@ -1,12 +1,12 @@
 #ifndef REMOTE_SERVER_H
 #define REMOTE_SERVER_H
 
-#include <memory>
-#include <string>
-#include <vector>
 #include <array>
 #include <deque>
 #include <mutex>
+#include <memory>
+#include <string>
+#include <vector>
 #include <atomic>
 #include <cstdint>
 #include <utility>
@@ -14,14 +14,13 @@
 
 #include <openssl/types.h>
 #include <boost/asio/ip/tcp.hpp>
-#include <boost/system/error_code.hpp>
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/io_context.hpp>
+#include <boost/system/error_code.hpp>
 #include <boost/asio/cancellation_signal.hpp>
 
 #include "config.h"
 #include "ch_parser.h"
-#include "task_group_registry.h"
 #include "mux_tunnel.h"
 #include "transcript.h"
 #include "log_context.h"
@@ -29,9 +28,10 @@
 #include "mux_protocol.h"
 #include "reality_core.h"
 #include "replay_cache.h"
+#include "cert_manager.h"
 #include "mux_connection.h"
 #include "reality_messages.h"
-#include "cert_manager.h"
+#include "task_group_registry.h"
 
 namespace mux
 {

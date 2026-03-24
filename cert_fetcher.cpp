@@ -494,7 +494,7 @@ cert_fetcher::fetch_session::fetch_session(boost::asio::io_context& io_context,
 
 boost::asio::awaitable<std::expected<fetch_result, fetch_error>> cert_fetcher::fetch_session::run()
 {
-    LOG_CTX_INFO(ctx_, "{} starting fetch fingerprint={}", mux::log_event::kCert, fingerprint_name(fingerprint_));
+    LOG_CTX_INFO(ctx_, "{} starting fetch fingerprint {}", mux::log_event::kCert, fingerprint_name(fingerprint_));
 
     if (const auto ec = co_await connect(); ec)
     {
@@ -523,14 +523,14 @@ boost::asio::awaitable<boost::system::error_code> cert_fetcher::fetch_session::c
     const auto resolve_res = co_await mux::timeout_io::wait_resolve_with_timeout(resolver, host_, std::to_string(port_), timeout_sec, ec);
     if (ec)
     {
-        LOG_CTX_ERROR(ctx_, "{} stage=resolve target={}:{} error={}", mux::log_event::kCert, host_, port_, ec.message());
+        LOG_CTX_ERROR(ctx_, "{} stage resolve target {}:{} error {}", mux::log_event::kCert, host_, port_, ec.message());
         co_return ec;
     }
 
     if (resolve_res.begin() == resolve_res.end())
     {
         ec = boost::asio::error::host_not_found;
-        LOG_CTX_ERROR(ctx_, "{} stage=resolve target={}:{} error={}", mux::log_event::kCert, host_, port_, ec.message());
+        LOG_CTX_ERROR(ctx_, "{} stage resolve target {}:{} error {}", mux::log_event::kCert, host_, port_, ec.message());
         co_return ec;
     }
 
@@ -556,7 +556,7 @@ boost::asio::awaitable<boost::system::error_code> cert_fetcher::fetch_session::c
         }
     }
 
-    LOG_CTX_ERROR(ctx_, "{} stage=connect target={}:{} error={}", mux::log_event::kCert, host_, port_, last_ec.message());
+    LOG_CTX_ERROR(ctx_, "{} stage connect target {}:{} error {}", mux::log_event::kCert, host_, port_, last_ec.message());
     co_return last_ec;
 }
 
@@ -574,7 +574,7 @@ boost::asio::awaitable<boost::system::error_code> cert_fetcher::fetch_session::p
         spec, session_id, client_random, std::vector<std::uint8_t>(client_public_, client_public_ + 32), {}, sni_);
     if (ch.empty())
     {
-        LOG_CTX_ERROR(ctx_, "{} invalid client hello for sni '{}' fingerprint={}", mux::log_event::kCert, sni_, fingerprint_name(fingerprint_));
+        LOG_CTX_ERROR(ctx_, "{} invalid client hello for sni '{}' fingerprint {}", mux::log_event::kCert, sni_, fingerprint_name(fingerprint_));
         co_return boost::asio::error::invalid_argument;
     }
 
