@@ -6,10 +6,14 @@
 #include <cstdint>
 #include <optional>
 
-#include "reality_messages.h"
-
 namespace reality
 {
+
+struct server_fingerprint
+{
+    std::uint16_t cipher_suite = 0;
+    std::string alpn;
+};
 
 struct site_material
 {

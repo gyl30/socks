@@ -21,7 +21,7 @@
 #include "config.h"
 #include "statistics.h"
 #include "scoped_exit.h"
-#include "crypto_util.h"
+#include "tls/crypto_util.h"
 #include "context_pool.h"
 #include "socks_client.h"
 #include "remote_server.h"
@@ -57,15 +57,15 @@ void dump_x25519()
 {
     std::uint8_t pub[32];
     std::uint8_t priv[32];
-    if (!reality::crypto_util::generate_x25519_keypair(pub, priv))
+    if (!::tls::crypto_util::generate_x25519_keypair(pub, priv))
     {
         std::fputs("failed to generate keypair\n", stdout);
         return;
     }
     const std::vector<std::uint8_t> vec_priv(priv, priv + 32);
     const std::vector<std::uint8_t> vec_pub(pub, pub + 32);
-    const std::string priv_hex = reality::crypto_util::bytes_to_hex(vec_priv);
-    const std::string pub_hex = reality::crypto_util::bytes_to_hex(vec_pub);
+    const std::string priv_hex = ::tls::crypto_util::bytes_to_hex(vec_priv);
+    const std::string pub_hex = ::tls::crypto_util::bytes_to_hex(vec_pub);
     std::cout << "private key: " << priv_hex << '\n' << "public key:  " << pub_hex << '\n';
 }
 

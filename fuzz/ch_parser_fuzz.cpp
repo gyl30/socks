@@ -5,9 +5,11 @@
 #include <string>
 #include <vector>
 
-#include "ch_parser.h"
-#include "reality_fingerprint.h"
-#include "reality_messages.h"
+#include "tls/core.h"
+#include "tls/ch_parser.h"
+#include "reality/handshake/client_hello_builder.h"
+#include "reality/handshake/fingerprint_patch.h"
+#include "reality/handshake/fingerprint.h"
 
 namespace
 {
@@ -75,19 +77,13 @@ std::vector<std::uint8_t> build_client_hello(const std::uint8_t* data, const std
 
     if (data != nullptr && size != 0 && (data[0] & 0x04) != 0)
     {
-        x25519_mlkem768_key_share = take_bytes(data, size, 66, reality::kMlkem768PublicKeySize + 32);
-        const auto key_share_it = std::find_if(spec.extensions.begin(), spec.extensions.end(), [](const auto& ext) {
-            return ext->type() == reality::extension_type::kKeyShare;
-        });
-        if (key_share_it != spec.extensions.end())
-        {
-            const auto key_share = std::static_pointer_cast<reality::key_share_blueprint>(*key_share_it);
-            key_share->key_shares().push_back({.group = reality::tls_consts::group::kX25519MLKEM768, .data = {}});
-        }
+        x25519_mlkem768_key_share = take_bytes(data, size, 66, ::tls::kMlkem768PublicKeySize + 32);
+        reality::fingerprint_append_key_share_group(spec, ::tls::consts::group::kX25519MLKEM768);
     }
 
     const auto hostname = select_hostname(data, size, with_sni);
-    return reality::client_hello_builder::build(spec, session_id, random, x25519_pubkey, x25519_mlkem768_key_share, hostname);
+    return reality::client_hello_builder::build(
+        spec, session_id, random, x25519_pubkey, x25519_mlkem768_key_share, hostname);
 }
 
 }    // namespace
@@ -100,18 +96,18 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
         raw.assign(data, data + size);
     }
 
-    (void)mux::ch_parser::parse(raw);
+    (void)::tls::client_hello_parser::parse(raw);
 
     const auto hello_with_sni = build_client_hello(data, size, true);
     if (!hello_with_sni.empty())
     {
-        (void)mux::ch_parser::parse(hello_with_sni);
+        (void)::tls::client_hello_parser::parse(hello_with_sni);
     }
 
     const auto hello_without_sni = build_client_hello(data, size, false);
     if (!hello_without_sni.empty())
     {
-        (void)mux::ch_parser::parse(hello_without_sni);
+        (void)::tls::client_hello_parser::parse(hello_without_sni);
     }
 
     return 0;

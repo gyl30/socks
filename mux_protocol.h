@@ -6,7 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "reality_core.h"
+#include "tls/core.h"
 
 namespace mux
 {
@@ -20,7 +20,7 @@ constexpr std::uint32_t kStreamIdHeartbeat = 0;
 
 constexpr std::size_t kHeaderSize = 7;
 constexpr std::size_t kMaxPayload = static_cast<std::size_t>(std::numeric_limits<std::uint16_t>::max());
-constexpr std::size_t kMaxPayloadPerRecord = reality::kMaxTlsApplicationDataPayloadLen - kHeaderSize;
+constexpr std::size_t kMaxPayloadPerRecord = ::tls::kMaxTlsApplicationDataPayloadLen - kHeaderSize;
 
 struct frame_header
 {

@@ -14,15 +14,19 @@
 #include <openssl/types.h>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/awaitable.hpp>
-#include <boost/circular_buffer.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/system/error_code.hpp>
 
-#include "transcript.h"
 #include "log_context.h"
 #include "site_material.h"
-#include "cipher_context.h"
-#include "reality_fingerprint.h"
+#include "tls/cipher_context.h"
+#include "tls/transcript.h"
+#include "reality/handshake/fingerprint.h"
+
+namespace tls
+{
+class handshake_reassembler;
+}
 
 namespace reality
 {
@@ -36,18 +40,6 @@ struct fetch_error
 struct fetch_result
 {
     site_material material;
-};
-
-class handshake_reassembler
-{
-   public:
-    handshake_reassembler();
-    void append(std::span<const std::uint8_t> data);
-    bool next(std::vector<std::uint8_t>& out, boost::system::error_code& ec);
-
-   private:
-    boost::circular_buffer<std::uint8_t> buffer_;
-    bool overflowed_ = false;
 };
 
 class cert_fetcher
@@ -90,11 +82,11 @@ class cert_fetcher
         [[nodiscard]] bool validate_server_hello_body(const std::vector<std::uint8_t>& sh_body) const;
 
         boost::asio::awaitable<bool> collect_site_material();
-        boost::asio::awaitable<void> append_next_handshake_record(handshake_reassembler& assembler,
+        boost::asio::awaitable<void> append_next_handshake_record(::tls::handshake_reassembler& assembler,
                                                                   std::vector<std::uint8_t>& pt_buf,
                                                                   int record_index,
                                                                   boost::system::error_code& ec);
-        bool consume_handshake_messages(handshake_reassembler& assembler,
+        bool consume_handshake_messages(::tls::handshake_reassembler& assembler,
                                         std::vector<std::uint8_t>& msg,
                                         boost::system::error_code& ec);
         bool process_handshake_message(const std::vector<std::uint8_t>& msg);
@@ -133,7 +125,7 @@ class cert_fetcher
         bool saw_certificate_ = false;
         bool saw_server_finished_ = false;
 
-        transcript trans_;
+        ::tls::transcript trans_;
         std::uint8_t client_public_[32] = {0};
         std::uint8_t client_private_[32] = {0};
 
@@ -141,7 +133,7 @@ class cert_fetcher
         std::vector<std::uint8_t> dec_key_;
         std::vector<std::uint8_t> dec_iv_;
         std::uint64_t seq_ = 0;
-        const cipher_context decrypt_ctx_;
+        const ::tls::cipher_context decrypt_ctx_;
     };
 };
 

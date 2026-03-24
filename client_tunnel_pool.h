@@ -18,17 +18,13 @@
 #include <boost/system/error_code.hpp>
 
 #include "config.h"
-#include "ch_parser.h"
 #include "mux_tunnel.h"
 #include "context_pool.h"
-#include "reality_core.h"
-#include "reality_fingerprint.h"
+#include "reality/types.h"
+#include "tls/core.h"
+#include "tls/ch_parser.h"
 #include "task_group_registry.h"
-
-namespace reality
-{
-class transcript;
-}
+#include "reality/handshake/fingerprint.h"
 
 namespace mux
 {
@@ -51,54 +47,14 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
     [[nodiscard]] std::uint32_t next_session_id();
 
    private:
-    enum class connect_loop_action : std::uint8_t
-    {
-        kRunTunnel,
-        kRetryLater,
-        kStopLoop,
-    };
-
-    enum class handshake_auth_mode : std::uint8_t
-    {
-        kRealityTunnel,
-        kRealCertificateFallback,
-    };
-
-    struct handshake_result
-    {
-        std::vector<std::uint8_t> c_app_secret;
-        std::vector<std::uint8_t> s_app_secret;
-        std::string negotiated_alpn;
-        std::uint16_t cipher_suite = 0;
-        std::uint16_t key_share_group = 0;
-        const EVP_MD* md = nullptr;
-        const EVP_CIPHER* cipher = nullptr;
-        handshake_auth_mode auth_mode = handshake_auth_mode::kRealityTunnel;
-    };
-
-    struct handshake_read_result
-    {
-        std::vector<std::uint8_t> c_app_secret;
-        std::vector<std::uint8_t> s_app_secret;
-        std::string negotiated_alpn;
-        handshake_auth_mode auth_mode = handshake_auth_mode::kRealityTunnel;
-    };
+    using handshake_auth_mode = reality::client_auth_mode;
+    using handshake_result = reality::client_handshake_result;
 
     boost::asio::awaitable<void> connect_remote_loop(std::uint32_t index, boost::asio::io_context& io_context);
-    [[nodiscard]] boost::asio::awaitable<bool> establish_tunnel_for_connection(std::uint32_t index,
-                                                                               boost::asio::io_context& io_context,
-                                                                               std::uint32_t cid,
-                                                                               const std::string& trace_id,
-                                                                               const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
-                                                                               std::shared_ptr<mux_tunnel_impl>& tunnel);
-
     [[nodiscard]] boost::asio::awaitable<void> tcp_connect_remote(boost::asio::io_context& io_context,
                                                                   boost::asio::ip::tcp::socket& socket,
                                                                   const connection_context& ctx,
                                                                   boost::system::error_code& ec) const;
-    [[nodiscard]] boost::asio::awaitable<handshake_result> perform_reality_handshake(boost::asio::ip::tcp::socket& socket,
-                                                                                     const connection_context& ctx,
-                                                                                     boost::system::error_code& ec) const;
     [[nodiscard]] boost::asio::awaitable<handshake_result> perform_reality_handshake_with_timeout(
         const std::shared_ptr<boost::asio::ip::tcp::socket>& socket, const connection_context& ctx, boost::system::error_code& ec) const;
     [[nodiscard]] std::shared_ptr<mux_tunnel_impl> build_tunnel(boost::asio::ip::tcp::socket socket,
@@ -109,61 +65,6 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
     [[nodiscard]] boost::asio::awaitable<void> run_real_certificate_fallback(boost::asio::ip::tcp::socket& socket,
                                                                              const handshake_result& handshake_ret,
                                                                              const connection_context& ctx) const;
-
-    [[nodiscard]] boost::asio::awaitable<void> generate_and_send_client_hello(
-        boost::asio::ip::tcp::socket& socket,
-        const std::uint8_t* public_key,
-        const std::uint8_t* private_key,
-        const std::vector<std::uint8_t>& x25519_mlkem768_key_share,
-        const reality::fingerprint_spec& spec,
-        reality::transcript& trans,
-        std::vector<std::uint8_t>& auth_key,
-        client_hello_info& client_hello,
-        boost::system::error_code& ec) const;
-
-    struct server_hello_res
-    {
-        reality::handshake_keys hs_keys;
-        const EVP_MD* negotiated_md = nullptr;
-        const EVP_CIPHER* negotiated_cipher = nullptr;
-        std::uint16_t cipher_suite = 0;
-        std::uint16_t key_share_group = 0;
-    };
-
-    [[nodiscard]] boost::asio::awaitable<server_hello_res> process_server_hello(
-        boost::asio::ip::tcp::socket& socket,
-        const std::uint8_t* private_key,
-        const std::vector<std::uint8_t>& mlkem768_private_key,
-        const client_hello_info& client_hello,
-        reality::transcript& trans,
-        std::vector<std::uint8_t>& extra_handshake_data,
-        const connection_context& ctx,
-        boost::system::error_code& ec) const;
-
-    [[nodiscard]] static boost::asio::awaitable<handshake_read_result> handshake_read_loop(
-        boost::asio::ip::tcp::socket& socket,
-        const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& s_hs_keys,
-        const reality::handshake_keys& hs_keys,
-        const std::vector<std::uint8_t>& auth_key,
-        const client_hello_info& client_hello,
-        const std::string& sni,
-        reality::transcript& trans,
-        std::vector<std::uint8_t> initial_handshake_data,
-        const EVP_CIPHER* cipher,
-        const EVP_MD* md,
-        std::uint32_t max_handshake_records,
-        std::uint32_t read_timeout_sec,
-        boost::system::error_code& ec);
-
-    [[nodiscard]] static boost::asio::awaitable<void> send_client_finished(
-        boost::asio::ip::tcp::socket& socket,
-        const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& c_hs_keys,
-        const std::vector<std::uint8_t>& c_hs_secret,
-        const reality::transcript& trans,
-        const EVP_CIPHER* cipher,
-        const EVP_MD* md,
-        std::uint32_t write_timeout_sec,
-        boost::system::error_code& ec);
 
    private:
     std::string sni_;

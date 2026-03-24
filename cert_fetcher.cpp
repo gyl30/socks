@@ -30,16 +30,20 @@ extern "C"
 
 #include "log.h"
 #include "timeout_io.h"
-#include "transcript.h"
-#include "crypto_util.h"
+#include "tls/core.h"
+#include "tls/crypto_util.h"
+#include "tls/handshake_builder.h"
+#include "tls/handshake_message.h"
+#include "tls/handshake_reassembler.h"
 #include "log_context.h"
 #include "cert_fetcher.h"
-#include "certificate_compression.h"
-#include "reality_core.h"
-#include "reality_messages.h"
-#include "tls_key_schedule.h"
-#include "tls_record_layer.h"
-#include "reality_fingerprint.h"
+#include "tls/certificate_compression.h"
+#include "tls/cipher_suite.h"
+#include "tls/key_schedule.h"
+#include "tls/record_layer.h"
+#include "tls/transcript.h"
+#include "reality/handshake/client_hello_builder.h"
+#include "reality/handshake/fingerprint.h"
 
 namespace reality
 {
@@ -49,7 +53,6 @@ namespace
 constexpr std::size_t kMaxMsgSize = 64L * 1024;
 constexpr std::size_t kMaxEncryptedRecordLen = 18432;
 constexpr std::uint32_t kMaxTlsCompatCcsRecords = 8;
-constexpr std::size_t kMaxHandshakeReassembleBuffer = kMaxMsgSize + 4;
 constexpr int kMaxHandshakeRecords = 256;
 
 constexpr std::array<fingerprint_type, 4> kFetchFingerprints = {
@@ -76,244 +79,6 @@ const char* fingerprint_name(const fingerprint_type fingerprint)
     }
 }
 
-struct negotiated_suite
-{
-    const EVP_CIPHER* cipher = nullptr;
-    const EVP_MD* md = nullptr;
-    std::size_t key_len = 16;
-};
-
-bool read_u16_at(const std::vector<std::uint8_t>& buf, std::size_t& pos, std::uint16_t& value)
-{
-    if (pos + 2 > buf.size())
-    {
-        return false;
-    }
-    value = static_cast<std::uint16_t>((static_cast<std::uint16_t>(buf[pos]) << 8) | static_cast<std::uint16_t>(buf[pos + 1]));
-    pos += 2;
-    return true;
-}
-
-bool read_u24_at(const std::vector<std::uint8_t>& buf, std::size_t& pos, std::uint32_t& value)
-{
-    if (pos + 3 > buf.size())
-    {
-        return false;
-    }
-    value = (static_cast<std::uint32_t>(buf[pos]) << 16) | (static_cast<std::uint32_t>(buf[pos + 1]) << 8) |
-            static_cast<std::uint32_t>(buf[pos + 2]);
-    pos += 3;
-    return true;
-}
-
-bool parse_extension_types(std::span<const std::uint8_t> ext_block,
-                           std::vector<std::uint16_t>& out,
-                           std::optional<std::uint16_t>* padding_len = nullptr)
-{
-    out.clear();
-    if (padding_len != nullptr)
-    {
-        padding_len->reset();
-    }
-    std::size_t pos = 0;
-    while (pos < ext_block.size())
-    {
-        if (pos + 4 > ext_block.size())
-        {
-            return false;
-        }
-        const auto ext_type = static_cast<std::uint16_t>((static_cast<std::uint16_t>(ext_block[pos]) << 8) |
-                                                         static_cast<std::uint16_t>(ext_block[pos + 1]));
-        const auto ext_len = static_cast<std::uint16_t>((static_cast<std::uint16_t>(ext_block[pos + 2]) << 8) |
-                                                        static_cast<std::uint16_t>(ext_block[pos + 3]));
-        pos += 4;
-        if (pos + ext_len > ext_block.size())
-        {
-            return false;
-        }
-        out.push_back(ext_type);
-        if (padding_len != nullptr && ext_type == tls_consts::ext::kPadding)
-        {
-            *padding_len = ext_len;
-        }
-        pos += ext_len;
-    }
-    return true;
-}
-
-bool parse_server_hello_extension_types(const std::vector<std::uint8_t>& sh_real, std::vector<std::uint16_t>& out)
-{
-    if (sh_real.size() < 4 + 2 + 32 + 1 + 2 + 1 + 2)
-    {
-        return false;
-    }
-    std::size_t pos = 4 + 2 + 32;
-    const std::uint8_t session_id_len = sh_real[pos++];
-    if (pos + session_id_len + 2 + 1 + 2 > sh_real.size())
-    {
-        return false;
-    }
-    pos += session_id_len;
-    pos += 2;
-    pos += 1;
-
-    std::uint16_t ext_len = 0;
-    if (!read_u16_at(sh_real, pos, ext_len))
-    {
-        return false;
-    }
-    if (pos + ext_len > sh_real.size())
-    {
-        return false;
-    }
-    return parse_extension_types(std::span<const std::uint8_t>(sh_real.data() + pos, ext_len), out);
-}
-
-bool parse_encrypted_extension_types(const std::vector<std::uint8_t>& ee_msg,
-                                     std::vector<std::uint16_t>& out,
-                                     std::optional<std::uint16_t>* padding_len = nullptr)
-{
-    if (ee_msg.size() < 6 || ee_msg[0] != 0x08)
-    {
-        return false;
-    }
-    std::size_t pos = 4;
-    std::uint16_t ext_len = 0;
-    if (!read_u16_at(ee_msg, pos, ext_len))
-    {
-        return false;
-    }
-    if (pos + ext_len != ee_msg.size())
-    {
-        return false;
-    }
-    return parse_extension_types(std::span<const std::uint8_t>(ee_msg.data() + pos, ext_len), out, padding_len);
-}
-
-bool parse_certificate_chain(const std::vector<std::uint8_t>& cert_msg, std::vector<std::vector<std::uint8_t>>& out)
-{
-    out.clear();
-    if (cert_msg.size() < 8 || cert_msg[0] != 0x0b)
-    {
-        return false;
-    }
-
-    const auto payload_len = (static_cast<std::uint32_t>(cert_msg[1]) << 16) | (static_cast<std::uint32_t>(cert_msg[2]) << 8) |
-                             static_cast<std::uint32_t>(cert_msg[3]);
-    if (payload_len + 4 != cert_msg.size())
-    {
-        return false;
-    }
-
-    std::size_t pos = 4;
-    const auto context_len = static_cast<std::size_t>(cert_msg[pos++]);
-    if (pos + context_len + 3 > cert_msg.size())
-    {
-        return false;
-    }
-    pos += context_len;
-
-    std::uint32_t cert_list_len = 0;
-    if (!read_u24_at(cert_msg, pos, cert_list_len))
-    {
-        return false;
-    }
-    if (pos + cert_list_len != cert_msg.size())
-    {
-        return false;
-    }
-
-    const auto cert_list_end = pos + cert_list_len;
-    while (pos < cert_list_end)
-    {
-        std::uint32_t cert_len = 0;
-        if (!read_u24_at(cert_msg, pos, cert_len))
-        {
-            return false;
-        }
-        if (cert_len == 0)
-        {
-            return false;
-        }
-        if (pos + cert_len + 2 > cert_list_end)
-        {
-            return false;
-        }
-        out.emplace_back(cert_msg.begin() + static_cast<std::ptrdiff_t>(pos), cert_msg.begin() + static_cast<std::ptrdiff_t>(pos + cert_len));
-        pos += cert_len;
-
-        std::uint16_t ext_len = 0;
-        if (!read_u16_at(cert_msg, pos, ext_len))
-        {
-            return false;
-        }
-        if (pos + ext_len > cert_list_end)
-        {
-            return false;
-        }
-        pos += ext_len;
-    }
-    return !out.empty();
-}
-
-bool extract_server_hello_message(const std::vector<std::uint8_t>& sh_body, std::vector<std::uint8_t>& sh_real)
-{
-    if (sh_body.size() < 4)
-    {
-        return false;
-    }
-
-    const std::uint32_t msg_len =
-        (static_cast<std::uint32_t>(sh_body[1]) << 16) | (static_cast<std::uint32_t>(sh_body[2]) << 8) | static_cast<std::uint32_t>(sh_body[3]);
-    const std::uint32_t full_msg_len = msg_len + 4;
-    if (sh_body.size() < full_msg_len)
-    {
-        return false;
-    }
-
-    sh_real.assign(sh_body.begin(), sh_body.begin() + static_cast<std::ptrdiff_t>(full_msg_len));
-    return true;
-}    // namespace
-
-bool parse_server_hello_cipher_suite(const std::vector<std::uint8_t>& sh_real, std::uint16_t& cipher_suite)
-{
-    if (sh_real.size() <= 38)
-    {
-        return false;
-    }
-
-    std::size_t cipher_offset = 39;
-    const std::uint8_t sid_len_val = sh_real[38];
-    cipher_offset += sid_len_val;
-    if (sh_real.size() < cipher_offset + 2)
-    {
-        return false;
-    }
-
-    cipher_suite = static_cast<std::uint16_t>((sh_real[cipher_offset] << 8) | sh_real[cipher_offset + 1]);
-    return true;
-}    // namespace
-
-std::optional<negotiated_suite> select_negotiated_suite(const std::uint16_t cipher_suite, const mux::connection_context& ctx)
-{
-    if (cipher_suite == 0x1301)
-    {
-        LOG_CTX_INFO(ctx, "{} selected tls_aes_128_gcm_sha256 0x1301", mux::log_event::kCert);
-        return negotiated_suite{.cipher = EVP_aes_128_gcm(), .md = EVP_sha256(), .key_len = 16};
-    }
-    if (cipher_suite == 0x1302)
-    {
-        LOG_CTX_INFO(ctx, "{} selected tls_aes_256_gcm_sha384 0x1302", mux::log_event::kCert);
-        return negotiated_suite{.cipher = EVP_aes_256_gcm(), .md = EVP_sha384(), .key_len = 32};
-    }
-    if (cipher_suite == 0x1303)
-    {
-        LOG_CTX_INFO(ctx, "{} selected tls_chacha20_poly1305_sha256 0x1303", mux::log_event::kCert);
-        return negotiated_suite{.cipher = EVP_chacha20_poly1305(), .md = EVP_sha256(), .key_len = 32};
-    }
-    return std::nullopt;
-}
-
 std::pair<std::uint8_t, std::span<std::uint8_t>> copy_plaintext_record(std::vector<std::uint8_t>& pt_buf, const std::vector<std::uint8_t>& rec)
 {
     if (pt_buf.size() < rec.size())
@@ -321,7 +86,7 @@ std::pair<std::uint8_t, std::span<std::uint8_t>> copy_plaintext_record(std::vect
         pt_buf.resize(rec.size());
     }
     std::memcpy(pt_buf.data(), rec.data(), rec.size());
-    return std::make_pair(kContentTypeChangeCipherSpec, std::span<std::uint8_t>(pt_buf.data(), rec.size()));
+    return std::make_pair(::tls::kContentTypeChangeCipherSpec, std::span<std::uint8_t>(pt_buf.data(), rec.size()));
 }
 
 std::vector<std::uint8_t> build_encrypted_record_bytes(const std::uint8_t* head, const std::vector<std::uint8_t>& rec)
@@ -333,8 +98,8 @@ std::vector<std::uint8_t> build_encrypted_record_bytes(const std::uint8_t* head,
 }
 
 boost::system::error_code derive_server_record_protection(const std::vector<std::uint8_t>& sh_real,
-                                                          const negotiated_suite& suite,
-                                                          transcript& trans,
+                                                          const ::tls::negotiated_tls13_suite& suite,
+                                                          ::tls::transcript& trans,
                                                           const std::uint8_t* client_private,
                                                           const mux::connection_context& ctx,
                                                           const EVP_CIPHER*& negotiated_cipher,
@@ -343,23 +108,23 @@ boost::system::error_code derive_server_record_protection(const std::vector<std:
 {
     constexpr std::size_t iv_len = 12;
 
-    const auto server_pub = extract_server_public_key(sh_real);
+    const auto server_pub = ::tls::extract_server_public_key(sh_real);
     boost::system::error_code ec;
-    auto shared = crypto_util::x25519_derive(std::vector<std::uint8_t>(client_private, client_private + 32), server_pub, ec);
+    auto shared = ::tls::crypto_util::x25519_derive(std::vector<std::uint8_t>(client_private, client_private + 32), server_pub, ec);
     if (ec)
     {
         LOG_CTX_ERROR(ctx, "{} x25519 derive failed", mux::log_event::kCert);
         return ec;
     }
 
-    auto hs_keys = tls_key_schedule::derive_handshake_keys(shared, trans.finish(), suite.md, ec);
+    auto hs_keys = ::tls::key_schedule::derive_handshake_keys(shared, trans.finish(), suite.md, ec);
     if (ec)
     {
         LOG_CTX_ERROR(ctx, "{} derive keys failed", mux::log_event::kCert);
         return ec;
     }
 
-    auto s_hs_keys = tls_key_schedule::derive_traffic_keys(hs_keys.server_handshake_traffic_secret, ec, suite.key_len, iv_len, suite.md);
+    auto s_hs_keys = ::tls::key_schedule::derive_traffic_keys(hs_keys.server_handshake_traffic_secret, ec, suite.key_len, iv_len, suite.md);
     if (ec)
     {
         LOG_CTX_ERROR(ctx, "{} derive traffic keys failed", mux::log_event::kCert);
@@ -373,63 +138,11 @@ boost::system::error_code derive_server_record_protection(const std::vector<std:
 }
 }    // namespace
 
-handshake_reassembler::handshake_reassembler() : buffer_(kMaxHandshakeReassembleBuffer) {}
-
-void handshake_reassembler::append(std::span<const std::uint8_t> data)
-{
-    if (data.empty())
-    {
-        return;
-    }
-    if (data.size() > buffer_.capacity() - buffer_.size())
-    {
-        buffer_.clear();
-        overflowed_ = true;
-        return;
-    }
-    buffer_.insert(buffer_.end(), data.begin(), data.end());
-}
-
-bool handshake_reassembler::next(std::vector<std::uint8_t>& out, boost::system::error_code& ec)
-{
-    ec.clear();
-    if (overflowed_)
-    {
-        overflowed_ = false;
-        ec = std::make_error_code(std::errc::message_size);
-        return false;
-    }
-    if (buffer_.size() < 4)
-    {
-        return false;
-    }
-
-    const std::uint32_t msg_len =
-        (static_cast<std::uint32_t>(buffer_[1]) << 16) | (static_cast<std::uint32_t>(buffer_[2]) << 8) | static_cast<std::uint32_t>(buffer_[3]);
-
-    if (msg_len > kMaxMsgSize)
-    {
-        buffer_.clear();
-        ec = std::make_error_code(std::errc::message_size);
-        return false;
-    }
-
-    const std::uint32_t full_len = 4 + msg_len;
-    if (buffer_.size() < full_len)
-    {
-        return false;
-    }
-
-    out.assign(buffer_.begin(), buffer_.begin() + full_len);
-    buffer_.erase_begin(static_cast<std::size_t>(full_len));
-    return true;
-}
-
-std::string cert_fetcher::hex(const std::vector<std::uint8_t>& data) { return crypto_util::bytes_to_hex(data); }
+std::string cert_fetcher::hex(const std::vector<std::uint8_t>& data) { return ::tls::crypto_util::bytes_to_hex(data); }
 
 std::string cert_fetcher::hex(const std::uint8_t* data, std::size_t len)
 {
-    return crypto_util::bytes_to_hex(std::vector<std::uint8_t>(data, data + len));
+    return ::tls::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(data, data + len));
 }
 
 boost::asio::awaitable<std::expected<fetch_result, fetch_error>> cert_fetcher::fetch(boost::asio::io_context& io_context,
@@ -571,7 +284,12 @@ boost::asio::awaitable<boost::system::error_code> cert_fetcher::fetch_session::p
 
     auto spec = fingerprint_factory::get(fingerprint_);
     auto ch = client_hello_builder::build(
-        spec, session_id, client_random, std::vector<std::uint8_t>(client_public_, client_public_ + 32), {}, sni_);
+        spec,
+        session_id,
+        client_random,
+        std::vector<std::uint8_t>(client_public_, client_public_ + 32),
+        {},
+        sni_);
     if (ch.empty())
     {
         LOG_CTX_ERROR(ctx_, "{} invalid client hello for sni '{}' fingerprint {}", mux::log_event::kCert, sni_, fingerprint_name(fingerprint_));
@@ -600,7 +318,7 @@ boost::asio::awaitable<boost::system::error_code> cert_fetcher::fetch_session::p
 
 bool cert_fetcher::fetch_session::init_handshake_material(std::vector<std::uint8_t>& client_random, std::vector<std::uint8_t>& session_id)
 {
-    if (!crypto_util::generate_x25519_keypair(client_public_, client_private_))
+    if (!::tls::crypto_util::generate_x25519_keypair(client_public_, client_private_))
     {
         return false;
     }
@@ -623,7 +341,7 @@ boost::asio::awaitable<boost::system::error_code> cert_fetcher::fetch_session::s
         co_return std::make_error_code(std::errc::message_size);
     }
 
-    auto ch_record = write_record_header(kContentTypeHandshake, static_cast<std::uint16_t>(client_hello.size()));
+    auto ch_record = ::tls::write_record_header(::tls::kContentTypeHandshake, static_cast<std::uint16_t>(client_hello.size()));
     ch_record.insert(ch_record.end(), client_hello.begin(), client_hello.end());
 
     boost::system::error_code write_ec;
@@ -653,8 +371,8 @@ bool cert_fetcher::fetch_session::validate_server_hello_body(const std::vector<s
 
 boost::asio::awaitable<bool> cert_fetcher::fetch_session::collect_site_material()
 {
-    handshake_reassembler assembler;
-    std::vector<std::uint8_t> pt_buf(kMaxTlsPlaintextLen + 256);
+    ::tls::handshake_reassembler assembler;
+    std::vector<std::uint8_t> pt_buf(::tls::kMaxTlsPlaintextLen + 256);
     std::vector<std::uint8_t> msg;
 
     for (int i = 0; i < kMaxHandshakeRecords; ++i)
@@ -690,7 +408,7 @@ boost::asio::awaitable<bool> cert_fetcher::fetch_session::collect_site_material(
     co_return false;
 }
 
-boost::asio::awaitable<void> cert_fetcher::fetch_session::append_next_handshake_record(handshake_reassembler& assembler,
+boost::asio::awaitable<void> cert_fetcher::fetch_session::append_next_handshake_record(::tls::handshake_reassembler& assembler,
                                                                                        std::vector<std::uint8_t>& pt_buf,
                                                                                        const int record_index,
                                                                                        boost::system::error_code& ec)
@@ -705,12 +423,12 @@ boost::asio::awaitable<void> cert_fetcher::fetch_session::append_next_handshake_
 
     auto [type, pt_data] = read_res;
 
-    if (type == kContentTypeChangeCipherSpec)
+    if (type == ::tls::kContentTypeChangeCipherSpec)
     {
         observed_material_.sends_change_cipher_spec = true;
         co_return;
     }
-    if (type != kContentTypeHandshake)
+    if (type != ::tls::kContentTypeHandshake)
     {
         co_return;
     }
@@ -723,7 +441,7 @@ boost::asio::awaitable<void> cert_fetcher::fetch_session::append_next_handshake_
     co_return;
 }
 
-bool cert_fetcher::fetch_session::consume_handshake_messages(handshake_reassembler& assembler,
+bool cert_fetcher::fetch_session::consume_handshake_messages(::tls::handshake_reassembler& assembler,
                                                              std::vector<std::uint8_t>& msg,
                                                              boost::system::error_code& ec)
 {
@@ -757,17 +475,16 @@ bool cert_fetcher::fetch_session::process_handshake_message(const std::vector<st
 
     if (msg_type == 0x08)
     {
-        if (auto alpn = extract_alpn_from_encrypted_extensions(msg); alpn)
+        if (auto alpn = ::tls::extract_alpn_from_encrypted_extensions(msg); alpn)
         {
             LOG_CTX_INFO(ctx_, "{} learned alpn {}", mux::log_event::kCert, *alpn);
             observed_material_.fingerprint.alpn = *alpn;
         }
-        std::vector<std::uint16_t> encrypted_extension_types;
-        std::optional<std::uint16_t> encrypted_extensions_padding_len;
-        if (parse_encrypted_extension_types(msg, encrypted_extension_types, &encrypted_extensions_padding_len))
+        ::tls::handshake_extension_layout encrypted_extensions_layout;
+        if (::tls::parse_encrypted_extensions_layout(msg, encrypted_extensions_layout))
         {
-            observed_material_.encrypted_extension_types = std::move(encrypted_extension_types);
-            observed_material_.encrypted_extensions_padding_len = encrypted_extensions_padding_len;
+            observed_material_.encrypted_extension_types = std::move(encrypted_extensions_layout.types);
+            observed_material_.encrypted_extensions_padding_len = encrypted_extensions_layout.padding_len;
         }
         else
         {
@@ -778,7 +495,7 @@ bool cert_fetcher::fetch_session::process_handshake_message(const std::vector<st
     {
         LOG_CTX_INFO(ctx_, "{} found certificate len {}", mux::log_event::kCert, msg_len);
         observed_material_.certificate_message = msg;
-        if (!parse_certificate_chain(msg, observed_material_.certificate_chain))
+        if (!::tls::parse_certificate_chain(msg, observed_material_.certificate_chain))
         {
             LOG_CTX_ERROR(ctx_, "{} parse certificate chain failed", mux::log_event::kCert);
             return false;
@@ -789,7 +506,7 @@ bool cert_fetcher::fetch_session::process_handshake_message(const std::vector<st
     {
         boost::system::error_code ec;
         std::vector<std::uint8_t> certificate_msg;
-        if (!decompress_certificate_message(msg, kMaxMsgSize, certificate_msg, ec))
+        if (!::tls::decompress_certificate_message(msg, kMaxMsgSize, certificate_msg, ec))
         {
             LOG_CTX_ERROR(ctx_, "{} decompress certificate failed {}", mux::log_event::kCert, ec.message());
             return false;
@@ -800,7 +517,7 @@ bool cert_fetcher::fetch_session::process_handshake_message(const std::vector<st
                      msg_len,
                      certificate_msg.size());
         observed_material_.certificate_message = std::move(certificate_msg);
-        if (!parse_certificate_chain(observed_material_.certificate_message, observed_material_.certificate_chain))
+        if (!::tls::parse_certificate_chain(observed_material_.certificate_message, observed_material_.certificate_chain))
         {
             LOG_CTX_ERROR(ctx_, "{} parse decompressed certificate chain failed", mux::log_event::kCert);
             return false;
@@ -820,39 +537,45 @@ bool cert_fetcher::fetch_session::process_handshake_message(const std::vector<st
 boost::system::error_code cert_fetcher::fetch_session::process_server_hello(const std::vector<std::uint8_t>& sh_body)
 {
     std::vector<std::uint8_t> sh_real;
-    if (!extract_server_hello_message(sh_body, sh_real))
+    if (!::tls::extract_handshake_message(sh_body, sh_real))
     {
         LOG_CTX_ERROR(ctx_, "{} server hello too short {}", mux::log_event::kCert, sh_body.size());
         return boost::asio::error::fault;
     }
 
-    if (auto cs = extract_cipher_suite_from_server_hello(sh_real); cs)
+    std::uint16_t cipher_suite = 0;
+    if (auto cs = ::tls::extract_cipher_suite_from_server_hello(sh_real); cs)
     {
+        cipher_suite = *cs;
         observed_material_.fingerprint.cipher_suite = *cs;
     }
-    if (!parse_server_hello_extension_types(sh_real, observed_material_.server_hello_extension_types))
+    else
+    {
+        return boost::asio::error::fault;
+    }
+    ::tls::handshake_extension_layout server_hello_layout;
+    if (::tls::parse_server_hello_extension_layout(sh_real, server_hello_layout))
+    {
+        observed_material_.server_hello_extension_types = std::move(server_hello_layout.types);
+    }
+    else
     {
         LOG_CTX_WARN(ctx_, "{} parse server hello extensions failed", mux::log_event::kCert);
     }
-    if (auto ks = extract_server_key_share(sh_real); ks)
+    if (auto ks = ::tls::extract_server_key_share(sh_real); ks)
     {
         observed_material_.key_share_groups = {ks->group};
     }
 
     trans_.update(sh_real);
 
-    std::uint16_t cipher_suite = 0;
-    if (!parse_server_hello_cipher_suite(sh_real, cipher_suite))
-    {
-        return boost::asio::error::fault;
-    }
-
-    const auto suite = select_negotiated_suite(cipher_suite, ctx_);
+    const auto suite = ::tls::select_tls13_suite(cipher_suite);
     if (!suite.has_value())
     {
         LOG_CTX_ERROR(ctx_, "{} unsupported cipher suite 0x{:04x}", mux::log_event::kCert, cipher_suite);
         return boost::asio::error::no_protocol_option;
     }
+    LOG_CTX_INFO(ctx_, "{} selected tls13 cipher suite 0x{:04x}", mux::log_event::kCert, cipher_suite);
 
     trans_.set_protocol_hash(suite->md);
     return derive_server_record_protection(sh_real, *suite, trans_, client_private_, ctx_, negotiated_cipher_, dec_key_, dec_iv_);
@@ -900,7 +623,7 @@ boost::asio::awaitable<std::pair<boost::system::error_code, std::vector<std::uin
             co_return std::make_pair(boost::asio::error::fault, std::vector<std::uint8_t>{});
         }
 
-        if (head[0] == kContentTypeChangeCipherSpec)
+        if (head[0] == ::tls::kContentTypeChangeCipherSpec)
         {
             if (len != 1 || body[0] != 0x01)
             {
@@ -919,7 +642,7 @@ boost::asio::awaitable<std::pair<boost::system::error_code, std::vector<std::uin
             continue;
         }
 
-        if (head[0] != kContentTypeHandshake)
+        if (head[0] != ::tls::kContentTypeHandshake)
         {
             LOG_CTX_ERROR(ctx_, "{} expected handshake type {}", mux::log_event::kCert, head[0]);
             co_return std::make_pair(boost::asio::error::fault, std::vector<std::uint8_t>{});
@@ -966,7 +689,7 @@ std::pair<std::uint8_t, std::span<std::uint8_t>> cert_fetcher::fetch_session::de
 {
     auto ciphertext_record = build_encrypted_record_bytes(head, rec);
     std::uint8_t type = 0;
-    const auto decrypted = tls_record_layer::decrypt_record(decrypt_ctx_, negotiated_cipher_, dec_key_, dec_iv_, seq_++, ciphertext_record, pt_buf, type, ec);
+    const auto decrypted = ::tls::record_layer::decrypt_record(decrypt_ctx_, negotiated_cipher_, dec_key_, dec_iv_, seq_++, ciphertext_record, pt_buf, type, ec);
     if (ec)
     {
         return {};
@@ -983,13 +706,13 @@ std::pair<std::uint8_t, std::span<std::uint8_t>> cert_fetcher::fetch_session::ha
     ec.clear();
     switch (head[0])
     {
-        case kContentTypeChangeCipherSpec:
+        case ::tls::kContentTypeChangeCipherSpec:
             return copy_plaintext_record(pt_buf, rec);
 
-        case kContentTypeApplicationData:
+        case ::tls::kContentTypeApplicationData:
             return decrypt_application_record(head, rec, pt_buf, ec);
 
-        case kContentTypeAlert:
+        case ::tls::kContentTypeAlert:
             LOG_CTX_WARN(ctx_, "{} received plaintext alert", mux::log_event::kCert);
             ec = boost::asio::error::connection_reset;
             return {};
