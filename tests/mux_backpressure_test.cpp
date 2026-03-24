@@ -63,10 +63,7 @@ struct fixture
         conn = std::make_shared<mux::mux_connection>(std::move(socket), io, std::move(engine), cfg, group, 1, "mux-backpressure-test");
     }
 
-    [[nodiscard]] std::uint64_t stream_budget() const
-    {
-        return std::max<std::uint64_t>(1ULL, cfg.limits.max_buffer / 4ULL);
-    }
+    [[nodiscard]] std::uint64_t connection_budget() const { return std::max<std::uint64_t>(1ULL, cfg.limits.max_buffer); }
 };
 
 [[noreturn]] void fail(const std::string& message)
@@ -135,43 +132,47 @@ boost::asio::awaitable<boost::system::error_code> send_frame(const std::shared_p
     co_return ec;
 }
 
-boost::asio::awaitable<void> stream_fairness_scenario(const std::shared_ptr<mux::mux_connection>& conn, const std::uint64_t stream_budget)
+boost::asio::awaitable<void> single_stream_budget_scenario(const std::shared_ptr<mux::mux_connection>& conn, const std::uint64_t connection_budget)
 {
-    for (std::uint64_t i = 0; i < stream_budget; ++i)
+    for (std::uint64_t i = 0; i < connection_budget; ++i)
     {
         const auto ec = co_await send_frame(conn, make_dat_frame(1, 1));
-        require_ok(ec, "stream 1 should stay within its per-stream budget");
+        require_ok(ec, "single stream should be able to consume the whole connection budget");
     }
 
     {
         const auto ec = co_await send_frame(conn, make_dat_frame(1, 1));
-        require_error(ec, boost::asio::error::no_buffer_space, "stream 1 should hit the per-stream cap first");
-    }
-
-    for (std::uint64_t i = 0; i < stream_budget; ++i)
-    {
-        const auto ec = co_await send_frame(conn, make_dat_frame(2, 1));
-        require_ok(ec, "stream 2 should keep its own write budget");
+        require_error(ec, boost::asio::error::no_buffer_space, "single stream should stop once the connection budget is exhausted");
     }
 
     {
         const auto ec = co_await send_frame(conn, make_dat_frame(2, 1));
-        require_error(ec, boost::asio::error::no_buffer_space, "stream 2 should also stop at its own cap");
+        require_error(ec, boost::asio::error::no_buffer_space, "second stream should also stop once the global write budget is exhausted");
     }
 
     co_return;
 }
 
-boost::asio::awaitable<void> exemption_and_cleanup_scenario(const std::shared_ptr<mux::mux_connection>& conn, const std::uint64_t stream_budget)
+boost::asio::awaitable<void> exemption_and_cleanup_scenario(const std::shared_ptr<mux::mux_connection>& conn, const std::uint64_t connection_budget)
 {
-    for (std::uint64_t i = 0; i < stream_budget; ++i)
+    const auto legacy_quarter_budget = std::max<std::uint64_t>(1ULL, connection_budget / 4ULL);
+    auto ack_frame = make_ack_frame(1);
+    const auto required_budget = legacy_quarter_budget + 1ULL + static_cast<std::uint64_t>(ack_frame.payload.size()) + 1ULL;
+    require(connection_budget >= required_budget, "test budget must leave headroom for exempt frames");
+
+    for (std::uint64_t i = 0; i < legacy_quarter_budget; ++i)
     {
         const auto ec = co_await send_frame(conn, make_dat_frame(1, 1));
-        require_ok(ec, "stream 1 should fill to its per-stream budget");
+        require_ok(ec, "stream 1 should reach the legacy quarter-buffer budget");
     }
 
     {
-        const auto ec = co_await send_frame(conn, make_ack_frame(1));
+        const auto ec = co_await send_frame(conn, make_dat_frame(1, 1));
+        require_ok(ec, "stream 1 should be able to exceed the legacy quarter-buffer budget");
+    }
+
+    {
+        const auto ec = co_await send_frame(conn, std::move(ack_frame));
         require_ok(ec, "ACK frames must bypass the per-stream budget");
     }
 
@@ -198,10 +199,19 @@ boost::asio::awaitable<void> exemption_and_cleanup_scenario(const std::shared_pt
 
 boost::asio::awaitable<void> connection_budget_scenario(const std::shared_ptr<mux::mux_connection>& conn, const std::uint64_t stream_budget)
 {
+    const auto per_stream_budget = std::max<std::uint64_t>(1ULL, stream_budget / 4ULL);
     for (std::uint32_t stream_id = 1; stream_id <= 4; ++stream_id)
     {
-        const auto ec = co_await send_frame(conn, make_dat_frame(stream_id, stream_budget));
+        const auto ec = co_await send_frame(conn, make_dat_frame(stream_id, per_stream_budget));
         require_ok(ec, "each stream should be able to consume its own share of the connection budget");
+    }
+
+    const auto consumed = per_stream_budget * 4ULL;
+    const auto remaining = (stream_budget > consumed) ? (stream_budget - consumed) : 0ULL;
+    if (remaining > 0)
+    {
+        const auto ec = co_await send_frame(conn, make_dat_frame(5, remaining));
+        require_ok(ec, "connection should accept the remaining global write budget");
     }
 
     {
@@ -215,7 +225,7 @@ boost::asio::awaitable<void> connection_budget_scenario(const std::shared_ptr<mu
 void run_scenario(const std::string& name, const std::function<boost::asio::awaitable<void>(const std::shared_ptr<mux::mux_connection>&, std::uint64_t)>& scenario)
 {
     fixture fx;
-    auto future = boost::asio::co_spawn(fx.io, scenario(fx.conn, fx.stream_budget()), boost::asio::use_future);
+    auto future = boost::asio::co_spawn(fx.io, scenario(fx.conn, fx.connection_budget()), boost::asio::use_future);
     fx.io.run();
     future.get();
     std::cout << "[PASS] " << name << '\n';
@@ -227,7 +237,7 @@ int main()
 {
     try
     {
-        run_scenario("single-stream-fairness", stream_fairness_scenario);
+        run_scenario("single-stream-full-budget", single_stream_budget_scenario);
         run_scenario("exemptions-and-cleanup", exemption_and_cleanup_scenario);
         run_scenario("connection-budget", connection_budget_scenario);
     }
