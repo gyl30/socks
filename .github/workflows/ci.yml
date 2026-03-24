@@ -204,6 +204,20 @@ jobs:
                   -DCMAKE_PREFIX_PATH="${BOOST_ROOT};${OPENSSL_ROOT}"
 
                 cmake --build build-fuzz --target ch_parser_fuzz mux_codec_fuzz --parallel
+
+                SYMBOLIZER_BIN="$(command -v llvm-symbolizer || command -v llvm-symbolizer-18 || command -v llvm-symbolizer-22 || true)"
+                if [ -z "${SYMBOLIZER_BIN}" ]; then
+                  apt-get update
+                  apt-get install -y --no-install-recommends llvm
+                  SYMBOLIZER_BIN="$(command -v llvm-symbolizer || command -v llvm-symbolizer-18 || command -v llvm-symbolizer-22 || true)"
+                fi
+                if [ -z "${SYMBOLIZER_BIN}" ]; then
+                  echo "llvm symbolizer not found" >&2
+                  exit 1
+                fi
+                export ASAN_SYMBOLIZER_PATH="${SYMBOLIZER_BIN}"
+                export UBSAN_SYMBOLIZER_PATH="${SYMBOLIZER_BIN}"
+
                 ./build-fuzz/ch_parser_fuzz -runs=1000 -timeout=5 -rss_limit_mb=2048 -dict=fuzz/ch_parser.dict fuzz/corpus/ch_parser
                 ./build-fuzz/mux_codec_fuzz -runs=1000 -timeout=5 -rss_limit_mb=2048 -dict=fuzz/mux_codec.dict fuzz/corpus/mux_codec
                 ccache -s
