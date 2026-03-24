@@ -36,18 +36,18 @@ jobs:
             runner: ubuntu-22.04-arm
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
 
       - name: Restore Linux Boost Cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: .cache/boost
           key: linux-boost-${{ env.BOOST_VERSION }}
 
       - name: Restore Linux OpenSSL Cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: .cache/openssl/${{ matrix.libc }}-${{ matrix.arch }}
           key: linux-${{ matrix.arch }}-${{ matrix.libc }}-openssl-${{ env.OPENSSL_VERSION }}-${{ env.OPENSSL_CACHE_REV }}
@@ -55,7 +55,7 @@ jobs:
             linux-${{ matrix.arch }}-${{ matrix.libc }}-openssl-${{ env.OPENSSL_VERSION }}-
 
       - name: Restore Linux ccache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: .cache/ccache/linux-${{ matrix.libc }}-${{ matrix.arch }}-${{ matrix.compiler }}
           key: linux-${{ matrix.arch }}-${{ matrix.compiler }}-${{ matrix.libc }}-ccache-${{ env.CCACHE_CACHE_REV }}-${{ github.sha }}
@@ -320,7 +320,7 @@ jobs:
 
       - name: Save Linux ccache
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: .cache/ccache/linux-${{ matrix.libc }}-${{ matrix.arch }}-${{ matrix.compiler }}
           key: linux-${{ matrix.arch }}-${{ matrix.compiler }}-${{ matrix.libc }}-ccache-${{ env.CCACHE_CACHE_REV }}-${{ github.sha }}
@@ -330,18 +330,18 @@ jobs:
     runs-on: macos-14
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
 
       - name: Restore macOS Boost Cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/boost
           key: macos-${{ runner.arch }}-boost-${{ env.BOOST_VERSION }}
 
       - name: Restore macOS OpenSSL Cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/openssl
           key: macos-${{ runner.arch }}-openssl-${{ env.OPENSSL_VERSION }}-${{ env.OPENSSL_CACHE_REV }}
@@ -349,7 +349,7 @@ jobs:
             macos-${{ runner.arch }}-openssl-${{ env.OPENSSL_VERSION }}-
 
       - name: Restore macOS ccache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: ~/.cache/ccache/macos-${{ runner.arch }}
           key: macos-${{ runner.arch }}-ccache-${{ env.CCACHE_CACHE_REV }}-${{ github.sha }}
@@ -450,7 +450,7 @@ jobs:
 
       - name: Save macOS ccache
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: ~/.cache/ccache/macos-${{ runner.arch }}
           key: macos-${{ runner.arch }}-ccache-${{ env.CCACHE_CACHE_REV }}-${{ github.sha }}
@@ -460,18 +460,18 @@ jobs:
     runs-on: windows-2022
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
 
       - name: Restore Windows Boost Cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: .cache/boost
           key: windows-${{ runner.arch }}-boost-${{ env.BOOST_VERSION }}
 
       - name: Restore Windows OpenSSL Cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: .cache/openssl
           key: windows-${{ runner.arch }}-openssl-${{ env.OPENSSL_VERSION }}-${{ env.OPENSSL_CACHE_REV }}
@@ -479,7 +479,7 @@ jobs:
             windows-${{ runner.arch }}-openssl-${{ env.OPENSSL_VERSION }}-
 
       - name: Restore Windows ccache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: .cache/ccache/windows-${{ runner.arch }}-ucrt64-clang
           key: windows-${{ runner.arch }}-ccache-${{ env.CCACHE_CACHE_REV }}-${{ github.sha }}
@@ -600,7 +600,7 @@ jobs:
 
       - name: Save Windows ccache
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: .cache/ccache/windows-${{ runner.arch }}-ucrt64-clang
           key: windows-${{ runner.arch }}-ccache-${{ env.CCACHE_CACHE_REV }}-${{ github.sha }}
