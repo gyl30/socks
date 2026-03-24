@@ -401,10 +401,7 @@ using x509_store_ctx_ptr = std::unique_ptr<X509_STORE_CTX, decltype(&X509_STORE_
 class x509_stack_deleter
 {
    public:
-    void operator()(STACK_OF(X509)* p) const
-    {
-        sk_X509_free(p);
-    }
+    void operator()(STACK_OF(X509) * p) const { sk_X509_free(p); }
 };
 
 using x509_stack_ptr = std::unique_ptr<STACK_OF(X509), x509_stack_deleter>;
@@ -1127,9 +1124,7 @@ void consume_handshake_plaintext(const std::vector<std::uint8_t>& plaintext,
     return;
 }
 
-void validate_server_handshake_chain(const handshake_validation_state& validation_state,
-                                     const std::string& sni,
-                                     boost::system::error_code& ec)
+void validate_server_handshake_chain(const handshake_validation_state& validation_state, const std::string& sni, boost::system::error_code& ec)
 {
     ec.clear();
     if (!validation_state.cert_checked || !validation_state.cert_verify_checked)
@@ -1298,8 +1293,8 @@ boost::asio::awaitable<std::vector<std::uint8_t>> read_handshake_record_body(boo
 }
 
 std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> derive_client_auth_key_material(const std::uint8_t* private_key,
-                                                                                                 const std::vector<std::uint8_t>& server_pub_key,
-                                                                                                 boost::system::error_code& ec)
+                                                                                                const std::vector<std::uint8_t>& server_pub_key,
+                                                                                                boost::system::error_code& ec)
 {
     ec.clear();
     auto shared = reality::crypto_util::x25519_derive(std::vector<std::uint8_t>(private_key, private_key + 32), server_pub_key, ec);
@@ -1344,12 +1339,7 @@ void build_client_hello_with_placeholder_sid(const reality::fingerprint_spec& sp
     ec.clear();
     const std::vector<std::uint8_t> placeholder_session_id(32, 0);
     hello_body = reality::client_hello_builder::build(
-        spec,
-        placeholder_session_id,
-        client_random,
-        std::vector<std::uint8_t>(public_key, public_key + 32),
-        x25519_mlkem768_key_share,
-        sni);
+        spec, placeholder_session_id, client_random, std::vector<std::uint8_t>(public_key, public_key + 32), x25519_mlkem768_key_share, sni);
     if (hello_body.empty())
     {
         LOG_ERROR("generated client hello body invalid for configured sni");
@@ -1496,9 +1486,9 @@ bool fingerprint_uses_hybrid_key_share(const reality::fingerprint_spec& spec)
         }
 
         const auto& values = key_share->key_shares();
-        return std::ranges::any_of(values, [](const reality::key_share_blueprint::key_share_entry& entry) {
-            return entry.group == reality::tls_consts::group::kX25519MLKEM768;
-        });
+        return std::ranges::any_of(values,
+                                   [](const reality::key_share_blueprint::key_share_entry& entry)
+                                   { return entry.group == reality::tls_consts::group::kX25519MLKEM768; });
     }
     return false;
 }
@@ -1662,8 +1652,8 @@ std::vector<std::uint8_t> derive_server_hello_shared_secret(const std::uint8_t* 
         return {};
     }
 
-    const std::vector<std::uint8_t> ciphertext(
-        key_share_data.begin(), key_share_data.begin() + static_cast<std::ptrdiff_t>(reality::kMlkem768CiphertextSize));
+    const std::vector<std::uint8_t> ciphertext(key_share_data.begin(),
+                                               key_share_data.begin() + static_cast<std::ptrdiff_t>(reality::kMlkem768CiphertextSize));
     auto mlkem768_shared = reality::crypto_util::mlkem768_decapsulate(mlkem768_private_key, ciphertext, ec);
     if (ec)
     {
@@ -1683,23 +1673,22 @@ std::vector<std::uint8_t> derive_server_hello_shared_secret(const std::uint8_t* 
     return mlkem768_shared;
 }
 
-boost::asio::awaitable<void> process_handshake_record(
-    boost::asio::ip::tcp::socket& socket,
-    const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& s_hs_keys,
-    const std::vector<std::uint8_t>& auth_key,
-    reality::transcript& trans,
-    const EVP_CIPHER* cipher,
-    std::vector<std::uint8_t>& handshake_buffer,
-    std::size_t& handshake_buffer_pos,
-    handshake_validation_state& validation_state,
-    bool& handshake_fin,
-    const reality::handshake_keys& hs_keys,
-    const EVP_MD* md,
-    std::uint64_t& seq,
-    std::uint32_t& tls13_compat_ccs_count,
-    const std::uint64_t handshake_start_ms,
-    const std::uint32_t timeout_sec,
-    boost::system::error_code& ec)
+boost::asio::awaitable<void> process_handshake_record(boost::asio::ip::tcp::socket& socket,
+                                                      const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& s_hs_keys,
+                                                      const std::vector<std::uint8_t>& auth_key,
+                                                      reality::transcript& trans,
+                                                      const EVP_CIPHER* cipher,
+                                                      std::vector<std::uint8_t>& handshake_buffer,
+                                                      std::size_t& handshake_buffer_pos,
+                                                      handshake_validation_state& validation_state,
+                                                      bool& handshake_fin,
+                                                      const reality::handshake_keys& hs_keys,
+                                                      const EVP_MD* md,
+                                                      std::uint64_t& seq,
+                                                      std::uint32_t& tls13_compat_ccs_count,
+                                                      const std::uint64_t handshake_start_ms,
+                                                      const std::uint32_t timeout_sec,
+                                                      boost::system::error_code& ec)
 {
     ec.clear();
     const auto record = co_await read_encrypted_record(socket, handshake_start_ms, timeout_sec, ec);
@@ -1809,37 +1798,36 @@ void client_tunnel_pool::start()
 
 void client_tunnel_pool::stop()
 {
-    std::call_once(
-        stop_once_,
-        [this]()
-        {
-            std::vector<std::shared_ptr<mux_tunnel_impl>> tunnels;
-            {
-                std::lock_guard<std::mutex> lock(tunnel_mutex_);
-                tunnels.reserve(tunnel_pool_.size());
-                for (auto& tunnel : tunnel_pool_)
-                {
-                    if (tunnel != nullptr)
-                    {
-                        tunnels.push_back(tunnel);
-                        tunnel.reset();
-                    }
-                }
-            }
+    std::call_once(stop_once_,
+                   [this]()
+                   {
+                       std::vector<std::shared_ptr<mux_tunnel_impl>> tunnels;
+                       {
+                           std::lock_guard<std::mutex> lock(tunnel_mutex_);
+                           tunnels.reserve(tunnel_pool_.size());
+                           for (auto& tunnel : tunnel_pool_)
+                           {
+                               if (tunnel != nullptr)
+                               {
+                                   tunnels.push_back(tunnel);
+                                   tunnel.reset();
+                               }
+                           }
+                       }
 
-            for (const auto& tunnel : tunnels)
-            {
-                if (tunnel == nullptr)
-                {
-                    continue;
-                }
-                const auto connection = tunnel->connection();
-                if (connection != nullptr)
-                {
-                    connection->stop();
-                }
-            }
-        });
+                       for (const auto& tunnel : tunnels)
+                       {
+                           if (tunnel == nullptr)
+                           {
+                               continue;
+                           }
+                           const auto connection = tunnel->connection();
+                           if (connection != nullptr)
+                           {
+                               connection->stop();
+                           }
+                       }
+                   });
 }
 
 std::shared_ptr<mux_tunnel_impl> client_tunnel_pool::select_tunnel()
@@ -1872,7 +1860,7 @@ std::shared_ptr<mux_tunnel_impl> client_tunnel_pool::select_tunnel()
 }
 
 boost::asio::awaitable<std::shared_ptr<mux_tunnel_impl>> client_tunnel_pool::wait_for_tunnel(boost::asio::io_context& io_context,
-                                                                                              boost::system::error_code& ec)
+                                                                                             boost::system::error_code& ec)
 {
     ec.clear();
     const auto start_ms = timeout_io::now_ms();
@@ -1932,8 +1920,10 @@ std::shared_ptr<mux_tunnel_impl> client_tunnel_pool::build_tunnel(boost::asio::i
     return std::make_shared<mux_tunnel_impl>(std::move(socket), io_context, std::move(re), cfg_, groups_.get(io_context), cid, trace_id);
 }
 
-boost::asio::awaitable<void> client_tunnel_pool::run_real_certificate_fallback(
-    boost::asio::ip::tcp::socket& socket, const handshake_result& handshake_ret, const connection_context& ctx) const
+// NOLINTBEGIN(readability-function-cognitive-complexity)
+boost::asio::awaitable<void> client_tunnel_pool::run_real_certificate_fallback(boost::asio::ip::tcp::socket& socket,
+                                                                               const handshake_result& handshake_ret,
+                                                                               const connection_context& ctx) const
 {
     connection_context fallback_ctx = ctx;
     fallback_ctx.sni(sni_);
@@ -1941,11 +1931,7 @@ boost::asio::awaitable<void> client_tunnel_pool::run_real_certificate_fallback(
 
     if (!handshake_ret.negotiated_alpn.empty() && handshake_ret.negotiated_alpn != "http/1.1")
     {
-        LOG_CTX_INFO(fallback_ctx,
-                     "{} stage skip_request host {} negotiated_alpn {}",
-                     log_event::kFallback,
-                     sni_,
-                     handshake_ret.negotiated_alpn);
+        LOG_CTX_INFO(fallback_ctx, "{} stage skip_request host {} negotiated_alpn {}", log_event::kFallback, sni_, handshake_ret.negotiated_alpn);
         co_return;
     }
 
@@ -1986,12 +1972,7 @@ boost::asio::awaitable<void> client_tunnel_pool::run_real_certificate_fallback(
         {
             ec = boost::asio::error::fault;
         }
-        LOG_CTX_WARN(fallback_ctx,
-                     "{} stage write_request host {} bytes {} error {}",
-                     log_event::kFallback,
-                     sni_,
-                     ciphertext.size(),
-                     ec.message());
+        LOG_CTX_WARN(fallback_ctx, "{} stage write_request host {} bytes {} error {}", log_event::kFallback, sni_, ciphertext.size(), ec.message());
         co_return;
     }
     fallback_ctx.add_tx_bytes(request_bytes.size());
@@ -2032,8 +2013,9 @@ boost::asio::awaitable<void> client_tunnel_pool::run_real_certificate_fallback(
         engine.commit_read(n);
         boost::system::error_code process_ec;
         co_await engine.process_available_records(
-            [&](const std::uint8_t type, const std::span<const std::uint8_t> plaintext, boost::system::error_code& cb_ec)
-                -> boost::asio::awaitable<void>
+            [&](const std::uint8_t type,
+                const std::span<const std::uint8_t> plaintext,
+                boost::system::error_code& cb_ec) -> boost::asio::awaitable<void>
             {
                 if (type == reality::kContentTypeApplicationData)
                 {
@@ -2041,8 +2023,7 @@ boost::asio::awaitable<void> client_tunnel_pool::run_real_certificate_fallback(
                     fallback_ctx.add_rx_bytes(plaintext.size());
                     const auto remaining = kFallbackResponseCaptureLimit - response_capture.size();
                     const auto copy_len = std::min(remaining, plaintext.size());
-                    response_capture.insert(
-                        response_capture.end(), plaintext.begin(), plaintext.begin() + static_cast<std::ptrdiff_t>(copy_len));
+                    response_capture.insert(response_capture.end(), plaintext.begin(), plaintext.begin() + static_cast<std::ptrdiff_t>(copy_len));
                     captured_bytes += plaintext.size();
                     header_complete = header_complete || contains_http_header_terminator(response_capture);
                     if (header_complete && (captured_bytes >= kFallbackResponseSufficientBytes || response_capture.size() >= 2048))
@@ -2093,19 +2074,15 @@ boost::asio::awaitable<void> client_tunnel_pool::run_real_certificate_fallback(
     }
     else
     {
-        LOG_CTX_WARN(fallback_ctx,
-                     "{} stage lightweight_visit_no_response tx_plain {}B alert {}",
-                     log_event::kFallback,
-                     fallback_ctx.tx_bytes(),
-                     saw_alert);
+        LOG_CTX_WARN(
+            fallback_ctx, "{} stage lightweight_visit_no_response tx_plain {}B alert {}", log_event::kFallback, fallback_ctx.tx_bytes(), saw_alert);
     }
     co_return;
 }
+// NOLINTEND(readability-function-cognitive-complexity)
 
-boost::asio::awaitable<client_tunnel_pool::handshake_result>
-client_tunnel_pool::perform_reality_handshake_with_timeout(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
-                                                           const connection_context& ctx,
-                                                           boost::system::error_code& ec) const
+boost::asio::awaitable<client_tunnel_pool::handshake_result> client_tunnel_pool::perform_reality_handshake_with_timeout(
+    const std::shared_ptr<boost::asio::ip::tcp::socket>& socket, const connection_context& ctx, boost::system::error_code& ec) const
 {
     ec.clear();
     if (!socket)
@@ -2132,11 +2109,13 @@ client_tunnel_pool::perform_reality_handshake_with_timeout(const std::shared_ptr
     co_return handshake_res;
 }
 
+// NOLINTBEGIN(readability-function-cognitive-complexity)
 boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::uint32_t index, boost::asio::io_context& io_context)
 {
     boost::system::error_code ec;
     static thread_local std::mt19937 reconnect_gen(std::random_device{}());
     std::uint32_t retry_delay_ms = kReconnectBaseDelayMs;
+    // NOLINTNEXTLINE(bugprone-lambda-function-name)
     const auto wait_before_retry = [&](const connection_context& ctx, const char* stage) -> boost::asio::awaitable<bool>
     {
         std::uniform_int_distribution<std::uint32_t> jitter_dist(0, retry_delay_ms / 4);
@@ -2290,6 +2269,7 @@ boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::
     }
     LOG_INFO("{} connect remote loop {} exited", log_event::kConnClose, index);
 }
+// NOLINTEND(readability-function-cognitive-complexity)
 
 boost::asio::awaitable<void> client_tunnel_pool::tcp_connect_remote(boost::asio::io_context& io_context,
                                                                     boost::asio::ip::tcp::socket& socket,
@@ -2343,8 +2323,9 @@ boost::asio::awaitable<void> client_tunnel_pool::tcp_connect_remote(boost::asio:
     co_return;
 }
 
-boost::asio::awaitable<client_tunnel_pool::handshake_result> client_tunnel_pool::perform_reality_handshake(
-    boost::asio::ip::tcp::socket& socket, const connection_context& ctx, boost::system::error_code& ec) const
+boost::asio::awaitable<client_tunnel_pool::handshake_result> client_tunnel_pool::perform_reality_handshake(boost::asio::ip::tcp::socket& socket,
+                                                                                                           const connection_context& ctx,
+                                                                                                           boost::system::error_code& ec) const
 {
     ec.clear();
     std::uint8_t public_key[32];
@@ -2370,13 +2351,15 @@ boost::asio::awaitable<client_tunnel_pool::handshake_result> client_tunnel_pool:
         x25519_mlkem768_key_share.insert(x25519_mlkem768_key_share.end(), public_key, public_key + 32);
     }
 
-    const std::shared_ptr<void> defer_cleanse(nullptr, [&](void*) {
-        OPENSSL_cleanse(private_key, 32);
-        if (!mlkem768_private_key.empty())
-        {
-            OPENSSL_cleanse(mlkem768_private_key.data(), mlkem768_private_key.size());
-        }
-    });
+    const std::shared_ptr<void> defer_cleanse(nullptr,
+                                              [&](void*)
+                                              {
+                                                  OPENSSL_cleanse(private_key, 32);
+                                                  if (!mlkem768_private_key.empty())
+                                                  {
+                                                      OPENSSL_cleanse(mlkem768_private_key.data(), mlkem768_private_key.size());
+                                                  }
+                                              });
 
     if (use_hybrid)
     {
@@ -2396,8 +2379,7 @@ boost::asio::awaitable<client_tunnel_pool::handshake_result> client_tunnel_pool:
     reality::transcript trans;
     std::vector<std::uint8_t> auth_key;
     client_hello_info client_hello;
-    co_await generate_and_send_client_hello(
-        socket, public_key, private_key, x25519_mlkem768_key_share, spec, trans, auth_key, client_hello, ec);
+    co_await generate_and_send_client_hello(socket, public_key, private_key, x25519_mlkem768_key_share, spec, trans, auth_key, client_hello, ec);
     if (ec)
     {
         co_return handshake_result{};
@@ -2460,16 +2442,15 @@ boost::asio::awaitable<client_tunnel_pool::handshake_result> client_tunnel_pool:
     co_return result;
 }
 
-boost::asio::awaitable<void> client_tunnel_pool::generate_and_send_client_hello(
-    boost::asio::ip::tcp::socket& socket,
-    const std::uint8_t* public_key,
-    const std::uint8_t* private_key,
-    const std::vector<std::uint8_t>& x25519_mlkem768_key_share,
-    const reality::fingerprint_spec& spec,
-    reality::transcript& trans,
-    std::vector<std::uint8_t>& auth_key,
-    client_hello_info& client_hello,
-    boost::system::error_code& ec) const
+boost::asio::awaitable<void> client_tunnel_pool::generate_and_send_client_hello(boost::asio::ip::tcp::socket& socket,
+                                                                                const std::uint8_t* public_key,
+                                                                                const std::uint8_t* private_key,
+                                                                                const std::vector<std::uint8_t>& x25519_mlkem768_key_share,
+                                                                                const reality::fingerprint_spec& spec,
+                                                                                reality::transcript& trans,
+                                                                                std::vector<std::uint8_t>& auth_key,
+                                                                                client_hello_info& client_hello,
+                                                                                boost::system::error_code& ec) const
 {
     ec.clear();
     std::array<std::uint8_t, 3> client_ver_{1, 0, 0};
@@ -2539,11 +2520,11 @@ boost::asio::awaitable<client_tunnel_pool::server_hello_res> client_tunnel_pool:
     }
 
     LOG_DEBUG("rx server hello size {}", sh_data.size());
-        LOG_CTX_INFO(ctx,
-                     "{} server hello key share group 0x{:04x} {} key share len {}",
-                     log_event::kHandshake,
-                     server_hello.key_share.group,
-                     reality::named_group_name(server_hello.key_share.group),
+    LOG_CTX_INFO(ctx,
+                 "{} server hello key share group 0x{:04x} {} key share len {}",
+                 log_event::kHandshake,
+                 server_hello.key_share.group,
+                 reality::named_group_name(server_hello.key_share.group),
                  server_hello.key_share.data.size());
 
     auto handshake_shared_secret =
@@ -2565,23 +2546,24 @@ boost::asio::awaitable<client_tunnel_pool::server_hello_res> client_tunnel_pool:
         .negotiated_md = md,
         .negotiated_cipher = cipher,
         .cipher_suite = cipher_suite,
-        .key_share_group = server_hello.key_share.group};
+        .key_share_group = server_hello.key_share.group,
+    };
 }
 
-boost::asio::awaitable<client_tunnel_pool::handshake_read_result>
-client_tunnel_pool::handshake_read_loop(boost::asio::ip::tcp::socket& socket,
-                                        const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& s_hs_keys,
-                                        const reality::handshake_keys& hs_keys,
-                                        const std::vector<std::uint8_t>& auth_key,
-                                        const client_hello_info& client_hello,
-                                        const std::string& sni,
-                                        reality::transcript& trans,
-                                        std::vector<std::uint8_t> initial_handshake_data,
-                                        const EVP_CIPHER* cipher,
-                                        const EVP_MD* md,
-                                        const std::uint32_t max_handshake_records,
-                                        const std::uint32_t read_timeout_sec,
-                                        boost::system::error_code& ec)
+boost::asio::awaitable<client_tunnel_pool::handshake_read_result> client_tunnel_pool::handshake_read_loop(
+    boost::asio::ip::tcp::socket& socket,
+    const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& s_hs_keys,
+    const reality::handshake_keys& hs_keys,
+    const std::vector<std::uint8_t>& auth_key,
+    const client_hello_info& client_hello,
+    const std::string& sni,
+    reality::transcript& trans,
+    std::vector<std::uint8_t> initial_handshake_data,
+    const EVP_CIPHER* cipher,
+    const EVP_MD* md,
+    const std::uint32_t max_handshake_records,
+    const std::uint32_t read_timeout_sec,
+    boost::system::error_code& ec)
 {
     ec.clear();
     const auto handshake_start_ms = timeout_io::now_ms();
@@ -2596,7 +2578,8 @@ client_tunnel_pool::handshake_read_loop(boost::asio::ip::tcp::socket& socket,
 
     if (!initial_handshake_data.empty())
     {
-        consume_handshake_plaintext(initial_handshake_data, handshake_buffer, handshake_buffer_pos, auth_key, validation_state, handshake_fin, hs_keys, md, trans, ec);
+        consume_handshake_plaintext(
+            initial_handshake_data, handshake_buffer, handshake_buffer_pos, auth_key, validation_state, handshake_fin, hs_keys, md, trans, ec);
         if (ec)
         {
             co_return handshake_read_result{};
@@ -2652,8 +2635,7 @@ client_tunnel_pool::handshake_read_loop(boost::asio::ip::tcp::socket& socket,
         .c_app_secret = std::move(app_sec.first),
         .s_app_secret = std::move(app_sec.second),
         .negotiated_alpn = std::move(validation_state.negotiated_alpn),
-        .auth_mode = validation_state.real_cert_chain_verified ? handshake_auth_mode::kRealCertificateFallback
-                                                               : handshake_auth_mode::kRealityTunnel};
+        .auth_mode = validation_state.real_cert_chain_verified ? handshake_auth_mode::kRealCertificateFallback : handshake_auth_mode::kRealityTunnel};
     co_return result;
 }
 

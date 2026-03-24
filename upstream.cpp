@@ -73,8 +73,7 @@ namespace
     {
         return socks::kRepNetUnreach;
     }
-    if (ec == boost::asio::error::host_unreachable || ec == boost::asio::error::host_not_found ||
-        ec == boost::asio::error::host_not_found_try_again)
+    if (ec == boost::asio::error::host_unreachable || ec == boost::asio::error::host_not_found || ec == boost::asio::error::host_not_found_try_again)
     {
         return socks::kRepHostUnreach;
     }
@@ -201,10 +200,7 @@ bool direct_upstream::get_bind_endpoint(boost::asio::ip::address& addr, std::uin
     return true;
 }
 
-std::uint8_t direct_upstream::suggested_socks_rep(const boost::system::error_code& ec) const
-{
-    return map_connect_error_to_socks_rep(ec);
-}
+std::uint8_t direct_upstream::suggested_socks_rep(const boost::system::error_code& ec) const { return map_connect_error_to_socks_rep(ec); }
 
 boost::asio::awaitable<void> direct_upstream::write(const std::vector<std::uint8_t>& data, boost::system::error_code& ec)
 {
@@ -354,13 +350,7 @@ boost::asio::awaitable<bool> proxy_upstream::wait_connect_ack(const std::shared_
         has_bind_endpoint_ = true;
     }
 
-    LOG_CTX_INFO(stream_ctx,
-                 "{} stage wait_ack target {}:{} bind {}:{}",
-                 log_event::kRoute,
-                 host,
-                 port,
-                 ack.bnd_addr,
-                 ack.bnd_port);
+    LOG_CTX_INFO(stream_ctx, "{} stage wait_ack target {}:{} bind {}:{}", log_event::kRoute, host, port, ack.bnd_addr, ack.bnd_port);
     co_return true;
 }
 
