@@ -38,9 +38,9 @@ extern "C"
 #include "statistics.h"
 #include "log_context.h"
 #include "mux_protocol.h"
-#include "reality_core.h"
 #include "mux_connection.h"
-#include "reality_engine.h"
+#include "reality/session/engine.h"
+#include "reality/session/session_internal.h"
 
 namespace mux
 {
@@ -90,7 +90,7 @@ void handle_post_handshake_record(const std::uint32_t cid,
 
 mux_connection::mux_connection(boost::asio::ip::tcp::socket socket,
                                boost::asio::io_context& io_context,
-                               reality_engine engine,
+                               reality::reality_session session,
                                const config& cfg,
                                task_group& group,
                                const std::uint32_t conn_id,
@@ -98,10 +98,11 @@ mux_connection::mux_connection(boost::asio::ip::tcp::socket socket,
     : cfg_(cfg),
       cid_(conn_id),
       group_(group),
-      reality_engine_(std::move(engine)),
+      reality_engine_(reality::session_internal::engine_access::take_engine(std::move(session))),
       io_context_(io_context),
       socket_(std::move(socket)),
-      write_channel_(std::make_unique<channel_type>(io_context_, 1024))
+      write_channel_(std::make_unique<channel_type>(io_context_, 1024)),
+      stop_channel_(std::make_unique<stop_channel_type>(io_context_, 1))
 {
     ctx_.trace_id(trace_id);
     ctx_.conn_id(conn_id);
@@ -494,9 +495,30 @@ void mux_connection::stop_on_executor()
     boost::system::error_code ec;
     ec = socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
     ec = socket_.close(ec);
+
+    if (stop_channel_ != nullptr)
+    {
+        stop_channel_->close();
+    }
 }
 
 bool mux_connection::is_active() const { return !stopped_.load(std::memory_order_relaxed); }
+
+boost::asio::awaitable<void> mux_connection::async_wait_stopped()
+{
+    if (stop_channel_ == nullptr)
+    {
+        co_return;
+    }
+
+    const auto [ec] = co_await stop_channel_->async_receive(boost::asio::as_tuple(boost::asio::use_awaitable));
+    if (ec && ec != boost::asio::experimental::error::channel_errors::channel_closed &&
+        ec != boost::asio::experimental::error::channel_errors::channel_cancelled &&
+        ec != boost::asio::error::operation_aborted)
+    {
+        LOG_WARN("mux {} wait stopped error {}", cid_, ec.message());
+    }
+}
 
 boost::asio::awaitable<void> mux_connection::read_loop()
 {
@@ -525,16 +547,16 @@ boost::asio::awaitable<void> mux_connection::read_loop()
             [this](
                 const std::uint8_t type, const std::span<const std::uint8_t> plaintext, boost::system::error_code& ec) -> boost::asio::awaitable<void>
             {
-                if (type == reality::kContentTypeApplicationData)
+                if (type == ::tls::kContentTypeApplicationData)
                 {
                     co_await mux_dispatcher_.on_plaintext_data(plaintext, ec);
                     co_return;
                 }
-                if (type == reality::kContentTypeAlert)
+                if (type == ::tls::kContentTypeAlert)
                 {
                     co_return;
                 }
-                if (type == reality::kContentTypeHandshake)
+                if (type == ::tls::kContentTypeHandshake)
                 {
                     handle_post_handshake_record(cid_, plaintext, ec);
                     co_return;
