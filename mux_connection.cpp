@@ -235,7 +235,7 @@ std::uint64_t mux_connection::reserve_write_bytes(const std::uint32_t stream_id,
         return bytes;
     }
 
-    const auto limit = std::max<std::uint64_t>(1ULL, cfg_.limits.max_buffer / 4ULL);
+    const auto limit = std::max<std::uint64_t>(1ULL, cfg_.limits.max_buffer);
     std::lock_guard<std::mutex> lock(write_limit_mutex_);
     auto& used = write_pending_bytes_by_stream_[stream_id];
     if (used >= limit || limit - used < bytes)
