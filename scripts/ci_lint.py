@@ -50,6 +50,23 @@ def pick_git_clang_format():
     raise RuntimeError("missing git-clang-format")
 
 
+def pick_clang_tidy():
+    candidates = [
+        "clang-tidy-23",
+        "clang-tidy-22",
+        "clang-tidy-21",
+        "clang-tidy-20",
+        "clang-tidy-19",
+        "clang-tidy-18",
+        "clang-tidy",
+    ]
+    for candidate in candidates:
+        path = shutil.which(candidate)
+        if path is not None:
+            return path
+    raise RuntimeError("missing clang-tidy")
+
+
 def resolve_base_sha(repo_root, base_sha):
     if base_sha:
         return base_sha
@@ -112,9 +129,7 @@ def run_git_clang_format(repo_root, base_sha, files):
 
 
 def run_clang_tidy(repo_root, base_sha, head_sha, files):
-    clang_tidy = shutil.which("clang-tidy")
-    if clang_tidy is None:
-        raise RuntimeError("missing clang-tidy")
+    clang_tidy = pick_clang_tidy()
 
     repo_root_str = str(repo_root)
     extra_args = [
