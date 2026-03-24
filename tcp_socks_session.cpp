@@ -78,10 +78,7 @@ void tcp_socks_session::start(const std::string& host, const std::uint16_t port)
         group_.adapt(boost::asio::detached));
 }
 
-void tcp_socks_session::stop()
-{
-    close_client_socket();
-}
+void tcp_socks_session::stop() { close_client_socket(); }
 
 boost::asio::awaitable<void> tcp_socks_session::run(const std::string& host, const std::uint16_t port)
 {
@@ -170,14 +167,7 @@ boost::asio::awaitable<bool> tcp_socks_session::connect_backend(const std::share
     }
 
     const auto rep = backend->suggested_socks_rep(ec);
-    LOG_CTX_WARN(ctx_,
-                 "{} connect failed {} {} via {} error {} rep {}",
-                 log_event::kConnInit,
-                 host,
-                 port,
-                 mux::to_string(route),
-                 ec.message(),
-                 rep);
+    LOG_CTX_WARN(ctx_, "{} connect failed {} {} via {} error {} rep {}", log_event::kConnInit, host, port, mux::to_string(route), ec.message(), rep);
     co_await reply_error(rep);
     co_return false;
 }
