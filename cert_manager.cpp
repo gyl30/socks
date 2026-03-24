@@ -63,9 +63,9 @@ void site_material_manager::mark_fetch_started(const std::string& cache_key,
                                                const std::string& trace_id)
 {
     const auto key = normalize_sni_key(cache_key);
-    site_material_snapshot initial_snapshot;
+    const site_material_snapshot initial_snapshot;
     cache_.upsert(key,
-                  std::move(initial_snapshot),
+                  initial_snapshot,
                   [&](site_material_snapshot& snapshot)
                   {
                       snapshot.target_host = target_host;
@@ -102,10 +102,10 @@ void site_material_manager::set_material(const std::string& cache_key,
     const auto hs_records = material.encrypted_handshake_record_sizes.size();
     const auto groups = material.key_share_groups.size();
     const auto fetched_at = material.fetched_at_unix_seconds;
-    site_material_snapshot initial_snapshot;
+    const site_material_snapshot initial_snapshot;
     auto material_holder = std::move(material);
     cache_.upsert(key,
-                  std::move(initial_snapshot),
+                  initial_snapshot,
                   [&](site_material_snapshot& snapshot) mutable
                   {
                       snapshot.target_host = target_host;
@@ -151,10 +151,10 @@ void site_material_manager::set_fetch_failure(const std::string& cache_key,
     const auto key = normalize_sni_key(cache_key);
     bool has_stale_material = false;
     const auto log_error = error;
-    site_material_snapshot initial_snapshot;
+    const site_material_snapshot initial_snapshot;
     auto error_holder = std::move(error);
     cache_.upsert(key,
-                  std::move(initial_snapshot),
+                  initial_snapshot,
                   [&](site_material_snapshot& snapshot) mutable
                   {
                       snapshot.target_host = target_host;
