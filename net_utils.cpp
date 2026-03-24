@@ -88,12 +88,8 @@ void log_original_dst_getsockopt_failure(const int level, const int option, cons
     }
 
     const auto dropped = suppressed.exchange(0, std::memory_order_relaxed);
-    LOG_INFO("get original tcp dst getsockopt failed level {} opt {} errno {} error {} suppressed {}",
-             level,
-             option,
-             ec.value(),
-             ec.message(),
-             dropped);
+    LOG_INFO(
+        "get original tcp dst getsockopt failed level {} opt {} errno {} error {} suppressed {}", level, option, ec.value(), ec.message(), dropped);
 }
 #endif
 
