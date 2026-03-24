@@ -3,12 +3,12 @@
 
 #include <atomic>
 #include <memory>
-#include <optional>
 #include <string>
-#include <utility>
 #include <vector>
+#include <utility>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/ip/udp.hpp>
@@ -16,19 +16,19 @@
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/address.hpp>
 #include <boost/asio/steady_timer.hpp>
-#include <boost/asio/cancellation_signal.hpp>
 #include <boost/system/error_code.hpp>
+#include <boost/asio/cancellation_signal.hpp>
 #include <boost/asio/experimental/concurrent_channel.hpp>
 
 #include "config.h"
-#include "protocol.h"
 #include "router.h"
+#include "protocol.h"
 #include "net_utils.h"
+#include "lru_cache.h"
 #include "mux_tunnel.h"
 #include "task_group.h"
 #include "log_context.h"
 #include "mux_stream_interface.h"
-#include "lru_cache.h"
 
 namespace mux
 {

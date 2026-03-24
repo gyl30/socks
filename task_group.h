@@ -2,16 +2,16 @@
 #define TASK_GROUP_H
 
 #include <list>
-#include <memory>
 #include <mutex>
-#include <utility>
+#include <memory>
 #include <vector>
+#include <utility>
 
 #include <boost/asio.hpp>
-#include <boost/asio/as_tuple.hpp>
-#include <boost/asio/bind_cancellation_slot.hpp>
 #include <boost/asio/consign.hpp>
+#include <boost/asio/as_tuple.hpp>
 #include <boost/asio/this_coro.hpp>
+#include <boost/asio/bind_cancellation_slot.hpp>
 
 class task_group
 {
