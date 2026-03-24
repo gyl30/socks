@@ -63,17 +63,16 @@ void site_material_manager::mark_fetch_started(const std::string& cache_key,
                                                const std::string& trace_id)
 {
     const auto key = normalize_sni_key(cache_key);
-    cache_.upsert(
-        key,
-        site_material_snapshot{},
-        [&](site_material_snapshot& snapshot)
-        {
-            snapshot.target_host = target_host;
-            snapshot.target_sni = target_sni;
-            snapshot.port = port;
-            snapshot.fetch_in_progress = true;
-            snapshot.last_attempt_at_unix_seconds = attempt_at_unix_seconds;
-        });
+    cache_.upsert(key,
+                  site_material_snapshot{},
+                  [&](site_material_snapshot& snapshot)
+                  {
+                      snapshot.target_host = target_host;
+                      snapshot.target_sni = target_sni;
+                      snapshot.port = port;
+                      snapshot.fetch_in_progress = true;
+                      snapshot.last_attempt_at_unix_seconds = attempt_at_unix_seconds;
+                  });
 
     mux::connection_context ctx;
     ctx.trace_id(trace_id);
@@ -103,39 +102,39 @@ void site_material_manager::set_material(const std::string& cache_key,
     const auto groups = material.key_share_groups.size();
     const auto fetched_at = material.fetched_at_unix_seconds;
     auto material_holder = std::move(material);
-    cache_.upsert(
-        key,
-        site_material_snapshot{},
-        [&](site_material_snapshot& snapshot) mutable
-        {
-            snapshot.target_host = target_host;
-            snapshot.target_sni = target_sni;
-            snapshot.port = port;
-            snapshot.fetch_in_progress = false;
-            snapshot.last_attempt_at_unix_seconds = fetched_at;
-            snapshot.last_success_at_unix_seconds = fetched_at;
-            snapshot.next_refresh_at_unix_seconds = next_refresh_at_unix_seconds;
-            snapshot.last_error.clear();
-            snapshot.material = std::move(material_holder);
-        });
+    cache_.upsert(key,
+                  site_material_snapshot{},
+                  [&](site_material_snapshot& snapshot) mutable
+                  {
+                      snapshot.target_host = target_host;
+                      snapshot.target_sni = target_sni;
+                      snapshot.port = port;
+                      snapshot.fetch_in_progress = false;
+                      snapshot.last_attempt_at_unix_seconds = fetched_at;
+                      snapshot.last_success_at_unix_seconds = fetched_at;
+                      snapshot.next_refresh_at_unix_seconds = next_refresh_at_unix_seconds;
+                      snapshot.last_error.clear();
+                      snapshot.material = std::move(material_holder);
+                  });
 
     mux::connection_context ctx;
     ctx.trace_id(trace_id);
     ctx.sni(key);
 
-    LOG_CTX_INFO(ctx,
-                 "{} cached site material certs {} cert_msg {} alpn '{}' cipher 0x{:04x} sh_exts {} ee_exts {} ee_padding {} ccs {} hs_records {} groups {}",
-                 mux::log_event::kCert,
-                 certs,
-                 cert_msg,
-                 alpn,
-                 cipher,
-                 sh_exts,
-                 ee_exts,
-                 ee_padding,
-                 ccs,
-                 hs_records,
-                 groups);
+    LOG_CTX_INFO(
+        ctx,
+        "{} cached site material certs {} cert_msg {} alpn '{}' cipher 0x{:04x} sh_exts {} ee_exts {} ee_padding {} ccs {} hs_records {} groups {}",
+        mux::log_event::kCert,
+        certs,
+        cert_msg,
+        alpn,
+        cipher,
+        sh_exts,
+        ee_exts,
+        ee_padding,
+        ccs,
+        hs_records,
+        groups);
 }
 
 void site_material_manager::set_fetch_failure(const std::string& cache_key,
@@ -151,32 +150,26 @@ void site_material_manager::set_fetch_failure(const std::string& cache_key,
     bool has_stale_material = false;
     const auto log_error = error;
     auto error_holder = std::move(error);
-    cache_.upsert(
-        key,
-        site_material_snapshot{},
-        [&](site_material_snapshot& snapshot) mutable
-        {
-            snapshot.target_host = target_host;
-            snapshot.target_sni = target_sni;
-            snapshot.port = port;
-            snapshot.fetch_in_progress = false;
-            snapshot.last_attempt_at_unix_seconds = attempt_at_unix_seconds;
-            snapshot.next_refresh_at_unix_seconds = next_refresh_at_unix_seconds;
-            snapshot.last_error = std::move(error_holder);
-            has_stale_material = snapshot.material.has_value();
-        });
+    cache_.upsert(key,
+                  site_material_snapshot{},
+                  [&](site_material_snapshot& snapshot) mutable
+                  {
+                      snapshot.target_host = target_host;
+                      snapshot.target_sni = target_sni;
+                      snapshot.port = port;
+                      snapshot.fetch_in_progress = false;
+                      snapshot.last_attempt_at_unix_seconds = attempt_at_unix_seconds;
+                      snapshot.next_refresh_at_unix_seconds = next_refresh_at_unix_seconds;
+                      snapshot.last_error = std::move(error_holder);
+                      has_stale_material = snapshot.material.has_value();
+                  });
 
     mux::connection_context ctx;
     ctx.trace_id(trace_id);
     ctx.sni(key);
 
-    LOG_CTX_WARN(ctx,
-                 "{} fetch failed target {}:{} stale_material {} error {}",
-                 mux::log_event::kCert,
-                 target_host,
-                 port,
-                 has_stale_material,
-                 log_error);
+    LOG_CTX_WARN(
+        ctx, "{} fetch failed target {}:{} stale_material {} error {}", mux::log_event::kCert, target_host, port, has_stale_material, log_error);
 }
 
 }    // namespace reality

@@ -65,8 +65,7 @@ namespace
     {
         return socks::kRepNetUnreach;
     }
-    if (ec == boost::asio::error::host_unreachable || ec == boost::asio::error::host_not_found ||
-        ec == boost::asio::error::host_not_found_try_again)
+    if (ec == boost::asio::error::host_unreachable || ec == boost::asio::error::host_not_found || ec == boost::asio::error::host_not_found_try_again)
     {
         return socks::kRepHostUnreach;
     }
@@ -143,17 +142,11 @@ void remote_tcp_session::close_from_reset()
     }
 }
 
+// NOLINTBEGIN(readability-function-cognitive-complexity)
 boost::asio::awaitable<void> remote_tcp_session::run(const syn_payload& syn)
 {
-    DEFER(
-        if (auto connection = connection_.lock(); connection != nullptr && stream_ != nullptr)
-        {
-            connection->close_and_remove_stream(stream_);
-        });
-    DEFER(
-        boost::system::error_code ignore;
-        ignore = socket_.close(ignore);
-        (void)ignore;);
+    DEFER(if (auto connection = connection_.lock(); connection != nullptr && stream_ != nullptr) { connection->close_and_remove_stream(stream_); });
+    DEFER(boost::system::error_code ignore; ignore = socket_.close(ignore); (void)ignore;);
 
     ctx_.set_target(syn.addr, syn.port);
     LOG_CTX_INFO(ctx_, "{} connecting {} {}", log_event::kMux, syn.addr, syn.port);
@@ -188,13 +181,7 @@ boost::asio::awaitable<void> remote_tcp_session::run(const syn_payload& syn)
             stats.inc_remote_session_resolve_errors();
         }
         const auto rep = map_connect_error_to_socks_rep(ec);
-        LOG_CTX_WARN(ctx_,
-                     "{} resolve failed target {}:{} error {} rep {}",
-                     log_event::kMux,
-                     syn.addr,
-                     syn.port,
-                     ec.message(),
-                     rep);
+        LOG_CTX_WARN(ctx_, "{} resolve failed target {}:{} error {} rep {}", log_event::kMux, syn.addr, syn.port, ec.message(), rep);
         co_await send_fail_ack(rep);
         co_return;
     }
@@ -236,13 +223,7 @@ boost::asio::awaitable<void> remote_tcp_session::run(const syn_payload& syn)
             stats.inc_remote_session_connect_errors();
         }
         const auto rep = map_connect_error_to_socks_rep(connect_ec);
-        LOG_CTX_WARN(ctx_,
-                     "{} connect failed target {}:{} error {} rep {}",
-                     log_event::kMux,
-                     syn.addr,
-                     syn.port,
-                     connect_ec.message(),
-                     rep);
+        LOG_CTX_WARN(ctx_, "{} connect failed target {}:{} error {} rep {}", log_event::kMux, syn.addr, syn.port, connect_ec.message(), rep);
         co_await send_fail_ack(rep);
         co_return;
     }
@@ -298,15 +279,14 @@ boost::asio::awaitable<void> remote_tcp_session::run(const syn_payload& syn)
 
     LOG_CTX_INFO(ctx_, "{} finished {}", log_event::kConnClose, ctx_.stats_summary());
 }
+// NOLINTEND(readability-function-cognitive-complexity)
 
 boost::asio::awaitable<void> remote_tcp_session::upstream()
 {
     boost::system::error_code ec;
     for (;;)
     {
-        const auto read_timeout = (cfg_.timeout.idle == 0)
-                                      ? cfg_.timeout.read
-                                      : std::max(cfg_.timeout.read, cfg_.timeout.idle + 2);
+        const auto read_timeout = (cfg_.timeout.idle == 0) ? cfg_.timeout.read : std::max(cfg_.timeout.read, cfg_.timeout.idle + 2);
         const auto frame = co_await stream_->async_read(read_timeout, ec);
         if (ec)
         {
