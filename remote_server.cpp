@@ -108,6 +108,7 @@ constexpr std::size_t kFallbackAttemptTrackerMaxEntries = 4096;
 constexpr std::uint32_t kSiteMaterialFetchSuccessTtlSec = 6 * 60 * 60;
 constexpr std::uint32_t kSiteMaterialFetchFailureRetrySec = 5 * 60;
 constexpr std::size_t kSiteMaterialCacheCapacity = 4;
+constexpr std::size_t kMaxUnauthenticatedClientHelloLen = 64 * 1024;
 
 std::shared_ptr<void> make_active_connection_guard()
 {
@@ -1617,8 +1618,7 @@ boost::asio::awaitable<void> remote_server::handle(boost::asio::io_context& io,
     LOG_CTX_INFO(ctx, "{} accepted {}", log_event::kConnInit, ctx.connection_info());
     boost::system::error_code ec;
     // tls handshake
-    const auto max_client_hello_len =
-        static_cast<std::size_t>(std::max(cfg_.limits.max_handshake_records, 1U)) * static_cast<std::size_t>(kMaxTlsPlaintextRecordLen);
+    const auto max_client_hello_len = kMaxUnauthenticatedClientHelloLen;
     const auto read_failure_reason = co_await read_client_hello_handshake(
         reality_ctx.socket, client_hello_wire, client_hello_handshake, ctx, cfg_.timeout.read, max_client_hello_len, ec);
     if (read_failure_reason != nullptr)
