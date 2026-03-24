@@ -68,6 +68,19 @@ std::uint64_t monotonic_ms()
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
 }
 
+cmsghdr* next_cmsg_header(const msghdr& msg, cmsghdr* current)
+{
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wsign-compare"
+#endif
+    auto* next = CMSG_NXTHDR(const_cast<msghdr*>(&msg), current);
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
+    return next;
+}
+
 void log_original_dst_getsockopt_failure(const int level, const int option, const boost::system::error_code& ec)
 {
     constexpr std::uint64_t kLogIntervalMs = 10'000;
@@ -169,7 +182,7 @@ boost::asio::ip::udp::endpoint endpoint_from_sockaddr_v6(const sockaddr_storage&
 
 }    // namespace
 
-void set_socket_mark(int fd, const std::uint32_t mark, boost::system::error_code& ec)
+void set_socket_mark(const socket_handle_t fd, const std::uint32_t mark, boost::system::error_code& ec)
 {
     ec.clear();
 #ifdef __linux__
@@ -369,7 +382,7 @@ std::uint64_t endpoint_hash(const boost::asio::ip::udp::endpoint& endpoint)
 std::optional<boost::asio::ip::udp::endpoint> parse_original_dst(const msghdr& msg)
 {
 #ifdef __linux__
-    for (auto* cm = CMSG_FIRSTHDR(&msg); cm != nullptr; cm = CMSG_NXTHDR(const_cast<msghdr*>(&msg), cm))
+    for (auto* cm = CMSG_FIRSTHDR(&msg); cm != nullptr; cm = next_cmsg_header(msg, cm))
     {
         const auto ep = parse_original_dst_control_message(cm);
         if (ep.has_value())
