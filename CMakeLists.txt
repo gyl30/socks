@@ -88,6 +88,7 @@ endif()
 
 option(ENABLE_TSAN "Enable ThreadSanitizer" OFF)
 option(ENABLE_ASAN "Enable AddressSanitizer" ON)
+option(ENABLE_LSAN "Enable LeakSanitizer" OFF)
 option(ENABLE_FUZZ "Enable libFuzzer targets" OFF)
 option(SOCKS_BUILD_TESTS "Build regression tests" ON)
 
@@ -99,9 +100,18 @@ if(ENABLE_FUZZ)
   add_compile_options(-fno-common)
   set(ENABLE_TSAN OFF)
   set(ENABLE_ASAN OFF)
+  set(ENABLE_LSAN OFF)
 endif()
 
 add_compile_options(-fno-omit-frame-pointer)
+
+if(ENABLE_LSAN)
+  set(ENABLE_ASAN OFF)
+endif()
+
+if(ENABLE_TSAN AND ENABLE_LSAN)
+  message(FATAL_ERROR "ENABLE_TSAN cannot be combined with ENABLE_LSAN.")
+endif()
 
 if(ENABLE_TSAN)
   if(NOT (CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR CMAKE_CXX_COMPILER_ID MATCHES
@@ -117,12 +127,19 @@ elseif(ENABLE_ASAN)
   endif()
   add_compile_options(-fsanitize=address,undefined)
   add_link_options(-fsanitize=address,undefined)
+elseif(ENABLE_LSAN)
+  if(NOT (CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR CMAKE_CXX_COMPILER_ID MATCHES
+                                                   "AppleClang"))
+    message(FATAL_ERROR "ENABLE_LSAN requires Clang toolchain.")
+  endif()
+  add_compile_options(-fsanitize=leak)
+  add_link_options(-fsanitize=leak)
 else()
   add_compile_options("$<$<NOT:$<CONFIG:Debug>>:-U_FORTIFY_SOURCE>")
   add_compile_options("$<$<NOT:$<CONFIG:Debug>>:-D_FORTIFY_SOURCE=3>")
 endif()
 
-if(NOT ENABLE_TSAN AND NOT ENABLE_ASAN)
+if(NOT ENABLE_TSAN AND NOT ENABLE_ASAN AND NOT ENABLE_LSAN)
   check_cxx_compiler_flag("-ftrivial-auto-var-init=zero"
                           HAS_TRIVIAL_AUTO_VAR_INIT_ZERO)
   if(HAS_TRIVIAL_AUTO_VAR_INIT_ZERO)
