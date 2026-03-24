@@ -23,9 +23,9 @@
 
 #include "config.h"
 #include "reflect.h"
-#include "crypto_util.h"
+#include "tls/crypto_util.h"
+#include "tls/server_name.h"
 #include "mux_protocol.h"
-#include "reality_messages.h"
 
 namespace reflect
 {
@@ -207,7 +207,7 @@ constexpr std::uint32_t kHandshakeRecordsLimitMax = 256;
     {
         return std::unexpected(make_config_error(path, "must be even-length hex when provided"));
     }
-    auto bytes = reality::crypto_util::hex_to_bytes(hex);
+    auto bytes = ::tls::crypto_util::hex_to_bytes(hex);
     if (bytes.empty())
     {
         return std::unexpected(make_config_error(path, "must be valid hex when provided"));
@@ -292,7 +292,7 @@ constexpr std::uint32_t kHandshakeRecordsLimitMax = 256;
     {
         return std::unexpected(make_config_error("/reality/sni", "must be non-empty after normalization when provided"));
     }
-    if (!reality.sni.empty() && !reality::valid_sni_hostname(reality.sni))
+    if (!reality.sni.empty() && !::tls::valid_sni_hostname(reality.sni))
     {
         return std::unexpected(make_config_error("/reality/sni", "must be a valid ascii hostname when provided"));
     }
@@ -587,16 +587,16 @@ std::string dump_default_config()
         OPENSSL_cleanse(public_key, sizeof(public_key));
         OPENSSL_cleanse(short_id, sizeof(short_id));
     };
-    if (reality::crypto_util::generate_x25519_keypair(public_key, private_key))
+    if (::tls::crypto_util::generate_x25519_keypair(public_key, private_key))
     {
-        cfg.reality.private_key = reality::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(private_key, private_key + 32));
-        cfg.reality.public_key = reality::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(public_key, public_key + 32));
+        cfg.reality.private_key = ::tls::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(private_key, private_key + 32));
+        cfg.reality.public_key = ::tls::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(public_key, public_key + 32));
     }
     if (RAND_bytes(short_id, sizeof(short_id)) != 1)
     {
         std::memcpy(short_id, private_key, sizeof(short_id));
     }
-    cfg.reality.short_id = reality::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(short_id, short_id + sizeof(short_id)));
+    cfg.reality.short_id = ::tls::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(short_id, short_id + sizeof(short_id)));
     wipe_keys();
     return dump_config(cfg);
 }
