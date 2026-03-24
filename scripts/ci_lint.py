@@ -5,6 +5,7 @@ import json
 import os
 import pathlib
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -128,6 +129,47 @@ def run_git_clang_format(repo_root, base_sha, files):
     run_checked(args, repo_root)
 
 
+def collect_compile_db_include_args(repo_root):
+    compile_commands_path = repo_root / "build" / "compile_commands.json"
+    if not compile_commands_path.is_file():
+        return []
+
+    try:
+        entries = json.loads(compile_commands_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+
+    include_args = []
+    seen = set()
+    for entry in entries:
+        command = entry.get("command", "")
+        if not command:
+            continue
+
+        try:
+            parts = shlex.split(command)
+        except ValueError:
+            continue
+
+        idx = 0
+        while idx < len(parts):
+            part = parts[idx]
+            include_arg = None
+            if part == "-I" or part == "-isystem":
+                if idx + 1 < len(parts):
+                    include_arg = f"{part}{parts[idx + 1]}"
+                    idx += 1
+            elif part.startswith("-I") or part.startswith("-isystem"):
+                include_arg = part
+
+            if include_arg is not None and include_arg not in seen:
+                seen.add(include_arg)
+                include_args.append(f"--extra-arg-before={include_arg}")
+            idx += 1
+
+    return include_args
+
+
 def run_clang_tidy(repo_root, base_sha, head_sha, files):
     clang_tidy = pick_clang_tidy()
 
@@ -136,6 +178,7 @@ def run_clang_tidy(repo_root, base_sha, head_sha, files):
         f"--extra-arg-before=-I{repo_root_str}",
         f"--extra-arg-before=-I{repo_root_str}/third/rapidjson/include",
         f"--extra-arg-before=-I{repo_root_str}/third/spdlog/include",
+        *collect_compile_db_include_args(repo_root),
         "--extra-arg=-std=c++23",
         "-warnings-as-errors=*",
     ]
