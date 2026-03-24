@@ -23,7 +23,8 @@
 #include "log_context.h"
 #include "mux_protocol.h"
 #include "mux_dispatcher.h"
-#include "reality_engine.h"
+#include "reality/session/session.h"
+#include "reality/session/engine.h"
 #include "mux_stream_interface.h"
 
 namespace mux
@@ -36,7 +37,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
    public:
     mux_connection(boost::asio::ip::tcp::socket socket,
                    boost::asio::io_context& io_context,
-                   reality_engine engine,
+                   reality::reality_session session,
                    const config& cfg,
                    task_group& group,
                    std::uint32_t conn_id,
@@ -54,6 +55,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
 
    public:
     [[nodiscard]] bool is_active() const;
+    boost::asio::awaitable<void> async_wait_stopped();
     std::shared_ptr<mux_stream> create_stream();
     void register_stream(const std::shared_ptr<mux_stream>& stream);
     void close_and_remove_stream(const std::shared_ptr<mux_stream>& stream);
@@ -106,7 +108,9 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     std::mutex write_limit_mutex_;
     std::unordered_map<std::uint32_t, std::uint64_t> write_pending_bytes_by_stream_;
     using channel_type = boost::asio::experimental::concurrent_channel<void(boost::system::error_code, mux_frame)>;
+    using stop_channel_type = boost::asio::experimental::concurrent_channel<void(boost::system::error_code)>;
     std::unique_ptr<channel_type> write_channel_;
+    std::unique_ptr<stop_channel_type> stop_channel_;
     std::unordered_map<uint32_t, std::shared_ptr<mux_stream>> streams_;
 };
 
