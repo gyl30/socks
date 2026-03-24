@@ -171,7 +171,7 @@ boost::asio::awaitable<bool> tcp_socks_session::connect_backend(const std::share
 
     const auto rep = backend->suggested_socks_rep(ec);
     LOG_CTX_WARN(ctx_,
-                 "{} connect failed {} {} via {} error={} rep={}",
+                 "{} connect failed {} {} via {} error {} rep {}",
                  log_event::kConnInit,
                  host,
                  port,

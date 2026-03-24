@@ -3,8 +3,8 @@
 
 #include <utility>
 
-#include <boost/asio/io_context.hpp>
 #include <boost/asio/post.hpp>
+#include <boost/asio/io_context.hpp>
 
 namespace mux::detail
 {

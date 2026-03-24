@@ -12,16 +12,16 @@
 #include <optional>
 
 #include <openssl/types.h>
-#include <boost/circular_buffer.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/awaitable.hpp>
+#include <boost/circular_buffer.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/system/error_code.hpp>
 
 #include "transcript.h"
 #include "log_context.h"
-#include "cipher_context.h"
 #include "site_material.h"
+#include "cipher_context.h"
 #include "reality_fingerprint.h"
 
 namespace reality
