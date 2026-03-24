@@ -1,15 +1,16 @@
 #ifndef MUX_CONNECTION_H
 #define MUX_CONNECTION_H
 
-#include <atomic>
-#include <functional>
-#include <memory>
 #include <mutex>
+#include <atomic>
+#include <memory>
 #include <string>
 #include <vector>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <unordered_map>
+
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/io_context.hpp>

@@ -1,7 +1,6 @@
 #ifndef REALITY_ENGINE_H
 #define REALITY_ENGINE_H
 
-#include <boost/asio/awaitable.hpp>
 #include <span>
 #include <memory>
 #include <vector>
@@ -11,6 +10,7 @@
 #include <functional>
 
 #include <openssl/types.h>
+#include <boost/asio/awaitable.hpp>
 #include <boost/asio/streambuf.hpp>
 #include <boost/system/error_code.hpp>
 

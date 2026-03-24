@@ -6,8 +6,8 @@
 #include <cstdint>
 #include <optional>
 
-#include "lru_cache_sharded.h"
 #include "site_material.h"
+#include "lru_cache_sharded.h"
 
 namespace reality
 {

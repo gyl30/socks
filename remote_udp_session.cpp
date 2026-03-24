@@ -293,25 +293,25 @@ boost::asio::awaitable<void> remote_udp_session::on_frame(const mux_frame& frame
     if (!socks_codec::decode_udp_header(frame.payload.data(), frame.payload.size(), header))
     {
         ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
-        LOG_CTX_WARN(ctx_, "{} stage=decode_header error=invalid_udp_header", log_event::kMux);
+        LOG_CTX_WARN(ctx_, "{} stage decode_header error invalid_udp_header", log_event::kMux);
         co_return;
     }
     if (header.frag != 0x00)
     {
         ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
-        LOG_CTX_WARN(ctx_, "{} stage=decode_header error=unsupported_frag frag={}", log_event::kMux, header.frag);
+        LOG_CTX_WARN(ctx_, "{} stage decode_header error unsupported_frag frag {}", log_event::kMux, header.frag);
         co_return;
     }
     if (header.addr.empty())
     {
         ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
-        LOG_CTX_WARN(ctx_, "{} stage=decode_header error=empty_target_host", log_event::kMux);
+        LOG_CTX_WARN(ctx_, "{} stage decode_header error empty_target_host", log_event::kMux);
         co_return;
     }
     if (header.port == 0)
     {
         ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
-        LOG_CTX_WARN(ctx_, "{} stage=decode_header error=invalid_target_port", log_event::kMux);
+        LOG_CTX_WARN(ctx_, "{} stage decode_header error invalid_target_port", log_event::kMux);
         co_return;
     }
 
@@ -319,7 +319,7 @@ boost::asio::awaitable<void> remote_udp_session::on_frame(const mux_frame& frame
     {
         ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
         LOG_CTX_WARN(ctx_,
-                     "{} stage=decode_header error=invalid_header_len header_len={} packet_len={}",
+                     "{} stage decode_header error invalid_header_len header_len {} packet_len {}",
                      log_event::kMux,
                      header.header_len,
                      frame.payload.size());
@@ -344,7 +344,7 @@ boost::asio::awaitable<void> remote_udp_session::on_frame(const mux_frame& frame
                                        boost::asio::redirect_error(boost::asio::use_awaitable, ec));
     if (ec)
     {
-        LOG_CTX_WARN(ctx_, "{} stage=send target={}:{} error={}", log_event::kMux, target_ep.address().to_string(), target_ep.port(), ec.message());
+        LOG_CTX_WARN(ctx_, "{} stage send target {}:{} error {}", log_event::kMux, target_ep.address().to_string(), target_ep.port(), ec.message());
         co_return;
     }
     last_activity_time_ms_ = timeout_io::now_ms();
@@ -464,7 +464,7 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> remote_udp_session::resol
         {
             stats.inc_remote_udp_session_resolve_errors();
         }
-        LOG_CTX_WARN(ctx_, "{} stage=resolve target={}:{} error={}", log_event::kMux, host, port, ec.message());
+        LOG_CTX_WARN(ctx_, "{} stage resolve target {}:{} error {}", log_event::kMux, host, port, ec.message());
         resolved_targets_.put(key, endpoint_cache_entry{{}, now_ms + kUdpNegativeCacheTtlMs, ec, true});
         co_return boost::asio::ip::udp::endpoint{};
     }
@@ -472,7 +472,7 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> remote_udp_session::resol
     {
         ec = boost::asio::error::host_not_found;
         statistics::instance().inc_remote_udp_session_resolve_errors();
-        LOG_CTX_WARN(ctx_, "{} stage=resolve target={}:{} error=empty_result", log_event::kMux, host, port);
+        LOG_CTX_WARN(ctx_, "{} stage resolve target {}:{} error empty_result", log_event::kMux, host, port);
         resolved_targets_.put(key, endpoint_cache_entry{{}, now_ms + kUdpNegativeCacheTtlMs, ec, true});
         co_return boost::asio::ip::udp::endpoint{};
     }
@@ -483,7 +483,7 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> remote_udp_session::resol
     {
         ec = local_ep_ec;
         statistics::instance().inc_remote_udp_session_resolve_errors();
-        LOG_CTX_WARN(ctx_, "{} stage=resolve target={}:{} error=local_endpoint_failed", log_event::kMux, host, port);
+        LOG_CTX_WARN(ctx_, "{} stage resolve target {}:{} error local_endpoint_failed", log_event::kMux, host, port);
         resolved_targets_.put(key, endpoint_cache_entry{{}, now_ms + kUdpNegativeCacheTtlMs, ec, true});
         co_return boost::asio::ip::udp::endpoint{};
     }
@@ -505,7 +505,7 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> remote_udp_session::resol
     {
         ec = boost::asio::error::address_family_not_supported;
         statistics::instance().inc_remote_udp_session_resolve_errors();
-        LOG_CTX_WARN(ctx_, "{} stage=resolve target={}:{} error=no_compatible_endpoint", log_event::kMux, host, port);
+        LOG_CTX_WARN(ctx_, "{} stage resolve target {}:{} error no_compatible_endpoint", log_event::kMux, host, port);
         resolved_targets_.put(key, endpoint_cache_entry{{}, now_ms + kUdpNegativeCacheTtlMs, ec, true});
         co_return boost::asio::ip::udp::endpoint{};
     }
