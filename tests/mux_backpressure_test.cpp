@@ -63,7 +63,7 @@ struct fixture
         conn = std::make_shared<mux::mux_connection>(std::move(socket), io, std::move(engine), cfg, group, 1, "mux-backpressure-test");
     }
 
-    [[nodiscard]] std::uint64_t connection_budget() const { return std::max<std::uint64_t>(1ULL, cfg.limits.max_buffer); }
+    [[nodiscard]] static std::uint64_t connection_budget() { return kTestMaxBuffer; }
 };
 
 [[noreturn]] void fail(const std::string& message)

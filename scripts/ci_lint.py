@@ -133,6 +133,7 @@ def run_clang_tidy(repo_root, base_sha, head_sha, files):
 
     repo_root_str = str(repo_root)
     extra_args = [
+        f"--extra-arg-before=-I{repo_root_str}",
         f"--extra-arg-before=-I{repo_root_str}/third/rapidjson/include",
         f"--extra-arg-before=-I{repo_root_str}/third/spdlog/include",
         "--extra-arg=-std=c++23",
