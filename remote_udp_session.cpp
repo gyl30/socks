@@ -252,10 +252,11 @@ boost::asio::awaitable<void> remote_udp_session::mux_to_udp()
         const auto data_frame = co_await stream_->async_read(read_timeout, ec);
         if (ec)
         {
-            if (ec != boost::asio::error::timed_out)
+            if (ec == boost::asio::error::timed_out)
             {
-                update_stream_close_command(stream_close_command_, kNoStreamControl);
+                continue;
             }
+            update_stream_close_command(stream_close_command_, kNoStreamControl);
             break;
         }
         if (data_frame.h.command == mux::kCmdRst || data_frame.h.command == mux::kCmdFin)
