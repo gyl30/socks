@@ -1591,10 +1591,13 @@ boost::asio::awaitable<void> remote_server::accept_loop()
         (void)ec;
         const std::uint32_t conn_id = next_conn_id_++;
         stats.inc_active_connections();
-        auto active_guard = make_active_connection_guard();
         boost::asio::co_spawn(
             io,
-            [this, self, io = &io, s, conn_id, active_guard]() { return handle(*io, s, conn_id); },
+            [this, io = &io, s, conn_id]() -> boost::asio::awaitable<void>
+            {
+                [[maybe_unused]] const auto active_guard = make_active_connection_guard();
+                co_await handle(*io, s, conn_id);
+            },
             io_group.adapt(boost::asio::detached));
     }
     LOG_INFO("accept loop exited");
