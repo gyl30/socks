@@ -18,7 +18,13 @@ struct sockaddr_storage;
 namespace mux::net
 {
 
-void set_socket_mark(int fd, std::uint32_t mark, boost::system::error_code& ec);
+#ifdef _WIN32
+using socket_handle_t = std::uintptr_t;
+#else
+using socket_handle_t = int;
+#endif
+
+void set_socket_mark(socket_handle_t fd, std::uint32_t mark, boost::system::error_code& ec);
 
 void set_socket_transparent_v4(int fd, boost::system::error_code& ec);
 
