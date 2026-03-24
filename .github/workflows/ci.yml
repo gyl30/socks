@@ -87,6 +87,7 @@ jobs:
                 bzip2 \
                 tar \
                 wget \
+                gnupg \
                 perl \
                 make \
                 cmake \
@@ -103,6 +104,12 @@ jobs:
                 libclang-rt-18-dev \
                 git \
                 python3
+
+              mkdir -p /usr/share/keyrings
+              wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --dearmor > /usr/share/keyrings/llvm-archive-keyring.gpg
+              echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] http://apt.llvm.org/noble/ llvm-toolchain-noble-22 main" >/etc/apt/sources.list.d/llvm.list
+              apt-get update
+              apt-get install -y --no-install-recommends clang-tidy-22
 
               mkdir -p /workspace/.cache/boost
               if [ ! -d "/workspace/.cache/boost/${BOOST_SRC_DIR}" ]; then
