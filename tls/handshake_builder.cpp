@@ -4,7 +4,6 @@
 #include <string>
 #include <vector>
 #include <cstddef>
-#include <cstdint>
 #include <optional>
 #include <algorithm>
 
@@ -36,10 +35,7 @@ void push_u24(std::vector<std::uint8_t>& buf, const std::uint32_t val)
     buf.push_back(static_cast<std::uint8_t>(val & 0xff));
 }
 
-void push_bytes(std::vector<std::uint8_t>& buf, const std::vector<std::uint8_t>& data)
-{
-    buf.insert(buf.end(), data.begin(), data.end());
-}
+void push_bytes(std::vector<std::uint8_t>& buf, const std::vector<std::uint8_t>& data) { buf.insert(buf.end(), data.begin(), data.end()); }
 
 void push_vector_u8(std::vector<std::uint8_t>& buf, const std::vector<std::uint8_t>& data)
 {
@@ -109,8 +105,7 @@ std::vector<std::uint8_t> construct_server_hello(const std::vector<std::uint8_t>
     std::vector<std::uint8_t> extensions;
     bool emitted_supported_versions = false;
     bool emitted_key_share = false;
-    const auto append_extension =
-        [&](const std::uint16_t ext_type)
+    const auto append_extension = [&](const std::uint16_t ext_type)
     {
         if (ext_type == ::tls::consts::ext::kSupportedVersions && !emitted_supported_versions)
         {
@@ -178,15 +173,13 @@ std::vector<std::uint8_t> construct_encrypted_extensions(const std::string& alpn
         std::uint16_t resolved_padding_len = 0;
         if (padding_len.has_value())
         {
-            resolved_padding_len = static_cast<std::uint16_t>(
-                std::min<std::size_t>(static_cast<std::size_t>(*padding_len), padding_budget));
+            resolved_padding_len = static_cast<std::uint16_t>(std::min<std::size_t>(static_cast<std::size_t>(*padding_len), padding_budget));
         }
         else
         {
             static thread_local std::mt19937 gen(std::random_device{}());
             std::uniform_int_distribution<std::uint16_t> dist(10, 100);
-            resolved_padding_len = static_cast<std::uint16_t>(
-                std::min<std::size_t>(static_cast<std::size_t>(dist(gen)), padding_budget));
+            resolved_padding_len = static_cast<std::uint16_t>(std::min<std::size_t>(static_cast<std::size_t>(dist(gen)), padding_budget));
         }
 
         if (padding_budget > 0)
@@ -202,8 +195,7 @@ std::vector<std::uint8_t> construct_encrypted_extensions(const std::string& alpn
 
     bool emitted_alpn = false;
     bool emitted_padding = false;
-    const auto append_extension =
-        [&](const std::uint16_t ext_type)
+    const auto append_extension = [&](const std::uint16_t ext_type)
     {
         if (ext_type == ::tls::consts::ext::kAlpn && !emitted_alpn && !alpn_ext.empty())
         {

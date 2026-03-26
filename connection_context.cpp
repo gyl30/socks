@@ -1,127 +1,76 @@
 #include <chrono>
-#include <cstdio>
 #include <random>
 #include <string>
-#include <cstdint>
-#include <charconv>
-#include <system_error>
+#include <utility>
+
+#include <spdlog/fmt/bundled/format.h>
 
 #include "connection_context.h"
 
 namespace mux
 {
-namespace
-{
-
-template <typename IntT>
-void append_int(std::string& out, const IntT value)
-{
-    char buf[32];
-    const auto [ptr, ec] = std::to_chars(buf, buf + sizeof(buf), value);
-    if (ec == std::errc())
-    {
-        out.append(buf, ptr);
-    }
-}
-
-std::string fixed_hex_16(std::uint64_t value)
-{
-    char buf[16];
-    const auto [ptr, ec] = std::to_chars(buf, buf + sizeof(buf), value, 16);
-    if (ec != std::errc())
-    {
-        return "0000000000000000";
-    }
-
-    const auto len = static_cast<std::size_t>(ptr - buf);
-    std::string out;
-    out.reserve(16);
-    out.append(16 - len, '0');
-    out.append(buf, len);
-    return out;
-}
-
-}    // namespace
-
 std::string generate_trace_id()
 {
     static thread_local std::mt19937_64 gen(std::random_device{}());
     std::uniform_int_distribution<std::uint64_t> dist;
-    return fixed_hex_16(dist(gen));
+    return fmt::format("{:016x}", dist(gen));
 }
 
 std::string connection_context::prefix() const
 {
-    std::string out;
-    out.reserve(trace_id_.size() + 32);
     if (!trace_id_.empty())
     {
-        out.push_back('t');
-        out += trace_id_;
-        out.push_back(' ');
+        if (stream_id_ > 0)
+        {
+            return fmt::format("t{} c{}_s{}", trace_id_, conn_id_, stream_id_);
+        }
+        return fmt::format("t{} c{}", trace_id_, conn_id_);
     }
-    out.push_back('c');
-    append_int(out, conn_id_);
     if (stream_id_ > 0)
     {
-        out += "_s";
-        append_int(out, stream_id_);
+        return fmt::format("c{}_s{}", conn_id_, stream_id_);
     }
-    return out;
+    return fmt::format("c{}", conn_id_);
 }
 
-std::string connection_context::connection_info() const
-{
-    std::string out;
-    out.reserve(local_addr_.size() + remote_addr_.size() + 32);
-    out += local_addr_;
-    out.push_back('_');
-    append_int(out, local_port_);
-    out.push_back('_');
-    out += remote_addr_;
-    out.push_back('_');
-    append_int(out, remote_port_);
-    return out;
-}
+std::string connection_context::connection_info() const { return fmt::format("{}_{}_{}_{}", local_.addr, local_.port, remote_.addr, remote_.port); }
 
 double connection_context::duration_seconds() const
 {
     const auto now = std::chrono::steady_clock::now();
-    const auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - start_time_);
+    const auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - stats_.start_time);
     return static_cast<double>(duration.count()) / 1000.0;
 }
 
 std::string connection_context::stats_summary() const
 {
-    char duration_buf[32];
-    std::snprintf(duration_buf, sizeof(duration_buf), "%.2f", duration_seconds());
-
-    std::string out;
-    out.reserve(96);
-    out += "tx ";
-    append_int(out, tx_bytes_);
-    out += " rx ";
-    append_int(out, rx_bytes_);
-    out += " duration ";
-    out += duration_buf;
-    out.push_back('s');
-    return out;
+    return fmt::format("tx {} rx {} duration {:.2f}s", stats_.tx_bytes, stats_.rx_bytes, duration_seconds());
 }
 
 connection_context connection_context::with_stream(const std::uint32_t sid) const
 {
     connection_context ctx = *this;
     ctx.stream_id_ = sid;
-    ctx.tx_bytes_ = 0;
-    ctx.rx_bytes_ = 0;
-    ctx.start_time_ = std::chrono::steady_clock::now();
+    ctx.stats_ = {};
     return ctx;
+}
+
+void connection_context::set_local_endpoint(std::string addr, const std::uint16_t port)
+{
+    local_.addr = std::move(addr);
+    local_.port = port;
+}
+
+void connection_context::set_remote_endpoint(std::string addr, const std::uint16_t port)
+{
+    remote_.addr = std::move(addr);
+    remote_.port = port;
 }
 
 void connection_context::set_target(const std::string& host, const std::uint16_t port)
 {
-    target_host_ = host;
-    target_port_ = port;
+    target_.host = host;
+    target_.port = port;
 }
 
 void connection_context::new_trace_id() { trace_id_ = generate_trace_id(); }

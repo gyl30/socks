@@ -1,41 +1,21 @@
-#include <array>
-#include <ctime>
-#include <chrono>
 #include <memory>
 #include <string>
 #include <vector>
-#include <cstdint>
+#include <chrono>
 #include <utility>
-#include <cctype>
-#include <expected>
+#include <cstddef>
+#include <cstdlib>
+#include <iterator>
 #include <optional>
-#include <algorithm>
 
-#include <boost/asio/error.hpp>
-#include <boost/system/errc.hpp>
-#include <boost/asio/ip/tcp.hpp>
-#include <boost/asio/as_tuple.hpp>
-#include <boost/asio/co_spawn.hpp>
-#include <boost/asio/detached.hpp>
+#include <boost/asio.hpp>
 #include <boost/algorithm/hex.hpp>
 #include <boost/asio/awaitable.hpp>
-#include <boost/asio/io_context.hpp>
-#include <boost/asio/ip/address.hpp>
-#include <boost/asio/post.hpp>
-#include <boost/asio/socket_base.hpp>
-#include <boost/system/error_code.hpp>
-#include <boost/asio/steady_timer.hpp>
-#include <boost/asio/ip/address_v4.hpp>
-#include <boost/asio/ip/address_v6.hpp>
-#include <boost/asio/ip/v6_only.hpp>
 #include <boost/asio/use_awaitable.hpp>
-#include <boost/system/detail/errc.hpp>
+#include <boost/asio/experimental/channel_error.hpp>
 
 extern "C"
 {
-#include <openssl/evp.h>
-#include <openssl/rand.h>
-#include <openssl/types.h>
 #include <openssl/crypto.h>
 }
 
@@ -43,22 +23,21 @@ extern "C"
 #include "config.h"
 #include "protocol.h"
 #include "mux_codec.h"
-#include "constants.h"
-#include "connection_tracker.h"
-#include "tls/core.h"
-#include "tls/crypto_util.h"
-#include "connection_context.h"
+#include "mux_protocol.h"
 #include "context_pool.h"
 #include "replay_cache.h"
 #include "remote_server.h"
+#include "reality/types.h"
+#include "mux_connection.h"
 #include "remote_session.h"
-#include "tls/ch_parser.h"
-#include "tls/record_layer.h"
+#include "tls/crypto_util.h"
+#include "connection_context.h"
+#include "connection_tracker.h"
 #include "remote_udp_session.h"
-#include "tls/record_validation.h"
-#include "reality/handshake/auth.h"
 #include "reality/session/session.h"
 #include "reality/policy/fallback_gate.h"
+#include "reality/policy/fallback_executor.h"
+#include "reality/material/material_provider.h"
 #include "reality/handshake/server_handshaker.h"
 
 namespace mux
@@ -66,22 +45,17 @@ namespace mux
 
 namespace
 {
-
-std::shared_ptr<void> make_active_connection_guard()
+[[nodiscard]] reality::fallback_gate::dependencies make_fallback_gate_dependencies()
 {
-    return {new int(0),
-            [](void* ptr)
-            {
-                delete static_cast<int*>(ptr);
-                connection_tracker::instance().release();
-            }};
+    reality::fallback_gate::dependencies deps;
+    return deps;
 }
 
-void close_tcp_socket(boost::asio::ip::tcp::socket& socket)
+void close_tcp_socket(boost::asio::ip::tcp::socket& socket)    // NOLINT(misc-const-correctness)
 {
     boost::system::error_code ec;
-    ec = socket.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
     ec = socket.close(ec);
+    (void)ec;
 }
 
 connection_context build_connection_context(const std::shared_ptr<boost::asio::ip::tcp::socket>& s, std::uint32_t conn_id)
@@ -95,14 +69,12 @@ connection_context build_connection_context(const std::shared_ptr<boost::asio::i
     if (local_ep_ec)
     {
         LOG_CTX_WARN(ctx, "{} query local endpoint failed {}", log_event::kConnInit, local_ep_ec.message());
-        ctx.local_addr("unknown");
-        ctx.local_port(0);
+        ctx.set_local_endpoint("unknown", 0);
     }
     else
     {
         const auto local_addr = socks_codec::normalize_ip_address(local_ep.address());
-        ctx.local_addr(local_addr.to_string());
-        ctx.local_port(local_ep.port());
+        ctx.set_local_endpoint(local_addr.to_string(), local_ep.port());
     }
 
     boost::system::error_code remote_ep_ec;
@@ -110,14 +82,12 @@ connection_context build_connection_context(const std::shared_ptr<boost::asio::i
     if (remote_ep_ec)
     {
         LOG_CTX_WARN(ctx, "{} query remote endpoint failed {}", log_event::kConnInit, remote_ep_ec.message());
-        ctx.remote_addr("unknown");
-        ctx.remote_port(0);
+        ctx.set_remote_endpoint("unknown", 0);
     }
     else
     {
         const auto remote_addr = socks_codec::normalize_ip_address(remote_ep.address());
-        ctx.remote_addr(remote_addr.to_string());
-        ctx.remote_port(remote_ep.port());
+        ctx.set_remote_endpoint(remote_addr.to_string(), remote_ep.port());
     }
     return ctx;
 }
@@ -140,7 +110,7 @@ std::optional<fallback_target> resolve_fallback_target(const config& cfg)
 
 }    // namespace
 
-boost::asio::awaitable<void> remote_server::fallback_to_target_site(reality::fallback_request request, const char* reason)
+boost::asio::awaitable<void> remote_server::fallback_to_target_site(reality::fallback_request&& request, const char* reason)
 {
     auto& ctx = request.ctx;
     const auto target = resolve_fallback_target(cfg_);
@@ -163,10 +133,10 @@ boost::asio::awaitable<void> remote_server::fallback_to_target_site(reality::fal
 remote_server::remote_server(io_context_pool& pool, const config& cfg)
     : cfg_(cfg),
       pool_(pool),
-      io_context_(pool.get_io_context()),
+      owner_worker_(pool.get_io_worker()),
       replay_cache_(static_cast<std::size_t>(cfg.reality.replay_cache_max_entries)),
-      fallback_gate_({.opts = {}, .now_seconds = {}}),
-      fallback_executor_({.io_context = io_context_, .cfg = cfg, .opts = {}})
+      fallback_gate_(make_fallback_gate_dependencies()),
+      fallback_executor_(owner_worker_.io_context, cfg)
 {
     private_key_ = ::tls::crypto_util::hex_to_bytes(cfg.reality.private_key);
     if (private_key_.size() != 32)
@@ -219,7 +189,16 @@ void remote_server::start()
         std::exit(EXIT_FAILURE);
     }
 
+    site_material_.reset();
     boost::system::error_code ec;
+    auto loaded_material = reality::load_site_material(cfg_, ec);
+    if (ec)
+    {
+        LOG_ERROR("remote server failed to load reality site material {}", ec.message());
+        std::exit(EXIT_FAILURE);
+    }
+    site_material_ = std::move(loaded_material);
+
     const auto addr = boost::asio::ip::make_address(cfg_.inbound.host, ec);
     if (ec)
     {
@@ -262,19 +241,9 @@ void remote_server::start()
         std::exit(EXIT_FAILURE);
     }
 
-    site_material_.reset();
-    auto loaded_material = reality::load_site_material(cfg_, ec);
-    if (ec)
-    {
-        LOG_ERROR("remote server failed to load reality site material {}", ec.message());
-        std::exit(EXIT_FAILURE);
-    }
-    site_material_ = std::move(loaded_material);
-
     LOG_INFO("remote server listening on {}:{}", cfg_.inbound.host, cfg_.inbound.port);
 
-    auto& owner_group = pool_.get_task_group(io_context_);
-    boost::asio::co_spawn(io_context_, [self = shared_from_this()] { return self->accept_loop(); }, owner_group.adapt(boost::asio::detached));
+    owner_worker_.group.spawn([self = shared_from_this()]() { return self->accept_loop(); });
 }
 
 void remote_server::stop()
@@ -284,33 +253,26 @@ void remote_server::stop()
         return;
     }
 
-    boost::asio::post(io_context_,
+    boost::asio::post(owner_worker_.io_context,
                       [self = shared_from_this()]()
                       {
                           boost::system::error_code ec;
-                          self->acceptor_.close(ec);
+                          ec = self->acceptor_.close(ec);
                           if (ec && ec != boost::asio::error::bad_descriptor)
                           {
                               LOG_ERROR("remote acceptor close error {}", ec.message());
                           }
-                          self->pool_.emit_all(boost::asio::cancellation_type::all);
                       });
-}
-
-boost::asio::awaitable<void> remote_server::wait_stopped()
-{
-    co_await pool_.async_wait_all();
 }
 
 boost::asio::awaitable<void> remote_server::accept_loop()
 {
     auto self = shared_from_this();
-    boost::asio::steady_timer retry_timer(io_context_);
+    boost::asio::steady_timer retry_timer(owner_worker_.io_context);
     while (true)
     {
-        auto& io = pool_.get_io_context();
-        auto& io_group = pool_.get_task_group(io);
-        const auto s = std::make_shared<boost::asio::ip::tcp::socket>(io);
+        auto& worker = pool_.get_io_worker();
+        const auto s = std::make_shared<boost::asio::ip::tcp::socket>(worker.io_context);
         const auto [accept_ec] = co_await acceptor_.async_accept(*s, boost::asio::as_tuple(boost::asio::use_awaitable));
         if (accept_ec)
         {
@@ -340,22 +302,18 @@ boost::asio::awaitable<void> remote_server::accept_loop()
         ec = s->set_option(boost::asio::ip::tcp::no_delay(true), ec);
         (void)ec;
         const std::uint32_t conn_id = next_conn_id_++;
-        connection_tracker::instance().acquire();
-        boost::asio::co_spawn(
-            io,
-            [self = shared_from_this(), io = &io, s, conn_id]() -> boost::asio::awaitable<void>
+        worker.group.spawn(
+            [self, worker = &worker, s, conn_id]() -> boost::asio::awaitable<void>
             {
-                [[maybe_unused]] const auto active_guard = make_active_connection_guard();
-                co_await self->handle(*io, s, conn_id);
-            },
-            io_group.adapt(boost::asio::detached));
+                const auto active_guard = acquire_active_connection_guard();
+
+                co_await self->handle(*worker, s, conn_id);
+            });
     }
     LOG_INFO("accept loop exited");
 }
 
-boost::asio::awaitable<void> remote_server::handle(boost::asio::io_context& io,
-                                                   std::shared_ptr<boost::asio::ip::tcp::socket> s,
-                                                   std::uint32_t conn_id)
+boost::asio::awaitable<void> remote_server::handle(io_worker& worker, std::shared_ptr<boost::asio::ip::tcp::socket> s, std::uint32_t conn_id)
 {
     reality::server_handshake_context reality_ctx;
     reality_ctx.socket = s.get();
@@ -363,16 +321,17 @@ boost::asio::awaitable<void> remote_server::handle(boost::asio::io_context& io,
     auto& ctx = reality_ctx.ctx;
     LOG_CTX_INFO(ctx, "{} accepted {}", log_event::kConnInit, ctx.connection_info());
     boost::system::error_code ec;
-    reality::server_handshaker handshaker(
-        {.cfg = cfg_,
-         .private_key = private_key_,
-         .short_id_bytes = short_id_bytes_,
-         .replay_cache = replay_cache_,
-         .site_material_ptr = site_material_ ? &*site_material_ : nullptr,
-         .reality_cert_private_key = reality_cert_private_key_,
-         .reality_cert_public_key = reality_cert_public_key_,
-         .reality_cert_template = reality_cert_template_});
-    const auto accept_result = co_await handshaker.accept(reality_ctx, ec);
+    const reality::server_handshaker handshaker({
+        .cfg = cfg_,
+        .private_key = private_key_,
+        .short_id_bytes = short_id_bytes_,
+        .replay_cache = replay_cache_,
+        .site_material_ptr = site_material_ ? &*site_material_ : nullptr,
+        .reality_cert_private_key = reality_cert_private_key_,
+        .reality_cert_public_key = reality_cert_public_key_,
+        .reality_cert_template = reality_cert_template_,
+    });
+    auto accept_result = co_await handshaker.accept(reality_ctx, ec);
     if (ec)
     {
         co_return;
@@ -407,7 +366,7 @@ boost::asio::awaitable<void> remote_server::handle(boost::asio::io_context& io,
         co_return;
     }
     LOG_CTX_INFO(ctx, "{} tunnel starting", log_event::kConnEstablished);
-    auto connection = std::make_shared<mux_connection>(std::move(*s), io, std::move(session), cfg_, pool_.get_task_group(io), conn_id, ctx.trace_id());
+    auto connection = std::make_shared<mux_connection>(std::move(*s), worker, std::move(session), cfg_, conn_id, ctx.trace_id());
     connection->start_accepting_streams();
     connection->start();
     for (;;)
@@ -416,15 +375,14 @@ boost::asio::awaitable<void> remote_server::handle(boost::asio::io_context& io,
         frame = co_await connection->async_receive_syn(ec);
         if (ec)
         {
-            if (ec != boost::asio::error::operation_aborted &&
-                ec != boost::asio::experimental::error::channel_errors::channel_closed &&
+            if (ec != boost::asio::error::operation_aborted && ec != boost::asio::experimental::error::channel_errors::channel_closed &&
                 ec != boost::asio::experimental::error::channel_errors::channel_cancelled)
             {
                 LOG_CTX_WARN(ctx, "{} accept incoming stream failed {}", log_event::kMux, ec.message());
             }
             break;
         }
-        co_await process_stream_request(connection, ctx, std::move(frame));
+        co_await process_stream_request(worker, connection, ctx, std::move(frame));
     }
     if (connection != nullptr)
     {
@@ -445,9 +403,10 @@ static boost::asio::awaitable<void> send_stream_reset(const std::shared_ptr<mux_
     co_await connection->send_async_with_timeout(std::move(frame), kRstSendTimeoutSec, ec);
 }
 
-boost::asio::awaitable<void> remote_server::process_stream_request(std::shared_ptr<mux_connection> connection,
+boost::asio::awaitable<void> remote_server::process_stream_request(io_worker& worker,
+                                                                   std::shared_ptr<mux_connection> connection,
                                                                    const connection_context& ctx,
-                                                                   mux_frame frame)
+                                                                   mux_frame frame) const
 {
     if (connection == nullptr)
     {
@@ -485,9 +444,6 @@ boost::asio::awaitable<void> remote_server::process_stream_request(std::shared_p
         co_return;
     }
 
-    auto& connection_io = connection->io_context();
-    auto& connection_group = pool_.get_task_group(connection_io);
-
     if (syn.socks_cmd == socks::kCmdConnect)
     {
         LOG_CTX_INFO(stream_ctx,
@@ -497,19 +453,15 @@ boost::asio::awaitable<void> remote_server::process_stream_request(std::shared_p
                      syn.addr,
                      syn.port,
                      frame.payload.size());
-        const auto sess = std::make_shared<remote_tcp_session>(connection, frame.h.stream_id, stream_ctx, cfg_);
-        boost::asio::co_spawn(connection_io,
-                              [sess, syn]() mutable -> boost::asio::awaitable<void> { co_await sess->start(syn); },
-                              connection_group.adapt(boost::asio::detached));
+        const auto sess = std::make_shared<remote_tcp_session>(worker.io_context, connection, frame.h.stream_id, stream_ctx, cfg_);
+        worker.group.spawn([sess, syn]() mutable -> boost::asio::awaitable<void> { co_await sess->start(syn); });
         co_return;
     }
     if (syn.socks_cmd == socks::kCmdUdpAssociate)
     {
         LOG_CTX_INFO(stream_ctx, "{} stream {} type udp associate associated via tcp", log_event::kMux, frame.h.stream_id);
-        const auto sess = std::make_shared<remote_udp_session>(connection, frame.h.stream_id, stream_ctx, cfg_);
-        boost::asio::co_spawn(connection_io,
-                              [sess]() mutable -> boost::asio::awaitable<void> { co_await sess->start(); },
-                              connection_group.adapt(boost::asio::detached));
+        const auto sess = std::make_shared<remote_udp_session>(worker.io_context, connection, frame.h.stream_id, stream_ctx, cfg_);
+        worker.group.spawn([sess]() mutable -> boost::asio::awaitable<void> { co_await sess->start(); });
         co_return;
     }
 

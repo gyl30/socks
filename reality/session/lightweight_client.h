@@ -7,12 +7,12 @@
 
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/awaitable.hpp>
-#include <boost/system/error_code.hpp>
-
-#include "reality/session/session.h"
+#include <boost/system/detail/error_code.hpp>
 
 namespace reality
 {
+
+class reality_session;
 
 struct lightweight_http_visit_options
 {
@@ -20,7 +20,7 @@ struct lightweight_http_visit_options
     std::uint32_t write_timeout_sec = 0;
     std::uint32_t read_timeout_sec = 0;
     std::uint32_t max_read_iterations = 8;
-    std::size_t response_capture_limit = 16 * 1024;
+    std::size_t response_capture_limit = 16L * 1024;
     std::size_t response_sufficient_bytes = 512;
 };
 
@@ -35,8 +35,10 @@ struct lightweight_http_visit_result
     std::string error_stage;
 };
 
-[[nodiscard]] boost::asio::awaitable<lightweight_http_visit_result> run_lightweight_http_visit(
-    boost::asio::ip::tcp::socket& socket, reality_session session, const lightweight_http_visit_options& options, boost::system::error_code& ec);
+[[nodiscard]] boost::asio::awaitable<lightweight_http_visit_result> run_lightweight_http_visit(boost::asio::ip::tcp::socket& socket,
+                                                                                               reality_session session,
+                                                                                               const lightweight_http_visit_options& options,
+                                                                                               boost::system::error_code& ec);
 
 }    // namespace reality
 

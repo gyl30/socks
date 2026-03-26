@@ -1,12 +1,9 @@
 #ifndef REALITY_FINGERPRINT_BLUEPRINT_H
 #define REALITY_FINGERPRINT_BLUEPRINT_H
 
-#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
-
-#include "reality/handshake/fingerprint_internal.h"
 
 namespace reality
 {

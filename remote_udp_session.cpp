@@ -1,21 +1,17 @@
+#include <atomic>
 #include <chrono>
 #include <memory>
 #include <string>
 #include <vector>
 #include <cstdint>
 #include <utility>
+#include <algorithm>
 
-#include <boost/asio/error.hpp>
-#include <boost/asio/buffer.hpp>
-#include <boost/asio/ip/udp.hpp>
-#include <boost/asio/as_tuple.hpp>
-#include <boost/asio/dispatch.hpp>
+#include <boost/asio.hpp>
+
 #include <boost/asio/awaitable.hpp>
-#include <boost/asio/io_context.hpp>
-#include <boost/asio/ip/v6_only.hpp>
-#include <boost/system/error_code.hpp>
-#include <boost/asio/ip/address_v6.hpp>
 #include <boost/asio/use_awaitable.hpp>
+#include <boost/asio/redirect_error.hpp>
 #include <boost/asio/experimental/awaitable_operators.hpp>
 
 #include "log.h"
@@ -24,9 +20,11 @@
 #include "mux_codec.h"
 #include "net_utils.h"
 #include "timeout_io.h"
+#include "mux_stream.h"
 #include "scoped_exit.h"
-#include "connection_context.h"
 #include "mux_protocol.h"
+#include "mux_connection.h"
+#include "connection_context.h"
 #include "remote_udp_session.h"
 
 namespace mux
@@ -37,8 +35,8 @@ namespace
 
 constexpr std::uint8_t kNoStreamControl = 0;
 constexpr std::size_t kMaxUdpCacheEntries = 1024;
-constexpr std::uint64_t kUdpCacheTtlMs = 10 * 60 * 1000;
-constexpr std::uint64_t kUdpNegativeCacheTtlMs = 3 * 1000;
+constexpr std::uint64_t kUdpCacheTtlMs = 10UL * 60 * 1000;
+constexpr std::uint64_t kUdpNegativeCacheTtlMs = 3UL * 1000;
 constexpr std::size_t kMaxUdpPayload = 65507;
 
 void update_stream_close_command(std::atomic<std::uint8_t>& stream_close_command, const std::uint8_t next_command)
@@ -66,10 +64,7 @@ void update_stream_close_command(std::atomic<std::uint8_t>& stream_close_command
     }
 }
 
-[[nodiscard]] std::string udp_target_key(const std::string& host, const std::uint16_t port)
-{
-    return host + "|" + std::to_string(port);
-}
+[[nodiscard]] std::string udp_target_key(const std::string& host, const std::uint16_t port) { return host + "|" + std::to_string(port); }
 
 template <typename Cache>
 void evict_expired(Cache& cache, const std::uint64_t now_ms)
@@ -79,16 +74,17 @@ void evict_expired(Cache& cache, const std::uint64_t now_ms)
 
 }    // namespace
 
-remote_udp_session::remote_udp_session(const std::shared_ptr<mux_connection>& connection,
+remote_udp_session::remote_udp_session(boost::asio::io_context& io_context,
+                                       const std::shared_ptr<mux_connection>& connection,
                                        const std::uint32_t id,
                                        const connection_context& ctx,
                                        const config& cfg)
     : id_(id),
       cfg_(cfg),
-      idle_timer_(connection->io_context()),
-      udp_socket_(connection->io_context()),
-      udp_resolver_(connection->io_context()),
-      stream_(std::make_shared<mux_stream>(id, cfg, connection->io_context(), connection)),
+      idle_timer_(io_context),
+      udp_socket_(io_context),
+      udp_resolver_(io_context),
+      stream_(connection != nullptr ? connection->create_incoming_stream(id) : nullptr),
       connection_(connection),
       resolved_targets_(kMaxUdpCacheEntries),
       allowed_reply_peers_(kMaxUdpCacheEntries)
@@ -98,33 +94,19 @@ remote_udp_session::remote_udp_session(const std::shared_ptr<mux_connection>& co
     ctx_.stream_id(id);
     stream_close_command_.store(mux::kCmdFin, std::memory_order_relaxed);
     last_activity_time_ms_ = timeout_io::now_ms();
-    if (connection != nullptr)
-    {
-        connection->register_stream(stream_);
-    }
 }
 
-boost::asio::awaitable<void> remote_udp_session::start()
-{
-    co_await start_impl();
-}
+boost::asio::awaitable<void> remote_udp_session::start() { co_await start_impl(); }
 
 boost::asio::awaitable<void> remote_udp_session::start_impl()
 {
-    DEFER(
-        if (auto connection = connection_.lock(); connection != nullptr && stream_ != nullptr)
-        {
-            connection->close_and_remove_stream(stream_);
-        });
-    DEFER(
-        boost::system::error_code ignore;
-        ignore = udp_socket_.close(ignore);
-        (void)ignore;);
+    DEFER(if (auto connection = connection_.lock(); connection != nullptr && stream_ != nullptr) { connection->close_and_remove_stream(stream_); });
+    DEFER(boost::system::error_code ignore; ignore = udp_socket_.close(ignore); (void)ignore;);
 
     boost::system::error_code ec;
     const auto send_fail_ack = [&](const std::uint8_t rep) -> boost::asio::awaitable<void>
     {
-        ack_payload ack{.socks_rep = rep, .bnd_addr = "0.0.0.0", .bnd_port = 0};
+        const ack_payload ack{.socks_rep = rep, .bnd_addr = "0.0.0.0", .bnd_port = 0};
         std::vector<std::uint8_t> ack_data;
         if (!mux_codec::encode_ack(ack, ack_data))
         {
@@ -157,6 +139,7 @@ boost::asio::awaitable<void> remote_udp_session::start_impl()
             LOG_CTX_WARN(ctx_, "{} bind dual-stack udp failed {} fallback ipv4", log_event::kMux, ec.message());
             boost::system::error_code close_ec;
             close_ec = udp_socket_.close(close_ec);
+            (void)close_ec;
         }
         else
         {
@@ -226,11 +209,7 @@ boost::asio::awaitable<void> remote_udp_session::start_impl()
         co_await stream_->async_write(std::move(close_frame), close_ec);
         if (close_ec)
         {
-            LOG_CTX_WARN(ctx_,
-                         "{} send {} failed {}",
-                         log_event::kMux,
-                         close_command == mux::kCmdRst ? "rst" : "fin",
-                         close_ec.message());
+            LOG_CTX_WARN(ctx_, "{} send {} failed {}", log_event::kMux, close_command == mux::kCmdRst ? "rst" : "fin", close_ec.message());
         }
     }
 
@@ -242,9 +221,7 @@ boost::asio::awaitable<void> remote_udp_session::mux_to_udp()
     boost::system::error_code ec;
     for (;;)
     {
-        const auto read_timeout = (cfg_.timeout.idle == 0)
-                                      ? cfg_.timeout.read
-                                      : std::max(cfg_.timeout.read, cfg_.timeout.idle + 2);
+        const auto read_timeout = (cfg_.timeout.idle == 0) ? cfg_.timeout.read : std::max(cfg_.timeout.read, cfg_.timeout.idle + 2);
         const auto data_frame = co_await stream_->async_read(read_timeout, ec);
         if (ec)
         {
@@ -362,7 +339,14 @@ boost::asio::awaitable<void> remote_udp_session::udp_to_mux()
         auto n = co_await udp_socket_.async_receive_from(boost::asio::buffer(buf), ep, boost::asio::redirect_error(boost::asio::use_awaitable, ec));
         if (ec)
         {
-            LOG_CTX_WARN(ctx_, "{} udp receive error {}", log_event::kMux, ec.message());
+            if (ec == boost::asio::error::operation_aborted || ec == boost::asio::error::bad_descriptor)
+            {
+                LOG_CTX_DEBUG(ctx_, "{} udp receive stopped {}", log_event::kMux, ec.message());
+            }
+            else
+            {
+                LOG_CTX_WARN(ctx_, "{} udp receive error {}", log_event::kMux, ec.message());
+            }
             break;
         }
 
@@ -377,11 +361,8 @@ boost::asio::awaitable<void> remote_udp_session::udp_to_mux()
             {
                 allowed_reply_peers_.erase(normalized_ep);
             }
-            LOG_CTX_WARN(ctx_,
-                         "{} ignore udp packet from unexpected peer {}:{}",
-                         log_event::kMux,
-                         normalized_ep.address().to_string(),
-                         normalized_ep.port());
+            LOG_CTX_WARN(
+                ctx_, "{} ignore udp packet from unexpected peer {}:{}", log_event::kMux, normalized_ep.address().to_string(), normalized_ep.port());
             continue;
         }
         ctx_.add_rx_bytes(n);
@@ -422,8 +403,8 @@ boost::asio::awaitable<void> remote_udp_session::udp_to_mux()
 }
 
 boost::asio::awaitable<boost::asio::ip::udp::endpoint> remote_udp_session::resolve_target_endpoint(const std::string& host,
-                                                                                                    const std::uint16_t port,
-                                                                                                    boost::system::error_code& ec)
+                                                                                                   const std::uint16_t port,
+                                                                                                   boost::system::error_code& ec)
 {
     ec.clear();
     const auto key = udp_target_key(host, port);
@@ -452,14 +433,14 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> remote_udp_session::resol
     if (ec)
     {
         LOG_CTX_WARN(ctx_, "{} stage resolve target {}:{} error {}", log_event::kMux, host, port, ec.message());
-        resolved_targets_.put(key, endpoint_cache_entry{{}, now_ms + kUdpNegativeCacheTtlMs, ec, true});
+        resolved_targets_.put(key, endpoint_cache_entry{.endpoint={}, .expires_at=now_ms + kUdpNegativeCacheTtlMs, .last_error=ec, .negative=true});
         co_return boost::asio::ip::udp::endpoint{};
     }
     if (res.begin() == res.end())
     {
         ec = boost::asio::error::host_not_found;
         LOG_CTX_WARN(ctx_, "{} stage resolve target {}:{} error empty_result", log_event::kMux, host, port);
-        resolved_targets_.put(key, endpoint_cache_entry{{}, now_ms + kUdpNegativeCacheTtlMs, ec, true});
+        resolved_targets_.put(key, endpoint_cache_entry{.endpoint={}, .expires_at=now_ms + kUdpNegativeCacheTtlMs, .last_error=ec, .negative=true});
         co_return boost::asio::ip::udp::endpoint{};
     }
 
@@ -469,7 +450,7 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> remote_udp_session::resol
     {
         ec = local_ep_ec;
         LOG_CTX_WARN(ctx_, "{} stage resolve target {}:{} error local_endpoint_failed", log_event::kMux, host, port);
-        resolved_targets_.put(key, endpoint_cache_entry{{}, now_ms + kUdpNegativeCacheTtlMs, ec, true});
+        resolved_targets_.put(key, endpoint_cache_entry{.endpoint={}, .expires_at=now_ms + kUdpNegativeCacheTtlMs, .last_error=ec, .negative=true});
         co_return boost::asio::ip::udp::endpoint{};
     }
     const bool v4_only = local_ep.address().is_v4();
@@ -490,11 +471,11 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> remote_udp_session::resol
     {
         ec = boost::asio::error::address_family_not_supported;
         LOG_CTX_WARN(ctx_, "{} stage resolve target {}:{} error no_compatible_endpoint", log_event::kMux, host, port);
-        resolved_targets_.put(key, endpoint_cache_entry{{}, now_ms + kUdpNegativeCacheTtlMs, ec, true});
+        resolved_targets_.put(key, endpoint_cache_entry{.endpoint={}, .expires_at=now_ms + kUdpNegativeCacheTtlMs, .last_error=ec, .negative=true});
         co_return boost::asio::ip::udp::endpoint{};
     }
     const auto expires_at = now_ms + kUdpCacheTtlMs;
-    resolved_targets_.put(key, endpoint_cache_entry{target, expires_at, {}, false});
+    resolved_targets_.put(key, endpoint_cache_entry{.endpoint=target, .expires_at=expires_at, .last_error={}, .negative=false});
     co_return target;
 }
 

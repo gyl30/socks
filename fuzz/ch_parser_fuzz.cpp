@@ -1,16 +1,14 @@
-#include <algorithm>
 #include <array>
-#include <cstddef>
-#include <cstdint>
 #include <string>
 #include <vector>
+#include <cstddef>
+#include <cstdint>
 
 #include "tls/core.h"
 #include "tls/ch_parser.h"
-#include "reality/handshake/client_hello_builder.h"
-#include "reality/handshake/fingerprint_patch.h"
 #include "reality/handshake/fingerprint.h"
-
+#include "reality/handshake/fingerprint_patch.h"
+#include "reality/handshake/client_hello_builder.h"
 namespace
 {
 
@@ -82,8 +80,7 @@ std::vector<std::uint8_t> build_client_hello(const std::uint8_t* data, const std
     }
 
     const auto hostname = select_hostname(data, size, with_sni);
-    return reality::client_hello_builder::build(
-        spec, session_id, random, x25519_pubkey, x25519_mlkem768_key_share, hostname);
+    return reality::client_hello_builder::build(spec, session_id, random, x25519_pubkey, x25519_mlkem768_key_share, hostname);
 }
 
 }    // namespace

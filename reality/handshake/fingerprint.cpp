@@ -13,6 +13,8 @@ extern "C"
 }
 
 #include "tls/core.h"
+#include "reality/handshake/fingerprint.h"
+#include "reality/handshake/fingerprint_internal.h"
 #include "reality/handshake/fingerprint_patch.h"
 #include "reality/handshake/fingerprint_blueprint.h"
 #include "reality/handshake/fingerprint_mutation_internal.h"
@@ -23,7 +25,7 @@ namespace reality
 namespace
 {
 
-void set_fingerprint_client_version(fingerprint_template& spec, const std::uint16_t client_version)
+void set_fingerprint_client_version(fingerprint_template& spec, std::uint16_t client_version)
 {
     fingerprint_template_mutation::set_client_version(spec, client_version);
 }
@@ -38,7 +40,7 @@ std::vector<std::shared_ptr<extension_blueprint>>& mutable_fingerprint_extension
     return fingerprint_template_mutation::extensions(spec);
 }
 
-void set_fingerprint_shuffle_extensions(fingerprint_template& spec, const bool enabled)
+void set_fingerprint_shuffle_extensions(fingerprint_template& spec, bool enabled)
 {
     fingerprint_template_mutation::set_shuffle_extensions(spec, enabled);
 }
@@ -113,7 +115,7 @@ void shuffle_extensions(std::vector<std::shared_ptr<extension_blueprint>>& exts)
 constexpr auto kGreaseValues = std::to_array<std::uint16_t>(
     {0x0a0a, 0x1a1a, 0x2a2a, 0x3a3a, 0x4a4a, 0x5a5a, 0x6a6a, 0x7a7a, 0x8a8a, 0x9a9a, 0xaaaa, 0xbaba, 0xcaca, 0xdada, 0xeaea, 0xfafa});
 
-}
+}    // namespace
 
 grease_context::grease_context()
 {
@@ -178,8 +180,12 @@ fingerprint_template build_firefox120_template()
     mutable_fingerprint_extensions(spec).push_back(std::make_shared<renegotiation_blueprint>());
 
     auto groups = std::make_shared<supported_groups_blueprint>();
-    groups->groups() = {
-        ::tls::consts::group::kX25519, ::tls::consts::group::kSecp256r1, ::tls::consts::group::kSecp384r1, ::tls::consts::group::kSecp521r1, 256, 257};
+    groups->groups() = {::tls::consts::group::kX25519,
+                        ::tls::consts::group::kSecp256r1,
+                        ::tls::consts::group::kSecp384r1,
+                        ::tls::consts::group::kSecp521r1,
+                        256,
+                        257};
     mutable_fingerprint_extensions(spec).push_back(groups);
     auto points = std::make_shared<ec_point_formats_blueprint>();
     points->formats() = {0x00};
@@ -273,8 +279,11 @@ fingerprint_template build_ios14_template()
     mutable_fingerprint_extensions(spec).push_back(std::make_shared<renegotiation_blueprint>());
 
     auto groups = std::make_shared<supported_groups_blueprint>();
-    groups->groups() = {
-        ::tls::kGreasePlaceholder, ::tls::consts::group::kX25519, ::tls::consts::group::kSecp256r1, ::tls::consts::group::kSecp384r1, ::tls::consts::group::kSecp521r1};
+    groups->groups() = {::tls::kGreasePlaceholder,
+                        ::tls::consts::group::kX25519,
+                        ::tls::consts::group::kSecp256r1,
+                        ::tls::consts::group::kSecp384r1,
+                        ::tls::consts::group::kSecp521r1};
     mutable_fingerprint_extensions(spec).push_back(groups);
 
     auto points = std::make_shared<ec_point_formats_blueprint>();

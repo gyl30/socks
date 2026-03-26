@@ -2,21 +2,23 @@
 #define REFLECT_H
 
 #include <map>
-#include <memory>
+#include <limits>
 #include <string>
 #include <vector>
 #include <cassert>
-#include <cstdint>
+#include <cstddef>
 #include <optional>
 #include <functional>
-#include <limits>
 #include <string_view>
 #include <type_traits>
 
 #include "rapidjson/fwd.h"
 #include "third/macro_map.h"
+#include "rapidjson/writer.h"
 #include "rapidjson/document.h"
-#include "rapidjson/prettywriter.h"
+#include "rapidjson/rapidjson.h"
+#include "rapidjson/error/error.h"
+#include "rapidjson/stringbuffer.h"
 
 namespace reflect
 {
@@ -64,7 +66,7 @@ struct JsonWriter
 inline std::string JsonReader::getString() const
 {
     const auto length = static_cast<std::size_t>(m->GetStringLength());
-    return std::string(m->GetString(), length);
+    return {m->GetString(), length};
 }
 inline bool JsonReader::isNull() const { return m->IsNull(); }
 inline void JsonReader::set_invalid()
@@ -164,15 +166,15 @@ inline void reflect(JsonReader& vis, bool& v)
     v = vis.m->GetBool();
 }
 inline void reflect(JsonReader& vis, unsigned char& v) { (void)read_unsigned_integer(vis, v); }
-template <typename T, std::enable_if_t<std::is_integral_v<T> && std::is_signed_v<T> && !std::is_same_v<T, bool> && !std::is_same_v<T, char>, int> = 0>
+template <typename T>
+    requires(std::is_integral_v<T> && std::is_signed_v<T> && !std::is_same_v<T, bool> && !std::is_same_v<T, char>)
 inline void reflect(JsonReader& vis, T& v)
 {
     (void)read_signed_integer(vis, v);
 }
-template <typename T,
-          std::enable_if_t<std::is_integral_v<T> && std::is_unsigned_v<T> && !std::is_same_v<T, bool> && !std::is_same_v<T, char> &&
-                               !std::is_same_v<T, unsigned char>,
-                           int> = 0>
+template <typename T>
+    requires(std::is_integral_v<T> && std::is_unsigned_v<T> && !std::is_same_v<T, bool> && !std::is_same_v<T, char> &&
+             !std::is_same_v<T, unsigned char>)
 inline void reflect(JsonReader& vis, T& v)
 {
     (void)read_unsigned_integer(vis, v);
@@ -195,29 +197,29 @@ inline void reflect(JsonReader& vis, std::string& v)
     }
     v = vis.getString();
 }
-inline void reflect(JsonWriter& vis, bool& v) { vis.m->Bool(v); }
-inline void reflect(JsonWriter& vis, unsigned char& v) { vis.m->Int(v); }
-template <typename T, std::enable_if_t<std::is_integral_v<T> && std::is_signed_v<T> && !std::is_same_v<T, bool> && !std::is_same_v<T, char>, int> = 0>
-inline void reflect(JsonWriter& vis, T& v)
+inline void reflect(const JsonWriter& vis, const bool v) { vis.m->Bool(v); }
+inline void reflect(const JsonWriter& vis, const unsigned char v) { vis.m->Int(v); }
+template <typename T>
+    requires(std::is_integral_v<T> && std::is_signed_v<T> && !std::is_same_v<T, bool> && !std::is_same_v<T, char>)
+inline void reflect(const JsonWriter& vis, const T v)
 {
     vis.m->Int64(static_cast<std::int64_t>(v));
 }
-template <typename T,
-          std::enable_if_t<std::is_integral_v<T> && std::is_unsigned_v<T> && !std::is_same_v<T, bool> && !std::is_same_v<T, char> &&
-                               !std::is_same_v<T, unsigned char>,
-                           int> = 0>
-inline void reflect(JsonWriter& vis, T& v)
+template <typename T>
+    requires(std::is_integral_v<T> && std::is_unsigned_v<T> && !std::is_same_v<T, bool> && !std::is_same_v<T, char> &&
+             !std::is_same_v<T, unsigned char>)
+inline void reflect(const JsonWriter& vis, const T v)
 {
     vis.m->Uint64(static_cast<std::uint64_t>(v));
 }
-inline void reflect(JsonWriter& vis, double& v) { vis.m->Double(v); }
-inline void reflect(JsonWriter& vis, std::string& v) { vis.string(v.c_str(), v.size()); }
-inline void reflect(JsonReader& vis, JsonNull& value)
+inline void reflect(const JsonWriter& vis, const double v) { vis.m->Double(v); }
+inline void reflect(const JsonWriter& vis, const std::string& v) { vis.string(v.c_str(), v.size()); }
+inline void reflect(const JsonReader& vis, const JsonNull& value)
 {
     (void)vis;
     (void)value;
 }
-inline void reflect(JsonWriter& vis, [[maybe_unused]] JsonNull& value) { vis.m->Null(); }
+inline void reflect(const JsonWriter& vis, [[maybe_unused]] const JsonNull& value) { vis.m->Null(); }
 
 template <typename T>
 void reflect(JsonReader& vis, std::optional<T>& v)
@@ -236,7 +238,7 @@ void reflect(JsonReader& vis, std::optional<T>& v)
         reflect(vis, *v);
     }
 }
-inline void reflect(JsonWriter& vis, std::string_view& data)
+inline void reflect(const JsonWriter& vis, std::string_view data)
 {
     if (data.empty())
     {
@@ -248,7 +250,7 @@ inline void reflect(JsonWriter& vis, std::string_view& data)
     }
 }
 template <typename T>
-void reflect(JsonWriter& vis, std::map<std::string, T>& v)
+void reflect(const JsonWriter& vis, const std::map<std::string, T>& v)
 {
     vis.startObject();
     for (auto& pair : v)
@@ -259,7 +261,7 @@ void reflect(JsonWriter& vis, std::map<std::string, T>& v)
     vis.endObject();
 }
 template <typename T>
-void reflect(JsonWriter& vis, std::optional<T>& v)
+void reflect(const JsonWriter& vis, const std::optional<T>& v)
 {
     if (v)
     {
@@ -290,7 +292,7 @@ inline void reflect(JsonReader& vis, std::vector<T>& v)
         });
 }
 template <typename T>
-inline void reflect(JsonWriter& vis, std::vector<T>& v)
+inline void reflect(const JsonWriter& vis, const std::vector<T>& v)
 {
     vis.startArray();
     for (auto& it : v)
@@ -313,14 +315,14 @@ inline void reflectMemberStart(T& unused)
 {
     (void)unused;
 }
-inline void reflectMemberStart(JsonWriter& vis) { vis.startObject(); }
+inline void reflectMemberStart(const JsonWriter& vis) { vis.startObject(); }
 
 template <typename T>
 inline void reflectMemberEnd(T& unused)
 {
     (void)unused;
 }
-inline void reflectMemberEnd(JsonWriter& vis) { vis.endObject(); }
+inline void reflectMemberEnd(const JsonWriter& vis) { vis.endObject(); }
 
 template <typename T>
 inline void reflectMember(JsonReader& vis, const char* name, T& v)
@@ -400,7 +402,7 @@ inline void JsonReader::member(const char* name, const std::function<void()>& fn
 
 #define REFLECT_STRUCT(type, ...)                       \
     template <typename Vis>                             \
-    void reflect(Vis& vis, type& v)                     \
+    static void reflect(Vis& vis, type& v)              \
     {                                                   \
         reflectMemberStart(vis);                        \
         MACRO_MAP(MAPPABLE_REFLECT_MEMBER, __VA_ARGS__) \
@@ -423,10 +425,10 @@ inline bool deserialize_struct(T& t, const std::string& msg)
 }
 
 template <typename T>
-inline bool deserialize_struct(T& t, const char* msg, std::size_t lenght)
+inline bool deserialize_struct(T& t, const char* msg, std::size_t length)
 {
     rapidjson::Document reader;
-    const rapidjson::ParseResult ok = reader.Parse(msg, lenght);
+    const rapidjson::ParseResult ok = reader.Parse(msg, length);
     if (!ok)
     {
         return false;

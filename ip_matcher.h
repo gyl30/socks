@@ -6,9 +6,7 @@
 #include <vector>
 #include <utility>
 
-#include <boost/asio/ip/address.hpp>
-#include <boost/asio/ip/address_v4.hpp>
-#include <boost/asio/ip/address_v6.hpp>
+#include <boost/asio.hpp>
 
 namespace mux
 {
@@ -25,7 +23,7 @@ class ip_matcher
 
     void add_rule(const std::string& cidr);
 
-    void optimize();
+    void optimize() const;
 
    private:
     struct trie_node;

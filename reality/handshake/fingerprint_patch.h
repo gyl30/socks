@@ -1,8 +1,6 @@
 #ifndef REALITY_FINGERPRINT_PATCH_H
 #define REALITY_FINGERPRINT_PATCH_H
 
-#include <cstdint>
-
 #include "reality/handshake/fingerprint.h"
 
 namespace reality

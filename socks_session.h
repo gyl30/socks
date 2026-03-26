@@ -1,6 +1,8 @@
 #ifndef SOCKS_SESSION_H
 #define SOCKS_SESSION_H
 
+#include "client_tunnel_pool.h"
+
 #include <array>
 #include <memory>
 #include <string>
@@ -10,32 +12,23 @@
 
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/awaitable.hpp>
-#include <boost/asio/io_context.hpp>
-#include <boost/asio/cancellation_signal.hpp>
 
-#include "config.h"
 #include "router.h"
-#include "task_group.h"
 #include "connection_context.h"
 
 namespace mux
 {
 
-class client_tunnel_pool;
-class router;
-class tcp_socks_session;
-class udp_socks_session;
-
 class socks_session : public std::enable_shared_from_this<socks_session>
 {
    public:
     socks_session(boost::asio::ip::tcp::socket socket,
-                  boost::asio::io_context& io_context,
+                  io_worker& worker,
                   std::shared_ptr<client_tunnel_pool> tunnel_pool,
                   std::shared_ptr<router> router,
                   std::uint32_t sid,
                   const config& cfg,
-                  task_group& group);
+                  std::shared_ptr<void> active_connection_guard = nullptr);
     ~socks_session();
 
     void start();
@@ -110,9 +103,8 @@ class socks_session : public std::enable_shared_from_this<socks_session>
     bool auth_enabled_ = false;
     const config& cfg_;
     connection_context ctx_;
-    task_group& group_;
-    boost::asio::io_context& ioc_;
-    boost::asio::ip::tcp::socket socket_{ioc_};
+    io_worker& worker_;
+    boost::asio::ip::tcp::socket socket_;
     std::shared_ptr<router> router_;
     std::shared_ptr<void> active_guard_;
     std::shared_ptr<client_tunnel_pool> tunnel_pool_;

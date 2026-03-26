@@ -2,23 +2,16 @@
 #include <array>
 #include <cctype>
 #include <chrono>
-#include <ranges>
 #include <string>
 #include <vector>
+#include <cstddef>
 #include <cstring>
 #include <utility>
-#include <cstddef>
-#include <cstdint>
 #include <optional>
 #include <algorithm>
 
-#include <boost/asio/error.hpp>
-#include <boost/asio/write.hpp>
-#include <boost/asio/buffer.hpp>
-#include <boost/asio/ip/tcp.hpp>
-#include <boost/system/errc.hpp>
+#include <boost/asio.hpp>
 #include <boost/asio/awaitable.hpp>
-#include <boost/system/error_code.hpp>
 
 extern "C"
 {
@@ -30,22 +23,24 @@ extern "C"
 
 #include "log.h"
 #include "config.h"
+#include "tls/core.h"
 #include "constants.h"
 #include "timeout_io.h"
-#include "tls/core.h"
-#include "tls/ch_parser.h"
-#include "tls/crypto_util.h"
-#include "tls/cipher_suite.h"
-#include "tls/handshake_builder.h"
-#include "tls/handshake_message.h"
-#include "tls/server_name.h"
-#include "tls/transcript.h"
 #include "replay_cache.h"
+#include "site_material.h"
+#include "tls/ch_parser.h"
+#include "reality/types.h"
+#include "tls/transcript.h"
+#include "tls/crypto_util.h"
+#include "tls/server_name.h"
+#include "tls/cipher_suite.h"
 #include "tls/key_schedule.h"
 #include "tls/record_layer.h"
+#include "connection_context.h"
+#include "tls/handshake_builder.h"
+#include "tls/handshake_message.h"
 #include "tls/record_validation.h"
 #include "reality/handshake/auth.h"
-#include "site_material.h"
 #include "reality/handshake/server_handshaker.h"
 
 namespace reality
@@ -55,10 +50,10 @@ namespace
 {
 
 constexpr std::size_t kTlsRecordHeaderSize = 5;
-constexpr std::uint16_t kMaxTlsPlaintextRecordLen = static_cast<std::uint16_t>(::tls::kMaxTlsPlaintextLen);
-constexpr std::uint16_t kMaxTlsCiphertextRecordLen = static_cast<std::uint16_t>(::tls::kMaxTlsPlaintextLen + 256);
+constexpr std::uint16_t kMaxTlsPlaintextRecordLen = static_cast<std::uint16_t>(tls::kMaxTlsPlaintextLen);
+constexpr std::uint16_t kMaxTlsCiphertextRecordLen = static_cast<std::uint16_t>(tls::kMaxTlsPlaintextLen + 256);
 constexpr std::uint32_t kMaxTlsCompatCcsRecords = 8;
-constexpr std::size_t kMaxUnauthenticatedClientHelloLen = 64 * 1024;
+constexpr std::size_t kMaxUnauthenticatedClientHelloLen = 64L * 1024;
 
 bool equal_server_name_ascii(const std::string& lhs, const std::string& rhs)
 {
@@ -80,7 +75,7 @@ bool equal_server_name_ascii(const std::string& lhs, const std::string& rhs)
     return true;
 }
 
-bool verify_client_hello_sni(const ::tls::client_hello_info& client_hello, const mux::config& cfg)
+bool verify_client_hello_sni(const tls::client_hello_info& client_hello, const mux::config& cfg)
 {
     if (cfg.reality.sni.empty())
     {
@@ -94,20 +89,17 @@ bool verify_client_hello_sni(const ::tls::client_hello_info& client_hello, const
     return equal_server_name_ascii(client_hello.sni, cfg.reality.sni);
 }
 
-[[nodiscard]] bool is_invalid_sni(const std::string& sni)
-{
-    return !::tls::valid_sni_hostname(sni);
-}
+[[nodiscard]] bool is_invalid_sni(const std::string& sni) { return !tls::valid_sni_hostname(sni); }
 
 struct server_handshake_state
 {
     std::vector<std::uint8_t> client_hello_record;
     std::vector<std::uint8_t> client_hello_handshake;
-    ::tls::client_hello_info client_hello;
+    tls::client_hello_info client_hello;
     std::uint16_t key_share_group = 0;
     std::vector<std::uint8_t> mlkem768_peer_pub;
     std::vector<std::uint8_t> x25519_peer_pub;
-    ::tls::transcript transcript;
+    tls::transcript transcript;
     std::vector<std::uint8_t> server_random;
     std::vector<std::uint8_t> server_key_share_data;
     std::vector<std::uint8_t> server_shared_secret;
@@ -191,9 +183,8 @@ boost::asio::awaitable<const char*> read_client_hello_handshake(boost::asio::ip:
     handshake_buf.clear();
     const auto handshake_start_ms = mux::timeout_io::now_ms();
     std::size_t record_count = 0;
-    const auto max_records =
-        std::max<std::size_t>(1, (max_handshake_len + kMaxTlsPlaintextRecordLen - 1) / kMaxTlsPlaintextRecordLen);
-    const auto max_wire_len = max_handshake_len + max_records * kTlsRecordHeaderSize;
+    const auto max_records = std::max<std::size_t>(1, (max_handshake_len + kMaxTlsPlaintextRecordLen - 1) / kMaxTlsPlaintextRecordLen);
+    const auto max_wire_len = max_handshake_len + (max_records * kTlsRecordHeaderSize);
     std::uint32_t ccs_count = 0;
 
     while (true)
@@ -237,7 +228,7 @@ boost::asio::awaitable<const char*> read_client_hello_handshake(boost::asio::ip:
 
             const std::array<std::uint8_t, 5> header = {record_buf[0], record_buf[1], record_buf[2], record_buf[3], record_buf[4]};
             const auto ccs_body = record_buf[kTlsRecordHeaderSize];
-            if (!::tls::is_valid_tls13_compat_ccs(header, ccs_body))
+            if (!tls::is_valid_tls13_compat_ccs(header, ccs_body))
             {
                 LOG_CTX_ERROR(ctx, "{} invalid ccs body {}", mux::log_event::kHandshake, ccs_body);
                 ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
@@ -298,8 +289,8 @@ boost::asio::awaitable<const char*> read_client_hello_handshake(boost::asio::ip:
             co_return "unexpected_client_hello_type";
         }
 
-        const auto hello_msg_len =
-            (static_cast<std::uint32_t>(handshake_buf[1]) << 16) | (static_cast<std::uint32_t>(handshake_buf[2]) << 8) | static_cast<std::uint32_t>(handshake_buf[3]);
+        const auto hello_msg_len = (static_cast<std::uint32_t>(handshake_buf[1]) << 16) | (static_cast<std::uint32_t>(handshake_buf[2]) << 8) |
+                                   static_cast<std::uint32_t>(handshake_buf[3]);
         const auto total_len = static_cast<std::size_t>(hello_msg_len) + 4;
         if (total_len > max_handshake_len)
         {
@@ -313,10 +304,7 @@ boost::asio::awaitable<const char*> read_client_hello_handshake(boost::asio::ip:
         }
         if (handshake_buf.size() != total_len)
         {
-            LOG_CTX_ERROR(ctx,
-                          "{} client hello message has trailing data {}",
-                          mux::log_event::kHandshake,
-                          handshake_buf.size() - total_len);
+            LOG_CTX_ERROR(ctx, "{} client hello message has trailing data {}", mux::log_event::kHandshake, handshake_buf.size() - total_len);
             ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
             co_return "client_hello_message_has_trailing_data";
         }
@@ -337,7 +325,7 @@ auth_inputs build_auth_decrypt_inputs(const server_handshake_context& handshake_
                                       boost::system::error_code& ec)
 {
     ec.clear();
-    auto shared = ::tls::crypto_util::x25519_derive(server_private_key, state.x25519_peer_pub, ec);
+    auto shared = tls::crypto_util::x25519_derive(server_private_key, state.x25519_peer_pub, ec);
     if (ec)
     {
         LOG_CTX_ERROR(handshake_ctx.ctx, "{} auth fail x25519 derive failed {}", mux::log_event::kAuth, ec.message());
@@ -345,8 +333,7 @@ auth_inputs build_auth_decrypt_inputs(const server_handshake_context& handshake_
     }
 
     if (state.client_hello.random.size() != 32 || state.client_hello.session_id.size() != constants::auth::kSessionIdLen ||
-        state.client_hello.sid_offset == 0 ||
-        state.client_hello.sid_offset + constants::auth::kSessionIdLen > state.client_hello_handshake.size())
+        state.client_hello.sid_offset == 0 || state.client_hello.sid_offset + constants::auth::kSessionIdLen > state.client_hello_handshake.size())
     {
         LOG_CTX_ERROR(handshake_ctx.ctx, "{} auth fail invalid client hello fields", mux::log_event::kAuth);
         ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
@@ -354,13 +341,13 @@ auth_inputs build_auth_decrypt_inputs(const server_handshake_context& handshake_
     }
 
     const auto salt = std::vector<std::uint8_t>(state.client_hello.random.begin(), state.client_hello.random.begin() + 20);
-    const auto reality_label_info = ::tls::crypto_util::hex_to_bytes("5245414c495459");
-    auto pseudo_random_key = ::tls::crypto_util::hkdf_extract(salt, shared, EVP_sha256(), ec);
+    const auto reality_label_info = tls::crypto_util::hex_to_bytes("5245414c495459");
+    auto pseudo_random_key = tls::crypto_util::hkdf_extract(salt, shared, EVP_sha256(), ec);
     if (ec)
     {
         return {};
     }
-    auto auth_key = ::tls::crypto_util::hkdf_expand(pseudo_random_key, reality_label_info, 16, EVP_sha256(), ec);
+    auto auth_key = tls::crypto_util::hkdf_expand(pseudo_random_key, reality_label_info, 16, EVP_sha256(), ec);
     if (ec)
     {
         return {};
@@ -390,12 +377,11 @@ auth_inputs build_auth_decrypt_inputs(const server_handshake_context& handshake_
     return out;
 }
 
-reality::auth_payload decrypt_auth_payload(server_handshake_context& handshake_ctx,
+reality::auth_payload decrypt_auth_payload(const server_handshake_context& handshake_ctx,
                                            server_handshake_state& state,
                                            const std::vector<std::uint8_t>& private_key,
                                            boost::system::error_code& ec)
 {
-    ec.clear();
     const auto inputs = build_auth_decrypt_inputs(handshake_ctx, state, private_key, ec);
     if (ec)
     {
@@ -404,7 +390,7 @@ reality::auth_payload decrypt_auth_payload(server_handshake_context& handshake_c
     state.auth_key = inputs.auth_key;
 
     const EVP_CIPHER* auth_cipher = EVP_aes_128_gcm();
-    auto plaintext = ::tls::crypto_util::aead_decrypt(auth_cipher, inputs.auth_key, inputs.nonce, state.client_hello.session_id, inputs.aad, ec);
+    auto plaintext = tls::crypto_util::aead_decrypt(auth_cipher, inputs.auth_key, inputs.nonce, state.client_hello.session_id, inputs.aad, ec);
     if (ec || plaintext.size() != 16)
     {
         LOG_CTX_ERROR(handshake_ctx.ctx, "{} auth fail decrypt failed tag mismatch pt size {}", mux::log_event::kAuth, plaintext.size());
@@ -429,7 +415,8 @@ bool verify_auth_payload_fields(const auth_payload& auth,
     (void)state;
     if (auth.version_x != 1 || auth.version_y != 0 || auth.version_z != 0)
     {
-        LOG_CTX_WARN(handshake_ctx.ctx, "{} auth fail version mismatch {}.{}.{}", mux::log_event::kAuth, auth.version_x, auth.version_y, auth.version_z);
+        LOG_CTX_WARN(
+            handshake_ctx.ctx, "{} auth fail version mismatch {}.{}.{}", mux::log_event::kAuth, auth.version_x, auth.version_y, auth.version_z);
         return false;
     }
 
@@ -482,7 +469,7 @@ bool verify_replay_guard(mux::replay_cache& replay_cache, const server_handshake
 
 struct handshake_crypto_result
 {
-    ::tls::handshake_keys hs_keys;
+    tls::handshake_keys hs_keys;
     std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> s_hs_keys;
     std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> c_hs_keys;
     const EVP_CIPHER* cipher = nullptr;
@@ -500,9 +487,9 @@ std::uint16_t normalize_cipher_suite(std::uint16_t cipher_suite)
     return cipher_suite;
 }
 
-handshake_crypto_result build_handshake_crypto(server_handshake_context& handshake_ctx,
+handshake_crypto_result build_handshake_crypto(const server_handshake_context& handshake_ctx,
                                                server_handshake_state& state,
-                                               const std::uint16_t cipher_suite,
+                                               std::uint16_t cipher_suite,
                                                const std::string& alpn,
                                                std::span<const std::uint16_t> server_hello_extension_order,
                                                std::span<const std::uint16_t> encrypted_extension_order,
@@ -513,24 +500,24 @@ handshake_crypto_result build_handshake_crypto(server_handshake_context& handsha
 {
     ec.clear();
     handshake_crypto_result out;
-    const auto suite = ::tls::select_tls13_suite(cipher_suite);
+    const auto suite = tls::select_tls13_suite(cipher_suite);
     if (!suite.has_value())
     {
         LOG_CTX_ERROR(handshake_ctx.ctx, "{} unsupported tls13 cipher suite 0x{:04x}", mux::log_event::kHandshake, cipher_suite);
         ec = boost::asio::error::no_protocol_option;
         return {};
     }
-    out.sh_msg = ::tls::construct_server_hello(state.server_random,
-                                               state.client_hello.session_id,
-                                               cipher_suite,
-                                               state.key_share_group,
-                                               state.server_key_share_data,
-                                               server_hello_extension_order);
+    out.sh_msg = tls::construct_server_hello(state.server_random,
+                                             state.client_hello.session_id,
+                                             cipher_suite,
+                                             state.key_share_group,
+                                             state.server_key_share_data,
+                                             server_hello_extension_order);
     state.transcript.update(out.sh_msg);
 
     out.md = suite->md;
     state.transcript.set_protocol_hash(out.md);
-    out.hs_keys = ::tls::key_schedule::derive_handshake_keys(state.server_shared_secret, state.transcript.finish(), out.md, ec);
+    out.hs_keys = tls::key_schedule::derive_handshake_keys(state.server_shared_secret, state.transcript.finish(), out.md, ec);
     if (ec)
     {
         return {};
@@ -538,23 +525,23 @@ handshake_crypto_result build_handshake_crypto(server_handshake_context& handsha
 
     constexpr std::size_t kIvLen = constants::crypto::kIvLen;
     const auto key_len = suite->key_len;
-    out.c_hs_keys = ::tls::key_schedule::derive_traffic_keys(out.hs_keys.client_handshake_traffic_secret, ec, key_len, kIvLen, out.md);
+    out.c_hs_keys = tls::key_schedule::derive_traffic_keys(out.hs_keys.client_handshake_traffic_secret, ec, key_len, kIvLen, out.md);
     if (ec)
     {
         return {};
     }
-    out.s_hs_keys = ::tls::key_schedule::derive_traffic_keys(out.hs_keys.server_handshake_traffic_secret, ec, key_len, kIvLen, out.md);
+    out.s_hs_keys = tls::key_schedule::derive_traffic_keys(out.hs_keys.server_handshake_traffic_secret, ec, key_len, kIvLen, out.md);
     if (ec)
     {
         return {};
     }
 
     const auto enc_ext =
-        ::tls::construct_encrypted_extensions(alpn, encrypted_extension_order, include_encrypted_extensions_padding, encrypted_extensions_padding_len);
+        tls::construct_encrypted_extensions(alpn, encrypted_extension_order, include_encrypted_extensions_padding, encrypted_extensions_padding_len);
     state.transcript.update(enc_ext);
     state.transcript.update(state.cert_msg);
 
-    const ::tls::openssl_ptrs::evp_pkey_ptr sign_key(EVP_PKEY_new_raw_private_key(EVP_PKEY_ED25519, nullptr, sign_key_bytes.data(), 32));
+    const tls::openssl_ptrs::evp_pkey_ptr sign_key(EVP_PKEY_new_raw_private_key(EVP_PKEY_ED25519, nullptr, sign_key_bytes.data(), 32));
     if (sign_key == nullptr)
     {
         LOG_CTX_ERROR(handshake_ctx.ctx, "{} failed to load private key", mux::log_event::kHandshake);
@@ -562,7 +549,7 @@ handshake_crypto_result build_handshake_crypto(server_handshake_context& handsha
         return {};
     }
 
-    const auto cv = ::tls::construct_certificate_verify(sign_key.get(), state.transcript.finish());
+    const auto cv = tls::construct_certificate_verify(sign_key.get(), state.transcript.finish());
     if (cv.empty())
     {
         LOG_CTX_ERROR(handshake_ctx.ctx, "{} certificate verify construct failed", mux::log_event::kHandshake);
@@ -572,13 +559,13 @@ handshake_crypto_result build_handshake_crypto(server_handshake_context& handsha
     state.transcript.update(cv);
 
     const auto s_fin_verify =
-        ::tls::key_schedule::compute_finished_verify_data(out.hs_keys.server_handshake_traffic_secret, state.transcript.finish(), out.md, ec);
+        tls::key_schedule::compute_finished_verify_data(out.hs_keys.server_handshake_traffic_secret, state.transcript.finish(), out.md, ec);
     if (ec)
     {
         LOG_CTX_ERROR(handshake_ctx.ctx, "{} compute server finished failed {}", mux::log_event::kHandshake, ec.message());
         return {};
     }
-    const auto s_fin = ::tls::construct_finished(s_fin_verify);
+    const auto s_fin = tls::construct_finished(s_fin_verify);
     if (s_fin.empty())
     {
         LOG_CTX_ERROR(handshake_ctx.ctx, "{} server finished construct failed", mux::log_event::kHandshake);
@@ -614,7 +601,7 @@ std::vector<std::uint8_t> build_reality_bound_certificate(const std::vector<std:
                                                           boost::system::error_code& ec)
 {
     ec.clear();
-    auto template_signature = ::tls::crypto_util::extract_certificate_signature(cert_template, ec);
+    auto template_signature = tls::crypto_util::extract_certificate_signature(cert_template, ec);
     if (ec)
     {
         return {};
@@ -631,7 +618,7 @@ std::vector<std::uint8_t> build_reality_bound_certificate(const std::vector<std:
         return {};
     }
 
-    auto reality_signature = ::tls::crypto_util::hmac_sha512(auth_key, cert_public_key, ec);
+    auto reality_signature = tls::crypto_util::hmac_sha512(auth_key, cert_public_key, ec);
     if (ec)
     {
         return {};
@@ -643,23 +630,23 @@ std::vector<std::uint8_t> build_reality_bound_certificate(const std::vector<std:
     }
 
     std::vector<std::uint8_t> cert_der = cert_template;
-    std::copy(reality_signature.begin(), reality_signature.end(), cert_der.begin() + static_cast<std::ptrdiff_t>(signature_offset));
+    std::ranges::copy(reality_signature, cert_der.begin() + static_cast<std::ptrdiff_t>(signature_offset));
     return cert_der;
 }
 
-bool client_offers_cipher_suite(const ::tls::client_hello_info& hello, const std::uint16_t cipher_suite)
+bool client_offers_cipher_suite(const tls::client_hello_info& hello, std::uint16_t cipher_suite)
 {
-    return std::find(hello.cipher_suites.begin(), hello.cipher_suites.end(), cipher_suite) != hello.cipher_suites.end();
+    return std::ranges::find(hello.cipher_suites, cipher_suite) != hello.cipher_suites.end();
 }
 
-bool client_offers_alpn(const ::tls::client_hello_info& hello, const std::string& alpn)
+bool client_offers_alpn(const tls::client_hello_info& hello, const std::string& alpn)
 {
-    return std::find(hello.alpn_protocols.begin(), hello.alpn_protocols.end(), alpn) != hello.alpn_protocols.end();
+    return std::ranges::find(hello.alpn_protocols, alpn) != hello.alpn_protocols.end();
 }
 
-bool client_offers_signature_scheme(const ::tls::client_hello_info& hello, const std::uint16_t scheme)
+bool client_offers_signature_scheme(const tls::client_hello_info& hello, std::uint16_t scheme)
 {
-    return std::find(hello.signature_algorithms.begin(), hello.signature_algorithms.end(), scheme) != hello.signature_algorithms.end();
+    return std::ranges::find(hello.signature_algorithms, scheme) != hello.signature_algorithms.end();
 }
 
 std::vector<std::vector<std::uint8_t>> build_reality_certificate_chain(const std::vector<std::uint8_t>& leaf_cert_der,
@@ -673,13 +660,12 @@ std::vector<std::vector<std::uint8_t>> build_reality_certificate_chain(const std
     }
 
     const auto& cached_chain = site_material->certificate_chain;
-    const auto cached_begin =
-        (!cached_chain.empty() && cached_chain.front() == leaf_cert_der) ? cached_chain.begin() + 1 : cached_chain.begin();
+    const auto cached_begin = (!cached_chain.empty() && cached_chain.front() == leaf_cert_der) ? cached_chain.begin() + 1 : cached_chain.begin();
     cert_chain.insert(cert_chain.end(), cached_begin, cached_chain.end());
     return cert_chain;
 }
 
-std::optional<std::uint16_t> select_reality_cipher_suite(const ::tls::client_hello_info& hello, const site_material* site_material)
+std::optional<std::uint16_t> select_reality_cipher_suite(const tls::client_hello_info& hello, const site_material* site_material)
 {
     if (site_material != nullptr)
     {
@@ -690,9 +676,8 @@ std::optional<std::uint16_t> select_reality_cipher_suite(const ::tls::client_hel
         }
     }
 
-    constexpr std::array<std::uint16_t, 3> kFallbackCipherSuites = {::tls::consts::cipher::kTlsAes128GcmSha256,
-                                                                    ::tls::consts::cipher::kTlsAes256GcmSha384,
-                                                                    ::tls::consts::cipher::kTlsChacha20Poly1305Sha256};
+    constexpr std::array<std::uint16_t, 3> kFallbackCipherSuites = {
+        tls::consts::cipher::kTlsAes128GcmSha256, tls::consts::cipher::kTlsAes256GcmSha384, tls::consts::cipher::kTlsChacha20Poly1305Sha256};
     for (const auto cipher_suite : kFallbackCipherSuites)
     {
         if (client_offers_cipher_suite(hello, cipher_suite))
@@ -703,7 +688,7 @@ std::optional<std::uint16_t> select_reality_cipher_suite(const ::tls::client_hel
     return std::nullopt;
 }
 
-std::string select_reality_alpn(const ::tls::client_hello_info& hello, const site_material* site_material)
+std::string select_reality_alpn(const tls::client_hello_info& hello, const site_material* site_material)
 {
     if (site_material == nullptr)
     {
@@ -730,7 +715,7 @@ std::vector<std::uint16_t> select_server_hello_extension_order(const site_materi
     std::vector<std::uint16_t> out;
     for (const auto ext_type : site_material->server_hello_extension_types)
     {
-        if (ext_type == ::tls::consts::ext::kSupportedVersions || ext_type == ::tls::consts::ext::kKeyShare)
+        if (ext_type == tls::consts::ext::kSupportedVersions || ext_type == tls::consts::ext::kKeyShare)
         {
             out.push_back(ext_type);
         }
@@ -747,7 +732,7 @@ std::vector<std::uint16_t> select_encrypted_extensions_order(const site_material
     std::vector<std::uint16_t> out;
     for (const auto ext_type : site_material->encrypted_extension_types)
     {
-        if (ext_type == ::tls::consts::ext::kAlpn || ext_type == ::tls::consts::ext::kPadding)
+        if (ext_type == tls::consts::ext::kAlpn || ext_type == tls::consts::ext::kPadding)
         {
             out.push_back(ext_type);
         }
@@ -761,9 +746,7 @@ bool should_include_encrypted_extensions_padding(const site_material* site_mater
     {
         return true;
     }
-    return std::find(site_material->encrypted_extension_types.begin(),
-                     site_material->encrypted_extension_types.end(),
-                     ::tls::consts::ext::kPadding) != site_material->encrypted_extension_types.end();
+    return std::ranges::find(site_material->encrypted_extension_types, tls::consts::ext::kPadding) != site_material->encrypted_extension_types.end();
 }
 
 std::optional<std::uint16_t> select_encrypted_extensions_padding_len(const site_material* site_material)
@@ -814,7 +797,7 @@ boost::asio::awaitable<void> consume_tls13_compat_ccs(boost::asio::ip::tcp::sock
     {
         co_return;
     }
-    if (!::tls::is_valid_tls13_compat_ccs(header, ccs_body[0]))
+    if (!tls::is_valid_tls13_compat_ccs(header, ccs_body[0]))
     {
         LOG_CTX_ERROR(ctx, "{} invalid ccs body {}", mux::log_event::kHandshake, ccs_body[0]);
         ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
@@ -894,7 +877,7 @@ bool verify_client_finished_plaintext(const std::vector<std::uint8_t>& plaintext
                                       const std::vector<std::uint8_t>& expected_verify,
                                       const mux::connection_context& ctx)
 {
-    if (content_type != ::tls::kContentTypeHandshake || plaintext.size() < 4 || plaintext[0] != 0x14)
+    if (content_type != tls::kContentTypeHandshake || plaintext.size() < 4 || plaintext[0] != 0x14)
     {
         LOG_CTX_ERROR(ctx, "{} client finished verification failed type {}", mux::log_event::kHandshake, static_cast<int>(content_type));
         return false;
@@ -925,7 +908,7 @@ std::vector<std::uint8_t> compose_server_hello_flight(const std::vector<std::uin
 {
     ec.clear();
     std::vector<std::uint8_t> out_sh;
-    const auto sh_rec = ::tls::write_record_header(::tls::kContentTypeHandshake, static_cast<std::uint16_t>(sh_msg.size()));
+    const auto sh_rec = tls::write_record_header(tls::kContentTypeHandshake, static_cast<std::uint16_t>(sh_msg.size()));
     out_sh.insert(out_sh.end(), sh_rec.begin(), sh_rec.end());
     out_sh.insert(out_sh.end(), sh_msg.begin(), sh_msg.end());
     if (send_change_cipher_spec)
@@ -950,9 +933,9 @@ std::vector<std::uint8_t> compose_server_hello_flight(const std::vector<std::uin
         }
 
         const auto end = offset + len;
-        std::vector<std::uint8_t> chunk(flight2_plain.begin() + static_cast<std::ptrdiff_t>(offset),
-                                        flight2_plain.begin() + static_cast<std::ptrdiff_t>(end));
-        auto record = ::tls::record_layer::encrypt_record(cipher, s_hs_keys.first, s_hs_keys.second, seq++, chunk, ::tls::kContentTypeHandshake, ec);
+        const std::vector<std::uint8_t> chunk(flight2_plain.begin() + static_cast<std::ptrdiff_t>(offset),
+                                              flight2_plain.begin() + static_cast<std::ptrdiff_t>(end));
+        auto record = tls::record_layer::encrypt_record(cipher, s_hs_keys.first, s_hs_keys.second, seq++, chunk, tls::kContentTypeHandshake, ec);
         if (ec)
         {
             return false;
@@ -991,7 +974,7 @@ struct authenticated_handshake_plan
     std::vector<std::uint16_t> encrypted_handshake_record_sizes;
 };
 
-boost::asio::awaitable<bool> read_client_hello_or_decide(server_handshake_context& handshake_ctx,
+boost::asio::awaitable<bool> read_client_hello_or_decide(const server_handshake_context& handshake_ctx,
                                                          server_handshake_state& state,
                                                          const mux::config& cfg,
                                                          server_accept_result& result,
@@ -1003,14 +986,9 @@ boost::asio::awaitable<bool> read_client_hello_or_decide(server_handshake_contex
         co_return false;
     }
 
-    auto& ctx = handshake_ctx.ctx;
-    const auto read_failure_reason = co_await read_client_hello_handshake(*handshake_ctx.socket,
-                                                                          state.client_hello_record,
-                                                                          state.client_hello_handshake,
-                                                                          ctx,
-                                                                          cfg.timeout.read,
-                                                                          kMaxUnauthenticatedClientHelloLen,
-                                                                          ec);
+    const auto& ctx = handshake_ctx.ctx;
+    const auto* read_failure_reason = co_await read_client_hello_handshake(
+        *handshake_ctx.socket, state.client_hello_record, state.client_hello_handshake, ctx, cfg.timeout.read, kMaxUnauthenticatedClientHelloLen, ec);
     if (read_failure_reason != nullptr)
     {
         ec.clear();
@@ -1023,7 +1001,7 @@ boost::asio::awaitable<bool> read_client_hello_or_decide(server_handshake_contex
                   mux::log_event::kHandshake,
                   state.client_hello_record.size(),
                   state.client_hello_handshake.size());
-    state.client_hello = ::tls::client_hello_parser::parse(state.client_hello_handshake);
+    state.client_hello = tls::client_hello_parser::parse(state.client_hello_handshake);
     co_return true;
 }
 
@@ -1056,11 +1034,7 @@ std::optional<server_accept_result> validate_client_hello_and_authenticate(serve
     if (!verify_client_hello_sni(state.client_hello, cfg))
     {
         const auto client_sni = state.client_hello.sni.empty() ? std::string("empty") : state.client_hello.sni;
-        LOG_CTX_WARN(ctx,
-                     "{} auth fail server name mismatch client {} expected {}",
-                     mux::log_event::kAuth,
-                     client_sni,
-                     cfg.reality.sni);
+        LOG_CTX_WARN(ctx, "{} auth fail server name mismatch client {} expected {}", mux::log_event::kAuth, client_sni, cfg.reality.sni);
         return make_decision_result(accept_mode::kFallbackToTarget, "server_name_mismatch", state);
     }
     if (state.client_hello.malformed_key_share)
@@ -1089,18 +1063,15 @@ std::optional<server_accept_result> validate_client_hello_and_authenticate(serve
         LOG_CTX_ERROR(ctx, "{} auth fail missing signature algorithms extension", mux::log_event::kAuth);
         return make_decision_result(accept_mode::kFallbackToTarget, "missing_signature_algorithms", state);
     }
-    if (!client_offers_signature_scheme(state.client_hello, ::tls::consts::sig_alg::kEd25519))
+    if (!client_offers_signature_scheme(state.client_hello, tls::consts::sig_alg::kEd25519))
     {
         LOG_CTX_WARN(ctx, "{} auth fail missing ed25519 signature algorithm", mux::log_event::kAuth);
         return make_decision_result(accept_mode::kFallbackToTarget, "missing_ed25519_signature_algorithm", state);
     }
     if (!state.client_hello.is_tls13 || state.client_hello.session_id.size() != constants::auth::kSessionIdLen)
     {
-        LOG_CTX_ERROR(ctx,
-                      "{} auth fail is tls13 {} sid len {}",
-                      mux::log_event::kAuth,
-                      state.client_hello.is_tls13,
-                      state.client_hello.session_id.size());
+        LOG_CTX_ERROR(
+            ctx, "{} auth fail is tls13 {} sid len {}", mux::log_event::kAuth, state.client_hello.is_tls13, state.client_hello.session_id.size());
         return make_decision_result(accept_mode::kFallbackToTarget, "invalid_tls13_client_hello", state);
     }
     if (state.client_hello.random.size() != 32)
@@ -1108,47 +1079,38 @@ std::optional<server_accept_result> validate_client_hello_and_authenticate(serve
         LOG_CTX_ERROR(ctx, "{} auth fail random len {}", mux::log_event::kAuth, state.client_hello.random.size());
         return make_decision_result(accept_mode::kFallbackToTarget, "invalid_client_random", state);
     }
-    if (client_offers_cipher_suite(state.client_hello, ::tls::consts::cipher::kTlsFallbackScsv))
+    if (client_offers_cipher_suite(state.client_hello, tls::consts::cipher::kTlsFallbackScsv))
     {
         LOG_CTX_WARN(ctx, "{} auth fail unexpected tls fallback scsv", mux::log_event::kAuth);
         return make_decision_result(accept_mode::kFallbackToTarget, "unexpected_tls_fallback_scsv", state);
     }
     if (state.client_hello.compression_methods.size() != 1)
     {
-        LOG_CTX_ERROR(ctx,
-                      "{} auth fail illegal tls13 compression method count {}",
-                      mux::log_event::kAuth,
-                      state.client_hello.compression_methods.size());
+        LOG_CTX_ERROR(
+            ctx, "{} auth fail illegal tls13 compression method count {}", mux::log_event::kAuth, state.client_hello.compression_methods.size());
         return make_decision_result(accept_mode::kFallbackToTarget, "illegal_tls13_compression_methods", state);
     }
     if (state.client_hello.compression_methods[0] != 0x00)
     {
-        LOG_CTX_ERROR(ctx,
-                      "{} auth fail illegal tls13 compression method {:02x}",
-                      mux::log_event::kAuth,
-                      state.client_hello.compression_methods[0]);
+        LOG_CTX_ERROR(ctx, "{} auth fail illegal tls13 compression method {:02x}", mux::log_event::kAuth, state.client_hello.compression_methods[0]);
         return make_decision_result(accept_mode::kFallbackToTarget, "illegal_tls13_compression_methods", state);
     }
     if (!state.client_hello.secure_renegotiation.empty())
     {
-        LOG_CTX_WARN(ctx,
-                     "{} auth fail non-empty renegotiation info len {}",
-                     mux::log_event::kAuth,
-                     state.client_hello.secure_renegotiation.size());
+        LOG_CTX_WARN(ctx, "{} auth fail non-empty renegotiation info len {}", mux::log_event::kAuth, state.client_hello.secure_renegotiation.size());
         return make_decision_result(accept_mode::kFallbackToTarget, "non_empty_renegotiation_info", state);
     }
-    if (state.client_hello.key_share_group == ::tls::consts::group::kX25519MLKEM768 &&
-        state.client_hello.x25519_mlkem768_share.size() == ::tls::kMlkem768PublicKeySize + 32)
+    if (state.client_hello.key_share_group == tls::consts::group::kX25519MLKEM768 &&
+        state.client_hello.x25519_mlkem768_share.size() == tls::kMlkem768PublicKeySize + 32)
     {
-        state.key_share_group = ::tls::consts::group::kX25519MLKEM768;
+        state.key_share_group = tls::consts::group::kX25519MLKEM768;
         state.mlkem768_peer_pub.assign(state.client_hello.x25519_mlkem768_share.begin(),
-                                       state.client_hello.x25519_mlkem768_share.begin() +
-                                           static_cast<std::ptrdiff_t>(::tls::kMlkem768PublicKeySize));
+                                       state.client_hello.x25519_mlkem768_share.begin() + static_cast<std::ptrdiff_t>(tls::kMlkem768PublicKeySize));
         state.x25519_peer_pub.assign(state.client_hello.x25519_mlkem768_share.end() - 32, state.client_hello.x25519_mlkem768_share.end());
     }
-    else if (state.client_hello.key_share_group == ::tls::consts::group::kX25519 && state.client_hello.x25519_pub.size() == 32)
+    else if (state.client_hello.key_share_group == tls::consts::group::kX25519 && state.client_hello.x25519_pub.size() == 32)
     {
-        state.key_share_group = ::tls::consts::group::kX25519;
+        state.key_share_group = tls::consts::group::kX25519;
         state.x25519_peer_pub = state.client_hello.x25519_pub;
     }
     if (state.x25519_peer_pub.size() != 32)
@@ -1176,7 +1138,7 @@ std::optional<server_accept_result> validate_client_hello_and_authenticate(serve
                  "{} client hello selected key share group 0x{:04x} {} client hybrid {} client x25519 {}",
                  mux::log_event::kHandshake,
                  state.key_share_group,
-                 ::tls::named_group_name(state.key_share_group),
+                 tls::named_group_name(state.key_share_group),
                  state.client_hello.has_x25519_mlkem768_share,
                  state.client_hello.has_x25519_share);
     if (state.client_hello_handshake.size() < 4)
@@ -1192,7 +1154,7 @@ std::optional<server_accept_result> validate_client_hello_and_authenticate(serve
     return std::nullopt;
 }
 
-authenticated_handshake_plan prepare_authenticated_handshake(server_handshake_context& handshake_ctx,
+authenticated_handshake_plan prepare_authenticated_handshake(const server_handshake_context& handshake_ctx,
                                                              server_handshake_state& state,
                                                              const site_material* site_material,
                                                              const std::array<std::uint8_t, 32>& reality_cert_private_key,
@@ -1202,18 +1164,18 @@ authenticated_handshake_plan prepare_authenticated_handshake(server_handshake_co
 {
     ec.clear();
     authenticated_handshake_plan plan;
-    auto& ctx = handshake_ctx.ctx;
+    const auto& ctx = handshake_ctx.ctx;
 
     std::array<std::uint8_t, 32> ephemeral_public_key = {};
     std::array<std::uint8_t, 32> ephemeral_private_key = {};
-    struct private_key_cleaner
+    const struct private_key_cleaner
     {
         std::array<std::uint8_t, 32>& key;
 
         ~private_key_cleaner() { OPENSSL_cleanse(key.data(), key.size()); }
     } cleaner{ephemeral_private_key};
 
-    if (!::tls::crypto_util::generate_x25519_keypair(ephemeral_public_key.data(), ephemeral_private_key.data()))
+    if (!tls::crypto_util::generate_x25519_keypair(ephemeral_public_key.data(), ephemeral_private_key.data()))
     {
         LOG_CTX_ERROR(ctx, "{} generate ephemeral x25519 key failed", mux::log_event::kHandshake);
         ec = boost::asio::error::fault;
@@ -1229,20 +1191,20 @@ authenticated_handshake_plan prepare_authenticated_handshake(server_handshake_co
     LOG_CTX_TRACE(ctx,
                   "{} generated ephemeral key {}",
                   mux::log_event::kHandshake,
-                  ::tls::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(ephemeral_public_key.begin(), ephemeral_public_key.end())));
+                  tls::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(ephemeral_public_key.begin(), ephemeral_public_key.end())));
 
-    auto x25519_shared =
-        ::tls::crypto_util::x25519_derive(std::vector<std::uint8_t>(ephemeral_private_key.begin(), ephemeral_private_key.end()), state.x25519_peer_pub, ec);
+    auto x25519_shared = tls::crypto_util::x25519_derive(
+        std::vector<std::uint8_t>(ephemeral_private_key.begin(), ephemeral_private_key.end()), state.x25519_peer_pub, ec);
     if (ec)
     {
         LOG_CTX_ERROR(ctx, "{} x25519 derive failed", mux::log_event::kHandshake);
         return {};
     }
 
-    if (state.key_share_group == ::tls::consts::group::kX25519MLKEM768)
+    if (state.key_share_group == tls::consts::group::kX25519MLKEM768)
     {
         std::vector<std::uint8_t> mlkem768_shared;
-        auto ciphertext = ::tls::crypto_util::mlkem768_encapsulate(state.mlkem768_peer_pub, mlkem768_shared, ec);
+        auto ciphertext = tls::crypto_util::mlkem768_encapsulate(state.mlkem768_peer_pub, mlkem768_shared, ec);
         if (ec)
         {
             LOG_CTX_ERROR(ctx, "{} mlkem768 encapsulate failed {}", mux::log_event::kHandshake, ec.message());
@@ -1275,7 +1237,7 @@ authenticated_handshake_plan prepare_authenticated_handshake(server_handshake_co
 
     plan.has_cached_material = (site_material != nullptr);
     const auto cert_chain = build_reality_certificate_chain(cert_der, site_material);
-    state.cert_msg = ::tls::construct_certificate(cert_chain);
+    state.cert_msg = tls::construct_certificate(cert_chain);
 
     const auto cipher_suite = select_reality_cipher_suite(state.client_hello, site_material);
     if (!cipher_suite.has_value())
@@ -1301,7 +1263,7 @@ authenticated_handshake_plan prepare_authenticated_handshake(server_handshake_co
                  plan.has_cached_material,
                  plan.cert_chain_size,
                  state.key_share_group,
-                 ::tls::named_group_name(state.key_share_group),
+                 tls::named_group_name(state.key_share_group),
                  state.server_key_share_data.size(),
                  plan.cipher_suite,
                  plan.selected_alpn,
@@ -1325,15 +1287,15 @@ authenticated_handshake_plan prepare_authenticated_handshake(server_handshake_co
     return plan;
 }
 
-boost::asio::awaitable<bool> complete_authenticated_handshake(server_handshake_context& handshake_ctx,
-                                                              server_handshake_state& state,
+boost::asio::awaitable<bool> complete_authenticated_handshake(const server_handshake_context& handshake_ctx,
+                                                              const server_handshake_state& state,
                                                               const mux::config& cfg,
                                                               const authenticated_handshake_plan& plan,
                                                               authenticated_session& authenticated,
                                                               boost::system::error_code& ec)
 {
     ec.clear();
-    auto& ctx = handshake_ctx.ctx;
+    const auto& ctx = handshake_ctx.ctx;
     const auto out_sh = compose_server_hello_flight(plan.crypto.sh_msg,
                                                     plan.crypto.flight2_plain,
                                                     plan.send_change_cipher_spec,
@@ -1380,14 +1342,14 @@ boost::asio::awaitable<bool> complete_authenticated_handshake(server_handshake_c
     const auto record = compose_tls_record(header, body);
     std::uint8_t content_type = 0;
     auto plaintext =
-        ::tls::record_layer::decrypt_record(plan.crypto.cipher, plan.crypto.c_hs_keys.first, plan.crypto.c_hs_keys.second, 0, record, content_type, ec);
+        tls::record_layer::decrypt_record(plan.crypto.cipher, plan.crypto.c_hs_keys.first, plan.crypto.c_hs_keys.second, 0, record, content_type, ec);
     if (ec)
     {
         LOG_CTX_ERROR(ctx, "{} client finished decrypt failed {}", mux::log_event::kHandshake, ec.message());
         co_return false;
     }
 
-    auto expected_fin_verify = ::tls::key_schedule::compute_finished_verify_data(
+    auto expected_fin_verify = tls::key_schedule::compute_finished_verify_data(
         plan.crypto.hs_keys.client_handshake_traffic_secret, state.transcript.finish(), plan.crypto.md, ec);
     if (ec)
     {
@@ -1401,32 +1363,29 @@ boost::asio::awaitable<bool> complete_authenticated_handshake(server_handshake_c
         co_return false;
     }
 
-    auto app_sec = ::tls::key_schedule::derive_application_secrets(
-        plan.crypto.hs_keys.master_secret, state.transcript.finish(), plan.crypto.md, ec);
+    auto app_sec = tls::key_schedule::derive_application_secrets(plan.crypto.hs_keys.master_secret, state.transcript.finish(), plan.crypto.md, ec);
     if (ec)
     {
         co_return false;
     }
 
-    authenticated.secrets =
-        {
-            .c_app_secret = std::move(app_sec.first),
-            .s_app_secret = std::move(app_sec.second),
-        };
-    authenticated.negotiated =
-        {
-            .cipher_suite = plan.cipher_suite,
-            .key_share_group = state.key_share_group,
-            .negotiated_alpn = plan.selected_alpn,
-            .md = plan.crypto.md,
-            .cipher = plan.crypto.cipher,
-        };
+    authenticated.secrets = {
+        .c_app_secret = std::move(app_sec.first),
+        .s_app_secret = std::move(app_sec.second),
+    };
+    authenticated.negotiated = {
+        .cipher_suite = plan.cipher_suite,
+        .key_share_group = state.key_share_group,
+        .negotiated_alpn = plan.selected_alpn,
+        .md = plan.crypto.md,
+        .cipher = plan.crypto.cipher,
+    };
     co_return true;
 }
 
 }    // namespace
 
-server_handshaker::server_handshaker(dependencies deps)
+server_handshaker::server_handshaker(const dependencies& deps)
     : cfg_(deps.cfg),
       private_key_(deps.private_key),
       short_id_bytes_(deps.short_id_bytes),
@@ -1438,8 +1397,7 @@ server_handshaker::server_handshaker(dependencies deps)
 {
 }
 
-boost::asio::awaitable<server_accept_result> server_handshaker::accept(server_handshake_context& handshake_ctx,
-                                                                       boost::system::error_code& ec) const
+boost::asio::awaitable<server_accept_result> server_handshaker::accept(server_handshake_context& handshake_ctx, boost::system::error_code& ec) const
 {
     ec.clear();
     server_accept_result result;

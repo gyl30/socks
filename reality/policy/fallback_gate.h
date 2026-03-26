@@ -4,7 +4,6 @@
 #include <deque>
 #include <mutex>
 #include <string>
-#include <utility>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -53,10 +52,7 @@ class fallback_gate
        private:
         friend class fallback_gate;
 
-        explicit budget_ticket(fallback_gate* owner)
-            : owner_(owner)
-        {
-        }
+        explicit budget_ticket(fallback_gate* owner) : owner_(owner) {}
 
         fallback_gate* owner_ = nullptr;
     };
