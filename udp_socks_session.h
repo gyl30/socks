@@ -28,7 +28,6 @@
 #include "mux_tunnel.h"
 #include "task_group.h"
 #include "log_context.h"
-#include "mux_stream_interface.h"
 
 namespace mux
 {
