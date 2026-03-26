@@ -35,7 +35,7 @@
 #include "config.h"
 #include "router.h"
 #include "net_utils.h"
-#include "statistics.h"
+#include "connection_tracker.h"
 #include "context_pool.h"
 #include "tproxy_client.h"
 #include "client_tunnel_pool.h"
@@ -295,10 +295,8 @@ void tproxy_client::on_tcp_socket(boost::asio::ip::tcp::socket&& socket)
         LOG_WARN("tproxy tcp set no delay failed code {}", ec.value());
     }
 
-    auto& stats = statistics::instance();
-    if (stats.active_connections() >= resolve_client_session_max_connections(cfg_.limits))
+    if (connection_tracker::instance().active_connections() >= resolve_client_session_max_connections(cfg_.limits))
     {
-        stats.inc_connection_limit_rejected();
         boost::system::error_code close_ec;
         socket.shutdown(boost::asio::ip::tcp::socket::shutdown_both, close_ec);
         socket.close(close_ec);
@@ -408,10 +406,8 @@ boost::asio::awaitable<void> tproxy_client::on_udp_packet(boost::asio::ip::udp::
     auto session_it = udp_sessions_.find(key);
     if (session_it == udp_sessions_.end())
     {
-        auto& stats = statistics::instance();
-        if (stats.active_connections() >= resolve_client_session_max_connections(cfg_.limits))
+        if (connection_tracker::instance().active_connections() >= resolve_client_session_max_connections(cfg_.limits))
         {
-            stats.inc_connection_limit_rejected();
             LOG_WARN("tproxy udp connection limit reached drop packet");
             co_return;
         }
@@ -483,7 +479,6 @@ boost::asio::awaitable<void> tproxy_client::on_udp_packet(boost::asio::ip::udp::
         evict_udp_sessions_if_needed();
         if (udp_sessions_.size() >= kMaxUdpSessions)
         {
-            statistics::instance().inc_connection_limit_rejected();
             LOG_WARN("tproxy udp session limit reached drop packet");
             co_return;
         }

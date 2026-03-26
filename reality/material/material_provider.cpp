@@ -10,7 +10,6 @@
 
 #include "log.h"
 #include "config.h"
-#include "statistics.h"
 #include "timeout_io.h"
 #include "cert_fetcher.h"
 #include "cert_manager.h"
@@ -108,7 +107,6 @@ boost::asio::awaitable<material_provider::refresh_result> material_provider::ref
     const std::string trace_id = "site-material:" + target_host;
     const auto attempt_at = now_seconds();
     manager_.mark_fetch_started(target_host, target_host, target_host, options_.fallback_port, attempt_at, trace_id);
-    mux::statistics::instance().inc_site_material_fetch_attempts();
 
     auto fetch_reply = co_await fetch_(io_context,
                                        {.host = target_host,
@@ -123,14 +121,12 @@ boost::asio::awaitable<material_provider::refresh_result> material_provider::ref
     {
         result.success = true;
         result.next_refresh_in_seconds = options_.fetch_success_ttl_sec;
-        mux::statistics::instance().inc_site_material_fetch_successes();
         const auto next_refresh_at = now_seconds() + options_.fetch_success_ttl_sec;
         manager_.set_material(
             target_host, target_host, target_host, options_.fallback_port, std::move(*fetch_reply.material), next_refresh_at, trace_id);
         co_return result;
     }
 
-    mux::statistics::instance().inc_site_material_fetch_failures();
     const auto next_refresh_at = now_seconds() + options_.fetch_failure_retry_sec;
     manager_.set_fetch_failure(
         target_host, target_host, target_host, options_.fallback_port, format_fetch_error(fetch_reply), attempt_at, next_refresh_at, trace_id);
