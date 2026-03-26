@@ -8,7 +8,6 @@
 #include <vector>
 #include <cstddef>
 #include <cstdint>
-#include <functional>
 #include <unordered_map>
 
 #include <boost/asio/ip/tcp.hpp>
@@ -48,13 +47,11 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     void stop();
 
    public:
-    using new_stream_cb = std::function<boost::asio::awaitable<void>(mux_frame)>;
-    void set_new_stream_cb(new_stream_cb cb) { cb_ = std::move(cb); }
-
-   public:
     [[nodiscard]] bool is_active() const;
     [[nodiscard]] boost::asio::io_context& io_context() const { return io_context_; }
+    void start_accepting_streams();
     boost::asio::awaitable<void> async_wait_stopped();
+    [[nodiscard]] boost::asio::awaitable<mux_frame> async_receive_syn(boost::system::error_code& ec);
     std::shared_ptr<mux_stream> create_stream();
     void register_stream(const std::shared_ptr<mux_stream>& stream);
     void close_and_remove_stream(const std::shared_ptr<mux_stream>& stream);
@@ -89,7 +86,6 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     connection_context ctx_;
     task_group& group_;
     std::mutex mutex_;
-    new_stream_cb cb_;
     reality_engine reality_engine_;
     std::vector<std::uint8_t> pending_plaintext_;
     std::uint32_t next_stream_id_ = 0;
@@ -109,6 +105,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     using channel_type = boost::asio::experimental::concurrent_channel<void(boost::system::error_code, mux_frame)>;
     using stop_channel_type = boost::asio::experimental::concurrent_channel<void(boost::system::error_code)>;
     std::unique_ptr<channel_type> write_channel_;
+    std::unique_ptr<channel_type> incoming_syn_channel_;
     std::unique_ptr<stop_channel_type> stop_channel_;
     std::unordered_map<uint32_t, std::shared_ptr<mux_stream>> streams_;
 };

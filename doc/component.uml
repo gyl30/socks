@@ -60,7 +60,7 @@ Network <--> ServerReality
 ServerReality --> ServerMux : plaintext mux frame
 
 RemoteServer --> ServerReality : REALITY 握手
-RemoteServer --> ServerMux : set_new_stream_cb
+RemoteServer --> ServerMux : async_receive_syn
 ServerMux --> RemoteTcp : SYN CONNECT
 ServerMux --> RemoteUdp : SYN UDP_ASSOCIATE
 
