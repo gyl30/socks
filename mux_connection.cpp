@@ -284,6 +284,15 @@ std::shared_ptr<mux_stream> mux_connection::find_stream(const std::uint32_t stre
     return nullptr;
 }
 
+void mux_connection::start_accepting_streams()
+{
+    if (incoming_syn_channel_ != nullptr)
+    {
+        return;
+    }
+    incoming_syn_channel_ = std::make_unique<channel_type>(io_context_, 1);
+}
+
 boost::asio::awaitable<void> mux_connection::handle_unknown_stream(mux::frame_header header, std::vector<std::uint8_t> payload)
 {
     if (header.command == mux::kCmdRst)
@@ -313,12 +322,34 @@ boost::asio::awaitable<void> mux_connection::handle_unknown_stream(mux::frame_he
             }
             co_return;
         }
-        if (cb_)
+        if (incoming_syn_channel_ == nullptr)
         {
-            mux_frame frame;
-            frame.h = header;
-            frame.payload = std::move(payload);
-            co_return co_await cb_(std::move(frame));
+            LOG_WARN("mux {} incoming syn on stream {} rejected without accept loop", cid_, header.stream_id);
+            mux_frame rst;
+            rst.h.command = mux::kCmdRst;
+            rst.h.stream_id = header.stream_id;
+            boost::system::error_code rst_ec;
+            co_await send_async_with_timeout(std::move(rst), kControlFrameSendTimeoutSec, rst_ec);
+            if (rst_ec)
+            {
+                LOG_WARN("mux {} reject stream {} send rst failed {}", cid_, header.stream_id, rst_ec.message());
+            }
+            co_return;
+        }
+
+        mux_frame frame;
+        frame.h = header;
+        frame.payload = std::move(payload);
+        const auto [send_ec] =
+            co_await incoming_syn_channel_->async_send(boost::system::error_code{}, std::move(frame), boost::asio::as_tuple(boost::asio::use_awaitable));
+        if (send_ec)
+        {
+            if (send_ec != boost::asio::error::operation_aborted &&
+                send_ec != boost::asio::experimental::error::channel_errors::channel_closed &&
+                send_ec != boost::asio::experimental::error::channel_errors::channel_cancelled)
+            {
+                LOG_WARN("mux {} queue incoming syn stream {} failed {}", cid_, header.stream_id, send_ec.message());
+            }
         }
         co_return;
     }
@@ -480,6 +511,10 @@ void mux_connection::stop_on_executor()
     {
         write_channel_->close();
     }
+    if (incoming_syn_channel_ != nullptr)
+    {
+        incoming_syn_channel_->close();
+    }
 
     {
         std::lock_guard<std::mutex> lock(write_limit_mutex_);
@@ -513,6 +548,20 @@ boost::asio::awaitable<void> mux_connection::async_wait_stopped()
     {
         LOG_WARN("mux {} wait stopped error {}", cid_, ec.message());
     }
+}
+
+boost::asio::awaitable<mux_frame> mux_connection::async_receive_syn(boost::system::error_code& ec)
+{
+    ec.clear();
+    if (incoming_syn_channel_ == nullptr)
+    {
+        ec = boost::asio::error::operation_not_supported;
+        co_return mux_frame{};
+    }
+
+    auto [recv_ec, frame] = co_await incoming_syn_channel_->async_receive(boost::asio::as_tuple(boost::asio::use_awaitable));
+    ec = recv_ec;
+    co_return frame;
 }
 
 boost::asio::awaitable<void> mux_connection::read_loop()
