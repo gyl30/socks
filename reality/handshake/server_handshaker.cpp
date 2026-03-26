@@ -45,7 +45,7 @@ extern "C"
 #include "tls/record_layer.h"
 #include "tls/record_validation.h"
 #include "reality/handshake/auth.h"
-#include "reality/material/material_provider.h"
+#include "site_material.h"
 #include "reality/handshake/server_handshaker.h"
 
 namespace reality
@@ -662,39 +662,28 @@ bool client_offers_signature_scheme(const ::tls::client_hello_info& hello, const
     return std::find(hello.signature_algorithms.begin(), hello.signature_algorithms.end(), scheme) != hello.signature_algorithms.end();
 }
 
-std::optional<site_material_snapshot> get_cached_site_material_snapshot(material_provider& provider)
-{
-    const auto snapshot = provider.get_server_material_snapshot();
-    if (!snapshot.has_value() || !snapshot->material.has_value())
-    {
-        return std::nullopt;
-    }
-    return snapshot;
-}
-
 std::vector<std::vector<std::uint8_t>> build_reality_certificate_chain(const std::vector<std::uint8_t>& leaf_cert_der,
-                                                                       const std::optional<site_material_snapshot>& site_material_snapshot)
+                                                                       const site_material* site_material)
 {
     std::vector<std::vector<std::uint8_t>> cert_chain;
     cert_chain.push_back(leaf_cert_der);
-    if (!site_material_snapshot.has_value())
+    if (site_material == nullptr)
     {
         return cert_chain;
     }
 
-    const auto& cached_chain = site_material_snapshot->material->certificate_chain;
+    const auto& cached_chain = site_material->certificate_chain;
     const auto cached_begin =
         (!cached_chain.empty() && cached_chain.front() == leaf_cert_der) ? cached_chain.begin() + 1 : cached_chain.begin();
     cert_chain.insert(cert_chain.end(), cached_begin, cached_chain.end());
     return cert_chain;
 }
 
-std::optional<std::uint16_t> select_reality_cipher_suite(const ::tls::client_hello_info& hello,
-                                                         const std::optional<site_material_snapshot>& site_material_snapshot)
+std::optional<std::uint16_t> select_reality_cipher_suite(const ::tls::client_hello_info& hello, const site_material* site_material)
 {
-    if (site_material_snapshot.has_value())
+    if (site_material != nullptr)
     {
-        const auto cached_cipher = normalize_cipher_suite(site_material_snapshot->material->fingerprint.cipher_suite);
+        const auto cached_cipher = normalize_cipher_suite(site_material->fingerprint.cipher_suite);
         if (client_offers_cipher_suite(hello, cached_cipher))
         {
             return cached_cipher;
@@ -714,13 +703,13 @@ std::optional<std::uint16_t> select_reality_cipher_suite(const ::tls::client_hel
     return std::nullopt;
 }
 
-std::string select_reality_alpn(const ::tls::client_hello_info& hello, const std::optional<site_material_snapshot>& site_material_snapshot)
+std::string select_reality_alpn(const ::tls::client_hello_info& hello, const site_material* site_material)
 {
-    if (!site_material_snapshot.has_value())
+    if (site_material == nullptr)
     {
         return {};
     }
-    const auto& cached_alpn = site_material_snapshot->material->fingerprint.alpn;
+    const auto& cached_alpn = site_material->fingerprint.alpn;
     if (cached_alpn.empty())
     {
         return {};
@@ -732,14 +721,14 @@ std::string select_reality_alpn(const ::tls::client_hello_info& hello, const std
     return cached_alpn;
 }
 
-std::vector<std::uint16_t> select_server_hello_extension_order(const std::optional<site_material_snapshot>& site_material_snapshot)
+std::vector<std::uint16_t> select_server_hello_extension_order(const site_material* site_material)
 {
-    if (!site_material_snapshot.has_value())
+    if (site_material == nullptr)
     {
         return {};
     }
     std::vector<std::uint16_t> out;
-    for (const auto ext_type : site_material_snapshot->material->server_hello_extension_types)
+    for (const auto ext_type : site_material->server_hello_extension_types)
     {
         if (ext_type == ::tls::consts::ext::kSupportedVersions || ext_type == ::tls::consts::ext::kKeyShare)
         {
@@ -749,14 +738,14 @@ std::vector<std::uint16_t> select_server_hello_extension_order(const std::option
     return out;
 }
 
-std::vector<std::uint16_t> select_encrypted_extensions_order(const std::optional<site_material_snapshot>& site_material_snapshot)
+std::vector<std::uint16_t> select_encrypted_extensions_order(const site_material* site_material)
 {
-    if (!site_material_snapshot.has_value())
+    if (site_material == nullptr)
     {
         return {};
     }
     std::vector<std::uint16_t> out;
-    for (const auto ext_type : site_material_snapshot->material->encrypted_extension_types)
+    for (const auto ext_type : site_material->encrypted_extension_types)
     {
         if (ext_type == ::tls::consts::ext::kAlpn || ext_type == ::tls::consts::ext::kPadding)
         {
@@ -766,51 +755,51 @@ std::vector<std::uint16_t> select_encrypted_extensions_order(const std::optional
     return out;
 }
 
-bool should_include_encrypted_extensions_padding(const std::optional<site_material_snapshot>& site_material_snapshot)
+bool should_include_encrypted_extensions_padding(const site_material* site_material)
 {
-    if (!site_material_snapshot.has_value())
+    if (site_material == nullptr)
     {
         return true;
     }
-    return std::find(site_material_snapshot->material->encrypted_extension_types.begin(),
-                     site_material_snapshot->material->encrypted_extension_types.end(),
-                     ::tls::consts::ext::kPadding) != site_material_snapshot->material->encrypted_extension_types.end();
+    return std::find(site_material->encrypted_extension_types.begin(),
+                     site_material->encrypted_extension_types.end(),
+                     ::tls::consts::ext::kPadding) != site_material->encrypted_extension_types.end();
 }
 
-std::optional<std::uint16_t> select_encrypted_extensions_padding_len(const std::optional<site_material_snapshot>& site_material_snapshot)
+std::optional<std::uint16_t> select_encrypted_extensions_padding_len(const site_material* site_material)
 {
-    if (!site_material_snapshot.has_value())
+    if (site_material == nullptr)
     {
         return std::nullopt;
     }
-    return site_material_snapshot->material->encrypted_extensions_padding_len;
+    return site_material->encrypted_extensions_padding_len;
 }
 
-bool should_send_change_cipher_spec(const std::optional<site_material_snapshot>& site_material_snapshot)
+bool should_send_change_cipher_spec(const site_material* site_material)
 {
-    if (!site_material_snapshot.has_value())
+    if (site_material == nullptr)
     {
         return true;
     }
-    return site_material_snapshot->material->sends_change_cipher_spec;
+    return site_material->sends_change_cipher_spec;
 }
 
-std::vector<std::uint16_t> select_encrypted_handshake_record_sizes(const std::optional<site_material_snapshot>& site_material_snapshot)
+std::vector<std::uint16_t> select_encrypted_handshake_record_sizes(const site_material* site_material)
 {
-    if (!site_material_snapshot.has_value())
+    if (site_material == nullptr)
     {
         return {};
     }
-    return site_material_snapshot->material->encrypted_handshake_record_sizes;
+    return site_material->encrypted_handshake_record_sizes;
 }
 
-std::size_t select_reality_certificate_chain_size(const std::optional<site_material_snapshot>& site_material_snapshot)
+std::size_t select_reality_certificate_chain_size(const site_material* site_material)
 {
-    if (!site_material_snapshot.has_value())
+    if (site_material == nullptr)
     {
         return 1;
     }
-    return 1 + site_material_snapshot->material->certificate_chain.size();
+    return 1 + site_material->certificate_chain.size();
 }
 
 boost::asio::awaitable<void> consume_tls13_compat_ccs(boost::asio::ip::tcp::socket& socket,
@@ -1205,7 +1194,7 @@ std::optional<server_accept_result> validate_client_hello_and_authenticate(serve
 
 authenticated_handshake_plan prepare_authenticated_handshake(server_handshake_context& handshake_ctx,
                                                              server_handshake_state& state,
-                                                             material_provider& material_provider_ref,
+                                                             const site_material* site_material,
                                                              const std::array<std::uint8_t, 32>& reality_cert_private_key,
                                                              const std::vector<std::uint8_t>& reality_cert_public_key,
                                                              const std::vector<std::uint8_t>& reality_cert_template,
@@ -1284,12 +1273,11 @@ authenticated_handshake_plan prepare_authenticated_handshake(server_handshake_co
         return {};
     }
 
-    const auto site_material_snapshot = get_cached_site_material_snapshot(material_provider_ref);
-    plan.has_cached_material = site_material_snapshot.has_value();
-    const auto cert_chain = build_reality_certificate_chain(cert_der, site_material_snapshot);
+    plan.has_cached_material = (site_material != nullptr);
+    const auto cert_chain = build_reality_certificate_chain(cert_der, site_material);
     state.cert_msg = ::tls::construct_certificate(cert_chain);
 
-    const auto cipher_suite = select_reality_cipher_suite(state.client_hello, site_material_snapshot);
+    const auto cipher_suite = select_reality_cipher_suite(state.client_hello, site_material);
     if (!cipher_suite.has_value())
     {
         LOG_CTX_ERROR(ctx, "{} no mutual tls13 cipher suite", mux::log_event::kHandshake);
@@ -1297,14 +1285,14 @@ authenticated_handshake_plan prepare_authenticated_handshake(server_handshake_co
         return {};
     }
     plan.cipher_suite = *cipher_suite;
-    plan.selected_alpn = select_reality_alpn(state.client_hello, site_material_snapshot);
-    const auto server_hello_extension_order = select_server_hello_extension_order(site_material_snapshot);
-    const auto encrypted_extension_order = select_encrypted_extensions_order(site_material_snapshot);
-    const bool include_ee_padding = should_include_encrypted_extensions_padding(site_material_snapshot);
-    const auto encrypted_extensions_padding_len = select_encrypted_extensions_padding_len(site_material_snapshot);
-    plan.send_change_cipher_spec = should_send_change_cipher_spec(site_material_snapshot);
-    plan.encrypted_handshake_record_sizes = select_encrypted_handshake_record_sizes(site_material_snapshot);
-    plan.cert_chain_size = select_reality_certificate_chain_size(site_material_snapshot);
+    plan.selected_alpn = select_reality_alpn(state.client_hello, site_material);
+    const auto server_hello_extension_order = select_server_hello_extension_order(site_material);
+    const auto encrypted_extension_order = select_encrypted_extensions_order(site_material);
+    const bool include_ee_padding = should_include_encrypted_extensions_padding(site_material);
+    const auto encrypted_extensions_padding_len = select_encrypted_extensions_padding_len(site_material);
+    plan.send_change_cipher_spec = should_send_change_cipher_spec(site_material);
+    plan.encrypted_handshake_record_sizes = select_encrypted_handshake_record_sizes(site_material);
+    plan.cert_chain_size = select_reality_certificate_chain_size(site_material);
 
     LOG_CTX_INFO(ctx,
                  "{} success path material cache {} certs {} group 0x{:04x} {} key share len {} cipher 0x{:04x} alpn '{}' sh exts {} ee exts {} "
@@ -1443,7 +1431,7 @@ server_handshaker::server_handshaker(dependencies deps)
       private_key_(deps.private_key),
       short_id_bytes_(deps.short_id_bytes),
       replay_cache_(deps.replay_cache),
-      material_provider_(deps.material_provider_ref),
+      site_material_(deps.site_material_ptr),
       reality_cert_private_key_(deps.reality_cert_private_key),
       reality_cert_public_key_(deps.reality_cert_public_key),
       reality_cert_template_(deps.reality_cert_template)
@@ -1469,7 +1457,7 @@ boost::asio::awaitable<server_accept_result> server_handshaker::accept(server_ha
     }
 
     const auto plan = prepare_authenticated_handshake(
-        handshake_ctx, state, material_provider_, reality_cert_private_key_, reality_cert_public_key_, reality_cert_template_, ec);
+        handshake_ctx, state, site_material_, reality_cert_private_key_, reality_cert_public_key_, reality_cert_template_, ec);
     if (ec)
     {
         co_return result;

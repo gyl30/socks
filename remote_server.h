@@ -3,6 +3,7 @@
 
 #include <array>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 #include <atomic>
@@ -62,7 +63,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     std::vector<std::uint8_t> reality_cert_template_;
     std::uint32_t next_conn_id_{1};
     replay_cache replay_cache_;
-    reality::material_provider material_provider_;
+    std::optional<reality::site_material> site_material_;
     reality::fallback_gate fallback_gate_;
     reality::fallback_executor fallback_executor_;
     std::atomic<bool> stopping_{false};

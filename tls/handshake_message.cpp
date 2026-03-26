@@ -6,6 +6,11 @@
 #include <cstdint>
 #include <algorithm>
 
+extern "C"
+{
+#include <openssl/x509.h>
+}
+
 #include "tls/core.h"
 #include "tls/handshake_message.h"
 
@@ -92,6 +97,18 @@ bool is_exact_handshake_message(const std::span<const std::uint8_t> message, con
         return false;
     }
     return message[0] == expected_type && full_len == message.size();
+}
+
+bool validate_certificate_der(const std::span<const std::uint8_t> certificate_der)
+{
+    const auto* der_begin = certificate_der.data();
+    auto* parse_cursor = der_begin;
+    ::tls::openssl_ptrs::x509_ptr certificate(d2i_X509(nullptr, &parse_cursor, static_cast<long>(certificate_der.size())));
+    if (certificate == nullptr)
+    {
+        return false;
+    }
+    return parse_cursor == der_begin + static_cast<std::ptrdiff_t>(certificate_der.size());
 }
 
 constexpr std::array<std::uint8_t, 32> kHelloRetryRequestRandom = {
@@ -525,6 +542,12 @@ bool parse_certificate_chain(const std::span<const std::uint8_t> certificate_mes
             return false;
         }
         if (pos + certificate_len + 2 > certificate_list_end)
+        {
+            return false;
+        }
+
+        const auto certificate_der = certificate_message.subspan(pos, static_cast<std::size_t>(certificate_len));
+        if (!validate_certificate_der(certificate_der))
         {
             return false;
         }

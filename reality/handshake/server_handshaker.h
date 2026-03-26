@@ -24,7 +24,7 @@ class replay_cache;
 namespace reality
 {
 
-class material_provider;
+struct site_material;
 
 struct server_handshake_context
 {
@@ -41,7 +41,7 @@ class server_handshaker
         const std::vector<std::uint8_t>& private_key;
         const std::vector<std::uint8_t>& short_id_bytes;
         mux::replay_cache& replay_cache;
-        material_provider& material_provider_ref;
+        const site_material* site_material_ptr = nullptr;
         const std::array<std::uint8_t, 32>& reality_cert_private_key;
         const std::vector<std::uint8_t>& reality_cert_public_key;
         const std::vector<std::uint8_t>& reality_cert_template;
@@ -57,7 +57,7 @@ class server_handshaker
     const std::vector<std::uint8_t>& private_key_;
     const std::vector<std::uint8_t>& short_id_bytes_;
     mux::replay_cache& replay_cache_;
-    material_provider& material_provider_;
+    const site_material* site_material_ = nullptr;
     const std::array<std::uint8_t, 32>& reality_cert_private_key_;
     const std::vector<std::uint8_t>& reality_cert_public_key_;
     const std::vector<std::uint8_t>& reality_cert_template_;
