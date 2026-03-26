@@ -222,7 +222,6 @@ set(SOCKS_SOURCES
     domain_matcher.cpp
     reality/handshake/auth.cpp
     cert_fetcher.cpp
-    cert_manager.cpp
     tls/certificate_compression.cpp)
 
 if(SOCKS_HAS_TPROXY)

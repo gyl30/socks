@@ -166,7 +166,6 @@ remote_server::remote_server(io_context_pool& pool, const config& cfg)
       pool_(pool),
       io_context_(pool.get_io_context()),
       replay_cache_(static_cast<std::size_t>(cfg.reality.replay_cache_max_entries)),
-      material_provider_({.cfg = cfg, .opts = {}, .now_seconds = {}, .fetch = {}}),
       fallback_gate_({.opts = {}, .now_seconds = {}}),
       fallback_executor_({.io_context = io_context_, .cfg = cfg, .opts = {}})
 {
@@ -264,11 +263,18 @@ void remote_server::start()
         std::exit(EXIT_FAILURE);
     }
 
+    site_material_.reset();
+    auto loaded_material = reality::load_site_material(cfg_, ec);
+    if (ec)
+    {
+        LOG_ERROR("remote server failed to load reality site material {}", ec.message());
+        std::exit(EXIT_FAILURE);
+    }
+    site_material_ = std::move(loaded_material);
+
     LOG_INFO("remote server listening on {}:{}", cfg_.inbound.host, cfg_.inbound.port);
 
     auto& owner_group = pool_.get_task_group(io_context_);
-    boost::asio::co_spawn(
-        io_context_, [self = shared_from_this()] { return self->material_provider_.refresh_loop(self->io_context_); }, owner_group.adapt(boost::asio::detached));
     boost::asio::co_spawn(io_context_, [self = shared_from_this()] { return self->accept_loop(); }, owner_group.adapt(boost::asio::detached));
 }
 
@@ -363,7 +369,7 @@ boost::asio::awaitable<void> remote_server::handle(boost::asio::io_context& io,
          .private_key = private_key_,
          .short_id_bytes = short_id_bytes_,
          .replay_cache = replay_cache_,
-         .material_provider_ref = material_provider_,
+         .site_material_ptr = site_material_ ? &*site_material_ : nullptr,
          .reality_cert_private_key = reality_cert_private_key_,
          .reality_cert_public_key = reality_cert_public_key_,
          .reality_cert_template = reality_cert_template_});
