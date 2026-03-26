@@ -6,7 +6,7 @@
 #include <charconv>
 #include <system_error>
 
-#include "log_context.h"
+#include "connection_context.h"
 
 namespace mux
 {
@@ -84,16 +84,6 @@ std::string connection_context::connection_info() const
     return out;
 }
 
-std::string connection_context::target_info() const
-{
-    std::string out;
-    out.reserve(target_host_.size() + 16);
-    out += target_host_;
-    out.push_back('_');
-    append_int(out, target_port_);
-    return out;
-}
-
 double connection_context::duration_seconds() const
 {
     const auto now = std::chrono::steady_clock::now();
@@ -135,43 +125,5 @@ void connection_context::set_target(const std::string& host, const std::uint16_t
 }
 
 void connection_context::new_trace_id() { trace_id_ = generate_trace_id(); }
-
-std::string format_bytes(std::uint64_t bytes)
-{
-    constexpr std::uint64_t kKib = 1024ULL;
-    constexpr std::uint64_t kMib = kKib * 1024ULL;
-    constexpr std::uint64_t kGib = kMib * 1024ULL;
-    const auto bytes_d = static_cast<double>(bytes);
-    char number_buf[32];
-    if (bytes >= kGib)
-    {
-        std::snprintf(number_buf, sizeof(number_buf), "%.2fGB", bytes_d / static_cast<double>(kGib));
-        return {number_buf};
-    }
-    if (bytes >= kMib)
-    {
-        std::snprintf(number_buf, sizeof(number_buf), "%.2fMB", bytes_d / static_cast<double>(kMib));
-        return {number_buf};
-    }
-    if (bytes >= kKib)
-    {
-        std::snprintf(number_buf, sizeof(number_buf), "%.2fKB", bytes_d / static_cast<double>(kKib));
-        return {number_buf};
-    }
-    std::string out;
-    out.reserve(24);
-    append_int(out, bytes);
-    out.push_back('B');
-    return out;
-}
-
-std::string format_latency_ms(std::int64_t ms)
-{
-    std::string out;
-    out.reserve(24);
-    append_int(out, ms);
-    out += "ms";
-    return out;
-}
 
 }    // namespace mux

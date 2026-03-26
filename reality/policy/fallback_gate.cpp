@@ -3,7 +3,7 @@
 
 #include "log.h"
 #include "timeout_io.h"
-#include "log_context.h"
+#include "connection_context.h"
 #include "reality/policy/fallback_gate.h"
 
 namespace reality

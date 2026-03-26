@@ -25,7 +25,7 @@
 #include "net_utils.h"
 #include "timeout_io.h"
 #include "scoped_exit.h"
-#include "log_context.h"
+#include "connection_context.h"
 #include "mux_protocol.h"
 #include "remote_udp_session.h"
 

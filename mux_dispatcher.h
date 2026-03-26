@@ -9,7 +9,7 @@
 #include <boost/asio/streambuf.hpp>
 #include <boost/system/error_code.hpp>
 
-#include "log_context.h"
+#include "connection_context.h"
 #include "mux_protocol.h"
 
 namespace mux

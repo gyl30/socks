@@ -17,7 +17,7 @@
 #include <boost/asio/io_context.hpp>
 #include <boost/system/error_code.hpp>
 
-#include "log_context.h"
+#include "connection_context.h"
 #include "site_material.h"
 #include "tls/cipher_context.h"
 #include "tls/transcript.h"

@@ -10,7 +10,7 @@
 #include <boost/asio/awaitable.hpp>
 #include <boost/system/error_code.hpp>
 
-#include "log_context.h"
+#include "connection_context.h"
 #include "reality/types.h"
 
 namespace mux

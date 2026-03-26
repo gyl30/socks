@@ -20,7 +20,7 @@
 #include "net_utils.h"
 #include "lru_cache.h"
 #include "mux_tunnel.h"
-#include "log_context.h"
+#include "connection_context.h"
 #include "mux_protocol.h"
 
 namespace mux
