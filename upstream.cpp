@@ -29,7 +29,7 @@
 #include "mux_codec.h"
 #include "net_utils.h"
 #include "mux_stream.h"
-#include "mux_tunnel.h"
+#include "mux_connection.h"
 #include "timeout_io.h"
 #include "connection_context.h"
 #include "mux_protocol.h"
@@ -212,7 +212,7 @@ boost::asio::awaitable<void> direct_upstream::shutdown_send(boost::system::error
     co_return;
 }
 
-proxy_upstream::proxy_upstream(std::shared_ptr<mux_tunnel_impl> tunnel,
+proxy_upstream::proxy_upstream(std::shared_ptr<mux_connection> tunnel,
                                boost::asio::io_context& io_context,
                                connection_context ctx,
                                const config& cfg)
