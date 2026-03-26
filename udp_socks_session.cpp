@@ -35,7 +35,7 @@
 #include "mux_codec.h"
 #include "net_utils.h"
 #include "mux_stream.h"
-#include "mux_tunnel.h"
+#include "mux_connection.h"
 #include "timeout_io.h"
 #include "scoped_exit.h"
 #include "connection_context.h"
@@ -95,7 +95,7 @@ void update_stream_close_command(std::atomic<std::uint8_t>& stream_close_command
 
 struct proxy_udp_stream
 {
-    std::shared_ptr<mux_tunnel_impl> tunnel;
+    std::shared_ptr<mux_connection> tunnel;
     std::shared_ptr<mux_stream> stream;
 };
 

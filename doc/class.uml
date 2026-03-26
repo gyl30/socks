@@ -90,12 +90,6 @@ package "Mux + Reality" {
         - perform_reality_handshake()
     }
 
-    class mux_tunnel_impl {
-        + run()
-        + create_stream()
-        + set_new_stream_cb()
-    }
-
     class mux_connection {
         + start()
         + stop()
@@ -123,8 +117,6 @@ package "Mux + Reality" {
         + encrypt(plaintext, ec)
         + process_available_records(callback, ec)
     }
-
-    interface mux_stream_interface
 }
 
 package "Server Side" {
@@ -166,11 +158,11 @@ socks_session ..> udp_socks_session : UDP ASSOCIATE
 
 tcp_socks_session ..> router
 tcp_socks_session ..> upstream : create_backend
-udp_socks_session ..> mux_tunnel_impl
+udp_socks_session ..> mux_connection
 
 upstream <|-- direct_upstream
 upstream <|-- proxy_upstream
-proxy_upstream ..> mux_tunnel_impl
+proxy_upstream ..> mux_connection
 
 tproxy_client o-- io_context_pool
 tproxy_client *-- task_group
@@ -183,9 +175,7 @@ tproxy_tcp_session ..> router
 tproxy_tcp_session ..> upstream : select_backend
 
 client_tunnel_pool o-- io_context_pool
-client_tunnel_pool *-- mux_tunnel_impl : pool items
-
-mux_tunnel_impl *-- mux_connection
+client_tunnel_pool *-- mux_connection : pool items
 mux_connection *-- mux_dispatcher
 mux_connection *-- reality_engine
 mux_connection *-- mux_stream : stream map
@@ -195,7 +185,7 @@ mux_stream ..> mux_connection : weak ref
 remote_server o-- io_context_pool
 remote_server *-- task_group
 remote_server *-- replay_cache
-remote_server ..> mux_tunnel_impl : creates per tunnel
+remote_server ..> mux_connection : creates per tunnel
 remote_server ..> remote_tcp_session : on SYN CONNECT
 remote_server ..> remote_udp_session : on SYN UDP_ASSOCIATE
 
@@ -205,11 +195,6 @@ remote_udp_session ..> mux_connection
 note right of tproxy_client
   TPROXY TCP/UDP 均已实现。
   UDP 会话按 client/target endpoint 维护。
-end note
-
-note right of mux_stream_interface
-  接口文件仍在代码中，
-  当前版本没有实际实现类接入。
 end note
 
 @enduml
