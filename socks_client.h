@@ -15,7 +15,6 @@
 #include "router.h"
 #include "context_pool.h"
 #include "client_tunnel_pool.h"
-#include "task_group_registry.h"
 
 namespace mux
 {
@@ -47,7 +46,6 @@ class socks_client : public std::enable_shared_from_this<socks_client>
     const config& cfg_;
     boost::asio::io_context& ioc_;
     io_context_pool& pool_;
-    task_group_registry groups_;
     boost::asio::ip::tcp::acceptor acceptor_{ioc_};
     std::shared_ptr<mux::router> router_;
     std::shared_ptr<client_tunnel_pool> tunnel_pool_;

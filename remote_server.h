@@ -23,7 +23,6 @@
 #include "mux_protocol.h"
 #include "replay_cache.h"
 #include "mux_connection.h"
-#include "task_group_registry.h"
 #include "reality/policy/fallback_executor.h"
 #include "reality/policy/fallback_gate.h"
 #include "reality/material/material_provider.h"
@@ -55,7 +54,6 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     const config& cfg_;
     io_context_pool& pool_;
     boost::asio::io_context& io_context_;
-    task_group_registry groups_;
     boost::asio::ip::tcp::acceptor acceptor_{io_context_};
     std::vector<std::uint8_t> private_key_;
     std::vector<std::uint8_t> short_id_bytes_;

@@ -166,7 +166,6 @@ remote_server::remote_server(io_context_pool& pool, const config& cfg)
     : cfg_(cfg),
       pool_(pool),
       io_context_(pool.get_io_context()),
-      groups_(pool),
       replay_cache_(static_cast<std::size_t>(cfg.reality.replay_cache_max_entries)),
       material_provider_({.cfg = cfg, .opts = {}, .now_seconds = {}, .fetch = {}}),
       fallback_gate_({.opts = {}, .now_seconds = {}}),
@@ -268,7 +267,7 @@ void remote_server::start()
 
     LOG_INFO("remote server listening on {}:{}", cfg_.inbound.host, cfg_.inbound.port);
 
-    auto& owner_group = groups_.get(io_context_);
+    auto& owner_group = pool_.get_task_group(io_context_);
     boost::asio::co_spawn(
         io_context_, [self = shared_from_this()] { return self->material_provider_.refresh_loop(self->io_context_); }, owner_group.adapt(boost::asio::detached));
     boost::asio::co_spawn(io_context_, [self = shared_from_this()] { return self->accept_loop(); }, owner_group.adapt(boost::asio::detached));
@@ -290,13 +289,13 @@ void remote_server::stop()
                           {
                               LOG_ERROR("remote acceptor close error {}", ec.message());
                           }
-                          self->groups_.emit_all(boost::asio::cancellation_type::all);
+                          self->pool_.emit_all(boost::asio::cancellation_type::all);
                       });
 }
 
 boost::asio::awaitable<void> remote_server::wait_stopped()
 {
-    co_await groups_.async_wait_all();
+    co_await pool_.async_wait_all();
 }
 
 boost::asio::awaitable<void> remote_server::accept_loop()
@@ -306,7 +305,7 @@ boost::asio::awaitable<void> remote_server::accept_loop()
     while (true)
     {
         auto& io = pool_.get_io_context();
-        auto& io_group = groups_.get(io);
+        auto& io_group = pool_.get_task_group(io);
         const auto s = std::make_shared<boost::asio::ip::tcp::socket>(io);
         const auto [accept_ec] = co_await acceptor_.async_accept(*s, boost::asio::as_tuple(boost::asio::use_awaitable));
         if (accept_ec)
@@ -406,7 +405,7 @@ boost::asio::awaitable<void> remote_server::handle(boost::asio::io_context& io,
         co_return;
     }
     LOG_CTX_INFO(ctx, "{} tunnel starting", log_event::kConnEstablished);
-    auto tunnel = std::make_shared<mux_tunnel_impl>(std::move(*s), io, std::move(session), cfg_, groups_.get(io), conn_id, ctx.trace_id());
+    auto tunnel = std::make_shared<mux_tunnel_impl>(std::move(*s), io, std::move(session), cfg_, pool_.get_task_group(io), conn_id, ctx.trace_id());
 
     std::weak_ptr<remote_server> weak_self = weak_from_this();
     std::weak_ptr<mux_tunnel_impl> weak_tunnel = tunnel;
@@ -484,7 +483,7 @@ boost::asio::awaitable<void> remote_server::process_stream_request(std::shared_p
     }
 
     auto& connection_io = connection->io_context();
-    auto& connection_group = groups_.get(connection_io);
+    auto& connection_group = pool_.get_task_group(connection_io);
 
     if (syn.socks_cmd == socks::kCmdConnect)
     {

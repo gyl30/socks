@@ -139,7 +139,6 @@ void remote_tcp_session::close_from_reset()
     }
 }
 
-// NOLINTBEGIN(readability-function-cognitive-complexity)
 boost::asio::awaitable<void> remote_tcp_session::run(const syn_payload& syn)
 {
     DEFER(if (auto connection = connection_.lock(); connection != nullptr && stream_ != nullptr) { connection->close_and_remove_stream(stream_); });
@@ -276,7 +275,6 @@ boost::asio::awaitable<void> remote_tcp_session::run(const syn_payload& syn)
 
     LOG_CTX_INFO(ctx_, "{} finished {}", log_event::kConnClose, ctx_.stats_summary());
 }
-// NOLINTEND(readability-function-cognitive-complexity)
 
 boost::asio::awaitable<void> remote_tcp_session::upstream()
 {
