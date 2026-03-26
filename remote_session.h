@@ -27,7 +27,6 @@ class remote_tcp_session : std::enable_shared_from_this<remote_tcp_session>
    public:
     remote_tcp_session(const std::shared_ptr<mux_connection>& connection,
                        std::uint32_t id,
-                       boost::asio::io_context& io_context,
                        const connection_context& ctx,
                        const config& cfg);
 
@@ -47,7 +46,6 @@ class remote_tcp_session : std::enable_shared_from_this<remote_tcp_session>
     std::uint32_t id_;
     const config& cfg_;
     connection_context ctx_;
-    boost::asio::io_context& io_context_;
     boost::asio::ip::tcp::socket socket_;
     boost::asio::steady_timer idle_timer_;
     std::shared_ptr<mux_stream> stream_;

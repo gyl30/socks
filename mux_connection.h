@@ -54,6 +54,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
 
    public:
     [[nodiscard]] bool is_active() const;
+    [[nodiscard]] boost::asio::io_context& io_context() const { return io_context_; }
     boost::asio::awaitable<void> async_wait_stopped();
     std::shared_ptr<mux_stream> create_stream();
     void register_stream(const std::shared_ptr<mux_stream>& stream);
