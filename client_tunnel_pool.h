@@ -2,33 +2,33 @@
 #define CLIENT_TUNNEL_POOL_H
 
 #include <mutex>
+#include <atomic>
 #include <memory>
 #include <string>
 #include <vector>
-#include <atomic>
-#include <cstdint>
-#include <utility>
-#include <expected>
 #include <optional>
 
-#include <openssl/types.h>
-#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio.hpp>
 #include <boost/asio/awaitable.hpp>
-#include <boost/asio/io_context.hpp>
 #include <boost/system/error_code.hpp>
 
-#include "config.h"
-#include "context_pool.h"
-#include "mux_connection.h"
-#include "reality/types.h"
-#include "tls/core.h"
-#include "tls/ch_parser.h"
-#include "reality/handshake/fingerprint.h"
+namespace reality
+{
+
+enum class client_auth_mode : std::uint8_t;
+struct client_handshake_result;
+enum class fingerprint_type : std::uint8_t;
+
+}    // namespace reality
 
 namespace mux
 {
 
+struct config;
+struct io_worker;
+class io_context_pool;
 class connection_context;
+class mux_connection;
 
 class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_pool>
 {
@@ -40,8 +40,7 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
     void stop();
 
     [[nodiscard]] std::shared_ptr<mux_connection> select_tunnel();
-    [[nodiscard]] boost::asio::awaitable<std::shared_ptr<mux_connection>> wait_for_tunnel(boost::asio::io_context& io_context,
-                                                                                           boost::system::error_code& ec);
+    [[nodiscard]] boost::asio::awaitable<std::shared_ptr<mux_connection>> wait_for_tunnel(std::uint32_t timeout_sec, boost::system::error_code& ec);
 
     [[nodiscard]] std::uint32_t next_session_id();
 
@@ -49,15 +48,28 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
     using handshake_auth_mode = reality::client_auth_mode;
     using handshake_result = reality::client_handshake_result;
 
-    boost::asio::awaitable<void> connect_remote_loop(std::uint32_t index, boost::asio::io_context& io_context);
-    [[nodiscard]] boost::asio::awaitable<void> tcp_connect_remote(boost::asio::io_context& io_context,
-                                                                  boost::asio::ip::tcp::socket& socket,
+    struct connect_options
+    {
+        std::string sni;
+        std::string remote_host;
+        std::string remote_port;
+        std::vector<std::uint8_t> server_pub_key;
+        std::vector<std::uint8_t> short_id_bytes;
+        std::optional<reality::fingerprint_type> fingerprint_type;
+        std::uint32_t max_handshake_records = 256;
+        std::uint32_t tunnel_connections = 1;
+        std::uint32_t connect_mark = 0;
+    };
+
+    [[nodiscard]] static connect_options build_connect_options(const config& cfg);
+    boost::asio::awaitable<void> connect_remote_loop(std::uint32_t index, io_worker& worker);
+    [[nodiscard]] boost::asio::awaitable<void> tcp_connect_remote(boost::asio::ip::tcp::socket& socket,
                                                                   const connection_context& ctx,
                                                                   boost::system::error_code& ec) const;
     [[nodiscard]] boost::asio::awaitable<handshake_result> perform_reality_handshake_with_timeout(
         const std::shared_ptr<boost::asio::ip::tcp::socket>& socket, const connection_context& ctx, boost::system::error_code& ec) const;
     [[nodiscard]] std::shared_ptr<mux_connection> build_tunnel(boost::asio::ip::tcp::socket socket,
-                                                               boost::asio::io_context& io_context,
+                                                               io_worker& worker,
                                                                std::uint32_t cid,
                                                                const handshake_result& handshake_ret,
                                                                const std::string& trace_id) const;
@@ -66,18 +78,12 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
                                                                              const connection_context& ctx) const;
 
    private:
-    std::string sni_;
-    std::string remote_host_;
-    std::string remote_port_;
     const config& cfg_;
     io_context_pool& pool_;
-    std::vector<std::uint8_t> short_id_bytes_;
+    connect_options options_;
     std::atomic<std::uint32_t> next_tunnel_index_{0};
     std::atomic<std::uint32_t> next_conn_id_{1};
     std::atomic<std::uint32_t> next_session_id_{1};
-    std::uint32_t max_handshake_records_ = 256;
-    std::vector<std::uint8_t> server_pub_key_;
-    std::optional<reality::fingerprint_type> fingerprint_type_;
     std::mutex tunnel_mutex_;
     std::vector<std::shared_ptr<mux_connection>> tunnel_pool_;
     std::once_flag stop_once_;

@@ -8,12 +8,8 @@
 #include <utility>
 #include <charconv>
 #include <string_view>
-#include <system_error>
 
-#include <boost/asio/ip/address.hpp>
-#include <boost/system/error_code.hpp>
-#include <boost/asio/ip/address_v4.hpp>
-#include <boost/asio/ip/address_v6.hpp>
+#include <boost/asio.hpp>
 
 #include "log.h"
 #include "ip_matcher.h"
@@ -323,7 +319,7 @@ void ip_matcher::add_rule(const std::string& cidr)
     }
 }
 
-void ip_matcher::optimize()
+void ip_matcher::optimize() const
 {
     if (root_v4_ != nullptr)
     {

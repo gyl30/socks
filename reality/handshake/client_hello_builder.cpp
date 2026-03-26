@@ -1,18 +1,12 @@
 #include <array>
-#include <algorithm>
-#include <cctype>
-#include <cstddef>
-#include <cstdint>
-#include <cstring>
 #include <ctime>
-#include <iterator>
-#include <limits>
 #include <memory>
-#include <optional>
-#include <random>
 #include <string>
-#include <string_view>
 #include <vector>
+#include <cstddef>
+#include <cstring>
+#include <optional>
+#include <algorithm>
 
 extern "C"
 {
@@ -26,7 +20,9 @@ extern "C"
 
 #include "tls/core.h"
 #include "tls/server_name.h"
+#include "reality/handshake/fingerprint.h"
 #include "reality/handshake/fingerprint_blueprint.h"
+#include "reality/handshake/fingerprint_internal.h"
 #include "reality/handshake/client_hello_builder.h"
 
 namespace reality

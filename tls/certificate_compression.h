@@ -2,9 +2,6 @@
 #define TLS_CERTIFICATE_COMPRESSION_H
 
 #include <vector>
-#include <cstddef>
-#include <cstdint>
-
 #include <boost/system/error_code.hpp>
 
 namespace tls

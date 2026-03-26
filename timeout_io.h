@@ -1,34 +1,78 @@
 #ifndef TIMEOUT_IO_H
 #define TIMEOUT_IO_H
 
-#include <tuple>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
-#include <variant>
-#include <string_view>
+#include <string>
 
 #include <boost/asio/read.hpp>
 #include <boost/asio/error.hpp>
 #include <boost/asio/write.hpp>
-#include <boost/asio/buffer.hpp>
 #include <boost/asio/ip/tcp.hpp>
-#include <boost/asio/ip/udp.hpp>
-#include <boost/asio/connect.hpp>
+#include <boost/asio/ip/basic_resolver.hpp>
 #include <boost/asio/as_tuple.hpp>
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/this_coro.hpp>
 #include <boost/asio/steady_timer.hpp>
-#include <boost/system/error_code.hpp>
+#include <boost/system/detail/error_code.hpp>
 #include <boost/asio/use_awaitable.hpp>
-#include <boost/asio/redirect_error.hpp>
 #include <boost/asio/experimental/concurrent_channel.hpp>
 #include <boost/asio/experimental/awaitable_operators.hpp>
 
-#include "mux_protocol.h"
-
 namespace mux::timeout_io
 {
+
+namespace detail
+{
+
+inline boost::system::error_code timeout_error(const boost::system::error_code& wait_ec)
+{
+    if (wait_ec)
+    {
+        return wait_ec;
+    }
+    return {boost::asio::error::timed_out};
+}
+
+template <typename WaitResult>
+inline void assign_timeout_error(const WaitResult& wait_result, boost::system::error_code& ec)
+{
+    const auto& [wait_ec] = wait_result;
+    ec = timeout_error(wait_ec);
+}
+
+template <typename OpFactory, typename SuccessHandler, typename TimeoutHandler>
+inline boost::asio::awaitable<void> await_with_timeout(const std::uint32_t timeout_sec,
+                                                       OpFactory&& op_factory,
+                                                       SuccessHandler&& on_success,
+                                                       TimeoutHandler&& on_timeout)
+{
+    if (timeout_sec == 0)
+    {
+        auto op_result = co_await op_factory();
+        on_success(op_result);
+        co_return;
+    }
+
+    auto executor = co_await boost::asio::this_coro::executor;
+    boost::asio::steady_timer timer(executor);
+    timer.expires_after(std::chrono::seconds(timeout_sec));
+
+    using boost::asio::experimental::awaitable_operators::operator||;
+
+    auto op_or_timeout = co_await (op_factory() || timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable)));
+    if (op_or_timeout.index() == 0)
+    {
+        auto op_result = std::move(std::get<0>(op_or_timeout));
+        on_success(op_result);
+        co_return;
+    }
+
+    on_timeout(std::get<1>(op_or_timeout));
+}
+
+}    // namespace detail
 
 inline std::uint64_t timeout_seconds_to_milliseconds(const std::uint32_t timeout_sec) { return static_cast<std::uint64_t>(timeout_sec) * 1000ULL; }
 inline std::uint64_t now_ms()
@@ -65,33 +109,15 @@ inline boost::asio::awaitable<void> wait_connect_with_timeout(boost::asio::ip::t
                                                               const std::uint32_t timeout_sec,
                                                               boost::system::error_code& ec)
 {
-    if (timeout_sec == 0)
-    {
-        co_await socket.async_connect(endpoint, boost::asio::redirect_error(boost::asio::use_awaitable, ec));
-        co_return;
-    }
-
-    auto executor = co_await boost::asio::this_coro::executor;
-    boost::asio::steady_timer timer(executor);
-    timer.expires_after(std::chrono::seconds(timeout_sec));
-
-    using boost::asio::experimental::awaitable_operators::operator||;
-
-    auto connect_or_timeout = co_await (socket.async_connect(endpoint, boost::asio::as_tuple(boost::asio::use_awaitable)) ||
-                                        timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable)));
-
-    if (connect_or_timeout.index() == 0)
-    {
-        const auto& [op_ec] = std::get<0>(connect_or_timeout);
-        ec = op_ec;
-    }
-    else
-    {
-        const auto& [wait_ec] = std::get<1>(connect_or_timeout);
-        ec = wait_ec ? wait_ec : boost::system::error_code(boost::asio::error::timed_out);
-    }
-
-    co_return;
+    co_await detail::await_with_timeout(
+        timeout_sec,
+        [&]() { return socket.async_connect(endpoint, boost::asio::as_tuple(boost::asio::use_awaitable)); },
+        [&](const auto& result)
+        {
+            const auto& [op_ec] = result;
+            ec = op_ec;
+        },
+        [&](const auto& wait_result) { detail::assign_timeout_error(wait_result, ec); });
 }
 
 template <typename MultipleBufferSequence>
@@ -100,38 +126,22 @@ inline boost::asio::awaitable<std::size_t> wait_read_with_timeout(boost::asio::i
                                                                   const std::uint32_t timeout_sec,
                                                                   boost::system::error_code& ec)
 {
-    if (timeout_sec == 0)
-    {
-        auto [read_ec, read_size] = co_await boost::asio::async_read(socket, buffer, boost::asio::as_tuple(boost::asio::use_awaitable));
-        ec = read_ec;
-        co_return read_size;
-    }
-
-    auto executor = co_await boost::asio::this_coro::executor;
-    boost::asio::steady_timer timer(executor);
-    timer.expires_after(std::chrono::seconds(timeout_sec));
-    using boost::asio::experimental::awaitable_operators::operator||;
-    auto read_or_timeout = co_await (boost::asio::async_read(socket, buffer, boost::asio::as_tuple(boost::asio::use_awaitable)) ||
-                                     timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable)));
-
-    if (read_or_timeout.index() == 0)
-    {
-        const auto& [read_ec, read_size] = std::get<0>(read_or_timeout);
-        ec = read_ec;
-        co_return read_size;
-    }
-
-    const auto& [timeout_ec] = std::get<1>(read_or_timeout);
-    if (timeout_ec)
-    {
-        ec = timeout_ec;
-    }
-    else
-    {
-        ec = boost::asio::error::timed_out;
-    }
-
-    co_return 0;
+    std::size_t read_size = 0;
+    co_await detail::await_with_timeout(
+        timeout_sec,
+        [&]() { return boost::asio::async_read(socket, buffer, boost::asio::as_tuple(boost::asio::use_awaitable)); },
+        [&](const auto& result)
+        {
+            const auto& [read_ec, n] = result;
+            ec = read_ec;
+            read_size = n;
+        },
+        [&](const auto& wait_result)
+        {
+            detail::assign_timeout_error(wait_result, ec);
+            read_size = 0;
+        });
+    co_return read_size;
 }
 
 template <typename ConstBufferSequence>
@@ -140,31 +150,22 @@ inline boost::asio::awaitable<std::size_t> wait_write_with_timeout(boost::asio::
                                                                    const std::uint32_t timeout_sec,
                                                                    boost::system::error_code& ec)
 {
-    if (timeout_sec == 0)
-    {
-        std::size_t n = co_await boost::asio::async_write(socket, buffers, boost::asio::redirect_error(boost::asio::use_awaitable, ec));
-        co_return n;
-    }
-
-    auto executor = co_await boost::asio::this_coro::executor;
-    boost::asio::steady_timer timer(executor);
-    timer.expires_after(std::chrono::seconds(timeout_sec));
-
-    using boost::asio::experimental::awaitable_operators::operator||;
-
-    auto write_or_timeout = co_await (boost::asio::async_write(socket, buffers, boost::asio::as_tuple(boost::asio::use_awaitable)) ||
-                                      timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable)));
-
-    if (write_or_timeout.index() == 0)
-    {
-        const auto& [op_ec, bytes_transferred] = std::get<0>(write_or_timeout);
-        ec = op_ec;
-        co_return bytes_transferred;
-    }
-
-    const auto& [wait_ec] = std::get<1>(write_or_timeout);
-    ec = wait_ec ? wait_ec : boost::system::error_code(boost::asio::error::timed_out);
-    co_return 0;
+    std::size_t write_size = 0;
+    co_await detail::await_with_timeout(
+        timeout_sec,
+        [&]() { return boost::asio::async_write(socket, buffers, boost::asio::as_tuple(boost::asio::use_awaitable)); },
+        [&](const auto& result)
+        {
+            const auto& [op_ec, n] = result;
+            ec = op_ec;
+            write_size = n;
+        },
+        [&](const auto& wait_result)
+        {
+            detail::assign_timeout_error(wait_result, ec);
+            write_size = 0;
+        });
+    co_return write_size;
 }
 
 template <typename MutableBufferSequence>
@@ -173,31 +174,22 @@ inline boost::asio::awaitable<std::size_t> wait_read_some_with_timeout(boost::as
                                                                        const std::uint32_t timeout_sec,
                                                                        boost::system::error_code& ec)
 {
-    if (timeout_sec == 0)
-    {
-        std::size_t n = co_await socket.async_read_some(buffers, boost::asio::redirect_error(boost::asio::use_awaitable, ec));
-        co_return n;
-    }
-
-    auto executor = co_await boost::asio::this_coro::executor;
-    boost::asio::steady_timer timer(executor);
-    timer.expires_after(std::chrono::seconds(timeout_sec));
-
-    using boost::asio::experimental::awaitable_operators::operator||;
-
-    auto read_or_timeout = co_await (socket.async_read_some(buffers, boost::asio::as_tuple(boost::asio::use_awaitable)) ||
-                                     timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable)));
-
-    if (read_or_timeout.index() == 0)
-    {
-        const auto& [op_ec, bytes_transferred] = std::get<0>(read_or_timeout);
-        ec = op_ec;
-        co_return bytes_transferred;
-    }
-
-    const auto& [wait_ec] = std::get<1>(read_or_timeout);
-    ec = wait_ec ? wait_ec : boost::system::error_code(boost::asio::error::timed_out);
-    co_return 0;
+    std::size_t read_size = 0;
+    co_await detail::await_with_timeout(
+        timeout_sec,
+        [&]() { return socket.async_read_some(buffers, boost::asio::as_tuple(boost::asio::use_awaitable)); },
+        [&](const auto& result)
+        {
+            const auto& [op_ec, n] = result;
+            ec = op_ec;
+            read_size = n;
+        },
+        [&](const auto& wait_result)
+        {
+            detail::assign_timeout_error(wait_result, ec);
+            read_size = 0;
+        });
+    co_return read_size;
 }
 
 template <typename ConstBufferSequence>
@@ -206,31 +198,22 @@ inline boost::asio::awaitable<std::size_t> wait_write_some_with_timeout(boost::a
                                                                         const std::uint32_t timeout_sec,
                                                                         boost::system::error_code& ec)
 {
-    if (timeout_sec == 0)
-    {
-        std::size_t n = co_await socket.async_write_some(buffers, boost::asio::redirect_error(boost::asio::use_awaitable, ec));
-        co_return n;
-    }
-
-    auto executor = co_await boost::asio::this_coro::executor;
-    boost::asio::steady_timer timer(executor);
-    timer.expires_after(std::chrono::seconds(timeout_sec));
-
-    using boost::asio::experimental::awaitable_operators::operator||;
-
-    auto write_or_timeout = co_await (socket.async_write_some(buffers, boost::asio::as_tuple(boost::asio::use_awaitable)) ||
-                                      timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable)));
-
-    if (write_or_timeout.index() == 0)
-    {
-        const auto& [op_ec, bytes_transferred] = std::get<0>(write_or_timeout);
-        ec = op_ec;
-        co_return bytes_transferred;
-    }
-
-    const auto& [wait_ec] = std::get<1>(write_or_timeout);
-    ec = wait_ec ? wait_ec : boost::system::error_code(boost::asio::error::timed_out);
-    co_return 0;
+    std::size_t write_size = 0;
+    co_await detail::await_with_timeout(
+        timeout_sec,
+        [&]() { return socket.async_write_some(buffers, boost::asio::as_tuple(boost::asio::use_awaitable)); },
+        [&](const auto& result)
+        {
+            const auto& [op_ec, n] = result;
+            ec = op_ec;
+            write_size = n;
+        },
+        [&](const auto& wait_result)
+        {
+            detail::assign_timeout_error(wait_result, ec);
+            write_size = 0;
+        });
+    co_return write_size;
 }
 
 template <typename InternetProtocol>
@@ -241,33 +224,23 @@ inline boost::asio::awaitable<typename boost::asio::ip::basic_resolver<InternetP
     const std::uint32_t timeout_sec,
     boost::system::error_code& ec)
 {
-    using results_type = typename boost::asio::ip::basic_resolver<InternetProtocol>::results_type;
-
-    if (timeout_sec == 0)
-    {
-        results_type results = co_await resolver.async_resolve(host, service, boost::asio::redirect_error(boost::asio::use_awaitable, ec));
-        co_return results;
-    }
-
-    auto executor = co_await boost::asio::this_coro::executor;
-    boost::asio::steady_timer timer(executor);
-    timer.expires_after(std::chrono::seconds(timeout_sec));
-
-    using boost::asio::experimental::awaitable_operators::operator||;
-
-    auto resolve_or_timeout = co_await (resolver.async_resolve(host, service, boost::asio::as_tuple(boost::asio::use_awaitable)) ||
-                                        timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable)));
-
-    if (resolve_or_timeout.index() == 0)
-    {
-        auto& [op_ec, results] = std::get<0>(resolve_or_timeout);
-        ec = op_ec;
-        co_return std::move(results);
-    }
-
-    const auto& [wait_ec] = std::get<1>(resolve_or_timeout);
-    ec = wait_ec ? wait_ec : boost::system::error_code(boost::asio::error::timed_out);
-    co_return results_type{};
+    using results_type = boost::asio::ip::basic_resolver<InternetProtocol>::results_type;
+    results_type results;
+    co_await detail::await_with_timeout(
+        timeout_sec,
+        [&]() { return resolver.async_resolve(host, service, boost::asio::as_tuple(boost::asio::use_awaitable)); },
+        [&](auto& result)
+        {
+            auto& [op_ec, resolved] = result;
+            ec = op_ec;
+            results = std::move(resolved);
+        },
+        [&](const auto& wait_result)
+        {
+            detail::assign_timeout_error(wait_result, ec);
+            results = results_type{};
+        });
+    co_return results;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -278,32 +251,22 @@ inline boost::asio::awaitable<ValueType> wait_receive_with_timeout(
     std::uint32_t timeout_sec,
     boost::system::error_code& ec)
 {
-    if (timeout_sec == 0)
-    {
-        auto [op_ec, data] = co_await chan.async_receive(boost::asio::as_tuple(boost::asio::use_awaitable));
-        ec = op_ec;
-        co_return std::move(data);
-    }
-
-    auto executor = co_await boost::asio::this_coro::executor;
-    boost::asio::steady_timer timer(executor);
-    timer.expires_after(std::chrono::seconds(timeout_sec));
-
-    using boost::asio::experimental::awaitable_operators::operator||;
-
-    auto receive_or_timeout = co_await (chan.async_receive(boost::asio::as_tuple(boost::asio::use_awaitable)) ||
-                                        timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable)));
-
-    if (receive_or_timeout.index() == 0)
-    {
-        auto& [op_ec, data] = std::get<0>(receive_or_timeout);
-        ec = op_ec;
-        co_return std::move(data);
-    }
-
-    const auto& [wait_ec] = std::get<1>(receive_or_timeout);
-    ec = wait_ec ? wait_ec : boost::system::error_code(boost::asio::error::timed_out);
-    co_return ValueType{};
+    ValueType data{};
+    co_await detail::await_with_timeout(
+        timeout_sec,
+        [&]() { return chan.async_receive(boost::asio::as_tuple(boost::asio::use_awaitable)); },
+        [&](auto& result)
+        {
+            auto& [op_ec, received] = result;
+            ec = op_ec;
+            data = std::move(received);
+        },
+        [&](const auto& wait_result)
+        {
+            detail::assign_timeout_error(wait_result, ec);
+            data = ValueType{};
+        });
+    co_return data;
 }
 
 template <typename ValueType>
@@ -313,34 +276,15 @@ inline boost::asio::awaitable<void> wait_send_with_timeout(
     std::uint32_t timeout_sec,
     boost::system::error_code& ec)
 {
-    if (timeout_sec == 0)
-    {
-        auto [op_ec] = co_await chan.async_send(boost::system::error_code{}, std::move(data), boost::asio::as_tuple(boost::asio::use_awaitable));
-        ec = op_ec;
-        co_return;
-    }
-
-    auto executor = co_await boost::asio::this_coro::executor;
-    boost::asio::steady_timer timer(executor);
-    timer.expires_after(std::chrono::seconds(timeout_sec));
-
-    using boost::asio::experimental::awaitable_operators::operator||;
-
-    auto send_or_timeout =
-        co_await (chan.async_send(boost::system::error_code{}, std::move(data), boost::asio::as_tuple(boost::asio::use_awaitable)) ||
-                  timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable)));
-
-    if (send_or_timeout.index() == 0)
-    {
-        const auto& [op_ec] = std::get<0>(send_or_timeout);
-        ec = op_ec;
-    }
-    else
-    {
-        const auto& [wait_ec] = std::get<1>(send_or_timeout);
-        ec = wait_ec ? wait_ec : boost::system::error_code(boost::asio::error::timed_out);
-    }
-    co_return;
+    co_await detail::await_with_timeout(
+        timeout_sec,
+        [&]() { return chan.async_send(boost::system::error_code{}, std::move(data), boost::asio::as_tuple(boost::asio::use_awaitable)); },
+        [&](const auto& result)
+        {
+            const auto& [op_ec] = result;
+            ec = op_ec;
+        },
+        [&](const auto& wait_result) { detail::assign_timeout_error(wait_result, ec); });
 }
 
 }    // namespace mux::timeout_io

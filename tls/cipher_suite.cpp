@@ -1,4 +1,3 @@
-#include <cstdint>
 #include <optional>
 
 #include <openssl/evp.h>

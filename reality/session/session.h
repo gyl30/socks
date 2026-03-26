@@ -4,7 +4,7 @@
 #include <vector>
 #include <cstdint>
 
-#include <boost/system/error_code.hpp>
+#include <boost/system/detail/error_code.hpp>
 
 #include "reality/types.h"
 
@@ -41,8 +41,7 @@ class reality_session
     reality_session& operator=(reality_session&&) = default;
 
     [[nodiscard]] static reality_session from_client_handshake(const client_handshake_result& handshake_result, boost::system::error_code& ec);
-    [[nodiscard]] static reality_session
-    from_authenticated_session(const authenticated_session& authenticated, boost::system::error_code& ec);
+    [[nodiscard]] static reality_session from_authenticated_session(const authenticated_session& authenticated, boost::system::error_code& ec);
     [[nodiscard]] const negotiated_params& negotiated() const { return negotiated_; }
 
    private:
@@ -54,11 +53,10 @@ class reality_session
         kServer,
     };
 
-    [[nodiscard]] static reality_session
-    build_from_parts(const negotiated_params& negotiated,
-                     const traffic_secrets& secrets,
-                     perspective session_perspective,
-                     boost::system::error_code& ec);
+    [[nodiscard]] static reality_session build_from_parts(const negotiated_params& negotiated,
+                                                          const traffic_secrets& secrets,
+                                                          perspective session_perspective,
+                                                          boost::system::error_code& ec);
 
     [[nodiscard]] mux::reality_engine take_engine() &&;
     reality_session(negotiated_params negotiated, traffic_key_material read_keys, traffic_key_material write_keys);

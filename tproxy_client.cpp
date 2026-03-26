@@ -1,46 +1,33 @@
-#include <chrono>
 #include <array>
+#include <cstddef>
 #include <cerrno>
-#include <cstdlib>
+#include <chrono>
 #include <memory>
 #include <string>
 #include <vector>
-#include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <utility>
-#include <sys/uio.h>
-#include <sys/socket.h>
 
-#include <boost/asio/error.hpp>
-#include <boost/asio/ip/tcp.hpp>
-#include <boost/asio/ip/udp.hpp>
-#include <boost/asio/as_tuple.hpp>
-#include <boost/asio/co_spawn.hpp>
-#include <boost/asio/detached.hpp>
+#include <boost/asio.hpp>
 #include <boost/asio/awaitable.hpp>
-#include <boost/asio/io_context.hpp>
-#include <boost/asio/ip/address.hpp>
-#include <boost/asio/ip/v6_only.hpp>
-#include <boost/asio/post.hpp>
-#include <boost/asio/socket_base.hpp>
 #include <boost/asio/steady_timer.hpp>
-#include <boost/system/error_code.hpp>
-#include <boost/asio/ip/address_v4.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/asio/redirect_error.hpp>
-#include <boost/asio/bind_cancellation_slot.hpp>
-#include <boost/asio/experimental/channel_error.hpp>
 
 #include "log.h"
 #include "config.h"
 #include "router.h"
 #include "net_utils.h"
-#include "connection_tracker.h"
 #include "context_pool.h"
 #include "tproxy_client.h"
 #include "client_tunnel_pool.h"
+#include "connection_context.h"
+#include "connection_tracker.h"
 #include "tproxy_tcp_session.h"
 #include "tproxy_udp_session.h"
+
+#include <ranges>
 
 namespace mux
 {
@@ -142,11 +129,10 @@ void open_udp_listener(boost::asio::ip::udp::socket& socket, const std::string& 
 
 tproxy_client::tproxy_client(io_context_pool& pool, const config& cfg)
     : cfg_(cfg),
-      pool_(pool),
-      io_context_(pool.get_io_context()),
+      owner_worker_(pool.get_io_worker()),
       router_(std::make_shared<router>()),
       tunnel_pool_(std::make_shared<client_tunnel_pool>(pool, cfg)),
-      tcp_acceptor_(io_context_)
+      tcp_acceptor_(owner_worker_.io_context)
 {
 }
 
@@ -169,7 +155,24 @@ void tproxy_client::start()
         std::exit(EXIT_FAILURE);
     }
 
+    tunnel_pool_->start();
+    LOG_INFO("tproxy waiting for upstream tunnel before listening on tcp:{} udp:{}", cfg_.tproxy.tcp_port, cfg_.tproxy.udp_port);
+    owner_worker_.group.spawn([self = shared_from_this()]() { return self->start_listeners_when_ready(); });
+}
+
+boost::asio::awaitable<void> tproxy_client::start_listeners_when_ready()
+{
     boost::system::error_code ec;
+    const auto tunnel = co_await tunnel_pool_->wait_for_tunnel(0, ec);
+    if (ec || tunnel == nullptr)
+    {
+        if (ec != boost::asio::error::operation_aborted)
+        {
+            LOG_ERROR("tproxy wait for upstream tunnel failed {}", ec.message());
+        }
+        co_return;
+    }
+
     if (cfg_.tproxy.tcp_port != 0)
     {
         open_tcp_listener(tcp_acceptor_, cfg_.tproxy.listen_host, cfg_.tproxy.tcp_port, ec);
@@ -192,15 +195,13 @@ void tproxy_client::start()
         LOG_INFO("tproxy udp listening on {}:{}", cfg_.tproxy.listen_host, cfg_.tproxy.udp_port);
     }
 
-    auto self = shared_from_this();
-    tunnel_pool_->start();
     if (cfg_.tproxy.tcp_port != 0)
     {
-        boost::asio::co_spawn(io_context_, [self]() { return self->accept_tcp_loop(); }, pool_.get_task_group(io_context_).adapt(boost::asio::detached));
+        owner_worker_.group.spawn([self = shared_from_this()]() { return self->accept_tcp_loop(); });
     }
     if (cfg_.tproxy.udp_port != 0)
     {
-        boost::asio::co_spawn(io_context_, [self]() { return self->accept_udp_loop(); }, pool_.get_task_group(io_context_).adapt(boost::asio::detached));
+        owner_worker_.group.spawn([self = shared_from_this()]() { return self->accept_udp_loop(); });
     }
 }
 
@@ -211,47 +212,39 @@ void tproxy_client::stop()
         return;
     }
 
-    boost::asio::post(
-        io_context_,
-        [self = shared_from_this()]()
-        {
-            LOG_INFO("tproxy client stopping closing resources");
+    boost::asio::post(owner_worker_.io_context,
+                      [self = shared_from_this()]()
+                      {
+                          LOG_INFO("tproxy client stopping closing resources");
 
-            boost::system::error_code ec;
-            ec = self->tcp_acceptor_.close(ec);
-            if (ec && ec != boost::asio::error::bad_descriptor)
-            {
-                LOG_ERROR("tproxy tcp acceptor close error {}", ec.message());
-            }
-            ec = self->udp_socket_.close(ec);
-            if (ec && ec != boost::asio::error::bad_descriptor)
-            {
-                LOG_ERROR("tproxy udp socket close error {}", ec.message());
-            }
+                          boost::system::error_code ec;
+                          ec = self->tcp_acceptor_.close(ec);
+                          if (ec && ec != boost::asio::error::bad_descriptor)
+                          {
+                              LOG_ERROR("tproxy tcp acceptor close error {}", ec.message());
+                          }
+                          ec = self->udp_socket_.close(ec);
+                          if (ec && ec != boost::asio::error::bad_descriptor)
+                          {
+                              LOG_ERROR("tproxy udp socket close error {}", ec.message());
+                          }
 
-            for (auto& [_, session] : self->udp_sessions_)
-            {
-                if (session != nullptr)
-                {
-                    session->stop();
-                }
-            }
-            self->udp_sessions_.clear();
-            self->udp_session_lru_.clear();
-            self->udp_session_lru_index_.clear();
+                          for (auto& session : self->udp_sessions_ | std::views::values)
+                          {
+                              if (session != nullptr)
+                              {
+                                  session->stop();
+                              }
+                          }
+                          self->udp_sessions_.clear();
+                          self->udp_session_lru_.clear();
+                          self->udp_session_lru_index_.clear();
 
-            if (self->tunnel_pool_ != nullptr)
-            {
-                self->tunnel_pool_->stop();
-            }
-
-            self->pool_.emit_all(boost::asio::cancellation_type::all);
-        });
-}
-
-boost::asio::awaitable<void> tproxy_client::wait_stopped()
-{
-    co_await pool_.async_wait_all();
+                          if (self->tunnel_pool_ != nullptr)
+                          {
+                              self->tunnel_pool_->stop();
+                          }
+                      });
 }
 
 boost::asio::awaitable<void> tproxy_client::accept_tcp_loop()
@@ -260,17 +253,17 @@ boost::asio::awaitable<void> tproxy_client::accept_tcp_loop()
 
     while (true)
     {
-        boost::asio::ip::tcp::socket socket(io_context_);
+        boost::asio::ip::tcp::socket socket(owner_worker_.io_context);
         co_await tcp_acceptor_.async_accept(socket, boost::asio::redirect_error(boost::asio::use_awaitable, ec));
         if (ec == boost::asio::error::operation_aborted)
         {
-            LOG_WARN("tproxy tcp accept cancelled {}", ec.message());
+            LOG_INFO("tproxy tcp accept loop stopped {}", ec.message());
             break;
         }
         if (ec)
         {
             LOG_ERROR("tproxy tcp accept failed {} retry", ec.message());
-            boost::asio::steady_timer retry_timer(io_context_);
+            boost::asio::steady_timer retry_timer(owner_worker_.io_context);
             retry_timer.expires_after(std::chrono::seconds(3));
             co_await retry_timer.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, ec));
             if (ec)
@@ -295,18 +288,18 @@ void tproxy_client::on_tcp_socket(boost::asio::ip::tcp::socket&& socket)
         LOG_WARN("tproxy tcp set no delay failed code {}", ec.value());
     }
 
-    if (connection_tracker::instance().active_connections() >= resolve_client_session_max_connections(cfg_.limits))
+    if (connection_tracker::instance().active_connections() >= cfg_.limits.client_session_max_connections)
     {
         boost::system::error_code close_ec;
-        socket.shutdown(boost::asio::ip::tcp::socket::shutdown_both, close_ec);
-        socket.close(close_ec);
+        close_ec = socket.close(close_ec);
+        (void)close_ec;
         LOG_WARN("tproxy tcp connection limit reached drop");
         return;
     }
 
     const std::uint32_t sid = tunnel_pool_->next_session_id();
-    auto& owner_group = pool_.get_task_group(io_context_);
-    std::make_shared<tproxy_tcp_session>(std::move(socket), io_context_, tunnel_pool_, router_, sid, cfg_, owner_group)->start();
+    const auto session = std::make_shared<tproxy_tcp_session>(std::move(socket), tunnel_pool_, router_, sid, cfg_);
+    owner_worker_.group.spawn([session]() -> boost::asio::awaitable<void> { co_await session->start(); });
 }
 
 boost::asio::awaitable<void> tproxy_client::accept_udp_loop()
@@ -329,7 +322,7 @@ boost::asio::awaitable<void> tproxy_client::accept_udp_loop()
         }
 
         sockaddr_storage source_addr{};
-        iovec iov{payload.data(), payload.size()};
+        struct iovec iov{.iov_base = payload.data(), .iov_len = payload.size()};
         msghdr msg{};
         msg.msg_name = &source_addr;
         msg.msg_namelen = sizeof(source_addr);
@@ -345,15 +338,12 @@ boost::asio::awaitable<void> tproxy_client::accept_udp_loop()
             {
                 continue;
             }
-            LOG_ERROR("tproxy udp recvmsg failed {}", std::strerror(errno));
+            LOG_ERROR("tproxy udp recv msg failed {}", std::strerror(errno));
             continue;
         }
         if ((msg.msg_flags & (MSG_TRUNC | MSG_CTRUNC)) != 0)
         {
-            LOG_WARN("tproxy udp recvmsg truncated drop flags {} bytes {} controllen {}",
-                     msg.msg_flags,
-                     bytes_recv,
-                     msg.msg_controllen);
+            LOG_WARN("tproxy udp recv msg truncated drop flags {} bytes {} controllen {}", msg.msg_flags, bytes_recv, msg.msg_controllen);
             continue;
         }
 
@@ -386,122 +376,176 @@ boost::asio::awaitable<void> tproxy_client::on_udp_packet(boost::asio::ip::udp::
     client_endpoint = net::normalize_endpoint(client_endpoint);
     target_endpoint = net::normalize_endpoint(target_endpoint);
 
-    if (cfg_.tproxy.udp_port != 0)
+    if (is_udp_routing_loop(target_endpoint))
     {
-        boost::system::error_code addr_ec;
-        const auto local_addr = boost::asio::ip::make_address(cfg_.tproxy.listen_host, addr_ec);
-        if (!addr_ec)
-        {
-            const auto target_addr = net::normalize_address(target_endpoint.address());
-            const auto local_norm = net::normalize_address(local_addr);
-            if (target_endpoint.port() == cfg_.tproxy.udp_port && target_addr == local_norm)
-            {
-                LOG_WARN("tproxy udp routing loop detected drop");
-                co_return;
-            }
-        }
+        LOG_WARN("tproxy udp routing loop detected drop");
+        co_return;
     }
 
     const auto key = make_udp_session_key(client_endpoint, target_endpoint);
-    auto session_it = udp_sessions_.find(key);
-    if (session_it == udp_sessions_.end())
+    if (auto session = find_udp_session(key); session != nullptr)
     {
-        if (connection_tracker::instance().active_connections() >= resolve_client_session_max_connections(cfg_.limits))
-        {
-            LOG_WARN("tproxy udp connection limit reached drop packet");
-            co_return;
-        }
+        co_await enqueue_udp_session(key, session, std::move(payload));
+        co_return;
+    }
 
-        connection_context ctx;
-        ctx.new_trace_id();
-        ctx.conn_id(tunnel_pool_->next_session_id());
-        ctx.remote_addr(client_endpoint.address().to_string());
-        ctx.remote_port(client_endpoint.port());
-        ctx.set_target(target_endpoint.address().to_string(), target_endpoint.port());
-        ctx.local_addr(target_endpoint.address().to_string());
-        ctx.local_port(target_endpoint.port());
+    if (!can_create_udp_session())
+    {
+        co_return;
+    }
 
-        route_type route = route_type::kProxy;
-        if (router_ != nullptr)
-        {
-            route = co_await router_->decide_ip(ctx, target_endpoint.address());
-        }
-        LOG_CTX_INFO(ctx,
-                     "{} udp route decision target {}:{} route {}",
-                     log_event::kRoute,
-                     target_endpoint.address().to_string(),
-                     target_endpoint.port(),
-                     mux::to_string(route));
-        if (route == route_type::kBlock)
-        {
-            LOG_CTX_INFO(ctx, "{} udp blocked {}:{}", log_event::kRoute, target_endpoint.address().to_string(), target_endpoint.port());
-            co_return;
-        }
+    auto ctx = make_udp_connection_context(client_endpoint, target_endpoint);
+    const auto route = co_await decide_udp_route(ctx, target_endpoint);
+    if (route == route_type::kBlock)
+    {
+        co_return;
+    }
 
-        session_it = udp_sessions_.find(key);
-        if (session_it != udp_sessions_.end())
-        {
-            auto session = session_it->second;
-            const auto enqueue_result = co_await session->enqueue_packet(std::move(payload));
-            if (enqueue_result == udp_enqueue_result::kEnqueued)
-            {
-                touch_udp_session(key);
-            }
-            else if (enqueue_result == udp_enqueue_result::kClosed)
-            {
-                erase_udp_session(key);
-            }
-            co_return;
-        }
+    if (auto session = find_udp_session(key); session != nullptr)
+    {
+        co_await enqueue_udp_session(key, session, std::move(payload));
+        co_return;
+    }
 
-        const auto weak_self = weak_from_this();
-        auto session = std::make_shared<tproxy_udp_session>(io_context_,
-                                                            tunnel_pool_,
-                                                            client_endpoint,
-                                                            target_endpoint,
-                                                            route,
-                                                            ctx,
-                                                            cfg_,
-                                                            pool_.get_task_group(io_context_),
-                                                            [weak_self, key]()
-                                                            {
-                                                                if (const auto self = weak_self.lock(); self != nullptr)
-                                                                {
-                                                                    self->erase_udp_session(key);
-                                                                }
-                                                            });
-        const auto enqueue_result = co_await session->enqueue_packet(std::move(payload));
-        if (enqueue_result != udp_enqueue_result::kEnqueued)
-        {
-            co_return;
-        }
+    auto session = make_udp_session(key, client_endpoint, target_endpoint, route, std::move(ctx));
+    const auto enqueue_result = co_await session->enqueue_packet(std::move(payload));
+    if (enqueue_result != udp_enqueue_result::kEnqueued)
+    {
+        co_return;
+    }
+    if (!register_udp_session(key, session))
+    {
+        co_return;
+    }
+}
 
-        evict_udp_sessions_if_needed();
-        if (udp_sessions_.size() >= kMaxUdpSessions)
-        {
-            LOG_WARN("tproxy udp session limit reached drop packet");
-            co_return;
-        }
+bool tproxy_client::is_udp_routing_loop(const boost::asio::ip::udp::endpoint& target_endpoint) const
+{
+    if (cfg_.tproxy.udp_port == 0)
+    {
+        return false;
+    }
 
-        udp_sessions_.emplace(key, session);
-        session->start();
+    boost::system::error_code addr_ec;
+    const auto local_addr = boost::asio::ip::make_address(cfg_.tproxy.listen_host, addr_ec);
+    if (addr_ec)
+    {
+        return false;
+    }
+
+    return target_endpoint.port() == cfg_.tproxy.udp_port && net::normalize_address(target_endpoint.address()) == net::normalize_address(local_addr);
+}
+
+bool tproxy_client::can_create_udp_session() const
+{
+    if (connection_tracker::instance().active_connections() < cfg_.limits.client_session_max_connections)
+    {
+        return true;
+    }
+
+    LOG_WARN("tproxy udp connection limit reached drop packet");
+    return false;
+}
+
+connection_context tproxy_client::make_udp_connection_context(const boost::asio::ip::udp::endpoint& client_endpoint,
+                                                              const boost::asio::ip::udp::endpoint& target_endpoint) const
+{
+    connection_context ctx;
+    ctx.new_trace_id();
+    ctx.conn_id(tunnel_pool_->next_session_id());
+    ctx.set_remote_endpoint(client_endpoint.address().to_string(), client_endpoint.port());
+    ctx.set_target(target_endpoint.address().to_string(), target_endpoint.port());
+    ctx.set_local_endpoint(target_endpoint.address().to_string(), target_endpoint.port());
+    return ctx;
+}
+
+boost::asio::awaitable<route_type> tproxy_client::decide_udp_route(const connection_context& ctx,
+                                                                   const boost::asio::ip::udp::endpoint& target_endpoint) const
+{
+    route_type route = route_type::kProxy;
+    if (router_ != nullptr)
+    {
+        route = co_await router_->decide_ip(ctx, target_endpoint.address());
+    }
+
+    LOG_CTX_INFO(ctx,
+                 "{} udp route decision target {}:{} route {}",
+                 log_event::kRoute,
+                 target_endpoint.address().to_string(),
+                 target_endpoint.port(),
+                 mux::to_string(route));
+    if (route == route_type::kBlock)
+    {
+        LOG_CTX_INFO(ctx, "{} udp blocked {}:{}", log_event::kRoute, target_endpoint.address().to_string(), target_endpoint.port());
+    }
+
+    co_return route;
+}
+
+std::shared_ptr<tproxy_udp_session> tproxy_client::find_udp_session(const std::string& key) const
+{
+    const auto it = udp_sessions_.find(key);
+    if (it == udp_sessions_.end())
+    {
+        return nullptr;
+    }
+
+    return it->second;
+}
+
+boost::asio::awaitable<void> tproxy_client::enqueue_udp_session(const std::string& key,
+                                                                const std::shared_ptr<tproxy_udp_session>& session,
+                                                                std::vector<std::uint8_t> payload)
+{
+    const auto enqueue_result = co_await session->enqueue_packet(std::move(payload));
+    if (enqueue_result == udp_enqueue_result::kEnqueued)
+    {
         touch_udp_session(key);
         co_return;
     }
-    else
+
+    if (enqueue_result == udp_enqueue_result::kClosed)
     {
-        auto session = session_it->second;
-        const auto enqueue_result = co_await session->enqueue_packet(std::move(payload));
-        if (enqueue_result == udp_enqueue_result::kEnqueued)
-        {
-            touch_udp_session(key);
-        }
-        else if (enqueue_result == udp_enqueue_result::kClosed)
-        {
-            erase_udp_session(key);
-        }
-        co_return;
+        erase_udp_session(key);
     }
+}
+
+std::shared_ptr<tproxy_udp_session> tproxy_client::make_udp_session(const std::string& key,
+                                                                    const boost::asio::ip::udp::endpoint& client_endpoint,
+                                                                    const boost::asio::ip::udp::endpoint& target_endpoint,
+                                                                    route_type route,
+                                                                    connection_context ctx)
+{
+    const auto weak_self = weak_from_this();
+    return std::make_shared<tproxy_udp_session>(owner_worker_,
+                                                tunnel_pool_,
+                                                client_endpoint,
+                                                target_endpoint,
+                                                route,
+                                                std::move(ctx),
+                                                cfg_,
+                                                [weak_self, key]()
+                                                {
+                                                    if (const auto self = weak_self.lock(); self != nullptr)
+                                                    {
+                                                        self->erase_udp_session(key);
+                                                    }
+                                                });
+}
+
+bool tproxy_client::register_udp_session(const std::string& key, const std::shared_ptr<tproxy_udp_session>& session)
+{
+    evict_udp_sessions_if_needed();
+    if (udp_sessions_.size() >= kMaxUdpSessions)
+    {
+        LOG_WARN("tproxy udp session limit reached drop packet");
+        return false;
+    }
+
+    udp_sessions_.emplace(key, session);
+    session->start();
+    touch_udp_session(key);
+    return true;
 }
 
 void tproxy_client::touch_udp_session(const std::string& key)
@@ -561,8 +605,8 @@ std::string tproxy_client::make_udp_session_key(const boost::asio::ip::udp::endp
 {
     const auto normalized_client = net::normalize_endpoint(client_endpoint);
     const auto normalized_target = net::normalize_endpoint(target_endpoint);
-    return normalized_client.address().to_string() + "|" + std::to_string(normalized_client.port()) + "->" +
-           normalized_target.address().to_string() + "|" + std::to_string(normalized_target.port());
+    return normalized_client.address().to_string() + "|" + std::to_string(normalized_client.port()) + "->" + normalized_target.address().to_string() +
+           "|" + std::to_string(normalized_target.port());
 }
 
 }    // namespace mux

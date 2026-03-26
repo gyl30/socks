@@ -25,6 +25,31 @@ done
 tmp_dir="$(mktemp -d "$repo_root/.tmp-tproxy-test.XXXXXX")"
 keep_artifacts="${KEEP_TEST_ARTIFACTS:-1}"
 tag="$(printf '%04x' "$(( $$ % 65536 ))")"
+uplink_if="${TPROXY_UPLINK_IF:-$(ip route show default 0.0.0.0/0 | awk '/default/ {print $5; exit}')}"
+sni="${REALITY_SNI:-www.example.com}"
+
+if [[ -z "$uplink_if" ]]; then
+    echo "failed to detect host uplink interface; set TPROXY_UPLINK_IF explicitly" >&2
+    exit 1
+fi
+
+if grep -Eq '^[[:space:]]*nameserver[[:space:]]+(127\.0\.0\.(1|53)|::1)[[:space:]]*$' /etc/resolv.conf; then
+    resolv_source="/run/systemd/resolve/resolv.conf"
+else
+    resolv_source="/etc/resolv.conf"
+fi
+
+if [[ ! -f "$resolv_source" ]]; then
+    echo "dns resolver source not found: $resolv_source" >&2
+    exit 1
+fi
+
+if ! grep -Eq '^[[:space:]]*nameserver[[:space:]]+([^[:space:]]+)' "$resolv_source"; then
+    echo "dns resolver source has no nameserver entries: $resolv_source" >&2
+    exit 1
+fi
+
+host_ip_forward_before="$(sysctl -n net.ipv4.ip_forward 2>/dev/null || echo 0)"
 
 ns_app="socks_tp_app_${tag}"
 ns_mid="socks_tp_mid_${tag}"
@@ -34,11 +59,16 @@ app_if="ta${tag}"
 mid_app_if="tma${tag}"
 mid_wan_if="tmw${tag}"
 wan_if="tw${tag}"
+mid_host_if="tmh${tag}"
+host_if="th${tag}"
 
 app_ip="10.200.1.2"
 mid_app_ip="10.200.1.1"
 mid_wan_ip="10.200.2.1"
 wan_ip="10.200.2.2"
+mid_host_ip="10.200.3.2"
+host_ip="10.200.3.1"
+routed_subnet="10.200.0.0/16"
 
 server_port=18443
 tproxy_tcp_port=15080
@@ -77,6 +107,56 @@ ns_exec() {
     ip netns exec "$ns" "$@"
 }
 
+prepare_namespace_resolv_conf() {
+    local ns="$1"
+    local dir="/etc/netns/$ns"
+    mkdir -p "$dir"
+    {
+        grep -E '^[[:space:]]*nameserver[[:space:]]+' "$resolv_source" | awk '$2 !~ /^127\./ && $2 != "::1" {print $0}'
+        grep -E '^[[:space:]]*search[[:space:]]+' "$resolv_source" || true
+        grep -E '^[[:space:]]*options[[:space:]]+' "$resolv_source" || true
+    } >"$dir/resolv.conf"
+
+    if ! grep -Eq '^[[:space:]]*nameserver[[:space:]]+' "$dir/resolv.conf"; then
+        echo "no non-loopback nameserver available for namespace $ns from $resolv_source" >&2
+        exit 1
+    fi
+}
+
+verify_external_tls_reachability() {
+    local ns="$1"
+    local host="$2"
+    ns_exec "$ns" python3 - "$host" <<'PY'
+import socket
+import sys
+
+host = sys.argv[1]
+port = 443
+
+try:
+    infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+except OSError as exc:
+    print(f"dns lookup failed for {host}: {exc}", file=sys.stderr)
+    sys.exit(1)
+
+last_error = None
+for family, socktype, proto, _, sockaddr in infos:
+    sock = socket.socket(family, socktype, proto)
+    sock.settimeout(5.0)
+    try:
+        sock.connect(sockaddr)
+        sock.close()
+        sys.exit(0)
+    except OSError as exc:
+        last_error = exc
+    finally:
+        sock.close()
+
+print(f"tcp connect failed for {host}:{port}: {last_error}", file=sys.stderr)
+sys.exit(1)
+PY
+}
+
 cleanup() {
     local exit_code=$?
     trap - EXIT
@@ -88,6 +168,13 @@ cleanup() {
         fi
     done
 
+    iptables -t nat -D POSTROUTING -s "$routed_subnet" -o "$uplink_if" -j MASQUERADE >/dev/null 2>&1 || true
+    iptables -D FORWARD -i "$host_if" -o "$uplink_if" -j ACCEPT >/dev/null 2>&1 || true
+    iptables -D FORWARD -i "$uplink_if" -o "$host_if" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT >/dev/null 2>&1 || true
+    ip route del "$routed_subnet" via "$mid_host_ip" dev "$host_if" >/dev/null 2>&1 || true
+    ip link delete "$host_if" >/dev/null 2>&1 || true
+    sysctl -q -w net.ipv4.ip_forward="$host_ip_forward_before" >/dev/null 2>&1 || true
+
     for ns in "$ns_app" "$ns_mid" "$ns_wan"; do
         if ns_exists "$ns"; then
             while read -r ns_pid; do
@@ -97,6 +184,7 @@ cleanup() {
             done < <(ip netns pids "$ns" 2>/dev/null || true)
             ip netns delete "$ns" >/dev/null 2>&1 || true
         fi
+        rm -rf "/etc/netns/$ns" >/dev/null 2>&1 || true
     done
 
     if [[ $exit_code -ne 0 ]]; then
@@ -234,13 +322,13 @@ start_in_ns() {
 
 configure_namespace_sysctls() {
     local ns="$1"
-    local if_a="$2"
-    local if_b="$3"
+    shift
     ns_exec "$ns" sysctl -q -w net.ipv4.ip_forward=1
     ns_exec "$ns" sysctl -q -w net.ipv4.conf.all.rp_filter=0
     ns_exec "$ns" sysctl -q -w net.ipv4.conf.default.rp_filter=0
-    ns_exec "$ns" sysctl -q -w "net.ipv4.conf.${if_a}.rp_filter=0"
-    ns_exec "$ns" sysctl -q -w "net.ipv4.conf.${if_b}.rp_filter=0"
+    for iface in "$@"; do
+        ns_exec "$ns" sysctl -q -w "net.ipv4.conf.${iface}.rp_filter=0"
+    done
 }
 
 echo "[setup] create isolated network namespaces"
@@ -250,29 +338,46 @@ ip netns add "$ns_wan"
 
 ip link add "$app_if" type veth peer name "$mid_app_if"
 ip link add "$mid_wan_if" type veth peer name "$wan_if"
+ip link add "$host_if" type veth peer name "$mid_host_if"
 
 ip link set "$app_if" netns "$ns_app"
 ip link set "$mid_app_if" netns "$ns_mid"
 ip link set "$mid_wan_if" netns "$ns_mid"
 ip link set "$wan_if" netns "$ns_wan"
+ip link set "$mid_host_if" netns "$ns_mid"
+
+prepare_namespace_resolv_conf "$ns_wan"
 
 ns_exec "$ns_app" ip link set lo up
 ns_exec "$ns_app" ip addr add "${app_ip}/24" dev "$app_if"
 ns_exec "$ns_app" ip link set "$app_if" up
 ns_exec "$ns_app" ip route add default via "$mid_app_ip"
 
+echo "[setup] attach host uplink $uplink_if to isolated topology"
+ip addr add "${host_ip}/24" dev "$host_if"
+ip link set "$host_if" up
+sysctl -q -w net.ipv4.ip_forward=1
+sysctl -q -w "net.ipv4.conf.${host_if}.rp_filter=0"
+ip route add "$routed_subnet" via "$mid_host_ip" dev "$host_if"
+iptables -A FORWARD -i "$host_if" -o "$uplink_if" -j ACCEPT
+iptables -A FORWARD -i "$uplink_if" -o "$host_if" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+iptables -t nat -A POSTROUTING -s "$routed_subnet" -o "$uplink_if" -j MASQUERADE
+
 ns_exec "$ns_mid" ip link set lo up
 ns_exec "$ns_mid" ip addr add "${mid_app_ip}/24" dev "$mid_app_if"
 ns_exec "$ns_mid" ip addr add "${mid_wan_ip}/24" dev "$mid_wan_if"
+ns_exec "$ns_mid" ip addr add "${mid_host_ip}/24" dev "$mid_host_if"
 ns_exec "$ns_mid" ip link set "$mid_app_if" up
 ns_exec "$ns_mid" ip link set "$mid_wan_if" up
-configure_namespace_sysctls "$ns_mid" "$mid_app_if" "$mid_wan_if"
+ns_exec "$ns_mid" ip link set "$mid_host_if" up
+configure_namespace_sysctls "$ns_mid" "$mid_app_if" "$mid_wan_if" "$mid_host_if"
 ns_exec "$ns_mid" ip route add "${direct_tcp_ip}/32" via "$wan_ip"
 ns_exec "$ns_mid" ip route add "${direct_tcp_drop_ip}/32" via "$wan_ip"
 ns_exec "$ns_mid" ip route add "${direct_udp_blackhole_ip}/32" via "$wan_ip"
 ns_exec "$ns_mid" ip route add "${proxy_tcp_ip}/32" via "$wan_ip"
 ns_exec "$ns_mid" ip route add "${proxy_tcp_drop_ip}/32" via "$wan_ip"
 ns_exec "$ns_mid" ip route add "${proxy_udp_blackhole_ip}/32" via "$wan_ip"
+ns_exec "$ns_mid" ip route add default via "$host_ip"
 ns_exec "$ns_mid" ip rule add pref 100 fwmark 0x11 iif "$mid_app_if" lookup 100
 ns_exec "$ns_mid" ip route add local 0.0.0.0/0 dev lo table 100
 
@@ -286,6 +391,9 @@ ns_exec "$ns_wan" ip addr add "${proxy_tcp_ip}/32" dev lo
 ns_exec "$ns_wan" ip addr add "${proxy_tcp_drop_ip}/32" dev lo
 ns_exec "$ns_wan" ip addr add "${proxy_udp_blackhole_ip}/32" dev lo
 ns_exec "$ns_wan" ip route add default via "$mid_wan_ip"
+
+echo "[setup] verify external dns/tcp reachability from $ns_wan to $sni:443"
+verify_external_tls_reachability "$ns_wan" "$sni"
 
 echo "[setup] install TPROXY rules inside $ns_mid"
 for ip_port in \
@@ -321,7 +429,6 @@ key_output="$("$binary" x25519)"
 private_key="$(awk '/private key:/{print $3}' <<<"$key_output")"
 public_key="$(awk '/public key:/{print $3}' <<<"$key_output")"
 short_id="0102030405060708"
-sni="www.example.com"
 
 cat >"$tmp_dir/server.json" <<EOF
 {
@@ -339,7 +446,7 @@ cat >"$tmp_dir/server.json" <<EOF
     "enabled": false
   },
   "reality": {
-    "sni": "",
+    "sni": "$sni",
     "private_key": "$private_key",
     "public_key": "$public_key",
     "short_id": "$short_id"

@@ -1,33 +1,28 @@
-#include <algorithm>
 #include <chrono>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
-#include <cstdint>
 #include <cstring>
+#include <algorithm>
 
-#include <boost/asio/error.hpp>
-#include <boost/asio/write.hpp>
-#include <boost/asio/buffer.hpp>
-#include <boost/asio/ip/tcp.hpp>
-#include <boost/asio/as_tuple.hpp>
-#include <boost/asio/dispatch.hpp>
+#include <boost/asio.hpp>
+
 #include <boost/asio/awaitable.hpp>
-#include <boost/asio/io_context.hpp>
-#include <boost/asio/steady_timer.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/asio/redirect_error.hpp>
 #include <boost/asio/experimental/awaitable_operators.hpp>
 
 #include "log.h"
+#include "config.h"
 #include "protocol.h"
 #include "mux_codec.h"
 #include "timeout_io.h"
 #include "scoped_exit.h"
-#include "connection_context.h"
 #include "mux_protocol.h"
 #include "mux_connection.h"
 #include "remote_session.h"
+#include "connection_context.h"
 
 namespace mux
 {
@@ -75,8 +70,6 @@ namespace
     return socks::kRepGenFail;
 }
 
-}    // namespace
-
 boost::asio::awaitable<void> send_stream_control_frame(const std::shared_ptr<mux_stream>& stream,
                                                        const std::uint8_t command,
                                                        boost::system::error_code& ec)
@@ -92,31 +85,25 @@ boost::asio::awaitable<void> send_stream_control_frame(const std::shared_ptr<mux
     control_frame.h.command = command;
     co_await stream->async_write(control_frame, ec);
 }
-
-remote_tcp_session::remote_tcp_session(const std::shared_ptr<mux_connection>& connection,
+}    // namespace
+remote_tcp_session::remote_tcp_session(boost::asio::io_context& io_context,
+                                       const std::shared_ptr<mux_connection>& connection,
                                        const std::uint32_t id,
                                        const connection_context& ctx,
                                        const config& cfg)
     : id_(id),
       cfg_(cfg),
-      socket_(connection->io_context()),
-      idle_timer_(connection->io_context()),
-      stream_(std::make_shared<mux_stream>(id, cfg, connection->io_context(), connection)),
+      socket_(io_context),
+      idle_timer_(io_context),
+      stream_(connection != nullptr ? connection->create_incoming_stream(id) : nullptr),
       connection_(connection)
 {
     ctx_ = ctx;
     ctx_.stream_id(id);
     last_activity_time_ms_ = timeout_io::now_ms();
-    if (connection != nullptr)
-    {
-        connection->register_stream(stream_);
-    }
 }
 
-boost::asio::awaitable<void> remote_tcp_session::start(const syn_payload& syn)
-{
-    co_await run(syn);
-}
+boost::asio::awaitable<void> remote_tcp_session::start(const syn_payload& syn) { co_await run(syn); }
 
 void remote_tcp_session::close_from_fin()
 {
@@ -148,7 +135,7 @@ boost::asio::awaitable<void> remote_tcp_session::run(const syn_payload& syn)
     boost::system::error_code ec;
     const auto send_fail_ack = [&](const std::uint8_t rep) -> boost::asio::awaitable<void>
     {
-        ack_payload ack{.socks_rep = rep, .bnd_addr = "0.0.0.0", .bnd_port = 0};
+        const ack_payload ack{.socks_rep = rep, .bnd_addr = "0.0.0.0", .bnd_port = 0};
         std::vector<std::uint8_t> ack_data;
         if (!mux_codec::encode_ack(ack, ack_data))
         {
@@ -162,8 +149,8 @@ boost::asio::awaitable<void> remote_tcp_session::run(const syn_payload& syn)
         boost::system::error_code ack_ec;
         co_await stream_->async_write(ack_frame, ack_ec);
     };
-    boost::asio::ip::tcp::resolver resolver_(socket_.get_executor());
-    auto resolve_res = co_await timeout_io::wait_resolve_with_timeout(resolver_, syn.addr, std::to_string(syn.port), cfg_.timeout.connect, ec);
+    boost::asio::ip::tcp::resolver resolver(socket_.get_executor());
+    auto resolve_res = co_await timeout_io::wait_resolve_with_timeout(resolver, syn.addr, std::to_string(syn.port), cfg_.timeout.connect, ec);
     if (ec)
     {
         const auto rep = map_connect_error_to_socks_rep(ec);
@@ -184,6 +171,7 @@ boost::asio::awaitable<void> remote_tcp_session::run(const syn_payload& syn)
         {
             boost::system::error_code close_ec;
             close_ec = socket_.close(close_ec);
+            (void)close_ec;
         }
         connect_ec = socket_.open(entry.endpoint().protocol(), connect_ec);
         if (connect_ec)

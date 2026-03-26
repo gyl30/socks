@@ -11,10 +11,7 @@ namespace reality::session_internal
 class engine_access
 {
    public:
-    [[nodiscard]] static mux::reality_engine take_engine(reality_session&& session)
-    {
-        return std::move(session).take_engine();
-    }
+    [[nodiscard]] static mux::reality_engine take_engine(reality_session&& session) { return std::move(session).take_engine(); }
 };
 
 }    // namespace reality::session_internal

@@ -3,7 +3,6 @@
 
 #include <string>
 #include <vector>
-#include <cstdint>
 
 extern "C"
 {

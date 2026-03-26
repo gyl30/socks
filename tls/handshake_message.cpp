@@ -3,7 +3,8 @@
 #include <string>
 #include <vector>
 #include <cstddef>
-#include <cstdint>
+#include <utility>
+#include <optional>
 #include <algorithm>
 
 extern "C"
@@ -37,8 +38,8 @@ bool read_u24_at(const std::span<const std::uint8_t> data, std::size_t& pos, std
     {
         return false;
     }
-    value = (static_cast<std::uint32_t>(data[pos]) << 16) | (static_cast<std::uint32_t>(data[pos + 1]) << 8) |
-            static_cast<std::uint32_t>(data[pos + 2]);
+    value =
+        (static_cast<std::uint32_t>(data[pos]) << 16) | (static_cast<std::uint32_t>(data[pos + 1]) << 8) | static_cast<std::uint32_t>(data[pos + 2]);
     pos += 3;
     return true;
 }
@@ -56,9 +57,7 @@ bool read_handshake_message_len(const std::span<const std::uint8_t> data, std::s
     return full_len <= data.size();
 }
 
-bool parse_extension_types(const std::span<const std::uint8_t> ext_block,
-                           handshake_extension_layout& layout,
-                           const bool capture_padding_len)
+bool parse_extension_types(const std::span<const std::uint8_t> ext_block, handshake_extension_layout& layout, const bool capture_padding_len)
 {
     layout.types.clear();
     layout.padding_len.reset();
@@ -70,10 +69,10 @@ bool parse_extension_types(const std::span<const std::uint8_t> ext_block,
         {
             return false;
         }
-        const auto ext_type = static_cast<std::uint16_t>((static_cast<std::uint16_t>(ext_block[pos]) << 8) |
-                                                         static_cast<std::uint16_t>(ext_block[pos + 1]));
-        const auto ext_len = static_cast<std::uint16_t>((static_cast<std::uint16_t>(ext_block[pos + 2]) << 8) |
-                                                        static_cast<std::uint16_t>(ext_block[pos + 3]));
+        const auto ext_type =
+            static_cast<std::uint16_t>((static_cast<std::uint16_t>(ext_block[pos]) << 8) | static_cast<std::uint16_t>(ext_block[pos + 1]));
+        const auto ext_len =
+            static_cast<std::uint16_t>((static_cast<std::uint16_t>(ext_block[pos + 2]) << 8) | static_cast<std::uint16_t>(ext_block[pos + 3]));
         pos += 4;
         if (pos + ext_len > ext_block.size())
         {
@@ -102,8 +101,8 @@ bool is_exact_handshake_message(const std::span<const std::uint8_t> message, con
 bool validate_certificate_der(const std::span<const std::uint8_t> certificate_der)
 {
     const auto* der_begin = certificate_der.data();
-    auto* parse_cursor = der_begin;
-    ::tls::openssl_ptrs::x509_ptr certificate(d2i_X509(nullptr, &parse_cursor, static_cast<long>(certificate_der.size())));
+    const auto* parse_cursor = der_begin;
+    const tls::openssl_ptrs::x509_ptr certificate(d2i_X509(nullptr, &parse_cursor, static_cast<long>(certificate_der.size())));
     if (certificate == nullptr)
     {
         return false;
@@ -112,38 +111,8 @@ bool validate_certificate_der(const std::span<const std::uint8_t> certificate_de
 }
 
 constexpr std::array<std::uint8_t, 32> kHelloRetryRequestRandom = {
-    0xcf,
-    0x21,
-    0xad,
-    0x74,
-    0xe5,
-    0x9a,
-    0x61,
-    0x11,
-    0xbe,
-    0x1d,
-    0x8c,
-    0x02,
-    0x1e,
-    0x65,
-    0xb8,
-    0x91,
-    0xc2,
-    0xa2,
-    0x11,
-    0x16,
-    0x7a,
-    0xbb,
-    0x8c,
-    0x5e,
-    0x07,
-    0x9e,
-    0x09,
-    0xe2,
-    0xc8,
-    0xa8,
-    0x33,
-    0x9c,
+    0xcf, 0x21, 0xad, 0x74, 0xe5, 0x9a, 0x61, 0x11, 0xbe, 0x1d, 0x8c, 0x02, 0x1e, 0x65, 0xb8, 0x91,
+    0xc2, 0xa2, 0x11, 0x16, 0x7a, 0xbb, 0x8c, 0x5e, 0x07, 0x9e, 0x09, 0xe2, 0xc8, 0xa8, 0x33, 0x9c,
 };
 
 bool is_hello_retry_request_random(const std::span<const std::uint8_t> server_hello, const std::size_t random_pos)
@@ -153,9 +122,8 @@ bool is_hello_retry_request_random(const std::span<const std::uint8_t> server_he
         return false;
     }
 
-    return std::equal(kHelloRetryRequestRandom.begin(),
-                      kHelloRetryRequestRandom.end(),
-                      server_hello.begin() + static_cast<std::ptrdiff_t>(random_pos));
+    return std::equal(
+        kHelloRetryRequestRandom.begin(), kHelloRetryRequestRandom.end(), server_hello.begin() + static_cast<std::ptrdiff_t>(random_pos));
 }
 
 bool skip_server_hello_prefix(const std::span<const std::uint8_t> server_hello, std::size_t& pos)
@@ -181,8 +149,7 @@ bool locate_server_hello_body(const std::span<const std::uint8_t> server_hello, 
     {
         return false;
     }
-    const auto payload_len = (static_cast<std::uint32_t>(server_hello[pos + 1]) << 16) |
-                             (static_cast<std::uint32_t>(server_hello[pos + 2]) << 8) |
+    const auto payload_len = (static_cast<std::uint32_t>(server_hello[pos + 1]) << 16) | (static_cast<std::uint32_t>(server_hello[pos + 2]) << 8) |
                              static_cast<std::uint32_t>(server_hello[pos + 3]);
     pos += 4;
     end = pos + payload_len;
@@ -362,7 +329,7 @@ std::optional<encrypted_extensions_range> parse_encrypted_extensions_range(const
     }
 
     const auto total_ext_len = static_cast<std::uint16_t>((encrypted_extensions[4] << 8) | encrypted_extensions[5]);
-    const std::size_t ext_start = 6;
+    constexpr std::size_t ext_start = 6;
     const std::size_t ext_end = ext_start + total_ext_len;
     if (ext_end != encrypted_extensions.size())
     {
@@ -372,8 +339,7 @@ std::optional<encrypted_extensions_range> parse_encrypted_extensions_range(const
     return encrypted_extensions_range{.pos = ext_start, .end = ext_end};
 }
 
-bool read_extension_header(
-    const std::span<const std::uint8_t> msg, std::size_t& pos, const std::size_t end, std::uint16_t& type, std::uint16_t& len)
+bool read_extension_header(const std::span<const std::uint8_t> msg, std::size_t& pos, const std::size_t end, std::uint16_t& type, std::uint16_t& len)
 {
     if (pos + 4 > end)
     {
@@ -496,8 +462,7 @@ bool parse_encrypted_extensions_layout(const std::span<const std::uint8_t> encry
     return parse_extension_types(encrypted_extensions.subspan(pos, ext_len), layout, true);
 }
 
-bool parse_certificate_chain(const std::span<const std::uint8_t> certificate_message,
-                             std::vector<std::vector<std::uint8_t>>& certificate_chain)
+bool parse_certificate_chain(const std::span<const std::uint8_t> certificate_message, std::vector<std::vector<std::uint8_t>>& certificate_chain)
 {
     certificate_chain.clear();
 

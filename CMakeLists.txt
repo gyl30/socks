@@ -259,6 +259,7 @@ if(ENABLE_FUZZ)
     fuzz_core STATIC
     log.cpp
     tls/ch_parser.cpp
+    tls/server_name.cpp
     reality/handshake/fingerprint.cpp
     reality/handshake/client_hello_builder.cpp
     mux_codec.cpp)
