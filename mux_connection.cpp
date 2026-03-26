@@ -37,6 +37,7 @@ extern "C"
 #include "timeout_io.h"
 #include "connection_context.h"
 #include "mux_protocol.h"
+#include "mux_codec.h"
 #include "mux_connection.h"
 #include "reality/session/engine.h"
 #include "reality/session/session_internal.h"
@@ -121,8 +122,6 @@ mux_connection::mux_connection(boost::asio::ip::tcp::socket socket,
         ctx_.remote_addr(remote_ep.address().to_string());
         ctx_.remote_port(remote_ep.port());
     }
-    mux_dispatcher_.set_context(ctx_);
-    mux_dispatcher_.set_max_buffer(cfg_.limits.max_buffer);
     LOG_CTX_INFO(ctx_, "{} mux initialized {}", log_event::kConnInit, ctx_.connection_info());
 }
 
@@ -545,9 +544,10 @@ boost::asio::awaitable<void> mux_connection::read_loop()
                 if (type == ::tls::kContentTypeApplicationData)
                 {
                     std::vector<mux_frame> frames;
-                    mux_dispatcher_.on_plaintext_data(plaintext, frames, ec);
+                    mux_codec::decode_frames(pending_plaintext_, plaintext, cfg_.limits.max_buffer, frames, ec);
                     if (ec)
                     {
+                        LOG_CTX_ERROR(ctx_, "{} mux decode failed {}", log_event::kMux, ec.message());
                         co_return;
                     }
                     for (auto& frame : frames)
@@ -594,7 +594,9 @@ boost::asio::awaitable<void> mux_connection::write_loop()
             release_write_bytes(msg.h.stream_id, msg.h.command, msg.payload.size());
         }
 
-        const auto mux_frame = mux_dispatcher::pack(msg.h.stream_id, msg.h.command, msg.payload);
+        frame_header header = msg.h;
+        header.length = static_cast<std::uint16_t>(msg.payload.size());
+        const auto mux_frame = mux_codec::encode_frame(header, msg.payload);
 
         boost::system::error_code encrypt_ec;
         const auto ct = reality_engine_.encrypt(mux_frame, encrypt_ec);

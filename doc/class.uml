@@ -108,11 +108,6 @@ package "Mux + Reality" {
         + on_frame(frame, ec)
     }
 
-    class mux_dispatcher {
-        + on_plaintext_data(data, ec)
-        + pack(stream_id, cmd, payload)
-    }
-
     class reality_engine {
         + encrypt(plaintext, ec)
         + process_available_records(callback, ec)
@@ -176,7 +171,6 @@ tproxy_tcp_session ..> upstream : select_backend
 
 client_tunnel_pool o-- io_context_pool
 client_tunnel_pool *-- mux_connection : pool items
-mux_connection *-- mux_dispatcher
 mux_connection *-- reality_engine
 mux_connection *-- mux_stream : stream map
 mux_stream ..> mux_connection : weak ref

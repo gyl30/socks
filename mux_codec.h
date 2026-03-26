@@ -1,9 +1,12 @@
 #ifndef MUX_CODEC_H
 #define MUX_CODEC_H
 
+#include <span>
 #include <vector>
 #include <cstddef>
 #include <cstdint>
+
+#include <boost/system/error_code.hpp>
 
 #include "mux_protocol.h"
 
@@ -15,6 +18,12 @@ class mux_codec
    public:
     static void encode_header(const frame_header& h, std::vector<std::uint8_t>& buf);
     static bool decode_header(const std::uint8_t* buf, std::size_t len, frame_header& out);
+    [[nodiscard]] static std::vector<std::uint8_t> encode_frame(const frame_header& h, std::span<const std::uint8_t> payload);
+    static void decode_frames(std::vector<std::uint8_t>& pending,
+                              std::span<const std::uint8_t> data,
+                              std::size_t max_buffer,
+                              std::vector<mux_frame>& frames,
+                              boost::system::error_code& ec);
 
     [[nodiscard]] static bool encode_syn(const syn_payload& p, std::vector<std::uint8_t>& buf);
 

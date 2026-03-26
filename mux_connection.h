@@ -22,7 +22,6 @@
 #include "task_group.h"
 #include "connection_context.h"
 #include "mux_protocol.h"
-#include "mux_dispatcher.h"
 #include "reality/session/session.h"
 #include "reality/session/engine.h"
 
@@ -92,7 +91,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     std::mutex mutex_;
     new_stream_cb cb_;
     reality_engine reality_engine_;
-    mux_dispatcher mux_dispatcher_;
+    std::vector<std::uint8_t> pending_plaintext_;
     std::uint32_t next_stream_id_ = 0;
     std::uint64_t read_bytes_ = 0;
     std::uint64_t write_bytes_ = 0;
