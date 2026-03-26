@@ -355,10 +355,6 @@ cat >"$tmp_dir/server.json" <<EOF
     "max_buffer": 10485760,
     "max_streams": 256,
     "max_handshake_records": 256
-  },
-  "monitor": {
-    "enabled": false,
-    "port": 0
   }
 }
 EOF
@@ -413,10 +409,6 @@ cat >"$tmp_dir/client.json" <<EOF
     "max_interval": 12,
     "min_padding": 32,
     "max_padding": 64
-  },
-  "monitor": {
-    "enabled": false,
-    "port": 0
   }
 }
 EOF

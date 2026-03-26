@@ -133,10 +133,6 @@ cat >"$tmp_dir/server.json" <<EOF
     "max_buffer": $server_max_buffer,
     "max_streams": $server_max_streams,
     "max_handshake_records": $server_max_handshake_records
-  },
-  "monitor": {
-    "enabled": false,
-    "port": 0
   }
 }
 EOF
@@ -193,10 +189,6 @@ cat >"$tmp_dir/client.json" <<EOF
     "max_interval": $heartbeat_max_interval,
     "min_padding": $heartbeat_min_padding,
     "max_padding": $heartbeat_max_padding
-  },
-  "monitor": {
-    "enabled": false,
-    "port": 0
   }
 }
 EOF

@@ -221,7 +221,6 @@ set(SOCKS_SOURCES
     reality/session/engine.cpp
     domain_matcher.cpp
     reality/handshake/auth.cpp
-    monitor_server.cpp
     cert_fetcher.cpp
     cert_manager.cpp
     tls/certificate_compression.cpp)

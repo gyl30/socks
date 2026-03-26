@@ -16,7 +16,6 @@
 - `timeout`
 - `limits`
 - `heartbeat`
-- `monitor`
 - `reality`
 
 ## 2. 进程启动顺序
@@ -24,10 +23,9 @@
 `main.cpp` 中的运行装配顺序：
 
 1. 解析并校验配置（`parse_config_with_error`）。
-2. 启动 `monitor_server`（当 `monitor.enabled=true`）。
-3. 当 `mode=server` 时启动 `remote_server`。
-4. 当 `mode=client` 且 `socks.enabled=true` 时启动 `socks_client`。
-5. Linux 且编译启用 TPROXY 时，若 `mode=client` 且 `tproxy.enabled=true` 启动 `tproxy_client`。
+2. 当 `mode=server` 时启动 `remote_server`。
+3. 当 `mode=client` 且 `socks.enabled=true` 时启动 `socks_client`。
+4. Linux 且编译启用 TPROXY 时，若 `mode=client` 且 `tproxy.enabled=true` 启动 `tproxy_client`。
 
 说明：`socks_client` / `tproxy_client` 仅在 `mode=client` 启动；`mode=server` 下即使配置了 `socks/tproxy` 也不会启动。
 
@@ -228,16 +226,3 @@
   - 仅 `mode=client` 生效，用于客户端认证相关密钥计算。
 - `reality.short_id`
   - 客户端写入认证载荷，服务端用于校验；`mode=server` 时必须非空。
-
-## 11. 监控
-
-字段：
-
-- `monitor.enabled`
-- `monitor.port`
-
-运行行为：
-
-- `monitor_server` 默认监听 `127.0.0.1:<port>`。
-- 仅支持 `GET /metrics`（Prometheus 文本格式）。
-- 当前实现不包含鉴权或限流逻辑。

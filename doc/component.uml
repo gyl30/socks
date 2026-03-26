@@ -18,7 +18,6 @@ package "Client Process" {
     [mux_connection (client)] as ClientMux
     [reality_engine (client)] as ClientReality
 
-    [monitor_server] as Monitor
 }
 
 cloud "Internet" {
@@ -35,8 +34,6 @@ package "Server Process" {
 
 [User App] as App
 [Target Service] as Target
-[Prometheus / curl] as MetricsClient
-
 App --> SocksListener : SOCKS5 TCP
 SocksListener --> SocksSession : create
 
@@ -72,8 +69,6 @@ RemoteUdp --> Target : UDP relay
 
 TproxyUdpSession --> TunnelPool : route=proxy
 TproxyUdpSession --> Target : direct UDP
-
-MetricsClient --> Monitor : GET /metrics
 
 note right of ProxyUpstream
   route=proxy 时：
