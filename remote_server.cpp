@@ -408,21 +408,24 @@ boost::asio::awaitable<void> remote_server::handle(boost::asio::io_context& io,
     }
     LOG_CTX_INFO(ctx, "{} tunnel starting", log_event::kConnEstablished);
     auto connection = std::make_shared<mux_connection>(std::move(*s), io, std::move(session), cfg_, pool_.get_task_group(io), conn_id, ctx.trace_id());
-
-    std::weak_ptr<remote_server> weak_self = weak_from_this();
-    std::weak_ptr<mux_connection> weak_connection = connection;
-    connection->set_new_stream_cb(
-        [weak_self, weak_connection, ctx](mux_frame frame) -> boost::asio::awaitable<void>
-        {
-            const auto self = weak_self.lock();
-            const auto connection_ref = weak_connection.lock();
-            if (self == nullptr || connection_ref == nullptr)
-            {
-                co_return;
-            }
-            co_await self->process_stream_request(connection_ref, ctx, std::move(frame));
-        });
+    connection->start_accepting_streams();
     connection->start();
+    for (;;)
+    {
+        mux_frame frame;
+        frame = co_await connection->async_receive_syn(ec);
+        if (ec)
+        {
+            if (ec != boost::asio::error::operation_aborted &&
+                ec != boost::asio::experimental::error::channel_errors::channel_closed &&
+                ec != boost::asio::experimental::error::channel_errors::channel_cancelled)
+            {
+                LOG_CTX_WARN(ctx, "{} accept incoming stream failed {}", log_event::kMux, ec.message());
+            }
+            break;
+        }
+        co_await process_stream_request(connection, ctx, std::move(frame));
+    }
     if (connection != nullptr)
     {
         co_await connection->async_wait_stopped();
