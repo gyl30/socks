@@ -47,10 +47,9 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     boost::asio::awaitable<void> fallback_to_target_site(reality::fallback_request request, const char* reason);
     boost::asio::awaitable<void> handle(boost::asio::io_context& io, std::shared_ptr<boost::asio::ip::tcp::socket> s, std::uint32_t conn_id);
 
-    boost::asio::awaitable<void> process_stream_request(boost::asio::io_context& io,
-                                                           std::shared_ptr<mux_tunnel_impl> tunnel,
-                                                           const connection_context& ctx,
-                                                           mux_frame frame);
+    boost::asio::awaitable<void> process_stream_request(std::shared_ptr<mux_tunnel_impl> tunnel,
+                                                        const connection_context& ctx,
+                                                        mux_frame frame);
 
    private:
     const config& cfg_;
