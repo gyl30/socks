@@ -189,7 +189,7 @@
 
 - `max_connections`：用于客户端 `client_tunnel_pool` 维护的并发隧道数。
 - `max_streams`：用于 `mux_connection` 的 stream 数量上限。
-- `max_buffer`：用于 `mux_dispatcher` 明文缓存上限。
+- `max_buffer`：用于 `mux_connection` 明文残包缓存与待写缓冲上限。
 - `max_handshake_records`：用于客户端 REALITY 握手读取上限。
 
 ## 10. REALITY

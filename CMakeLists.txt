@@ -187,7 +187,6 @@ set(SOCKS_SOURCES
     socks_session.cpp
     tcp_socks_session.cpp
     udp_socks_session.cpp
-    mux_dispatcher.cpp
     reality/handshake/client_hello_builder.cpp
     tls/cipher_suite.cpp
     tls/record_validation.cpp
