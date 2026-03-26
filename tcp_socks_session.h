@@ -16,7 +16,6 @@
 #include "router.h"
 #include "upstream.h"
 #include "task_group.h"
-#include "mux_tunnel.h"
 #include "connection_context.h"
 
 namespace mux

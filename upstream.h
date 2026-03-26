@@ -15,9 +15,9 @@
 
 #include "protocol.h"
 #include "mux_stream.h"
-#include "mux_tunnel.h"
 #include "connection_context.h"
 #include "mux_protocol.h"
+#include "mux_connection.h"
 
 namespace mux
 {
@@ -66,7 +66,7 @@ class direct_upstream : public upstream
 class proxy_upstream : public upstream
 {
    public:
-    explicit proxy_upstream(std::shared_ptr<mux_tunnel_impl> tunnel, boost::asio::io_context& io_context, connection_context ctx, const config& cfg);
+    explicit proxy_upstream(std::shared_ptr<mux_connection> tunnel, boost::asio::io_context& io_context, connection_context ctx, const config& cfg);
     explicit proxy_upstream(std::shared_ptr<client_tunnel_pool> tunnel_pool,
                             boost::asio::io_context& io_context,
                             connection_context ctx,
@@ -98,7 +98,7 @@ class proxy_upstream : public upstream
     std::shared_ptr<mux_stream> stream_;
     boost::asio::io_context& io_context_;
     std::shared_ptr<client_tunnel_pool> tunnel_pool_;
-    std::shared_ptr<mux_tunnel_impl> tunnel_;
+    std::shared_ptr<mux_connection> tunnel_;
     boost::asio::ip::address bind_addr_;
     std::uint16_t bind_port_ = 0;
     bool fin_sent_ = false;

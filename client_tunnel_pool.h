@@ -18,8 +18,8 @@
 #include <boost/system/error_code.hpp>
 
 #include "config.h"
-#include "mux_tunnel.h"
 #include "context_pool.h"
+#include "mux_connection.h"
 #include "reality/types.h"
 #include "tls/core.h"
 #include "tls/ch_parser.h"
@@ -39,9 +39,9 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
 
     void stop();
 
-    [[nodiscard]] std::shared_ptr<mux_tunnel_impl> select_tunnel();
-    [[nodiscard]] boost::asio::awaitable<std::shared_ptr<mux_tunnel_impl>> wait_for_tunnel(boost::asio::io_context& io_context,
-                                                                                            boost::system::error_code& ec);
+    [[nodiscard]] std::shared_ptr<mux_connection> select_tunnel();
+    [[nodiscard]] boost::asio::awaitable<std::shared_ptr<mux_connection>> wait_for_tunnel(boost::asio::io_context& io_context,
+                                                                                           boost::system::error_code& ec);
 
     [[nodiscard]] std::uint32_t next_session_id();
 
@@ -56,11 +56,11 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
                                                                   boost::system::error_code& ec) const;
     [[nodiscard]] boost::asio::awaitable<handshake_result> perform_reality_handshake_with_timeout(
         const std::shared_ptr<boost::asio::ip::tcp::socket>& socket, const connection_context& ctx, boost::system::error_code& ec) const;
-    [[nodiscard]] std::shared_ptr<mux_tunnel_impl> build_tunnel(boost::asio::ip::tcp::socket socket,
-                                                                boost::asio::io_context& io_context,
-                                                                std::uint32_t cid,
-                                                                const handshake_result& handshake_ret,
-                                                                const std::string& trace_id) const;
+    [[nodiscard]] std::shared_ptr<mux_connection> build_tunnel(boost::asio::ip::tcp::socket socket,
+                                                               boost::asio::io_context& io_context,
+                                                               std::uint32_t cid,
+                                                               const handshake_result& handshake_ret,
+                                                               const std::string& trace_id) const;
     [[nodiscard]] boost::asio::awaitable<void> run_real_certificate_fallback(boost::asio::ip::tcp::socket& socket,
                                                                              const handshake_result& handshake_ret,
                                                                              const connection_context& ctx) const;
@@ -79,7 +79,7 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
     std::vector<std::uint8_t> server_pub_key_;
     std::optional<reality::fingerprint_type> fingerprint_type_;
     std::mutex tunnel_mutex_;
-    std::vector<std::shared_ptr<mux_tunnel_impl>> tunnel_pool_;
+    std::vector<std::shared_ptr<mux_connection>> tunnel_pool_;
     std::once_flag stop_once_;
 };
 

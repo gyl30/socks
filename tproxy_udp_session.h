@@ -20,8 +20,8 @@
 #include "router.h"
 #include "lru_cache.h"
 #include "task_group.h"
-#include "mux_tunnel.h"
 #include "connection_context.h"
+#include "mux_connection.h"
 
 namespace mux
 {
@@ -59,7 +59,7 @@ class tproxy_udp_session : public std::enable_shared_from_this<tproxy_udp_sessio
     [[nodiscard]] boost::asio::awaitable<void> run();
     [[nodiscard]] boost::asio::awaitable<bool> open_direct_socket();
     [[nodiscard]] boost::asio::awaitable<bool> open_proxy_stream();
-    [[nodiscard]] boost::asio::awaitable<std::shared_ptr<mux_tunnel_impl>> wait_for_proxy_tunnel(boost::system::error_code& ec);
+    [[nodiscard]] boost::asio::awaitable<std::shared_ptr<mux_connection>> wait_for_proxy_tunnel(boost::system::error_code& ec);
     [[nodiscard]] boost::asio::awaitable<void> packets_to_direct();
     [[nodiscard]] boost::asio::awaitable<void> direct_to_client();
     [[nodiscard]] boost::asio::awaitable<void> packets_to_proxy();
@@ -85,7 +85,7 @@ class tproxy_udp_session : public std::enable_shared_from_this<tproxy_udp_sessio
     boost::asio::steady_timer idle_timer_;
     boost::asio::ip::udp::socket upstream_socket_;
     std::shared_ptr<client_tunnel_pool> tunnel_pool_;
-    std::shared_ptr<mux_tunnel_impl> tunnel_;
+    std::shared_ptr<mux_connection> tunnel_;
     std::shared_ptr<mux_stream> stream_;
     std::atomic<std::uint8_t> stream_close_command_{0};
     boost::asio::ip::udp::endpoint client_endpoint_;

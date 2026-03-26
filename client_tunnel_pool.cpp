@@ -43,7 +43,7 @@ extern "C"
 #include "config.h"
 #include "constants.h"
 #include "net_utils.h"
-#include "mux_tunnel.h"
+#include "mux_connection.h"
 #include "timeout_io.h"
 #include "tls/crypto_util.h"
 #include "connection_context.h"
@@ -204,7 +204,7 @@ void client_tunnel_pool::stop()
     std::call_once(stop_once_,
                    [this]()
                    {
-                       std::vector<std::shared_ptr<mux_tunnel_impl>> tunnels;
+                       std::vector<std::shared_ptr<mux_connection>> tunnels;
                        {
                            std::lock_guard<std::mutex> lock(tunnel_mutex_);
                            tunnels.reserve(tunnel_pool_.size());
@@ -224,16 +224,15 @@ void client_tunnel_pool::stop()
                            {
                                continue;
                            }
-                           const auto connection = tunnel->connection();
-                           if (connection != nullptr)
+                           if (tunnel != nullptr)
                            {
-                               connection->stop();
+                               tunnel->stop();
                            }
                        }
                    });
 }
 
-std::shared_ptr<mux_tunnel_impl> client_tunnel_pool::select_tunnel()
+std::shared_ptr<mux_connection> client_tunnel_pool::select_tunnel()
 {
     std::lock_guard<std::mutex> lock(tunnel_mutex_);
     if (tunnel_pool_.empty())
@@ -251,8 +250,7 @@ std::shared_ptr<mux_tunnel_impl> client_tunnel_pool::select_tunnel()
         {
             continue;
         }
-        const auto connection = tunnel->connection();
-        if (connection == nullptr || !connection->is_active())
+        if (tunnel == nullptr || !tunnel->is_active())
         {
             continue;
         }
@@ -262,8 +260,8 @@ std::shared_ptr<mux_tunnel_impl> client_tunnel_pool::select_tunnel()
     return nullptr;
 }
 
-boost::asio::awaitable<std::shared_ptr<mux_tunnel_impl>> client_tunnel_pool::wait_for_tunnel(boost::asio::io_context& io_context,
-                                                                                             boost::system::error_code& ec)
+boost::asio::awaitable<std::shared_ptr<mux_connection>> client_tunnel_pool::wait_for_tunnel(boost::asio::io_context& io_context,
+                                                                                            boost::system::error_code& ec)
 {
     ec.clear();
     const auto start_ms = timeout_io::now_ms();
@@ -295,11 +293,11 @@ boost::asio::awaitable<std::shared_ptr<mux_tunnel_impl>> client_tunnel_pool::wai
 
 std::uint32_t client_tunnel_pool::next_session_id() { return next_session_id_.fetch_add(1, std::memory_order_relaxed); }
 
-std::shared_ptr<mux_tunnel_impl> client_tunnel_pool::build_tunnel(boost::asio::ip::tcp::socket socket,
-                                                                  boost::asio::io_context& io_context,
-                                                                  const std::uint32_t cid,
-                                                                  const handshake_result& handshake_ret,
-                                                                  const std::string& trace_id) const
+std::shared_ptr<mux_connection> client_tunnel_pool::build_tunnel(boost::asio::ip::tcp::socket socket,
+                                                                 boost::asio::io_context& io_context,
+                                                                 const std::uint32_t cid,
+                                                                 const handshake_result& handshake_ret,
+                                                                 const std::string& trace_id) const
 {
     boost::system::error_code ec;
     auto session = reality::reality_session::from_client_handshake(handshake_ret, ec);
@@ -308,7 +306,7 @@ std::shared_ptr<mux_tunnel_impl> client_tunnel_pool::build_tunnel(boost::asio::i
         LOG_ERROR("build client reality session failed {}", ec.message());
         return nullptr;
     }
-    return std::make_shared<mux_tunnel_impl>(std::move(socket), io_context, std::move(session), cfg_, pool_.get_task_group(io_context), cid, trace_id);
+    return std::make_shared<mux_connection>(std::move(socket), io_context, std::move(session), cfg_, pool_.get_task_group(io_context), cid, trace_id);
 }
 
 boost::asio::awaitable<void> client_tunnel_pool::run_real_certificate_fallback(boost::asio::ip::tcp::socket& socket,
@@ -492,7 +490,7 @@ boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::
             continue;
         }
         // step 5 tunnel run
-        tunnel->run();
+        tunnel->start();
         const auto tunnel_start_ms = timeout_io::now_ms();
 
         {
@@ -518,8 +516,7 @@ boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::
                 break;
             }
 
-            const auto connection = tunnel->connection();
-            if (connection == nullptr || !connection->is_active())
+            if (tunnel == nullptr || !tunnel->is_active())
             {
                 break;
             }

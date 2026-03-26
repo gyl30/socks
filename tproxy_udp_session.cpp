@@ -35,7 +35,7 @@
 #include "mux_stream.h"
 #include "protocol.h"
 #include "timeout_io.h"
-#include "mux_tunnel.h"
+#include "mux_connection.h"
 #include "connection_tracker.h"
 #include "task_group.h"
 #include "connection_context.h"
@@ -113,7 +113,7 @@ void set_socket_reuse_port(const int fd, boost::system::error_code& ec)
 #endif
 }
 
-boost::asio::awaitable<std::shared_ptr<mux_stream>> connect_remote_udp_stream(const std::shared_ptr<mux_tunnel_impl>& tunnel,
+boost::asio::awaitable<std::shared_ptr<mux_stream>> connect_remote_udp_stream(const std::shared_ptr<mux_connection>& tunnel,
                                                                                const connection_context& ctx,
                                                                                boost::system::error_code& ec)
 {
@@ -444,7 +444,7 @@ boost::asio::awaitable<bool> tproxy_udp_session::open_proxy_stream()
     co_return true;
 }
 
-boost::asio::awaitable<std::shared_ptr<mux_tunnel_impl>> tproxy_udp_session::wait_for_proxy_tunnel(boost::system::error_code& ec)
+boost::asio::awaitable<std::shared_ptr<mux_connection>> tproxy_udp_session::wait_for_proxy_tunnel(boost::system::error_code& ec)
 {
     ec.clear();
     const auto start_ms = timeout_io::now_ms();

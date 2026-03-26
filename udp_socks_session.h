@@ -25,9 +25,9 @@
 #include "protocol.h"
 #include "net_utils.h"
 #include "lru_cache.h"
-#include "mux_tunnel.h"
 #include "task_group.h"
 #include "connection_context.h"
+#include "mux_connection.h"
 
 namespace mux
 {
@@ -115,7 +115,7 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
     boost::asio::ip::udp::socket direct_udp_socket_v6_;
     std::shared_ptr<router> router_;
     std::shared_ptr<client_tunnel_pool> tunnel_pool_;
-    std::shared_ptr<mux_tunnel_impl> tunnel_;
+    std::shared_ptr<mux_connection> tunnel_;
     std::shared_ptr<mux_stream> stream_;
     std::atomic<std::uint8_t> stream_close_command_{0};
     std::uint64_t last_activity_time_ms_{0};
