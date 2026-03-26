@@ -29,19 +29,6 @@ struct site_material
     std::uint64_t fetched_at_unix_seconds = 0;
 };
 
-struct site_material_snapshot
-{
-    std::string target_host;
-    std::string target_sni;
-    std::uint16_t port = 0;
-    bool fetch_in_progress = false;
-    std::uint64_t last_attempt_at_unix_seconds = 0;
-    std::uint64_t last_success_at_unix_seconds = 0;
-    std::uint64_t next_refresh_at_unix_seconds = 0;
-    std::string last_error;
-    std::optional<site_material> material;
-};
-
 }    // namespace reality
 
 #endif
