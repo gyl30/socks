@@ -25,7 +25,6 @@
 #include "mux_dispatcher.h"
 #include "reality/session/session.h"
 #include "reality/session/engine.h"
-#include "mux_stream_interface.h"
 
 namespace mux
 {
