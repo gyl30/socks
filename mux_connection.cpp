@@ -124,7 +124,6 @@ mux_connection::mux_connection(boost::asio::ip::tcp::socket socket,
     }
     mux_dispatcher_.set_context(ctx_);
     mux_dispatcher_.set_max_buffer(cfg_.limits.max_buffer);
-    mux_dispatcher_.set_callback([this](const auto h, auto p) -> boost::asio::awaitable<void> { co_return co_await on_mux_frame(h, std::move(p)); });
     statistics::instance().inc_active_mux_sessions();
     LOG_CTX_INFO(ctx_, "{} mux initialized {}", log_event::kConnInit, ctx_.connection_info());
 }
@@ -549,7 +548,16 @@ boost::asio::awaitable<void> mux_connection::read_loop()
             {
                 if (type == ::tls::kContentTypeApplicationData)
                 {
-                    co_await mux_dispatcher_.on_plaintext_data(plaintext, ec);
+                    std::vector<mux_frame> frames;
+                    mux_dispatcher_.on_plaintext_data(plaintext, frames, ec);
+                    if (ec)
+                    {
+                        co_return;
+                    }
+                    for (auto& frame : frames)
+                    {
+                        co_await on_mux_frame(frame.h, std::move(frame.payload));
+                    }
                     co_return;
                 }
                 if (type == ::tls::kContentTypeAlert)

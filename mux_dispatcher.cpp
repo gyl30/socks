@@ -7,6 +7,7 @@
 #include <utility>
 
 #include <boost/asio/buffer.hpp>
+#include <boost/system/error_code.hpp>
 
 #include "log.h"
 #include "mux_codec.h"
@@ -19,17 +20,16 @@ namespace mux
 
 mux_dispatcher::mux_dispatcher() : buffer_(std::numeric_limits<std::size_t>::max()) { LOG_DEBUG("mux dispatcher initialized"); }
 
-void mux_dispatcher::set_callback(frame_callback_t cb) { callback_ = std::move(cb); }
-
 void mux_dispatcher::set_context(connection_context ctx) { ctx_ = std::move(ctx); }
 
 void mux_dispatcher::set_max_buffer(std::size_t max_buffer) { max_buffer_ = max_buffer; }
 
-boost::asio::awaitable<void> mux_dispatcher::on_plaintext_data(std::span<const std::uint8_t> data, boost::system::error_code& ec)
+void mux_dispatcher::on_plaintext_data(std::span<const std::uint8_t> data, std::vector<mux_frame>& frames, boost::system::error_code& ec)
 {
+    ec.clear();
     if (data.empty())
     {
-        co_return;
+        return;
     }
 
     if (max_buffer_ > 0 && buffer_.size() + data.size() > max_buffer_)
@@ -37,13 +37,13 @@ boost::asio::awaitable<void> mux_dispatcher::on_plaintext_data(std::span<const s
         LOG_CTX_ERROR(ctx_, "{} mux dispatcher buffer overflow", log_event::kMux);
         buffer_.consume(buffer_.size());
         ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
-        co_return;
+        return;
     }
 
     auto mutable_bufs = buffer_.prepare(data.size());
     const std::size_t n = boost::asio::buffer_copy(mutable_bufs, boost::asio::buffer(data.data(), data.size()));
     buffer_.commit(n);
-    co_await process_frames(ec);
+    process_frames(frames, ec);
 }
 
 std::vector<std::uint8_t> mux_dispatcher::pack(std::uint32_t stream_id, std::uint8_t cmd, const std::vector<std::uint8_t>& payload)
@@ -67,7 +67,7 @@ std::vector<std::uint8_t> mux_dispatcher::pack(std::uint32_t stream_id, std::uin
     return frame;
 }
 
-boost::asio::awaitable<void> mux_dispatcher::process_frames(boost::system::error_code& ec)
+void mux_dispatcher::process_frames(std::vector<mux_frame>& frames, boost::system::error_code& ec)
 {
     while (buffer_.size() >= mux::kHeaderSize)
     {
@@ -114,10 +114,10 @@ boost::asio::awaitable<void> mux_dispatcher::process_frames(boost::system::error
 
         buffer_.consume(total_frame_len);
 
-        if (callback_)
-        {
-            co_await callback_(header, std::move(payload));
-        }
+        mux_frame frame;
+        frame.h = header;
+        frame.payload = std::move(payload);
+        frames.push_back(std::move(frame));
     }
 }
 
