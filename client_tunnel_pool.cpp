@@ -168,12 +168,11 @@ void prepare_socket_for_connect(boost::asio::ip::tcp::socket& socket,
 
 }    // namespace
 
-client_tunnel_pool::client_tunnel_pool(io_context_pool& pool, const config& cfg, task_group_registry& groups)
+client_tunnel_pool::client_tunnel_pool(io_context_pool& pool, const config& cfg)
     : sni_(cfg.reality.sni),
       remote_host_(cfg.outbound.host),
       remote_port_(std::to_string(cfg.outbound.port)),
       cfg_(cfg),
-      groups_(groups),
       pool_(pool),
       max_handshake_records_(cfg.limits.max_handshake_records),
       tunnel_pool_(resolve_tunnel_connections(cfg.limits))
@@ -193,7 +192,7 @@ void client_tunnel_pool::start()
     for (std::uint32_t i = 0; i < tunnel_connections; ++i)
     {
         boost::asio::io_context& io = pool_.get_io_context();
-        auto& group = groups_.get(io);
+        auto& group = pool_.get_task_group(io);
         boost::asio::co_spawn(
             io,
             [this, i, io = &io, self]() -> boost::asio::awaitable<void> { co_await connect_remote_loop(i, *io); },
@@ -310,10 +309,9 @@ std::shared_ptr<mux_tunnel_impl> client_tunnel_pool::build_tunnel(boost::asio::i
         LOG_ERROR("build client reality session failed {}", ec.message());
         return nullptr;
     }
-    return std::make_shared<mux_tunnel_impl>(std::move(socket), io_context, std::move(session), cfg_, groups_.get(io_context), cid, trace_id);
+    return std::make_shared<mux_tunnel_impl>(std::move(socket), io_context, std::move(session), cfg_, pool_.get_task_group(io_context), cid, trace_id);
 }
 
-// NOLINTBEGIN(readability-function-cognitive-complexity)
 boost::asio::awaitable<void> client_tunnel_pool::run_real_certificate_fallback(boost::asio::ip::tcp::socket& socket,
                                                                                const handshake_result& handshake_ret,
                                                                                const connection_context& ctx) const
@@ -377,7 +375,6 @@ boost::asio::awaitable<void> client_tunnel_pool::run_real_certificate_fallback(b
     }
     co_return;
 }
-// NOLINTEND(readability-function-cognitive-complexity)
 
 boost::asio::awaitable<client_tunnel_pool::handshake_result> client_tunnel_pool::perform_reality_handshake_with_timeout(
     const std::shared_ptr<boost::asio::ip::tcp::socket>& socket, const connection_context& ctx, boost::system::error_code& ec) const
@@ -408,13 +405,11 @@ boost::asio::awaitable<client_tunnel_pool::handshake_result> client_tunnel_pool:
     co_return handshake_res;
 }
 
-// NOLINTBEGIN(readability-function-cognitive-complexity)
 boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::uint32_t index, boost::asio::io_context& io_context)
 {
     boost::system::error_code ec;
     static thread_local std::mt19937 reconnect_gen(std::random_device{}());
     std::uint32_t retry_delay_ms = kReconnectBaseDelayMs;
-    // NOLINTNEXTLINE(bugprone-lambda-function-name)
     const auto wait_before_retry = [&](const connection_context& ctx, const char* stage) -> boost::asio::awaitable<bool>
     {
         std::uniform_int_distribution<std::uint32_t> jitter_dist(0, retry_delay_ms / 4);
@@ -568,7 +563,6 @@ boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::
     }
     LOG_INFO("{} connect remote loop {} exited", log_event::kConnClose, index);
 }
-// NOLINTEND(readability-function-cognitive-complexity)
 
 boost::asio::awaitable<void> client_tunnel_pool::tcp_connect_remote(boost::asio::io_context& io_context,
                                                                     boost::asio::ip::tcp::socket& socket,

@@ -18,7 +18,6 @@
 #include "router.h"
 #include "context_pool.h"
 #include "client_tunnel_pool.h"
-#include "task_group_registry.h"
 
 namespace mux
 {
@@ -50,8 +49,8 @@ class tproxy_client : public std::enable_shared_from_this<tproxy_client>
 
    private:
     config cfg_;
+    io_context_pool& pool_;
     boost::asio::io_context& io_context_;
-    task_group_registry groups_;
     std::shared_ptr<router> router_;
     std::shared_ptr<client_tunnel_pool> tunnel_pool_;
     boost::asio::ip::tcp::acceptor tcp_acceptor_{io_context_};

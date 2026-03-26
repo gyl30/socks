@@ -7,11 +7,20 @@
 #include <cstddef>
 #include <utility>
 
+#include <boost/asio/awaitable.hpp>
+#include <boost/asio/cancellation_type.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/executor_work_guard.hpp>
 
+#include "task_group.h"
+
 namespace mux
 {
+struct io_worker
+{
+    boost::asio::io_context io_context;
+    task_group group{io_context};
+};
 
 class io_context_pool
 {
@@ -27,16 +36,22 @@ class io_context_pool
 
     void stop();
 
-    [[nodiscard]] std::vector<boost::asio::io_context*> all_io_contexts() const;
+    [[nodiscard]] io_worker& get_io_worker();
 
     [[nodiscard]] boost::asio::io_context& get_io_context();
+
+    [[nodiscard]] task_group& get_task_group(boost::asio::io_context& io_context) const;
+
+    void emit_all(boost::asio::cancellation_type type) const;
+
+    boost::asio::awaitable<void> async_wait_all() const;
 
    private:
     using work_guard_t = decltype(boost::asio::make_work_guard(std::declval<boost::asio::io_context&>()));
 
-    std::vector<std::shared_ptr<boost::asio::io_context>> io_contexts_;
-    alignas(sizeof(std::size_t)) std::atomic<std::size_t> next_io_context_ = {0};
     std::vector<work_guard_t> work_guards_;
+    std::vector<std::shared_ptr<io_worker>> workers_;
+    alignas(sizeof(std::size_t)) std::atomic<std::size_t> next_io_context_ = {0};
 };
 
 }    // namespace mux

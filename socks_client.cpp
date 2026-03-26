@@ -83,9 +83,8 @@ socks_client::socks_client(io_context_pool& pool, const config& cfg)
     : cfg_(cfg),
       ioc_(pool.get_io_context()),
       pool_(pool),
-      groups_(pool),
       router_(std::make_shared<mux::router>()),
-      tunnel_pool_(std::make_shared<client_tunnel_pool>(pool, cfg, groups_))
+      tunnel_pool_(std::make_shared<client_tunnel_pool>(pool, cfg))
 {
 }
 
@@ -127,7 +126,7 @@ int socks_client::start()
 
     tunnel_pool->start();
 
-    boost::asio::co_spawn(ioc_, accept_loop(), groups_.get(ioc_).adapt(boost::asio::detached));
+    boost::asio::co_spawn(ioc_, accept_loop(), pool_.get_task_group(ioc_).adapt(boost::asio::detached));
     return 0;
 }
 
@@ -137,7 +136,7 @@ boost::asio::awaitable<void> socks_client::accept_loop()
     for (;;)
     {
         auto& socket_io = pool_.get_io_context();
-        auto& socket_group = groups_.get(socket_io);
+        auto& socket_group = pool_.get_task_group(socket_io);
         boost::asio::ip::tcp::socket socket(socket_io);
         co_await acceptor_.async_accept(socket, boost::asio::redirect_error(boost::asio::use_awaitable, ec));
         if (ec == boost::asio::error::operation_aborted)
@@ -203,13 +202,13 @@ void socks_client::stop()
             {
                 self->tunnel_pool_->stop();
             }
-            self->groups_.emit_all(::boost::asio::cancellation_type::all);
+            self->pool_.emit_all(::boost::asio::cancellation_type::all);
         });
 }
 
 boost::asio::awaitable<void> socks_client::wait_stopped()
 {
-    co_await groups_.async_wait_all();
+    co_await pool_.async_wait_all();
 }
 
 }    // namespace mux

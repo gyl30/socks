@@ -23,7 +23,6 @@
 #include "reality/types.h"
 #include "tls/core.h"
 #include "tls/ch_parser.h"
-#include "task_group_registry.h"
 #include "reality/handshake/fingerprint.h"
 
 namespace mux
@@ -34,7 +33,7 @@ class connection_context;
 class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_pool>
 {
    public:
-    client_tunnel_pool(io_context_pool& pool, const config& cfg, task_group_registry& groups);
+    client_tunnel_pool(io_context_pool& pool, const config& cfg);
 
     void start();
 
@@ -71,7 +70,6 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
     std::string remote_host_;
     std::string remote_port_;
     const config& cfg_;
-    task_group_registry& groups_;
     io_context_pool& pool_;
     std::vector<std::uint8_t> short_id_bytes_;
     std::atomic<std::uint32_t> next_tunnel_index_{0};
