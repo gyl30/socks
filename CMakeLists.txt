@@ -202,7 +202,7 @@ set(SOCKS_SOURCES
     mux_codec.cpp
     mux_stream.cpp
     protocol.cpp
-    log_context.cpp
+    connection_context.cpp
     context_pool.cpp
     client_tunnel_pool.cpp
     reality/handshake/client_handshaker.cpp

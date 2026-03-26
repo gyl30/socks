@@ -12,7 +12,7 @@
 #include "log.h"
 #include "router.h"
 #include "ip_matcher.h"
-#include "log_context.h"
+#include "connection_context.h"
 #include "domain_matcher.h"
 
 namespace mux

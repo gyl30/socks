@@ -18,7 +18,7 @@
 
 #include "config.h"
 #include "mux_tunnel.h"
-#include "log_context.h"
+#include "connection_context.h"
 #include "context_pool.h"
 #include "mux_protocol.h"
 #include "replay_cache.h"

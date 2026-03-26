@@ -11,7 +11,7 @@
 #include <boost/asio/io_context.hpp>
 #include <boost/system/error_code.hpp>
 
-#include "log_context.h"
+#include "connection_context.h"
 
 namespace mux
 {

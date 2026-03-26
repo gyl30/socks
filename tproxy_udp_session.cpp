@@ -38,7 +38,7 @@
 #include "mux_tunnel.h"
 #include "connection_tracker.h"
 #include "task_group.h"
-#include "log_context.h"
+#include "connection_context.h"
 #include "mux_protocol.h"
 #include "tproxy_udp_session.h"
 #include "client_tunnel_pool.h"

@@ -30,7 +30,7 @@
 #include "mux_tunnel.h"
 #include "timeout_io.h"
 #include "scoped_exit.h"
-#include "log_context.h"
+#include "connection_context.h"
 #include "tcp_socks_session.h"
 
 namespace mux
