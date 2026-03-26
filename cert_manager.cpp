@@ -6,7 +6,7 @@
 #include <utility>
 
 #include "log.h"
-#include "log_context.h"
+#include "connection_context.h"
 #include "cert_manager.h"
 
 namespace reality

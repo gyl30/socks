@@ -24,7 +24,7 @@
 #include "mux_codec.h"
 #include "timeout_io.h"
 #include "scoped_exit.h"
-#include "log_context.h"
+#include "connection_context.h"
 #include "mux_protocol.h"
 #include "mux_connection.h"
 #include "remote_session.h"

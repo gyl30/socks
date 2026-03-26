@@ -31,7 +31,7 @@
 #include "mux_tunnel.h"
 #include "timeout_io.h"
 #include "connection_tracker.h"
-#include "log_context.h"
+#include "connection_context.h"
 #include "socks_session.h"
 #include "tcp_socks_session.h"
 #include "udp_socks_session.h"

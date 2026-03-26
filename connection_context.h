@@ -1,5 +1,5 @@
-#ifndef LOG_CONTEXT_H
-#define LOG_CONTEXT_H
+#ifndef CONNECTION_CONTEXT_H
+#define CONNECTION_CONTEXT_H
 
 #include <chrono>
 #include <string>
@@ -80,8 +80,6 @@ class connection_context
 
     [[nodiscard]] std::string connection_info() const;
 
-    [[nodiscard]] std::string target_info() const;
-
     [[nodiscard]] double duration_seconds() const;
 
     [[nodiscard]] std::string stats_summary() const;
@@ -108,10 +106,6 @@ class connection_context
     std::uint64_t rx_bytes_ = 0;
     std::chrono::steady_clock::time_point start_time_ = std::chrono::steady_clock::now();
 };
-
-std::string format_bytes(std::uint64_t bytes);
-
-std::string format_latency_ms(std::int64_t ms);
 
 }    // namespace mux
 

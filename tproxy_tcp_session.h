@@ -20,7 +20,7 @@
 #include "router.h"
 #include "upstream.h"
 #include "task_group.h"
-#include "log_context.h"
+#include "connection_context.h"
 #include "client_tunnel_pool.h"
 
 namespace mux

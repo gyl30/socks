@@ -20,7 +20,7 @@
 
 #include "config.h"
 #include "task_group.h"
-#include "log_context.h"
+#include "connection_context.h"
 #include "mux_protocol.h"
 #include "mux_dispatcher.h"
 #include "reality/session/session.h"

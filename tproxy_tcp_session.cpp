@@ -28,7 +28,7 @@
 #include "net_utils.h"
 #include "connection_tracker.h"
 #include "timeout_io.h"
-#include "log_context.h"
+#include "connection_context.h"
 #include "client_tunnel_pool.h"
 #include "tproxy_tcp_session.h"
 

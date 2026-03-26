@@ -15,7 +15,7 @@
 #include <boost/asio/experimental/concurrent_channel.hpp>
 
 #include "config.h"
-#include "log_context.h"
+#include "connection_context.h"
 #include "mux_protocol.h"
 
 namespace mux

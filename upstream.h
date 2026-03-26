@@ -16,7 +16,7 @@
 #include "protocol.h"
 #include "mux_stream.h"
 #include "mux_tunnel.h"
-#include "log_context.h"
+#include "connection_context.h"
 #include "mux_protocol.h"
 
 namespace mux

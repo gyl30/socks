@@ -11,7 +11,7 @@
 
 #include "log.h"
 #include "mux_codec.h"
-#include "log_context.h"
+#include "connection_context.h"
 #include "mux_protocol.h"
 #include "mux_dispatcher.h"
 

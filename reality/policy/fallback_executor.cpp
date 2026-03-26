@@ -12,7 +12,7 @@
 #include "log.h"
 #include "config.h"
 #include "timeout_io.h"
-#include "log_context.h"
+#include "connection_context.h"
 #include "scoped_exit.h"
 #include "reality/policy/fallback_executor.h"
 

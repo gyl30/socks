@@ -10,7 +10,7 @@
 #include <functional>
 #include <unordered_map>
 
-#include "log_context.h"
+#include "connection_context.h"
 
 namespace reality
 {
