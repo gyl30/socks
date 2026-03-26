@@ -1,4 +1,5 @@
 #include <string>
+#include <span>
 #include <vector>
 #include <string_view>
 #include <cstddef>
@@ -68,6 +69,97 @@ bool mux_codec::decode_header(const std::uint8_t* buf, std::size_t len, frame_he
     out.length = static_cast<std::uint16_t>((static_cast<std::uint16_t>(buf[4]) << 8) | static_cast<std::uint16_t>(buf[5]));
     out.command = buf[6];
     return true;
+}
+
+std::vector<std::uint8_t> mux_codec::encode_frame(const frame_header& h, std::span<const std::uint8_t> payload)
+{
+    if (payload.size() > mux::kMaxPayload)
+    {
+        LOG_ERROR("mux frame encode payload too large {} max {}", payload.size(), mux::kMaxPayload);
+        return {};
+    }
+
+    std::vector<std::uint8_t> frame;
+    frame.reserve(mux::kHeaderSize + payload.size());
+
+    frame_header header = h;
+    header.length = static_cast<std::uint16_t>(payload.size());
+    encode_header(header, frame);
+
+    if (!payload.empty())
+    {
+        frame.insert(frame.end(), payload.begin(), payload.end());
+    }
+    return frame;
+}
+
+void mux_codec::decode_frames(std::vector<std::uint8_t>& pending,
+                              const std::span<const std::uint8_t> data,
+                              const std::size_t max_buffer,
+                              std::vector<mux_frame>& frames,
+                              boost::system::error_code& ec)
+{
+    ec.clear();
+    if (data.empty())
+    {
+        return;
+    }
+
+    if (max_buffer > 0 && pending.size() + data.size() > max_buffer)
+    {
+        pending.clear();
+        ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
+        return;
+    }
+
+    pending.insert(pending.end(), data.begin(), data.end());
+
+    std::size_t offset = 0;
+    while (pending.size() - offset >= mux::kHeaderSize)
+    {
+        frame_header header;
+        if (!decode_header(pending.data() + static_cast<std::ptrdiff_t>(offset), mux::kHeaderSize, header))
+        {
+            pending.clear();
+            ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
+            return;
+        }
+        if (header.length > mux::kMaxPayload)
+        {
+            pending.clear();
+            ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
+            return;
+        }
+
+        const std::size_t total_frame_len = mux::kHeaderSize + static_cast<std::size_t>(header.length);
+        if (pending.size() - offset < total_frame_len)
+        {
+            break;
+        }
+
+        mux_frame frame;
+        frame.h = header;
+        if (header.length > 0)
+        {
+            const auto payload_begin = pending.begin() + static_cast<std::ptrdiff_t>(offset + mux::kHeaderSize);
+            const auto payload_end = pending.begin() + static_cast<std::ptrdiff_t>(offset + total_frame_len);
+            frame.payload.assign(payload_begin, payload_end);
+        }
+        frames.push_back(std::move(frame));
+        offset += total_frame_len;
+    }
+
+    if (offset == 0)
+    {
+        return;
+    }
+    if (offset == pending.size())
+    {
+        pending.clear();
+        return;
+    }
+
+    pending.erase(pending.begin(), pending.begin() + static_cast<std::ptrdiff_t>(offset));
 }
 
 bool mux_codec::encode_syn(const syn_payload& p, std::vector<std::uint8_t>& buf)
