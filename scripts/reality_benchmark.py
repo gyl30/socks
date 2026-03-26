@@ -234,10 +234,6 @@ def start_client_server_pair(repo_root, temp_root, binary, socks_port, server_po
             "max_streams": 256,
             "max_handshake_records": 256,
         },
-        "monitor": {
-            "enabled": False,
-            "port": 0,
-        },
     }
 
     client_cfg = {
@@ -289,10 +285,6 @@ def start_client_server_pair(repo_root, temp_root, binary, socks_port, server_po
             "max_interval": 45,
             "min_padding": 32,
             "max_padding": 128,
-        },
-        "monitor": {
-            "enabled": False,
-            "port": 0,
         },
     }
 

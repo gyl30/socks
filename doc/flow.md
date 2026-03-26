@@ -34,8 +34,6 @@ flowchart TD
   RemoteTcp --> Target
   RemoteUdp --> Target
 
-  Monitor[monitor_server] --> Metrics[GET /metrics]
-
   RouterNote["route=block 时直接拒绝或断开"]
   Router -.-> RouterNote
   MuxNote["MUX 异常帧会终止连接"]

@@ -19,7 +19,6 @@
 
 #include "log.h"
 #include "config.h"
-#include "statistics.h"
 #include "scoped_exit.h"
 #include "tls/crypto_util.h"
 #include "context_pool.h"
@@ -30,8 +29,6 @@
 #include "tproxy_client.h"
 
 #endif
-#include "monitor_server.h"
-
 namespace
 {
 
@@ -42,7 +39,6 @@ struct runtime_services
 #if SOCKS_HAS_TPROXY
     std::shared_ptr<mux::tproxy_client> tproxy = nullptr;
 #endif
-    std::shared_ptr<mux::monitor_server> monitor = nullptr;
 };
 
 void print_usage(std::string_view prog)
@@ -113,15 +109,6 @@ int run_services(mux::io_context_pool& pool, const mux::config& cfg, runtime_ser
 {
     const bool is_client_mode = (cfg.mode == "client");
 
-    if (cfg.monitor.enabled)
-    {
-        services.monitor = std::make_shared<mux::monitor_server>(pool.get_io_context(), cfg.monitor.port);
-        services.monitor->start();
-    }
-    else
-    {
-        LOG_INFO("monitor disabled");
-    }
     if (cfg.mode == "server")
     {
         services.server = std::make_shared<mux::remote_server>(pool, cfg);
@@ -145,10 +132,6 @@ int run_services(mux::io_context_pool& pool, const mux::config& cfg, runtime_ser
 
 void stop_services(runtime_services& services)
 {
-    if (services.monitor != nullptr)
-    {
-        services.monitor->stop();
-    }
     if (services.socks != nullptr)
     {
         services.socks->stop();
@@ -167,10 +150,6 @@ void stop_services(runtime_services& services)
 
 boost::asio::awaitable<void> wait_services_stopped(runtime_services& services, mux::io_context_pool& pool)
 {
-    if (services.monitor != nullptr)
-    {
-        co_await services.monitor->wait_stopped();
-    }
     if (services.socks != nullptr)
     {
         co_await services.socks->wait_stopped();
@@ -207,9 +186,6 @@ int run_with_config(const char* prog, const char* config_path)
         LOG_ERROR("not supported mode {}", cfg.mode);
         return -1;
     }
-
-    mux::statistics::instance().start_time();
-
     mux::io_context_pool pool(resolve_worker_threads(cfg));
 
     runtime_services services;
