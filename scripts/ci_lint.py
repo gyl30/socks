@@ -120,7 +120,8 @@ def build_line_filter(repo_root, base_sha, head_sha, rel_path):
             ranges.append([start, start + count - 1])
     if not ranges:
         return None
-    return json.dumps([{ "name": rel_path, "lines": ranges }])
+    abs_path = str((repo_root / rel_path).resolve())
+    return json.dumps([{"name": abs_path, "lines": ranges}])
 
 
 def run_git_clang_format(repo_root, base_sha, files):
@@ -129,8 +130,8 @@ def run_git_clang_format(repo_root, base_sha, files):
     run_checked(args, repo_root)
 
 
-def collect_compile_db_include_args(repo_root):
-    compile_commands_path = repo_root / "build" / "compile_commands.json"
+def collect_compile_db_include_args(repo_root, build_dir):
+    compile_commands_path = repo_root / build_dir / "compile_commands.json"
     if not compile_commands_path.is_file():
         return []
 
@@ -170,7 +171,7 @@ def collect_compile_db_include_args(repo_root):
     return include_args
 
 
-def run_clang_tidy(repo_root, base_sha, head_sha, files):
+def run_clang_tidy(repo_root, base_sha, head_sha, files, build_dir):
     clang_tidy = pick_clang_tidy()
 
     repo_root_str = str(repo_root)
@@ -178,7 +179,7 @@ def run_clang_tidy(repo_root, base_sha, head_sha, files):
         f"--extra-arg-before=-I{repo_root_str}",
         f"--extra-arg-before=-I{repo_root_str}/third/rapidjson/include",
         f"--extra-arg-before=-I{repo_root_str}/third/spdlog/include",
-        *collect_compile_db_include_args(repo_root),
+        *collect_compile_db_include_args(repo_root, build_dir),
         "--extra-arg=-std=c++23",
         "-warnings-as-errors=*",
     ]
@@ -189,13 +190,15 @@ def run_clang_tidy(repo_root, base_sha, head_sha, files):
         line_filter = build_line_filter(repo_root, base_sha, head_sha, rel_path)
         if line_filter is None:
             continue
-        run_checked([clang_tidy, "-p", "build", *extra_args, f"-line-filter={line_filter}", rel_path, "--"], repo_root)
+        abs_path = str((repo_root / rel_path).resolve())
+        run_checked([clang_tidy, "-p", build_dir, *extra_args, f"-line-filter={line_filter}", abs_path], repo_root)
 
 
 def main():
     parser = argparse.ArgumentParser(description="Run diff-scoped clang-format and clang-tidy checks")
     parser.add_argument("--base-sha", default="")
     parser.add_argument("--head-sha", default="HEAD")
+    parser.add_argument("--build-dir", default="build")
     args = parser.parse_args()
 
     repo_root = pathlib.Path(__file__).resolve().parents[1]
@@ -212,7 +215,7 @@ def main():
     if format_files:
         run_git_clang_format(repo_root, base_sha, format_files)
 
-    run_clang_tidy(repo_root, base_sha, head_sha, files)
+    run_clang_tidy(repo_root, base_sha, head_sha, files, args.build_dir)
     return 0
 
 

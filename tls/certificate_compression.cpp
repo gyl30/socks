@@ -1,11 +1,8 @@
 #include <vector>
 #include <limits>
 #include <cstddef>
-#include <cstdint>
 
-#include <boost/asio/error.hpp>
-#include <boost/system/errc.hpp>
-#include <boost/system/error_code.hpp>
+#include <boost/asio.hpp>
 
 extern "C"
 {
@@ -25,7 +22,7 @@ constexpr std::uint8_t kHandshakeTypeCertificate = 0x0b;
 constexpr std::uint8_t kHandshakeTypeCompressedCertificate = 0x19;
 constexpr std::size_t kCompressedCertificateFixedPrefixLen = 8;
 
-bool read_u24_field(const std::vector<std::uint8_t>& data, const std::size_t pos, std::uint32_t& value)
+bool read_u24_field(const std::vector<std::uint8_t>& data, std::size_t pos, std::uint32_t& value)
 {
     if (pos + 3 > data.size())
     {
@@ -36,7 +33,7 @@ bool read_u24_field(const std::vector<std::uint8_t>& data, const std::size_t pos
     return true;
 }
 
-bool read_u16_field(const std::vector<std::uint8_t>& data, const std::size_t pos, std::uint16_t& value)
+bool read_u16_field(const std::vector<std::uint8_t>& data, std::size_t pos, std::uint16_t& value)
 {
     if (pos + 2 > data.size())
     {
@@ -49,7 +46,7 @@ bool read_u16_field(const std::vector<std::uint8_t>& data, const std::size_t pos
 }    // namespace
 
 bool decompress_certificate_message(const std::vector<std::uint8_t>& compressed_msg,
-                                    const std::size_t max_uncompressed_len,
+                                    std::size_t max_uncompressed_len,
                                     std::vector<std::uint8_t>& certificate_msg,
                                     boost::system::error_code& ec)
 {

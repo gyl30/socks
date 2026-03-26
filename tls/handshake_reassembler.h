@@ -3,8 +3,6 @@
 
 #include <span>
 #include <vector>
-#include <cstddef>
-#include <cstdint>
 
 #include <boost/circular_buffer.hpp>
 #include <boost/system/error_code.hpp>

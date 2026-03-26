@@ -1,21 +1,14 @@
 #include <span>
 #include <array>
 #include <ctime>
+#include <limits>
 #include <string>
 #include <vector>
 #include <cstddef>
-#include <cstdint>
 #include <cstring>
 #include <utility>
-#include <limits>
 #include <system_error>
-
-#include <boost/asio/read.hpp>
-#include <boost/asio/error.hpp>
-#include <boost/asio/write.hpp>
-#include <boost/asio/buffer.hpp>
-#include <boost/asio/ip/tcp.hpp>
-#include <boost/system/error_code.hpp>
+#include <boost/asio.hpp>
 
 extern "C"
 {
@@ -27,19 +20,21 @@ extern "C"
 
 #include "log.h"
 #include "tls/core.h"
-#include "tls/crypto_util.h"
-#include "tls/handshake_builder.h"
-#include "tls/handshake_message.h"
-#include "tls/handshake_reassembler.h"
-#include "connection_context.h"
 #include "cert_fetcher.h"
-#include "tls/certificate_compression.h"
+#include "site_material.h"
+#include "tls/cipher_context.h"
+#include "tls/transcript.h"
+#include "tls/crypto_util.h"
 #include "tls/cipher_suite.h"
 #include "tls/key_schedule.h"
 #include "tls/record_layer.h"
-#include "tls/transcript.h"
-#include "reality/handshake/client_hello_builder.h"
+#include "connection_context.h"
+#include "tls/handshake_builder.h"
+#include "tls/handshake_message.h"
+#include "tls/handshake_reassembler.h"
+#include "tls/certificate_compression.h"
 #include "reality/handshake/fingerprint.h"
+#include "reality/handshake/client_hello_builder.h"
 
 namespace reality
 {
@@ -156,50 +151,17 @@ boost::system::error_code derive_server_record_protection(fetch_context& ctx,
     return boost::system::error_code{};
 }
 
-boost::system::error_code connect(fetch_context& ctx)
+void connect(fetch_context& ctx, boost::system::error_code& ec)
 {
     boost::asio::ip::tcp::resolver resolver(ctx.io_context);
-    boost::system::error_code ec;
     const auto resolved = resolver.resolve(ctx.host, std::to_string(ctx.port), ec);
     if (ec)
     {
         LOG_CTX_ERROR(ctx.ctx, "{} stage resolve target {}:{} error {}", mux::log_event::kCert, ctx.host, ctx.port, ec.message());
-        return ec;
+        return;
     }
-
-    if (resolved.begin() == resolved.end())
-    {
-        ec = boost::asio::error::host_not_found;
-        LOG_CTX_ERROR(ctx.ctx, "{} stage resolve target {}:{} error {}", mux::log_event::kCert, ctx.host, ctx.port, ec.message());
-        return ec;
-    }
-
-    boost::system::error_code last_ec = boost::asio::error::host_unreachable;
-    for (const auto& endpoint : resolved)
-    {
-        if (ctx.socket.is_open())
-        {
-            boost::system::error_code close_ec;
-            ctx.socket.close(close_ec);
-        }
-
-        boost::system::error_code open_ec;
-        ctx.socket.open(endpoint.endpoint().protocol(), open_ec);
-        if (open_ec)
-        {
-            last_ec = open_ec;
-            continue;
-        }
-
-        ctx.socket.connect(endpoint.endpoint(), last_ec);
-        if (!last_ec)
-        {
-            return boost::system::error_code{};
-        }
-    }
-
-    LOG_CTX_ERROR(ctx.ctx, "{} stage connect target {}:{} error {}", mux::log_event::kCert, ctx.host, ctx.port, last_ec.message());
-    return last_ec;
+    boost::asio::connect(ctx.socket, resolved, ec);
+    LOG_CTX_ERROR(ctx.ctx, "{} stage connect target {}:{} error {}", mux::log_event::kCert, ctx.host, ctx.port, ec.message());
 }
 
 bool init_handshake_material(fetch_context& ctx, std::vector<std::uint8_t>& client_random, std::vector<std::uint8_t>& session_id)
@@ -245,7 +207,7 @@ boost::system::error_code send_client_hello_record(fetch_context& ctx, const std
     return boost::system::error_code{};
 }
 
-bool validate_server_hello_body(fetch_context& ctx, const std::vector<std::uint8_t>& server_hello_body)
+bool validate_server_hello_body(const fetch_context& ctx, const std::vector<std::uint8_t>& server_hello_body)
 {
     if (!server_hello_body.empty())
     {
@@ -395,20 +357,15 @@ boost::system::error_code perform_handshake_start(fetch_context& ctx)
 
     const auto spec = fingerprint_factory::get(ctx.fingerprint);
     auto client_hello = client_hello_builder::build(
-        spec,
-        session_id,
-        client_random,
-        std::vector<std::uint8_t>(ctx.client_public, ctx.client_public + 32),
-        {},
-        ctx.sni);
+        spec, session_id, client_random, std::vector<std::uint8_t>(ctx.client_public, ctx.client_public + 32), {}, ctx.sni);
     if (client_hello.empty())
     {
-        LOG_CTX_ERROR(ctx.ctx, "{} invalid client hello for sni '{}' fingerprint {}", mux::log_event::kCert, ctx.sni, fingerprint_name(ctx.fingerprint));
+        LOG_CTX_ERROR(
+            ctx.ctx, "{} invalid client hello for sni '{}' fingerprint {}", mux::log_event::kCert, ctx.sni, fingerprint_name(ctx.fingerprint));
         return boost::asio::error::invalid_argument;
     }
 
-    auto write_ec = send_client_hello_record(ctx, client_hello);
-    if (write_ec)
+    if (auto write_ec = send_client_hello_record(ctx, client_hello))
     {
         return write_ec;
     }
@@ -449,10 +406,10 @@ void read_record_body(fetch_context& ctx, const std::uint16_t len, std::vector<s
 }
 
 std::pair<std::uint8_t, std::span<std::uint8_t>> decrypt_application_record(fetch_context& ctx,
-                                                                             const std::uint8_t header[5],
-                                                                             const std::vector<std::uint8_t>& record,
-                                                                             std::vector<std::uint8_t>& plaintext_buffer,
-                                                                             boost::system::error_code& ec)
+                                                                            const std::uint8_t header[5],
+                                                                            const std::vector<std::uint8_t>& record,
+                                                                            std::vector<std::uint8_t>& plaintext_buffer,
+                                                                            boost::system::error_code& ec)
 {
     auto ciphertext_record = build_encrypted_record_bytes(header, record);
     std::uint8_t content_type = 0;
@@ -466,10 +423,10 @@ std::pair<std::uint8_t, std::span<std::uint8_t>> decrypt_application_record(fetc
 }
 
 std::pair<std::uint8_t, std::span<std::uint8_t>> handle_record_by_content_type(fetch_context& ctx,
-                                                                                const std::uint8_t header[5],
-                                                                                const std::vector<std::uint8_t>& record,
-                                                                                std::vector<std::uint8_t>& plaintext_buffer,
-                                                                                boost::system::error_code& ec)
+                                                                               const std::uint8_t header[5],
+                                                                               const std::vector<std::uint8_t>& record,
+                                                                               std::vector<std::uint8_t>& plaintext_buffer,
+                                                                               boost::system::error_code& ec)
 {
     ec.clear();
     switch (header[0])
@@ -528,9 +485,8 @@ std::pair<std::uint8_t, std::span<std::uint8_t>> read_record(fetch_context& ctx,
 bool process_handshake_message(fetch_context& ctx, const std::vector<std::uint8_t>& message)
 {
     const std::uint8_t message_type = message[0];
-    const std::uint32_t message_len = (static_cast<std::uint32_t>(message[1]) << 16) |
-                                      (static_cast<std::uint32_t>(message[2]) << 8) |
-                                      static_cast<std::uint32_t>(message[3]);
+    const std::uint32_t message_len =
+        (static_cast<std::uint32_t>(message[1]) << 16) | (static_cast<std::uint32_t>(message[2]) << 8) | static_cast<std::uint32_t>(message[3]);
     LOG_CTX_INFO(ctx.ctx, "{} found handshake 0x{:02x} len {}", mux::log_event::kCert, message_type, message_len);
 
     if (message_type == 0x08)
@@ -571,11 +527,8 @@ bool process_handshake_message(fetch_context& ctx, const std::vector<std::uint8_
             LOG_CTX_ERROR(ctx.ctx, "{} decompress certificate failed {}", mux::log_event::kCert, ec.message());
             return false;
         }
-        LOG_CTX_INFO(ctx.ctx,
-                     "{} found compressed certificate len {} decompressed_len {}",
-                     mux::log_event::kCert,
-                     message_len,
-                     certificate_message.size());
+        LOG_CTX_INFO(
+            ctx.ctx, "{} found compressed certificate len {} decompressed_len {}", mux::log_event::kCert, message_len, certificate_message.size());
         ctx.material.certificate_message = std::move(certificate_message);
         if (!::tls::parse_certificate_chain(ctx.material.certificate_message, ctx.material.certificate_chain))
         {
@@ -701,13 +654,12 @@ site_material fetch_once(std::string host,
     ctx.sni = std::move(sni);
     ctx.fingerprint = fingerprint;
     ctx.ctx.trace_id(trace_id);
-    ctx.ctx.target_host(ctx.host);
-    ctx.ctx.target_port(ctx.port);
+    ctx.ctx.set_target(ctx.host, ctx.port);
     ctx.ctx.sni(ctx.sni);
 
     LOG_CTX_INFO(ctx.ctx, "{} starting fetch fingerprint {}", mux::log_event::kCert, fingerprint_name(ctx.fingerprint));
 
-    ec = connect(ctx);
+    connect(ctx, ec);
     if (ec)
     {
         return {};
@@ -732,11 +684,8 @@ site_material fetch_once(std::string host,
 
 }    // namespace
 
-site_material fetch_site_material(std::string host,
-                                  const std::uint16_t port,
-                                  std::string sni,
-                                  boost::system::error_code& ec,
-                                  const std::string& trace_id)
+site_material fetch_site_material(
+    const std::string& host, std::uint16_t port, const std::string& sni, boost::system::error_code& ec, const std::string& trace_id)
 {
     ec.clear();
     boost::system::error_code last_ec = boost::asio::error::fault;

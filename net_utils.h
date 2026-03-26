@@ -2,18 +2,10 @@
 #define NET_UTILS_H
 
 #include <cstddef>
-#include <cstdint>
-#include <expected>
 #include <optional>
 #include <string_view>
 
-#include <boost/asio/ip/tcp.hpp>
-#include <boost/asio/ip/udp.hpp>
-#include <boost/asio/ip/address.hpp>
-#include <boost/system/error_code.hpp>
-
-struct msghdr;
-struct sockaddr_storage;
+#include <boost/asio.hpp>
 
 namespace mux::net
 {
@@ -47,11 +39,11 @@ struct udp_endpoint_hash
     std::size_t operator()(const boost::asio::ip::udp::endpoint& ep) const noexcept
     {
         const auto normalized = normalize_endpoint(ep);
-        std::size_t h = 1469598103934665603ull;
+        std::size_t h = 1469598103934665603ULL;
         auto mix = [&](std::uint8_t b)
         {
             h ^= b;
-            h *= 1099511628211ull;
+            h *= 1099511628211ULL;
         };
         if (normalized.address().is_v4())
         {

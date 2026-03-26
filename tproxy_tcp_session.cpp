@@ -1,23 +1,13 @@
 #include <chrono>
 #include <memory>
+#include <string>
 #include <vector>
 #include <cstddef>
-#include <cstdint>
 #include <utility>
 
-#include <boost/asio/error.hpp>
-#include <boost/asio/write.hpp>
-#include <boost/asio/buffer.hpp>
-#include <boost/asio/ip/tcp.hpp>
-#include <boost/asio/as_tuple.hpp>
-#include <boost/asio/co_spawn.hpp>
-#include <boost/asio/detached.hpp>
+#include <boost/asio.hpp>
 #include <boost/asio/awaitable.hpp>
-#include <boost/asio/io_context.hpp>
-#include <boost/system/error_code.hpp>
-#include <boost/asio/use_awaitable.hpp>
 #include <boost/asio/redirect_error.hpp>
-#include <boost/asio/bind_cancellation_slot.hpp>
 #include <boost/asio/experimental/channel_error.hpp>
 #include <boost/asio/experimental/awaitable_operators.hpp>
 
@@ -26,10 +16,10 @@
 #include "router.h"
 #include "upstream.h"
 #include "net_utils.h"
-#include "connection_tracker.h"
 #include "timeout_io.h"
-#include "connection_context.h"
 #include "client_tunnel_pool.h"
+#include "connection_context.h"
+#include "connection_tracker.h"
 #include "tproxy_tcp_session.h"
 
 namespace mux
@@ -37,47 +27,37 @@ namespace mux
 
 namespace
 {
-
-std::shared_ptr<void> make_active_connection_guard()
+std::string describe_endpoint(const boost::asio::ip::tcp::endpoint& endpoint)
 {
-    return {new int(0),
-            [](void* ptr)
-            {
-                delete static_cast<int*>(ptr);
-                connection_tracker::instance().release();
-            }};
+    return endpoint.address().to_string() + ":" + std::to_string(endpoint.port());
+}
+
+std::string describe_endpoint_error(const boost::system::error_code& ec) { return std::string("<error:") + ec.message() + ">"; }
+
+[[nodiscard]] bool is_expected_upstream_shutdown_error(const boost::system::error_code& ec)
+{
+    return ec == boost::asio::error::operation_aborted || ec == boost::asio::error::bad_descriptor ||
+           ec == boost::asio::experimental::error::channel_errors::channel_closed ||
+           ec == boost::asio::experimental::error::channel_errors::channel_cancelled || ec == boost::asio::error::connection_reset;
 }
 
 }    // namespace
 
 tproxy_tcp_session::tproxy_tcp_session(boost::asio::ip::tcp::socket socket,
-                                       boost::asio::io_context& io_context,
                                        std::shared_ptr<client_tunnel_pool> tunnel_pool,
                                        std::shared_ptr<router> router,
                                        const std::uint32_t sid,
-                                       const config& cfg,
-                                       task_group& group)
-    : io_context_(io_context),
-      socket_(std::move(socket)),
-      idle_timer_(io_context_),
-      tunnel_pool_(std::move(tunnel_pool)),
-      router_(std::move(router)),
-      cfg_(cfg),
-      group_(group)
+                                       const config& cfg)
+    : socket_(std::move(socket)), idle_timer_(socket_.get_executor()), tunnel_pool_(std::move(tunnel_pool)), router_(std::move(router)), cfg_(cfg)
 
 {
     ctx_.new_trace_id();
     ctx_.conn_id(sid);
     last_activity_time_ms_ = timeout_io::now_ms();
-    connection_tracker::instance().acquire();
-    active_guard_ = make_active_connection_guard();
+    active_guard_ = acquire_active_connection_guard();
 }
 
-void tproxy_tcp_session::start()
-{
-    auto self = shared_from_this();
-    boost::asio::co_spawn(io_context_, [this, self]() -> boost::asio::awaitable<void> { co_await run(); }, group_.adapt(boost::asio::detached));
-}
+boost::asio::awaitable<void> tproxy_tcp_session::start() { co_await run(); }
 
 void tproxy_tcp_session::stop()
 {
@@ -102,7 +82,16 @@ boost::asio::awaitable<void> tproxy_tcp_session::run()
     boost::asio::ip::tcp::endpoint target_ep;
     if (!net::get_original_tcp_dst(socket_, target_ep, ec))
     {
-        LOG_CTX_WARN(ctx_, "{} original dst failed drop connection reason {}", log_event::kConnInit, ec.message());
+        boost::system::error_code local_ec;
+        const auto local_ep = socket_.local_endpoint(local_ec);
+        boost::system::error_code peer_ec;
+        const auto peer_ep = socket_.remote_endpoint(peer_ec);
+        LOG_CTX_WARN(ctx_,
+                     "{} original dst failed drop connection reason {} local {} peer {}",
+                     log_event::kConnInit,
+                     ec.message(),
+                     local_ec ? describe_endpoint_error(local_ec) : describe_endpoint(local_ep),
+                     peer_ec ? describe_endpoint_error(peer_ec) : describe_endpoint(peer_ep));
         co_return;
     }
     if (cfg_.tproxy.tcp_port != 0)
@@ -125,12 +114,10 @@ boost::asio::awaitable<void> tproxy_tcp_session::run()
     auto target_addr = net::normalize_address(target_ep.address());
     const auto target_port = target_ep.port();
     ctx_.set_target(target_addr.to_string(), target_port);
-    ctx_.local_addr(target_addr.to_string());
-    ctx_.local_port(target_port);
+    ctx_.set_local_endpoint(target_addr.to_string(), target_port);
     if (!peer_ec)
     {
-        ctx_.remote_addr(peer_ep.address().to_string());
-        ctx_.remote_port(peer_ep.port());
+        ctx_.set_remote_endpoint(peer_ep.address().to_string(), peer_ep.port());
     }
     LOG_CTX_INFO(ctx_,
                  "{} redirected flow client {}:{} -> target {}:{}",
@@ -145,18 +132,17 @@ boost::asio::awaitable<void> tproxy_tcp_session::run()
         co_return;
     }
     LOG_CTX_INFO(ctx_, "{} selecting backend route {}", log_event::kRoute, mux::to_string(route));
-    co_await backend->connect(target_addr.to_string(), target_port, ec);
-    if (ec)
+    const auto connect_result = co_await backend->connect(target_addr.to_string(), target_port);
+    if (connect_result.ec)
     {
-        const auto rep = backend->suggested_socks_rep(ec);
         LOG_CTX_WARN(ctx_,
                      "{} backend connect failed target {}:{} route {} error {} rep {}",
                      log_event::kConnInit,
                      target_addr.to_string(),
                      target_port,
                      mux::to_string(route),
-                     ec.message(),
-                     rep);
+                     connect_result.ec.message(),
+                     connect_result.socks_rep);
         co_await backend->close();
         co_return;
     }
@@ -200,7 +186,7 @@ boost::asio::awaitable<std::pair<route_type, std::shared_ptr<upstream>>> tproxy_
     }
     if (route == route_type::kDirect)
     {
-        const std::shared_ptr<upstream> backend = std::make_shared<direct_upstream>(io_context_, ctx_, cfg_);
+        const std::shared_ptr<upstream> backend = make_direct_upstream(socket_.get_executor(), ctx_, cfg_);
         co_return std::make_pair(route, backend);
     }
     if (route == route_type::kProxy)
@@ -210,7 +196,7 @@ boost::asio::awaitable<std::pair<route_type, std::shared_ptr<upstream>>> tproxy_
             LOG_CTX_WARN(ctx_, "{} tunnel pool unavailable for proxy route", log_event::kRoute);
             co_return std::make_pair(route_type::kBlock, std::shared_ptr<upstream>(nullptr));
         }
-        const std::shared_ptr<upstream> backend = std::make_shared<proxy_upstream>(tunnel_pool_, io_context_, ctx_, cfg_);
+        const std::shared_ptr<upstream> backend = make_proxy_upstream(tunnel_pool_, ctx_, cfg_);
         co_return std::make_pair(route, backend);
     }
     co_return std::make_pair(route_type::kBlock, std::shared_ptr<upstream>(nullptr));
@@ -241,7 +227,7 @@ boost::asio::awaitable<void> tproxy_tcp_session::client_to_upstream(std::shared_
             }
             break;
         }
-        std::vector<std::uint8_t> data_buf(buf.begin(), buf.begin() + static_cast<int>(n));
+        const std::vector<std::uint8_t> data_buf(buf.begin(), buf.begin() + static_cast<int>(n));
         co_await backend->write(data_buf, ec);
         if (ec)
         {
@@ -275,7 +261,14 @@ boost::asio::awaitable<void> tproxy_tcp_session::upstream_to_client(std::shared_
             }
             else
             {
-                LOG_CTX_WARN(ctx_, "{} failed to read from backend {} code {}", log_event::kSocks, ec.message(), ec.value());
+                if (is_expected_upstream_shutdown_error(ec))
+                {
+                    LOG_CTX_INFO(ctx_, "{} backend read stopped {} code {}", log_event::kSocks, ec.message(), ec.value());
+                }
+                else
+                {
+                    LOG_CTX_WARN(ctx_, "{} failed to read from backend {} code {}", log_event::kSocks, ec.message(), ec.value());
+                }
                 ec = socket_.close(ec);
                 if (ec)
                 {

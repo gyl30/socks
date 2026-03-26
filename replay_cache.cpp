@@ -1,8 +1,8 @@
 #include <chrono>
+#include <mutex>
 #include <string>
 #include <vector>
 #include <cstddef>
-#include <cstdint>
 
 #include "constants.h"
 #include "replay_cache.h"
@@ -30,7 +30,7 @@ bool replay_cache::check_and_insert(const std::vector<std::uint8_t>& sid)
     }
     const std::string key(sid.begin(), sid.end());
 
-    std::lock_guard<std::mutex> lock(mutex_);
+    const std::scoped_lock lock(mutex_);
     rotate_if_needed(std::chrono::steady_clock::now());
 
     if (current_.contains(key) || previous_.contains(key))

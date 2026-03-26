@@ -2,14 +2,10 @@
 #include <array>
 #include <limits>
 #include <vector>
-#include <cstring>
 #include <cstddef>
-#include <cstdint>
-#include <expected>
+#include <cstring>
 
-#include <boost/system/errc.hpp>
 #include <boost/system/error_code.hpp>
-#include <boost/system/detail/errc.hpp>
 
 extern "C"
 {
@@ -17,10 +13,10 @@ extern "C"
 #include <openssl/types.h>
 }
 
-#include "tls/crypto_util.h"
 #include "tls/core.h"
-#include "tls/cipher_context.h"
+#include "tls/crypto_util.h"
 #include "tls/record_layer.h"
+#include "tls/cipher_context.h"
 
 namespace tls
 {
@@ -225,14 +221,13 @@ std::size_t record_layer::decrypt_record(const cipher_context& ctx,
     return trim_padding_and_read_content_type(output_buffer.subspan(0, written), out_content_type, ec);
 }
 
-std::vector<std::uint8_t> record_layer::decrypt_record(
-    const EVP_CIPHER* cipher,
-    const std::vector<std::uint8_t>& key,
-    const std::vector<std::uint8_t>& iv,
-    const std::uint64_t seq,
-    const std::vector<std::uint8_t>& ciphertext_with_header,
-    std::uint8_t& out_content_type,
-    boost::system::error_code& ec)
+std::vector<std::uint8_t> record_layer::decrypt_record(const EVP_CIPHER* cipher,
+                                                       const std::vector<std::uint8_t>& key,
+                                                       const std::vector<std::uint8_t>& iv,
+                                                       const std::uint64_t seq,
+                                                       const std::vector<std::uint8_t>& ciphertext_with_header,
+                                                       std::uint8_t& out_content_type,
+                                                       boost::system::error_code& ec)
 {
     ec.clear();
     const cipher_context ctx;

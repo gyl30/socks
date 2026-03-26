@@ -1,14 +1,10 @@
 #include <string>
 #include <vector>
 #include <cstddef>
-#include <cstdint>
 #include <cstring>
 #include <algorithm>
 
-#include <boost/asio/ip/address.hpp>
-#include <boost/system/error_code.hpp>
-#include <boost/asio/ip/address_v4.hpp>
-#include <boost/asio/ip/address_v6.hpp>
+#include <boost/asio.hpp>
 
 #include "protocol.h"
 

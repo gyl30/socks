@@ -2,16 +2,14 @@
 #define REALITY_SERVER_HANDSHAKER_H
 
 #include <array>
-#include <string>
 #include <vector>
 #include <cstdint>
 
-#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio.hpp>
 #include <boost/asio/awaitable.hpp>
-#include <boost/system/error_code.hpp>
 
-#include "connection_context.h"
 #include "reality/types.h"
+#include "connection_context.h"
 
 namespace mux
 {
@@ -47,10 +45,9 @@ class server_handshaker
         const std::vector<std::uint8_t>& reality_cert_template;
     };
 
-    explicit server_handshaker(dependencies deps);
+    explicit server_handshaker(const dependencies& deps);
 
-    [[nodiscard]] boost::asio::awaitable<server_accept_result> accept(server_handshake_context& handshake_ctx,
-                                                                      boost::system::error_code& ec) const;
+    [[nodiscard]] boost::asio::awaitable<server_accept_result> accept(server_handshake_context& handshake_ctx, boost::system::error_code& ec) const;
 
    private:
     const mux::config& cfg_;

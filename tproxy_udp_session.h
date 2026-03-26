@@ -5,31 +5,20 @@
 #include <memory>
 #include <string>
 #include <vector>
-#include <cstddef>
-#include <cstdint>
 #include <functional>
 
-#include <boost/asio/ip/udp.hpp>
 #include <boost/asio/awaitable.hpp>
-#include <boost/asio/io_context.hpp>
 #include <boost/asio/steady_timer.hpp>
-#include <boost/system/error_code.hpp>
 #include <boost/asio/experimental/concurrent_channel.hpp>
 
-#include "config.h"
-#include "router.h"
 #include "lru_cache.h"
-#include "task_group.h"
 #include "connection_context.h"
-#include "mux_connection.h"
+#include "client_tunnel_pool.h"
 
 namespace mux
 {
 
-class mux_stream;
-class client_tunnel_pool;
-
-enum class udp_enqueue_result
+enum class udp_enqueue_result : std::uint8_t
 {
     kEnqueued,
     kDroppedOverflow,
@@ -39,14 +28,13 @@ enum class udp_enqueue_result
 class tproxy_udp_session : public std::enable_shared_from_this<tproxy_udp_session>
 {
    public:
-    tproxy_udp_session(boost::asio::io_context& io_context,
+    tproxy_udp_session(io_worker& worker,
                        std::shared_ptr<client_tunnel_pool> tunnel_pool,
-                       boost::asio::ip::udp::endpoint client_endpoint,
-                       boost::asio::ip::udp::endpoint target_endpoint,
+                       const boost::asio::ip::udp::endpoint& client_endpoint,
+                       const boost::asio::ip::udp::endpoint& target_endpoint,
                        route_type route,
                        connection_context ctx,
                        const config& cfg,
-                       task_group& group,
                        std::function<void()> on_close);
 
     void start();
@@ -59,7 +47,9 @@ class tproxy_udp_session : public std::enable_shared_from_this<tproxy_udp_sessio
     [[nodiscard]] boost::asio::awaitable<void> run();
     [[nodiscard]] boost::asio::awaitable<bool> open_direct_socket();
     [[nodiscard]] boost::asio::awaitable<bool> open_proxy_stream();
-    [[nodiscard]] boost::asio::awaitable<std::shared_ptr<mux_connection>> wait_for_proxy_tunnel(boost::system::error_code& ec);
+    [[nodiscard]] boost::asio::awaitable<bool> run_direct_mode();
+    [[nodiscard]] boost::asio::awaitable<bool> run_proxy_mode();
+    [[nodiscard]] boost::asio::awaitable<std::shared_ptr<mux_connection>> wait_for_proxy_tunnel(boost::system::error_code& ec) const;
     [[nodiscard]] boost::asio::awaitable<void> packets_to_direct();
     [[nodiscard]] boost::asio::awaitable<void> direct_to_client();
     [[nodiscard]] boost::asio::awaitable<void> packets_to_proxy();
@@ -69,19 +59,19 @@ class tproxy_udp_session : public std::enable_shared_from_this<tproxy_udp_sessio
                                                               const std::uint8_t* payload,
                                                               std::size_t payload_len);
     [[nodiscard]] std::shared_ptr<boost::asio::ip::udp::socket> get_or_create_reply_socket(const boost::asio::ip::udp::endpoint& source,
-                                                                                            boost::system::error_code& ec);
+                                                                                           boost::system::error_code& ec);
     [[nodiscard]] static std::string endpoint_key(const boost::asio::ip::udp::endpoint& endpoint);
+    void notify_closed();
     void close_impl();
 
    private:
     connection_context ctx_;
     const config& cfg_;
-    task_group& group_;
+    io_worker& worker_;
     std::shared_ptr<void> active_guard_;
     route_type route_;
     std::atomic<bool> stopped_{false};
     std::uint64_t last_activity_time_ms_ = 0;
-    boost::asio::io_context& io_context_;
     boost::asio::steady_timer idle_timer_;
     boost::asio::ip::udp::socket upstream_socket_;
     std::shared_ptr<client_tunnel_pool> tunnel_pool_;

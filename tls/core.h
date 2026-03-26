@@ -3,7 +3,6 @@
 
 #include <memory>
 #include <vector>
-#include <cstddef>
 #include <cstdint>
 
 extern "C"
@@ -26,8 +25,7 @@ inline constexpr std::size_t kAeadTagSize = 16;
 inline constexpr std::size_t kMaxTlsPlaintextLen = 16384;
 inline constexpr std::size_t kMaxTlsInnerPlaintextLen = kMaxTlsPlaintextLen + 1;
 inline constexpr std::size_t kMaxTlsApplicationDataPaddingLen = 63;
-inline constexpr std::size_t kMaxTlsApplicationDataPayloadLen =
-    kMaxTlsInnerPlaintextLen - 1 - kMaxTlsApplicationDataPaddingLen;
+inline constexpr std::size_t kMaxTlsApplicationDataPayloadLen = kMaxTlsInnerPlaintextLen - 1 - kMaxTlsApplicationDataPaddingLen;
 inline constexpr std::size_t kMlkem768PublicKeySize = 1184;
 inline constexpr std::size_t kMlkem768PrivateKeySize = 2400;
 inline constexpr std::size_t kMlkem768CiphertextSize = 1088;

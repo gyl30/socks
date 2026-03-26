@@ -5,24 +5,24 @@
 #include <string>
 #include <vector>
 #include <cstddef>
-#include <cstdint>
-#include <utility>
 
-#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio.hpp>
 #include <boost/asio/awaitable.hpp>
-#include <boost/asio/io_context.hpp>
-#include <boost/system/error_code.hpp>
 
-#include "protocol.h"
-#include "mux_stream.h"
-#include "connection_context.h"
-#include "mux_protocol.h"
 #include "mux_connection.h"
+#include "client_tunnel_pool.h"
 
 namespace mux
 {
 
-class client_tunnel_pool;
+struct upstream_connect_result
+{
+    boost::system::error_code ec;
+    boost::asio::ip::address bind_addr;
+    std::uint16_t bind_port = 0;
+    std::uint8_t socks_rep = 0;
+    bool has_bind_endpoint = false;
+};
 
 class upstream
 {
@@ -32,84 +32,16 @@ class upstream
    public:
     virtual boost::asio::awaitable<void> close() = 0;
     virtual boost::asio::awaitable<void> shutdown_send(boost::system::error_code& ec) = 0;
-    virtual boost::asio::awaitable<void> connect(const std::string& host, std::uint16_t port, boost::system::error_code& ec) = 0;
+    [[nodiscard]] virtual boost::asio::awaitable<upstream_connect_result> connect(const std::string& host, std::uint16_t port) = 0;
     virtual boost::asio::awaitable<void> write(const std::vector<std::uint8_t>& data, boost::system::error_code& ec) = 0;
     [[nodiscard]] virtual boost::asio::awaitable<std::size_t> read(std::vector<std::uint8_t>& buf, boost::system::error_code& ec) = 0;
-    [[nodiscard]] virtual bool get_bind_endpoint(boost::asio::ip::address& addr, std::uint16_t& port, boost::system::error_code& ec) const = 0;
-    [[nodiscard]] virtual std::uint8_t suggested_socks_rep(const boost::system::error_code& ec) const = 0;
 };
 
-class direct_upstream : public upstream
-{
-   public:
-    explicit direct_upstream(boost::asio::io_context& io_context, connection_context ctx, const config& cfg)
-        : cfg_(cfg), ctx_(std::move(ctx)), socket_(io_context), resolver_(io_context)
-    {
-    }
-
-   public:
-    boost::asio::awaitable<void> close() override;
-    boost::asio::awaitable<void> shutdown_send(boost::system::error_code& ec) override;
-    boost::asio::awaitable<void> connect(const std::string& host, std::uint16_t port, boost::system::error_code& ec) override;
-    boost::asio::awaitable<void> write(const std::vector<std::uint8_t>& data, boost::system::error_code& ec) override;
-    [[nodiscard]] boost::asio::awaitable<std::size_t> read(std::vector<std::uint8_t>& buf, boost::system::error_code& ec) override;
-    [[nodiscard]] bool get_bind_endpoint(boost::asio::ip::address& addr, std::uint16_t& port, boost::system::error_code& ec) const override;
-    [[nodiscard]] std::uint8_t suggested_socks_rep(const boost::system::error_code& ec) const override;
-
-   private:
-    const config& cfg_;
-    connection_context ctx_;
-    boost::asio::ip::tcp::socket socket_;
-    boost::asio::ip::tcp::resolver resolver_;
-};
-
-class proxy_upstream : public upstream
-{
-   public:
-    explicit proxy_upstream(std::shared_ptr<mux_connection> tunnel, boost::asio::io_context& io_context, connection_context ctx, const config& cfg);
-    explicit proxy_upstream(std::shared_ptr<client_tunnel_pool> tunnel_pool,
-                            boost::asio::io_context& io_context,
-                            connection_context ctx,
-                            const config& cfg);
-
-   public:
-    boost::asio::awaitable<void> close() override;
-    boost::asio::awaitable<void> shutdown_send(boost::system::error_code& ec) override;
-    boost::asio::awaitable<void> connect(const std::string& host, std::uint16_t port, boost::system::error_code& ec) override;
-    boost::asio::awaitable<void> write(const std::vector<std::uint8_t>& data, boost::system::error_code& ec) override;
-    [[nodiscard]] boost::asio::awaitable<std::size_t> read(std::vector<std::uint8_t>& buf, boost::system::error_code& ec) override;
-    [[nodiscard]] bool get_bind_endpoint(boost::asio::ip::address& addr, std::uint16_t& port, boost::system::error_code& ec) const override;
-    [[nodiscard]] std::uint8_t suggested_socks_rep(const boost::system::error_code& ec) const override;
-
-   private:
-    boost::asio::awaitable<void> send_syn_request(const std::shared_ptr<mux_stream>& stream,
-                                                  const std::string& host,
-                                                  std::uint16_t port,
-                                                  boost::system::error_code& ec);
-    boost::asio::awaitable<bool> wait_connect_ack(const std::shared_ptr<mux_stream>& stream,
-                                                  const std::string& host,
-                                                  std::uint16_t port,
-                                                  boost::system::error_code& ec);
-    [[nodiscard]] std::uint32_t connect_ack_timeout() const;
-
-   private:
-    const config& cfg_;
-    connection_context ctx_;
-    std::shared_ptr<mux_stream> stream_;
-    boost::asio::io_context& io_context_;
-    std::shared_ptr<client_tunnel_pool> tunnel_pool_;
-    std::shared_ptr<mux_connection> tunnel_;
-    boost::asio::ip::address bind_addr_;
-    std::uint16_t bind_port_ = 0;
-    bool fin_sent_ = false;
-    bool reset_received_ = false;
-    bool protocol_error_ = false;
-    std::uint8_t last_remote_rep_ = socks::kRepSuccess;
-    bool has_bind_endpoint_ = false;
-    using channel_type =
-        boost::asio::experimental::concurrent_channel<void(boost::system::error_code, std::pair<frame_header, std::vector<uint8_t>>)>;
-    std::unique_ptr<channel_type> recv_channel_;
-};
+[[nodiscard]] std::shared_ptr<upstream> make_direct_upstream(const boost::asio::any_io_executor& executor, connection_context ctx, const config& cfg);
+[[nodiscard]] std::shared_ptr<upstream> make_proxy_upstream(std::shared_ptr<mux_connection> tunnel, connection_context ctx, const config& cfg);
+[[nodiscard]] std::shared_ptr<upstream> make_proxy_upstream(std::shared_ptr<client_tunnel_pool> tunnel_pool,
+                                                            connection_context ctx,
+                                                            const config& cfg);
 
 }    // namespace mux
 

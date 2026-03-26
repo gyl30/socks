@@ -7,13 +7,12 @@
 
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/ip/address.hpp>
-#include <boost/system/error_code.hpp>
 
 #include "log.h"
 #include "router.h"
 #include "ip_matcher.h"
-#include "connection_context.h"
 #include "domain_matcher.h"
+#include "connection_context.h"
 
 namespace mux
 {

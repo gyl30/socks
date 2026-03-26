@@ -1,37 +1,28 @@
 #include <array>
 #include <chrono>
+#include <cstddef>
 #include <memory>
+#include <optional>
 #include <random>
 #include <string>
 #include <vector>
-#include <cstdint>
 #include <utility>
 #include <algorithm>
-#include <boost/asio/read.hpp>
-#include <boost/asio/error.hpp>
-#include <boost/asio/write.hpp>
-#include <boost/asio/buffer.hpp>
-#include <boost/asio/ip/tcp.hpp>
-#include <boost/asio/as_tuple.hpp>
-#include <boost/asio/co_spawn.hpp>
-#include <boost/asio/detached.hpp>
+
+#include <boost/asio.hpp>
 #include <boost/asio/awaitable.hpp>
-#include <boost/asio/io_context.hpp>
-#include <boost/asio/bind_cancellation_slot.hpp>
-#include <boost/asio/steady_timer.hpp>
-#include <boost/system/error_code.hpp>
-#include <boost/asio/ip/address_v4.hpp>
-#include <boost/asio/ip/address_v6.hpp>
-#include <boost/asio/use_awaitable.hpp>
 #include <boost/endian/conversion.hpp>
+#include <boost/asio/redirect_error.hpp>
+#include <boost/asio/use_awaitable.hpp>
 
 #include "log.h"
 #include "config.h"
 #include "protocol.h"
 #include "timeout_io.h"
+#include "context_pool.h"
+#include "socks_session.h"
 #include "connection_tracker.h"
 #include "connection_context.h"
-#include "socks_session.h"
 #include "tcp_socks_session.h"
 #include "udp_socks_session.h"
 
@@ -40,17 +31,6 @@ namespace mux
 
 namespace
 {
-
-std::shared_ptr<void> make_active_connection_guard()
-{
-    return {new int(0),
-            [](void* ptr)
-            {
-                delete static_cast<int*>(ptr);
-                connection_tracker::instance().release();
-            }};
-}
-
 bool secure_string_equals(const std::string& lhs, const std::string& rhs)
 {
     const auto max_len = std::max(lhs.size(), rhs.size());
@@ -87,35 +67,36 @@ constexpr std::uint32_t kAuthFailDelayMs = 200;
 }    // namespace
 
 socks_session::socks_session(boost::asio::ip::tcp::socket socket,
-                             boost::asio::io_context& io_context,
+                             io_worker& worker,
                              std::shared_ptr<client_tunnel_pool> tunnel_pool,
                              std::shared_ptr<router> router,
                              const std::uint32_t sid,
                              const config& cfg,
-                             task_group& group)
+                             std::shared_ptr<void> active_connection_guard)
     : sid_(sid),
       username_(cfg.socks.username),
       password_(cfg.socks.password),
       auth_enabled_(cfg.socks.auth),
       cfg_(cfg),
-      group_(group),
-      ioc_(io_context),
+      worker_(worker),
       socket_(std::move(socket)),
       router_(std::move(router)),
+      active_guard_(std::move(active_connection_guard)),
       tunnel_pool_(std::move(tunnel_pool))
 {
     ctx_.new_trace_id();
     ctx_.conn_id(sid);
-    connection_tracker::instance().acquire();
-    active_guard_ = make_active_connection_guard();
+    if (!active_guard_)
+    {
+        active_guard_ = acquire_active_connection_guard();
+    }
 }
 
 socks_session::~socks_session() = default;
 
 void socks_session::start()
 {
-    const auto self = shared_from_this();
-    boost::asio::co_spawn(ioc_, [self]() mutable -> boost::asio::awaitable<void> { co_await self->run_loop(); }, group_.adapt(boost::asio::detached));
+    worker_.group.spawn([self = shared_from_this()]() -> boost::asio::awaitable<void> { co_await self->run_loop(); });
 }
 
 void socks_session::stop()
@@ -152,12 +133,13 @@ boost::asio::awaitable<void> socks_session::run_loop()
 
     if (cmd == socks::kCmdConnect)
     {
-        const auto tcp_sess = std::make_shared<tcp_socks_session>(std::move(socket_), ioc_, tunnel_pool_, router_, sid_, cfg_, group_, std::move(active_guard_));
-        tcp_sess->start(host, port);
+        const auto tcp_sess = std::make_shared<tcp_socks_session>(std::move(socket_), tunnel_pool_, router_, sid_, cfg_, std::move(active_guard_));
+        worker_.group.spawn([tcp_sess, host, port]() -> boost::asio::awaitable<void> { co_await tcp_sess->start(host, port); });
     }
     else if (cmd == socks::kCmdUdpAssociate)
     {
-        const auto udp_sess = std::make_shared<udp_socks_session>(std::move(socket_), ioc_, tunnel_pool_, router_, sid_, cfg_, group_, std::move(active_guard_));
+        const auto udp_sess =
+            std::make_shared<udp_socks_session>(std::move(socket_), worker_, tunnel_pool_, router_, sid_, cfg_, std::move(active_guard_));
         udp_sess->start(host, port);
     }
     else
@@ -214,7 +196,7 @@ boost::asio::awaitable<bool> socks_session::read_socks_greeting(std::uint8_t& me
     }
     if (ver_nmethods[0] != socks::kVer)
     {
-        LOG_ERROR("socks session {} handshake method version {} failed", sid_, (int)ver_nmethods[0]);
+        LOG_ERROR("socks session {} handshake method version {} failed", sid_, static_cast<int>(ver_nmethods[0]));
         co_return false;
     }
     method_count = ver_nmethods[1];
@@ -297,7 +279,7 @@ boost::asio::awaitable<bool> socks_session::do_password_auth()
     if (!success)
     {
         LOG_WARN("socks session {} auth failed", sid_);
-        boost::asio::steady_timer delay_timer(ioc_);
+        boost::asio::steady_timer delay_timer(worker_.io_context);
         delay_timer.expires_after(std::chrono::milliseconds(kAuthFailDelayMs));
         boost::system::error_code delay_ec;
         co_await delay_timer.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, delay_ec));
@@ -379,7 +361,7 @@ boost::asio::awaitable<void> socks_session::delay_invalid_request() const
 {
     static thread_local std::mt19937 delay_gen(std::random_device{}());
     std::uniform_int_distribution<std::uint32_t> delay_dist(10, 50);
-    boost::asio::steady_timer delay_timer(ioc_);
+    boost::asio::steady_timer delay_timer(worker_.io_context);
     delay_timer.expires_after(std::chrono::milliseconds(delay_dist(delay_gen)));
     co_await delay_timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
 }

@@ -2,9 +2,9 @@
 #define MUX_PROTOCOL_H
 
 #include <string>
+#include <vector>
 #include <limits>
 #include <cstddef>
-#include <cstdint>
 
 #include "tls/core.h"
 

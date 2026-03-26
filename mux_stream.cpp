@@ -1,17 +1,15 @@
-#include <algorithm>
+#include <atomic>
 #include <memory>
+#include <utility>
 #include <vector>
-#include <cstdint>
+#include <algorithm>
 
-#include <boost/asio/error.hpp>
-#include <boost/asio/as_tuple.hpp>
+#include <boost/asio.hpp>
 #include <boost/asio/awaitable.hpp>
-#include <boost/asio/io_context.hpp>
-#include <boost/system/error_code.hpp>
-#include <boost/asio/use_awaitable.hpp>
 
-#include "timeout_io.h"
+#include "config.h"
 #include "mux_stream.h"
+#include "timeout_io.h"
 #include "mux_protocol.h"
 #include "mux_connection.h"
 
@@ -35,8 +33,7 @@ mux_stream::~mux_stream()
     const auto left = pending_bytes_.exchange(0, std::memory_order_relaxed);
     if (left > 0)
     {
-        const auto connection = connection_.lock();
-        if (connection)
+        if (const auto connection = connection_.lock())
         {
             connection->release_pending(left);
         }
@@ -50,14 +47,12 @@ void mux_stream::close() { recv_channel_.close(); }
 boost::asio::awaitable<void> mux_stream::on_frame(mux_frame frame, boost::system::error_code& ec)
 {
     const auto payload_len = frame.payload.size();
-    const auto stream_pending_limit =
-        std::max<std::uint64_t>(kDefaultMaxPendingBytes, std::max<std::uint64_t>(1ULL, cfg_.limits.max_buffer / 4ULL));
+    const auto stream_pending_limit = std::max<std::uint64_t>({kDefaultMaxPendingBytes, 1ULL, cfg_.limits.max_buffer / 4ULL});
     std::shared_ptr<mux_connection> connection;
     std::uint64_t reserved = 0;
     if (payload_len > 0)
     {
-        if (payload_len > stream_pending_limit ||
-            pending_bytes_.load(std::memory_order_relaxed) > stream_pending_limit - payload_len)
+        if (payload_len > stream_pending_limit || pending_bytes_.load(std::memory_order_relaxed) > stream_pending_limit - payload_len)
         {
             ec = boost::asio::error::timed_out;
             co_return;
@@ -115,17 +110,15 @@ boost::asio::awaitable<mux_frame> mux_stream::async_read(const std::uint32_t tim
                 break;
             }
         }
-        const auto connection = connection_.lock();
-        if (connection)
+        if (const auto connection = connection_.lock())
         {
             connection->release_pending(data.payload.size());
         }
     }
-    rx_bytes_ += data.payload.size();
     co_return data;
 }
 
-boost::asio::awaitable<void> mux_stream::async_write(mux_frame frame, boost::system::error_code& ec)
+boost::asio::awaitable<void> mux_stream::async_write(mux_frame frame, boost::system::error_code& ec) const
 {
     const auto connection = connection_.lock();
     if (!connection)
@@ -134,7 +127,6 @@ boost::asio::awaitable<void> mux_stream::async_write(mux_frame frame, boost::sys
         co_return;
     }
 
-    const auto len = frame.payload.size();
     frame.h.stream_id = id_;
     if (frame.h.command == mux::kCmdFin || frame.h.command == mux::kCmdRst)
     {
@@ -148,7 +140,6 @@ boost::asio::awaitable<void> mux_stream::async_write(mux_frame frame, boost::sys
     {
         co_return;
     }
-    tx_bytes_ += len;
 }
 
 }    // namespace mux

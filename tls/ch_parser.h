@@ -5,6 +5,7 @@
 #include <vector>
 #include <cstddef>
 #include <cstdint>
+#include <utility>
 
 namespace tls
 {
@@ -51,7 +52,7 @@ class client_hello_parser
         reader(const std::uint8_t* p, const std::size_t len, const std::uint8_t* s) : ptr_(p), end_(p + len), start_(s) {}
 
         [[nodiscard]] bool valid() const { return ptr_ != nullptr; }
-        [[nodiscard]] bool has(const std::size_t n) const { return valid() && (n <= static_cast<std::size_t>(end_ - ptr_)); }
+        [[nodiscard]] bool has(const std::size_t n) const { return valid() && std::cmp_less_equal(n, end_ - ptr_); }
         [[nodiscard]] std::size_t remaining() const { return valid() ? static_cast<std::size_t>(end_ - ptr_) : 0; }
         [[nodiscard]] std::size_t offset() const { return valid() ? static_cast<std::size_t>(ptr_ - start_) : 0; }
         [[nodiscard]] std::uint8_t peek(const std::size_t off) const { return has(off + 1) ? ptr_[off] : static_cast<std::uint8_t>(0); }
@@ -123,7 +124,7 @@ class client_hello_parser
     static bool read_sni_item_header(reader& r, std::uint8_t& type, std::uint16_t& len);
     static bool handle_sni_item(reader& r, std::uint8_t type, std::uint16_t len, client_hello_info& info);
     static bool read_key_share_item_header(reader& r, std::uint16_t& group, std::uint16_t& len);
-    static void handle_key_share_item(reader& r, std::uint16_t group, std::uint16_t len, client_hello_info& info);
+    static void handle_key_share_item(const reader& r, std::uint16_t group, std::uint16_t len, client_hello_info& info);
     static void finalize_key_share_info(client_hello_info& info);
     static void finalize_tls13_info(client_hello_info& info);
     static bool parse_before_extensions(reader& r, client_hello_info& info);

@@ -3,17 +3,16 @@
 
 #include <span>
 #include <vector>
-#include <cstring>
 #include <cstddef>
 #include <cstdint>
-#include <expected>
+#include <cstring>
+
+#include <boost/system/detail/error_code.hpp>
 
 extern "C"
 {
 #include <openssl/types.h>
 }
-
-#include <boost/system/error_code.hpp>
 
 #include "tls/cipher_context.h"
 
@@ -33,14 +32,13 @@ class record_layer
                                       std::vector<std::uint8_t>& output_buffer,
                                       boost::system::error_code& ec);
 
-    [[nodiscard]] static std::vector<std::uint8_t> encrypt_record(
-        const EVP_CIPHER* cipher,
-        const std::vector<std::uint8_t>& key,
-        const std::vector<std::uint8_t>& iv,
-        std::uint64_t seq,
-        const std::vector<std::uint8_t>& plaintext,
-        std::uint8_t content_type,
-        boost::system::error_code& ec);
+    [[nodiscard]] static std::vector<std::uint8_t> encrypt_record(const EVP_CIPHER* cipher,
+                                                                  const std::vector<std::uint8_t>& key,
+                                                                  const std::vector<std::uint8_t>& iv,
+                                                                  std::uint64_t seq,
+                                                                  const std::vector<std::uint8_t>& plaintext,
+                                                                  std::uint8_t content_type,
+                                                                  boost::system::error_code& ec);
 
     [[nodiscard]] static std::size_t decrypt_record(const cipher_context& ctx,
                                                     const EVP_CIPHER* cipher,
@@ -52,14 +50,13 @@ class record_layer
                                                     std::uint8_t& out_content_type,
                                                     boost::system::error_code& ec);
 
-    [[nodiscard]] static std::vector<std::uint8_t> decrypt_record(
-        const EVP_CIPHER* cipher,
-        const std::vector<std::uint8_t>& key,
-        const std::vector<std::uint8_t>& iv,
-        std::uint64_t seq,
-        const std::vector<std::uint8_t>& ciphertext_with_header,
-        std::uint8_t& out_content_type,
-        boost::system::error_code& ec);
+    [[nodiscard]] static std::vector<std::uint8_t> decrypt_record(const EVP_CIPHER* cipher,
+                                                                  const std::vector<std::uint8_t>& key,
+                                                                  const std::vector<std::uint8_t>& iv,
+                                                                  std::uint64_t seq,
+                                                                  const std::vector<std::uint8_t>& ciphertext_with_header,
+                                                                  std::uint8_t& out_content_type,
+                                                                  boost::system::error_code& ec);
 };
 
 }    // namespace tls

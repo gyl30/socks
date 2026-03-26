@@ -3,11 +3,12 @@
 
 #include <string>
 #include <vector>
+#include <cstddef>
 #include <cstring>
 #include <utility>
-#include <cstddef>
-#include <cstdint>
-#include <expected>
+
+#include <boost/system/error_code.hpp>
+
 
 extern "C"
 {
@@ -16,24 +17,19 @@ extern "C"
 #include <openssl/types.h>
 }
 
-#include <boost/system/errc.hpp>
-#include <boost/system/error_code.hpp>
-#include <boost/system/detail/errc.hpp>
-
-#include "tls/crypto_util.h"
 #include "tls/core.h"
+#include "tls/crypto_util.h"
 
 namespace tls
 {
 class key_schedule
 {
    public:
-    [[nodiscard]] static std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>
-    derive_traffic_keys(const std::vector<std::uint8_t>& secret,
-                        boost::system::error_code& ec,
-                        std::size_t key_len = 16,
-                        std::size_t iv_len = 12,
-                        const EVP_MD* md = EVP_sha256())
+    [[nodiscard]] static std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> derive_traffic_keys(const std::vector<std::uint8_t>& secret,
+                                                                                                             boost::system::error_code& ec,
+                                                                                                             std::size_t key_len = 16,
+                                                                                                             std::size_t iv_len = 12,
+                                                                                                             const EVP_MD* md = EVP_sha256())
     {
         ec.clear();
         auto key = crypto_util::hkdf_expand_label(secret, "key", {}, key_len, md, ec);
@@ -113,11 +109,11 @@ class key_schedule
                               .master_secret = std::move(master_secret)};
     }
 
-    [[nodiscard]] static std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>
-    derive_application_secrets(const std::vector<std::uint8_t>& master_secret,
-                               const std::vector<std::uint8_t>& handshake_hash,
-                               const EVP_MD* md,
-                               boost::system::error_code& ec)
+    [[nodiscard]] static std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> derive_application_secrets(
+        const std::vector<std::uint8_t>& master_secret,
+        const std::vector<std::uint8_t>& handshake_hash,
+        const EVP_MD* md,
+        boost::system::error_code& ec)
     {
         ec.clear();
         const auto hash_len = hash_size(md, ec);
@@ -157,13 +153,8 @@ class key_schedule
 
         std::uint8_t hmac_out[EVP_MAX_MD_SIZE] = {};
         unsigned int hmac_len = 0;
-        if (HMAC(md,
-                 finished_key.data(),
-                 static_cast<int>(finished_key.size()),
-                 handshake_hash.data(),
-                 handshake_hash.size(),
-                 hmac_out,
-                 &hmac_len) == nullptr ||
+        if (HMAC(md, finished_key.data(), static_cast<int>(finished_key.size()), handshake_hash.data(), handshake_hash.size(), hmac_out, &hmac_len) ==
+                nullptr ||
             hmac_len == 0)
         {
             ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);

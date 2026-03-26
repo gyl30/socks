@@ -1,12 +1,12 @@
-#include <algorithm>
 #include <array>
-#include <cstddef>
-#include <cstdint>
 #include <string>
 #include <vector>
+#include <cstddef>
+#include <cstdint>
+#include <algorithm>
 
 #include "mux_codec.h"
-
+#include "mux_protocol.h"
 namespace
 {
 
@@ -46,7 +46,8 @@ std::uint32_t read_u32(const std::uint8_t* data, const std::size_t size, const s
     return (b0 << 24) | (b1 << 16) | (b2 << 8) | b3;
 }
 
-std::string make_printable_text(const std::uint8_t* data, const std::size_t size, const std::size_t offset, const std::size_t max_len, const char* fallback)
+std::string make_printable_text(
+    const std::uint8_t* data, const std::size_t size, const std::size_t offset, const std::size_t max_len, const char* fallback)
 {
     static constexpr char kAlphabet[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-_:/";
     if (data == nullptr || size == 0)

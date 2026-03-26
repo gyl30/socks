@@ -1,8 +1,8 @@
 #include <span>
 #include <vector>
-#include <system_error>
 #include <cstddef>
-#include <cstdint>
+
+#include <boost/system/error_code.hpp>
 
 #include "tls/handshake_reassembler.h"
 

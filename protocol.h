@@ -4,7 +4,6 @@
 #include <string>
 #include <vector>
 #include <cstddef>
-#include <cstdint>
 #include <cstring>
 
 #include <boost/asio/ip/address.hpp>

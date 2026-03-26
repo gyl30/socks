@@ -1,9 +1,10 @@
 #include <vector>
+#include <cstddef>
 #include <cstdint>
 #include <algorithm>
 
-#include "tls/ch_parser.h"
 #include "tls/core.h"
+#include "tls/ch_parser.h"
 
 namespace tls
 {
@@ -114,9 +115,12 @@ bool client_hello_parser::handle_sni_item(reader& r, const std::uint8_t type, co
     return false;
 }
 
-bool client_hello_parser::read_key_share_item_header(reader& r, std::uint16_t& group, std::uint16_t& len) { return r.read_u16(group) && r.read_u16(len); }
+bool client_hello_parser::read_key_share_item_header(reader& r, std::uint16_t& group, std::uint16_t& len)
+{
+    return r.read_u16(group) && r.read_u16(len);
+}
 
-void client_hello_parser::handle_key_share_item(reader& r, const std::uint16_t group, const std::uint16_t len, client_hello_info& info)
+void client_hello_parser::handle_key_share_item(const reader& r, const std::uint16_t group, const std::uint16_t len, client_hello_info& info)
 {
     if (group == consts::group::kX25519)
     {
@@ -162,14 +166,14 @@ void client_hello_parser::finalize_tls13_info(client_hello_info& info)
         info.key_share_group = 0;
         return;
     }
-    if (std::find(info.supported_versions.begin(), info.supported_versions.end(), consts::kVer13) == info.supported_versions.end())
+    if (std::ranges::find(info.supported_versions, consts::kVer13) == info.supported_versions.end())
     {
         info.key_share_group = 0;
         return;
     }
     if (info.has_x25519_mlkem768_share)
     {
-        const auto hybrid_it = std::find(info.supported_groups.begin(), info.supported_groups.end(), consts::group::kX25519MLKEM768);
+        const auto hybrid_it = std::ranges::find(info.supported_groups, consts::group::kX25519MLKEM768);
         if (hybrid_it != info.supported_groups.end())
         {
             info.is_tls13 = true;
@@ -179,7 +183,7 @@ void client_hello_parser::finalize_tls13_info(client_hello_info& info)
     }
     if (info.has_x25519_share)
     {
-        const auto x25519_it = std::find(info.supported_groups.begin(), info.supported_groups.end(), consts::group::kX25519);
+        const auto x25519_it = std::ranges::find(info.supported_groups, consts::group::kX25519);
         if (x25519_it != info.supported_groups.end())
         {
             info.is_tls13 = true;

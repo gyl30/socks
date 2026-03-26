@@ -3,32 +3,25 @@
 
 #include <array>
 #include <memory>
-#include <optional>
-#include <string>
 #include <vector>
 #include <atomic>
-#include <cstdint>
-#include <utility>
+#include <optional>
 
-#include <openssl/types.h>
-#include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/awaitable.hpp>
-#include <boost/asio/io_context.hpp>
-#include <boost/system/error_code.hpp>
-#include <boost/asio/cancellation_signal.hpp>
 
-#include "config.h"
-#include "connection_context.h"
 #include "context_pool.h"
 #include "mux_protocol.h"
 #include "replay_cache.h"
-#include "mux_connection.h"
-#include "reality/policy/fallback_executor.h"
+#include "site_material.h"
 #include "reality/policy/fallback_gate.h"
-#include "reality/material/material_provider.h"
+#include "reality/policy/fallback_executor.h"
 
 namespace mux
 {
+
+struct config;
+class connection_context;
+class mux_connection;
 
 class remote_server : public std::enable_shared_from_this<remote_server>
 {
@@ -39,22 +32,22 @@ class remote_server : public std::enable_shared_from_this<remote_server>
    public:
     void start();
     void stop();
-    boost::asio::awaitable<void> wait_stopped();
 
    private:
     boost::asio::awaitable<void> accept_loop();
-    boost::asio::awaitable<void> fallback_to_target_site(reality::fallback_request request, const char* reason);
-    boost::asio::awaitable<void> handle(boost::asio::io_context& io, std::shared_ptr<boost::asio::ip::tcp::socket> s, std::uint32_t conn_id);
+    boost::asio::awaitable<void> fallback_to_target_site(reality::fallback_request&& request, const char* reason);
+    boost::asio::awaitable<void> handle(io_worker& worker, std::shared_ptr<boost::asio::ip::tcp::socket> s, std::uint32_t conn_id);
 
-    boost::asio::awaitable<void> process_stream_request(std::shared_ptr<mux_connection> connection,
+    boost::asio::awaitable<void> process_stream_request(io_worker& worker,
+                                                        std::shared_ptr<mux_connection> connection,
                                                         const connection_context& ctx,
-                                                        mux_frame frame);
+                                                        mux_frame frame) const;
 
    private:
     const config& cfg_;
     io_context_pool& pool_;
-    boost::asio::io_context& io_context_;
-    boost::asio::ip::tcp::acceptor acceptor_{io_context_};
+    io_worker& owner_worker_;
+    boost::asio::ip::tcp::acceptor acceptor_{owner_worker_.io_context};
     std::vector<std::uint8_t> private_key_;
     std::vector<std::uint8_t> short_id_bytes_;
     std::array<std::uint8_t, 32> reality_cert_private_key_{};

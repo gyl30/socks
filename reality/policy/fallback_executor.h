@@ -3,12 +3,10 @@
 
 #include <string>
 #include <vector>
-#include <cstddef>
 #include <cstdint>
 
-#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio.hpp>
 #include <boost/asio/awaitable.hpp>
-#include <boost/asio/io_context.hpp>
 #include <boost/system/error_code.hpp>
 
 #include "connection_context.h"
@@ -33,25 +31,10 @@ struct fallback_request
 class fallback_executor
 {
    public:
-    struct options
-    {
-        std::size_t relay_buffer_size = 16 * 1024;
-    };
+    explicit fallback_executor(boost::asio::io_context& io_context, const mux::config& cfg);
 
-    struct dependencies
-    {
-        boost::asio::io_context& io_context;
-        const mux::config& cfg;
-        options opts{};
-    };
-
-    explicit fallback_executor(dependencies deps);
-
-    [[nodiscard]] boost::asio::awaitable<void> run(fallback_request& request,
-                                                   const std::string& host,
-                                                   std::uint16_t port,
-                                                   const char* reason,
-                                                   boost::system::error_code& ec) const;
+    [[nodiscard]] boost::asio::awaitable<void> run(
+        fallback_request& request, const std::string& host, std::uint16_t port, const char* reason, boost::system::error_code& ec) const;
 
    private:
     [[nodiscard]] boost::asio::awaitable<void> connect_target(boost::asio::ip::tcp::socket& upstream_socket,
@@ -78,7 +61,6 @@ class fallback_executor
 
     boost::asio::io_context& io_context_;
     const mux::config& cfg_;
-    options options_{};
 };
 
 }    // namespace reality

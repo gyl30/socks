@@ -2,7 +2,6 @@
 #define TLS_CIPHER_CONTEXT_H
 
 #include <cstddef>
-#include <cstdint>
 
 extern "C"
 {

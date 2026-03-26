@@ -1,3 +1,4 @@
+#include <atomic>
 #include <array>
 #include <chrono>
 #include <memory>
@@ -7,41 +8,26 @@
 #include <cstdint>
 #include <utility>
 
-#include <boost/asio/error.hpp>
-#include <boost/asio/write.hpp>
-#include <boost/asio/buffer.hpp>
-#include <boost/asio/ip/tcp.hpp>
-#include <boost/asio/ip/udp.hpp>
-#include <boost/asio/as_tuple.hpp>
-#include <boost/asio/co_spawn.hpp>
-#include <boost/asio/detached.hpp>
+#include <boost/asio.hpp>
 #include <boost/asio/awaitable.hpp>
-#include <boost/asio/this_coro.hpp>
-#include <boost/asio/io_context.hpp>
-#include <boost/asio/ip/address.hpp>
-#include <boost/asio/ip/v6_only.hpp>
-#include <boost/asio/steady_timer.hpp>
-#include <boost/system/error_code.hpp>
-#include <boost/system/errc.hpp>
 #include <boost/asio/use_awaitable.hpp>
-#include <boost/asio/redirect_error.hpp>
-#include <boost/asio/bind_cancellation_slot.hpp>
-#include <boost/asio/experimental/channel_error.hpp>
 #include <boost/asio/experimental/awaitable_operators.hpp>
 
 #include "log.h"
 #include "config.h"
+#include "router.h"
 #include "protocol.h"
 #include "mux_codec.h"
 #include "net_utils.h"
 #include "mux_stream.h"
-#include "mux_connection.h"
 #include "timeout_io.h"
 #include "scoped_exit.h"
-#include "connection_context.h"
 #include "mux_protocol.h"
-#include "client_tunnel_pool.h"
+#include "context_pool.h"
+#include "mux_connection.h"
 #include "udp_socks_session.h"
+#include "client_tunnel_pool.h"
+#include "connection_context.h"
 
 namespace mux
 {
@@ -51,8 +37,8 @@ namespace
 
 constexpr std::uint8_t kNoStreamControl = 0;
 constexpr std::size_t kMaxUdpCacheEntries = 1024;
-constexpr std::uint64_t kUdpCacheTtlMs = 10 * 60 * 1000;
-constexpr std::uint64_t kUdpNegativeCacheTtlMs = 3 * 1000;
+constexpr std::uint64_t kUdpCacheTtlMs = 10UL * 60 * 1000;
+constexpr std::uint64_t kUdpNegativeCacheTtlMs = 3UL * 1000;
 constexpr std::size_t kMaxUdpPayload = 65507;
 constexpr std::size_t kTcpControlReadBufferSize = 1024;
 constexpr std::size_t kTcpControlIgnoreLimitBytes = 4096;
@@ -145,7 +131,7 @@ void evict_expired(Cache& cache, const std::uint64_t now_ms)
     cache.evict_while([&](const auto&, const auto& entry) { return entry.expires_at <= now_ms; });
 }
 
-void bind_local_udp_address(boost::asio::ip::tcp::socket& tcp_socket,
+void bind_local_udp_address(const boost::asio::ip::tcp::socket& tcp_socket,
                             boost::asio::ip::udp::socket& udp_socket,
                             const connection_context& ctx,
                             boost::asio::ip::address& local_addr,
@@ -177,7 +163,7 @@ void bind_local_udp_address(boost::asio::ip::tcp::socket& tcp_socket,
 }
 
 boost::asio::awaitable<proxy_udp_stream> connect_remote_address(const std::shared_ptr<client_tunnel_pool>& tunnel_pool,
-                                                                boost::asio::io_context& io_context,
+                                                                const std::uint32_t connect_timeout_sec,
                                                                 const connection_context& ctx,
                                                                 boost::system::error_code& ec)
 {
@@ -189,7 +175,7 @@ boost::asio::awaitable<proxy_udp_stream> connect_remote_address(const std::share
         co_return proxy_udp_stream{};
     }
 
-    const auto tunnel = co_await tunnel_pool->wait_for_tunnel(io_context, ec);
+    const auto tunnel = co_await tunnel_pool->wait_for_tunnel(connect_timeout_sec, ec);
     if (ec || tunnel == nullptr)
     {
         if (!ec)
@@ -329,28 +315,26 @@ namespace
 }    // namespace
 
 udp_socks_session::udp_socks_session(boost::asio::ip::tcp::socket socket,
-                                     boost::asio::io_context& io_context,
+                                     io_worker& worker,
                                      std::shared_ptr<client_tunnel_pool> tunnel_pool,
                                      std::shared_ptr<router> router,
                                      const std::uint32_t sid,
                                      const config& cfg,
-                                     task_group& group,
                                      std::shared_ptr<void> active_connection_guard)
     : cfg_(cfg),
-      group_(group),
-      io_context_(io_context),
-      timer_(io_context_),
-      idle_timer_(io_context_),
+      worker_(worker),
+      timer_(worker.io_context),
+      idle_timer_(worker.io_context),
       socket_(std::move(socket)),
-      udp_socket_(io_context_),
-      direct_udp_socket_v4_(io_context_),
-      direct_udp_socket_v6_(io_context_),
+      udp_socket_(worker.io_context),
+      direct_udp_socket_v4_(worker.io_context),
+      direct_udp_socket_v6_(worker.io_context),
       router_(std::move(router)),
       tunnel_pool_(std::move(tunnel_pool)),
       resolved_targets_(kMaxUdpCacheEntries),
       direct_peers_(kMaxUdpCacheEntries),
       active_connection_guard_(std::move(active_connection_guard)),
-      proxy_stream_channel_(io_context_, 1)
+      proxy_stream_channel_(worker.io_context, 1)
 {
     ctx_.new_trace_id();
     ctx_.conn_id(sid);
@@ -360,9 +344,7 @@ udp_socks_session::udp_socks_session(boost::asio::ip::tcp::socket socket,
 
 void udp_socks_session::start(const std::string& host, const std::uint16_t port)
 {
-    const auto self = shared_from_this();
-    boost::asio::co_spawn(
-        io_context_, [self, host, port]() -> boost::asio::awaitable<void> { co_await self->run(host, port); }, group_.adapt(boost::asio::detached));
+    worker_.group.spawn([self = shared_from_this(), host, port]() -> boost::asio::awaitable<void> { co_await self->run(host, port); });
 }
 
 void udp_socks_session::close_impl()
@@ -463,7 +445,7 @@ boost::asio::awaitable<void> udp_socks_session::run(const std::string& host, con
     LOG_CTX_INFO(ctx_, "{} finished", log_event::kSocks);
 }
 
-void udp_socks_session::apply_request_peer_constraint(const std::string& host, const std::uint16_t port)
+void udp_socks_session::apply_request_peer_constraint(const std::string& host, const std::uint16_t port) const
 {
     if (!host.empty() || port != 0)
     {
@@ -474,7 +456,7 @@ void udp_socks_session::apply_request_peer_constraint(const std::string& host, c
 void udp_socks_session::open_direct_udp_socket(boost::asio::ip::udp::socket& direct_socket,
                                                const boost::asio::ip::udp& protocol,
                                                const char* family,
-                                               boost::system::error_code& ec)
+                                               boost::system::error_code& ec) const
 {
     ec.clear();
     ec = direct_socket.open(protocol, ec);
@@ -586,19 +568,21 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> udp_socks_session::resolv
         }
     }
 
-    boost::asio::ip::udp::resolver resolver(io_context_);
+    boost::asio::ip::udp::resolver resolver(worker_.io_context);
     auto endpoints = co_await timeout_io::wait_resolve_with_timeout(resolver, host, std::to_string(port), cfg_.timeout.connect, ec);
     if (ec)
     {
         LOG_CTX_WARN(ctx_, "{} udp direct resolve failed {}:{} error {}", log_event::kRoute, host, port, ec.message());
-        resolved_targets_.put(key, endpoint_cache_entry{{}, now_ms_value + kUdpNegativeCacheTtlMs, ec, true});
+        resolved_targets_.put(
+            key, endpoint_cache_entry{.endpoint = {}, .expires_at = now_ms_value + kUdpNegativeCacheTtlMs, .last_error = ec, .negative = true});
         co_return boost::asio::ip::udp::endpoint{};
     }
     if (endpoints.begin() == endpoints.end())
     {
         ec = boost::asio::error::host_not_found;
         LOG_CTX_WARN(ctx_, "{} udp direct resolve empty {}:{}", log_event::kRoute, host, port);
-        resolved_targets_.put(key, endpoint_cache_entry{{}, now_ms_value + kUdpNegativeCacheTtlMs, ec, true});
+        resolved_targets_.put(
+            key, endpoint_cache_entry{.endpoint = {}, .expires_at = now_ms_value + kUdpNegativeCacheTtlMs, .last_error = ec, .negative = true});
         co_return boost::asio::ip::udp::endpoint{};
     }
 
@@ -619,11 +603,12 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> udp_socks_session::resolv
     {
         ec = boost::asio::error::address_family_not_supported;
         LOG_CTX_WARN(ctx_, "{} udp direct resolve no compatible endpoint {}:{}", log_event::kRoute, host, port);
-        resolved_targets_.put(key, endpoint_cache_entry{{}, now_ms_value + kUdpNegativeCacheTtlMs, ec, true});
+        resolved_targets_.put(
+            key, endpoint_cache_entry{.endpoint = {}, .expires_at = now_ms_value + kUdpNegativeCacheTtlMs, .last_error = ec, .negative = true});
         co_return boost::asio::ip::udp::endpoint{};
     }
     const auto expires_at = now_ms_value + kUdpCacheTtlMs;
-    resolved_targets_.put(key, endpoint_cache_entry{target, expires_at, {}, false});
+    resolved_targets_.put(key, endpoint_cache_entry{.endpoint = target, .expires_at = expires_at, .last_error = {}, .negative = false});
     co_return target;
 }
 
@@ -683,17 +668,18 @@ boost::asio::awaitable<void> udp_socks_session::direct_udp_socket_loop(boost::as
 {
     std::vector<std::uint8_t> buf(65535);
     boost::asio::ip::udp::endpoint sender;
+    boost::system::error_code ec;
     while (true)
     {
-        const auto [recv_ec, n] =
-            co_await direct_socket.async_receive_from(boost::asio::buffer(buf), sender, boost::asio::as_tuple(boost::asio::use_awaitable));
-        if (recv_ec)
+        const auto n =
+            co_await direct_socket.async_receive_from(boost::asio::buffer(buf), sender, boost::asio::redirect_error(boost::asio::use_awaitable, ec));
+        if (ec)
         {
-            if (!is_normal_close_error(recv_ec))
+            if (!is_normal_close_error(ec))
             {
-                LOG_CTX_WARN(ctx_, "{} direct udp receive error {}", log_event::kRoute, recv_ec.message());
-                boost::system::error_code close_ec;
-                direct_socket.close(close_ec);
+                LOG_CTX_WARN(ctx_, "{} direct udp receive error {}", log_event::kRoute, ec.message());
+                ec = direct_socket.close(ec);
+                (void)ec;
             }
             break;
         }
@@ -712,14 +698,13 @@ boost::asio::awaitable<void> udp_socks_session::direct_udp_socket_loop(boost::as
             continue;
         }
 
-        boost::system::error_code ec;
         co_await forward_direct_reply_to_client(sender, buf.data(), n, ec);
         if (ec)
         {
             if (!is_normal_close_error(ec))
             {
-                boost::system::error_code close_ec;
-                direct_socket.close(close_ec);
+                ec = direct_socket.close(ec);
+                (void)ec;
             }
             break;
         }
@@ -735,14 +720,12 @@ void udp_socks_session::start_direct_udp_socket_loops()
         if (!direct_udp_v4_running_)
         {
             direct_udp_v4_running_ = true;
-            boost::asio::co_spawn(
-                io_context_,
+            worker_.group.spawn(
                 [self]() -> boost::asio::awaitable<void>
                 {
                     co_await self->direct_udp_socket_loop(self->direct_udp_socket_v4_);
                     self->direct_udp_v4_running_ = false;
-                },
-                group_.adapt(boost::asio::detached));
+                });
         }
     }
     if (direct_udp_socket_v6_.is_open())
@@ -750,14 +733,12 @@ void udp_socks_session::start_direct_udp_socket_loops()
         if (!direct_udp_v6_running_)
         {
             direct_udp_v6_running_ = true;
-            boost::asio::co_spawn(
-                io_context_,
+            worker_.group.spawn(
                 [self]() -> boost::asio::awaitable<void>
                 {
                     co_await self->direct_udp_socket_loop(self->direct_udp_socket_v6_);
                     self->direct_udp_v6_running_ = false;
-                },
-                group_.adapt(boost::asio::detached));
+                });
         }
     }
 }
@@ -811,7 +792,7 @@ boost::asio::awaitable<bool> udp_socks_session::ensure_proxy_stream(boost::syste
         co_return true;
     }
 
-    const auto proxy_stream = co_await connect_remote_address(tunnel_pool_, io_context_, ctx_, ec);
+    const auto proxy_stream = co_await connect_remote_address(tunnel_pool_, cfg_.timeout.connect, ctx_, ec);
     if (ec || proxy_stream.stream == nullptr || proxy_stream.tunnel == nullptr)
     {
         if (!ec)

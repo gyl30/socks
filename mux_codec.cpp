@@ -1,11 +1,15 @@
-#include <string>
 #include <span>
+#include <atomic>
+#include <string>
 #include <vector>
-#include <string_view>
 #include <cstddef>
 #include <cstdint>
+#include <utility>
 #include <algorithm>
-#include <atomic>
+#include <string_view>
+
+#include <boost/system/errc.hpp>
+#include <boost/system/error_code.hpp>
 
 #include "log.h"
 #include "mux_codec.h"
@@ -36,10 +40,12 @@ std::atomic<std::uint64_t> g_decode_warn_total{0};
     {
         return false;
     }
-    return std::all_of(value.begin(), value.end(), [](const char c) {
-        const auto uc = static_cast<unsigned char>(c);
-        return uc >= 0x20 && uc <= 0x7e;
-    });
+    return std::ranges::all_of(value,
+                               [](const char c)
+                               {
+                                   const auto uc = static_cast<unsigned char>(c);
+                                   return uc >= 0x20 && uc <= 0x7e;
+                               });
 }
 
 }    // namespace
@@ -57,18 +63,13 @@ void mux_codec::encode_header(const frame_header& h, std::vector<std::uint8_t>& 
     buf.push_back(h.command);
 }
 
-bool mux_codec::decode_header(const std::uint8_t* buf, std::size_t len, frame_header& out)
+void mux_codec::decode_header(const std::uint8_t* buf, frame_header& out)
 {
-    if (len < 7)
-    {
-        return false;
-    }
     out.stream_id = (static_cast<std::uint32_t>(buf[0]) << 24) | (static_cast<std::uint32_t>(buf[1]) << 16) |
                     (static_cast<std::uint32_t>(buf[2]) << 8) | (static_cast<std::uint32_t>(buf[3]));
 
     out.length = static_cast<std::uint16_t>((static_cast<std::uint16_t>(buf[4]) << 8) | static_cast<std::uint16_t>(buf[5]));
     out.command = buf[6];
-    return true;
 }
 
 std::vector<std::uint8_t> mux_codec::encode_frame(const frame_header& h, std::span<const std::uint8_t> payload)
@@ -118,12 +119,7 @@ void mux_codec::decode_frames(std::vector<std::uint8_t>& pending,
     while (pending.size() - offset >= mux::kHeaderSize)
     {
         frame_header header;
-        if (!decode_header(pending.data() + static_cast<std::ptrdiff_t>(offset), mux::kHeaderSize, header))
-        {
-            pending.clear();
-            ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
-            return;
-        }
+        decode_header(pending.data() + static_cast<std::ptrdiff_t>(offset), header);
         if (header.length > mux::kMaxPayload)
         {
             pending.clear();

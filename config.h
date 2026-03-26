@@ -2,9 +2,7 @@
 #define CONFIG_H
 
 #include <string>
-#include <vector>
 #include <cstdint>
-#include <expected>
 #include <optional>
 
 namespace mux
@@ -91,28 +89,6 @@ struct config
     } reality;
 };
 
-struct config_error
-{
-    std::string path = "/";
-    std::string reason;
-};
-
-[[nodiscard]] constexpr std::uint32_t normalize_max_connections(const std::uint32_t max_connections)
-{
-    return (max_connections == 0) ? 1U : max_connections;
-}
-
-[[nodiscard]] constexpr std::uint32_t resolve_client_session_max_connections(const config::limits_t& limits)
-{
-    return normalize_max_connections(limits.client_session_max_connections == 0 ? limits.max_connections : limits.client_session_max_connections);
-}
-
-[[nodiscard]] constexpr std::uint32_t resolve_tunnel_connections(const config::limits_t& limits)
-{
-    return normalize_max_connections(limits.tunnel_connections == 0 ? limits.max_connections : limits.tunnel_connections);
-}
-
-[[nodiscard]] std::expected<config, config_error> parse_config_with_error(const std::string& filename);
 [[nodiscard]] std::optional<config> parse_config(const std::string& filename);
 [[nodiscard]] std::string dump_config(const config& cfg);
 [[nodiscard]] std::string dump_default_config();

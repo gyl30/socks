@@ -4,13 +4,14 @@
 #include <chrono>
 #include <cstdint>
 #include <cstring>
-#include <expected>
 #include <optional>
+#include <string_view>
 
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #else
+#include <netdb.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #endif
@@ -31,9 +32,12 @@
 
 #endif
 
+#include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/ip/udp.hpp>
 #include <boost/asio/ip/address.hpp>
-#include <boost/system/error_code.hpp>
+#include <boost/system/errc.hpp>
+#include <boost/system/detail/errc.hpp>
+#include <boost/system/detail/error_code.hpp>
 #include <boost/asio/ip/address_v4.hpp>
 #include <boost/asio/ip/address_v6.hpp>
 #include <boost/system/detail/system_category.hpp>
@@ -103,6 +107,46 @@ void log_original_dst_getsockopt_failure(const int level, const int option, cons
     const auto dropped = suppressed.exchange(0, std::memory_order_relaxed);
     LOG_INFO(
         "get original tcp dst getsockopt failed level {} opt {} errno {} error {} suppressed {}", level, option, ec.value(), ec.message(), dropped);
+}
+
+boost::system::error_code select_original_dst_error(const bool prefer_ipv6,
+                                                    const boost::system::error_code& v4_ec,
+                                                    const boost::system::error_code& v6_ec)
+{
+    if (prefer_ipv6)
+    {
+        if (v6_ec)
+        {
+            return v6_ec;
+        }
+        return v4_ec;
+    }
+
+    if (v4_ec)
+    {
+        return v4_ec;
+    }
+    return v6_ec;
+}
+
+bool try_get_original_dst_from_local_endpoint(boost::asio::ip::tcp::socket& socket,
+                                              boost::asio::ip::tcp::endpoint& endpoint,
+                                              boost::system::error_code& ec)
+{
+    ec.clear();
+    const auto local_endpoint = socket.local_endpoint(ec);
+    if (ec)
+    {
+        return false;
+    }
+    if (local_endpoint.port() == 0 || local_endpoint.address().is_unspecified())
+    {
+        ec = boost::system::errc::make_error_code(boost::system::errc::address_not_available);
+        return false;
+    }
+
+    endpoint = local_endpoint;
+    return true;
 }
 #endif
 
@@ -421,7 +465,7 @@ bool get_original_tcp_dst(boost::asio::ip::tcp::socket& socket, boost::asio::ip:
     const auto try_get_original_dst = [&](const int level, const int option, boost::system::error_code& op_ec) -> bool
     {
         sockaddr_storage addr{};
-        socklen_t addr_len = sizeof(addr);
+        decltype(addrinfo{}.ai_addrlen) addr_len = sizeof(addr);
         if (getsockopt(socket.native_handle(), level, option, &addr, &addr_len) != 0)
         {
             op_ec = boost::system::error_code(errno, boost::system::system_category());
@@ -431,7 +475,7 @@ bool get_original_tcp_dst(boost::asio::ip::tcp::socket& socket, boost::asio::ip:
         const auto udp_endpoint = endpoint_from_sockaddr(addr, addr_len);
         if (udp_endpoint.port() == 0)
         {
-            op_ec = boost::asio::error::address_family_not_supported;
+            op_ec = boost::system::errc::make_error_code(boost::system::errc::address_family_not_supported);
             return false;
         }
 
@@ -440,7 +484,6 @@ bool get_original_tcp_dst(boost::asio::ip::tcp::socket& socket, boost::asio::ip:
         return true;
     };
 
-    boost::system::error_code last_ec;
     if (prefer_ipv6)
     {
         boost::system::error_code v6_ec;
@@ -449,7 +492,6 @@ bool get_original_tcp_dst(boost::asio::ip::tcp::socket& socket, boost::asio::ip:
         {
             return true;
         }
-        last_ec = v6_ec;
         if (try_get_original_dst(SOL_IP, SO_ORIGINAL_DST, v4_ec))
         {
             return true;
@@ -458,7 +500,21 @@ bool get_original_tcp_dst(boost::asio::ip::tcp::socket& socket, boost::asio::ip:
         log_original_dst_getsockopt_failure(SOL_IPV6, IP6T_SO_ORIGINAL_DST, v6_ec);
         log_original_dst_getsockopt_failure(SOL_IP, SO_ORIGINAL_DST, v4_ec);
 #endif
-        ec = v4_ec ? v4_ec : last_ec;
+        boost::system::error_code local_ec;
+        if (try_get_original_dst_from_local_endpoint(socket, endpoint, local_ec))
+        {
+            LOG_INFO("get original tcp dst fallback to local endpoint {}:{} after getsockopt failure v6 {} v4 {}",
+                     endpoint.address().to_string(),
+                     endpoint.port(),
+                     v6_ec.message(),
+                     v4_ec.message());
+            return true;
+        }
+        ec = select_original_dst_error(true, v4_ec, v6_ec);
+        if (!ec)
+        {
+            ec = local_ec;
+        }
         return false;
     }
 
@@ -468,7 +524,6 @@ bool get_original_tcp_dst(boost::asio::ip::tcp::socket& socket, boost::asio::ip:
     {
         return true;
     }
-    last_ec = v4_ec;
     if (try_get_original_dst(SOL_IPV6, IP6T_SO_ORIGINAL_DST, v6_ec))
     {
         return true;
@@ -477,7 +532,21 @@ bool get_original_tcp_dst(boost::asio::ip::tcp::socket& socket, boost::asio::ip:
     log_original_dst_getsockopt_failure(SOL_IP, SO_ORIGINAL_DST, v4_ec);
     log_original_dst_getsockopt_failure(SOL_IPV6, IP6T_SO_ORIGINAL_DST, v6_ec);
 #endif
-    ec = v6_ec ? v6_ec : last_ec;
+    boost::system::error_code local_ec;
+    if (try_get_original_dst_from_local_endpoint(socket, endpoint, local_ec))
+    {
+        LOG_INFO("get original tcp dst fallback to local endpoint {}:{} after getsockopt failure v4 {} v6 {}",
+                 endpoint.address().to_string(),
+                 endpoint.port(),
+                 v4_ec.message(),
+                 v6_ec.message());
+        return true;
+    }
+    ec = select_original_dst_error(false, v4_ec, v6_ec);
+    if (!ec)
+    {
+        ec = local_ec;
+    }
     return false;
 #else
     (void)socket;

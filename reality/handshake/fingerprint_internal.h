@@ -1,7 +1,11 @@
 #ifndef REALITY_FINGERPRINT_INTERNAL_H
 #define REALITY_FINGERPRINT_INTERNAL_H
 
+#include <memory>
+#include <vector>
 #include <cstdint>
+
+#include "tls/core.h"
 #include "reality/handshake/fingerprint.h"
 
 namespace reality
@@ -15,15 +19,9 @@ struct fingerprint_instance
     std::vector<std::shared_ptr<extension_blueprint>> extensions;
 };
 
-[[nodiscard]] inline std::uint16_t fingerprint_client_version(const fingerprint_template& spec)
-{
-    return spec.client_version_;
-}
+[[nodiscard]] inline std::uint16_t fingerprint_client_version(const fingerprint_template& spec) { return spec.client_version_; }
 
-[[nodiscard]] inline const std::vector<std::uint16_t>& fingerprint_cipher_suites(const fingerprint_template& spec)
-{
-    return spec.cipher_suites_;
-}
+[[nodiscard]] inline const std::vector<std::uint16_t>& fingerprint_cipher_suites(const fingerprint_template& spec) { return spec.cipher_suites_; }
 
 [[nodiscard]] inline const std::vector<std::uint8_t>& fingerprint_compression_methods(const fingerprint_template& spec)
 {
@@ -35,10 +33,7 @@ struct fingerprint_instance
     return spec.extensions_;
 }
 
-[[nodiscard]] inline bool fingerprint_shuffle_extensions_enabled(const fingerprint_template& spec)
-{
-    return spec.shuffle_extensions_;
-}
+[[nodiscard]] inline bool fingerprint_shuffle_extensions_enabled(const fingerprint_template& spec) { return spec.shuffle_extensions_; }
 
 [[nodiscard]] bool fingerprint_has_key_share_group(const fingerprint_template& spec, std::uint16_t group);
 

@@ -1,39 +1,25 @@
 #ifndef UDP_SOCKS_SESSION_H
 #define UDP_SOCKS_SESSION_H
 
+
+
 #include <atomic>
 #include <memory>
 #include <string>
 #include <vector>
-#include <utility>
-#include <cstddef>
-#include <cstdint>
-#include <optional>
 
-#include <boost/asio/ip/tcp.hpp>
-#include <boost/asio/ip/udp.hpp>
 #include <boost/asio/awaitable.hpp>
-#include <boost/asio/io_context.hpp>
-#include <boost/asio/ip/address.hpp>
 #include <boost/asio/steady_timer.hpp>
-#include <boost/system/error_code.hpp>
-#include <boost/asio/cancellation_signal.hpp>
 #include <boost/asio/experimental/concurrent_channel.hpp>
 
-#include "config.h"
-#include "router.h"
-#include "protocol.h"
 #include "net_utils.h"
 #include "lru_cache.h"
-#include "task_group.h"
 #include "connection_context.h"
-#include "mux_connection.h"
+#include "client_tunnel_pool.h"
 
 namespace mux
 {
 
-class mux_stream;
-class client_tunnel_pool;
 namespace detail
 {
 std::vector<std::uint8_t> build_udp_associate_reply(const boost::asio::ip::address& local_addr, std::uint16_t udp_bind_port);
@@ -43,22 +29,20 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
 {
    public:
     udp_socks_session(boost::asio::ip::tcp::socket socket,
-                      boost::asio::io_context& io_context,
+                      io_worker& worker,
                       std::shared_ptr<client_tunnel_pool> tunnel_pool,
                       std::shared_ptr<router> router,
                       std::uint32_t sid,
                       const config& cfg,
-                      task_group& group,
                       std::shared_ptr<void> active_connection_guard = nullptr);
 
     void start(const std::string& host, std::uint16_t port);
-    void stop();
 
    private:
     boost::asio::awaitable<void> run(const std::string& host, std::uint16_t port);
 
    private:
-    void apply_request_peer_constraint(const std::string& host, std::uint16_t port);
+    void apply_request_peer_constraint(const std::string& host, std::uint16_t port) const;
     [[nodiscard]] boost::asio::awaitable<route_type> decide_udp_route(const socks_udp_header& header) const;
     [[nodiscard]] boost::asio::awaitable<bool> ensure_proxy_stream(boost::system::error_code& ec);
     [[nodiscard]] boost::asio::awaitable<boost::asio::ip::udp::endpoint> resolve_target_endpoint(const std::string& host,
@@ -78,7 +62,7 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
     void open_direct_udp_socket(boost::asio::ip::udp::socket& direct_socket,
                                 const boost::asio::ip::udp& protocol,
                                 const char* family,
-                                boost::system::error_code& ec);
+                                boost::system::error_code& ec) const;
     [[nodiscard]] boost::asio::ip::udp::socket* select_direct_udp_socket(const boost::asio::ip::udp::endpoint& target);
     void clear_proxy_stream_if_current(const std::shared_ptr<mux_stream>& stream);
     boost::asio::awaitable<void> wait_and_stream_to_udp_sock();
@@ -105,8 +89,7 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
 
     connection_context ctx_;
     const config& cfg_;
-    task_group& group_;
-    boost::asio::io_context& io_context_;
+    io_worker& worker_;
     boost::asio::steady_timer timer_;
     boost::asio::steady_timer idle_timer_;
     boost::asio::ip::tcp::socket socket_;

@@ -4,8 +4,6 @@
 #include <vector>
 #include <utility>
 #include <cstddef>
-#include <cstdint>
-#include <expected>
 #include <algorithm>
 
 extern "C"
@@ -13,11 +11,9 @@ extern "C"
 #include <openssl/types.h>
 }
 
-#include <boost/asio/error.hpp>
-#include <boost/asio/buffer.hpp>
+#include <boost/asio.hpp>
+#include <boost/asio/awaitable.hpp>
 #include <boost/asio/streambuf.hpp>
-#include <boost/system/errc.hpp>
-#include <boost/system/error_code.hpp>
 
 #include "tls/core.h"
 #include "tls/record_layer.h"
@@ -121,7 +117,6 @@ boost::asio::awaitable<void> reality_engine::process_available_records(const rec
             co_return;
         }
     }
-    co_return;
 }
 
 void reality_engine::try_decrypt_next_record(std::uint8_t& content_type, std::size_t& payload_len, boost::system::error_code& ec)

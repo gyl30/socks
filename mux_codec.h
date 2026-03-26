@@ -3,10 +3,6 @@
 
 #include <span>
 #include <vector>
-#include <cstddef>
-#include <cstdint>
-
-#include <boost/system/error_code.hpp>
 
 #include "mux_protocol.h"
 
@@ -17,7 +13,7 @@ class mux_codec
 {
    public:
     static void encode_header(const frame_header& h, std::vector<std::uint8_t>& buf);
-    static bool decode_header(const std::uint8_t* buf, std::size_t len, frame_header& out);
+    static void decode_header(const std::uint8_t* buf, frame_header& out);
     [[nodiscard]] static std::vector<std::uint8_t> encode_frame(const frame_header& h, std::span<const std::uint8_t> payload);
     static void decode_frames(std::vector<std::uint8_t>& pending,
                               std::span<const std::uint8_t> data,

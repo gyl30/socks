@@ -7,9 +7,8 @@
 #include <cstddef>
 #include <utility>
 
+#include <boost/asio.hpp>
 #include <boost/asio/awaitable.hpp>
-#include <boost/asio/cancellation_type.hpp>
-#include <boost/asio/io_context.hpp>
 #include <boost/asio/executor_work_guard.hpp>
 
 #include "task_group.h"
@@ -30,21 +29,15 @@ class io_context_pool
     io_context_pool(const io_context_pool&) = delete;
     io_context_pool& operator=(const io_context_pool&) = delete;
 
-    void run();
+    void run() const;
 
     void shutdown();
 
-    void stop();
-
     [[nodiscard]] io_worker& get_io_worker();
-
-    [[nodiscard]] boost::asio::io_context& get_io_context();
-
-    [[nodiscard]] task_group& get_task_group(boost::asio::io_context& io_context) const;
 
     void emit_all(boost::asio::cancellation_type type) const;
 
-    boost::asio::awaitable<void> async_wait_all() const;
+    [[nodiscard]] boost::asio::awaitable<void> async_wait_all() const;
 
    private:
     using work_guard_t = decltype(boost::asio::make_work_guard(std::declval<boost::asio::io_context&>()));

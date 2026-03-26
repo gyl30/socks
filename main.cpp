@@ -3,27 +3,23 @@
 #include <thread>
 #include <vector>
 #include <cstdio>
-#include <chrono>
 #include <csignal>
-#include <cstdint>
 #include <cstring>
 #include <iostream>
 #include <string_view>
 
-#include <boost/system/errc.hpp>
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/signal_set.hpp>
-#include <boost/system/detail/errc.hpp>
 
 #include "log.h"
 #include "config.h"
 #include "scoped_exit.h"
-#include "tls/crypto_util.h"
 #include "context_pool.h"
 #include "socks_client.h"
 #include "remote_server.h"
+#include "tls/crypto_util.h"
 
 #if SOCKS_HAS_TPROXY
 #include "tproxy_client.h"
@@ -51,31 +47,18 @@ void print_usage(std::string_view prog)
 
 void dump_x25519()
 {
-    std::uint8_t pub[32];
-    std::uint8_t priv[32];
-    if (!::tls::crypto_util::generate_x25519_keypair(pub, priv))
+    std::uint8_t public_key[32];
+    std::uint8_t private_key[32];
+    if (!::tls::crypto_util::generate_x25519_keypair(public_key, private_key))
     {
         std::fputs("failed to generate keypair\n", stdout);
         return;
     }
-    const std::vector<std::uint8_t> vec_priv(priv, priv + 32);
-    const std::vector<std::uint8_t> vec_pub(pub, pub + 32);
-    const std::string priv_hex = ::tls::crypto_util::bytes_to_hex(vec_priv);
-    const std::string pub_hex = ::tls::crypto_util::bytes_to_hex(vec_pub);
-    std::cout << "private key: " << priv_hex << '\n' << "public key:  " << pub_hex << '\n';
-}
-
-int parse_config_from_file(const std::string& file, mux::config& cfg)
-{
-    const auto parsed = mux::parse_config_with_error(file);
-    if (!parsed)
-    {
-        const auto& error = parsed.error();
-        std::cerr << "parse config failed path " << error.path << " reason " << error.reason << '\n';
-        return -1;
-    }
-    cfg = *parsed;
-    return 0;
+    const std::vector<std::uint8_t> vec_private_key(private_key, private_key + 32);
+    const std::vector<std::uint8_t> vec_public_key(public_key, public_key + 32);
+    const std::string private_key_hex = ::tls::crypto_util::bytes_to_hex(vec_private_key);
+    const std::string public_key_hex = ::tls::crypto_util::bytes_to_hex(vec_public_key);
+    std::cout << "private key: " << private_key_hex << '\n' << "public key:  " << public_key_hex << '\n';
 }
 
 int register_signal(boost::asio::signal_set& signals, const int signal, const char* signal_name)
@@ -105,8 +88,9 @@ std::uint32_t resolve_worker_threads(const mux::config& cfg)
     return 4;
 }
 
-int run_services(mux::io_context_pool& pool, const mux::config& cfg, runtime_services& services)
+runtime_services start_services(mux::io_context_pool& pool, const mux::config& cfg)
 {
+    runtime_services services;
     const bool is_client_mode = (cfg.mode == "client");
 
     if (cfg.mode == "server")
@@ -127,10 +111,10 @@ int run_services(mux::io_context_pool& pool, const mux::config& cfg, runtime_ser
         services.tproxy->start();
     }
 #endif
-    return 0;
+    return services;
 }
 
-void stop_services(runtime_services& services)
+void stop_services(const runtime_services& services, const mux::io_context_pool& pool)
 {
     if (services.socks != nullptr)
     {
@@ -146,56 +130,42 @@ void stop_services(runtime_services& services)
     {
         services.server->stop();
     }
+
+    pool.emit_all(boost::asio::cancellation_type::all);
 }
 
-boost::asio::awaitable<void> wait_services_stopped(runtime_services& services, mux::io_context_pool& pool)
+boost::asio::awaitable<void> wait_services_stopped(mux::io_context_pool& pool)
 {
-    if (services.socks != nullptr)
-    {
-        co_await services.socks->wait_stopped();
-    }
-#if SOCKS_HAS_TPROXY
-    if (services.tproxy != nullptr)
-    {
-        co_await services.tproxy->wait_stopped();
-    }
-#endif
-    if (services.server != nullptr)
-    {
-        co_await services.server->wait_stopped();
-    }
+    co_await pool.async_wait_all();
     pool.shutdown();
 }
 
 int run_with_config(const char* prog, const char* config_path)
 {
-    mux::config cfg;
     auto usage = make_scoped_exit([prog]() { print_usage(prog); });
-    if (parse_config_from_file(config_path, cfg) != 0)
+    auto cfg = mux::parse_config(config_path);
+    if (!cfg.has_value())
     {
         return -1;
     }
     usage.cancel();
 
-    init_log(cfg.log.file);
-    set_level(cfg.log.level);
+    init_log(cfg->log.file);
+    set_level(cfg->log.level);
     DEFER(shutdown_log());
 
-    if (cfg.mode != "client" && cfg.mode != "server")
+    if (cfg->mode != "client" && cfg->mode != "server")
     {
-        LOG_ERROR("not supported mode {}", cfg.mode);
+        LOG_ERROR("not supported mode {}", cfg->mode);
         return -1;
     }
-    mux::io_context_pool pool(resolve_worker_threads(cfg));
+    mux::io_context_pool pool(resolve_worker_threads(*cfg));
 
-    runtime_services services;
-    int ret = run_services(pool, cfg, services);
-    if (ret != 0)
-    {
-        return ret;
-    }
-    boost::asio::signal_set signals(pool.get_io_context());
-    ret = register_signal(signals, SIGINT, "sigint");
+    auto services = start_services(pool, *cfg);
+    auto& signal_worker = pool.get_io_worker();
+    auto& signal_io = signal_worker.io_context;
+    boost::asio::signal_set signals(signal_io);
+    int ret = register_signal(signals, SIGINT, "sigint");
     if (ret != 0)
     {
         return ret;
@@ -208,12 +178,12 @@ int run_with_config(const char* prog, const char* config_path)
     signals.async_wait(
         [&](boost::system::error_code, int)
         {
-            stop_services(services);
-            boost::asio::co_spawn(pool.get_io_context(), wait_services_stopped(services, pool), boost::asio::detached);
+            stop_services(services, pool);
+            boost::asio::co_spawn(signal_io, wait_services_stopped(pool), boost::asio::detached);
         });
 
     pool.run();
-    LOG_INFO("{} shutdown", cfg.mode);
+    LOG_INFO("{} shutdown", cfg->mode);
     return 0;
 }
 

@@ -1,7 +1,6 @@
 #ifndef REALITY_CLIENT_HELLO_BUILDER_H
 #define REALITY_CLIENT_HELLO_BUILDER_H
 
-#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>

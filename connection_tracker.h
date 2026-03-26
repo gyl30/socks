@@ -3,6 +3,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <memory>
 
 namespace mux
 {
@@ -26,6 +27,19 @@ class connection_tracker
    private:
     std::atomic<std::uint64_t> active_connections_{0};
 };
+
+[[nodiscard]] inline std::shared_ptr<void> acquire_active_connection_guard()
+{
+    connection_tracker::instance().acquire();
+    return {
+        new int(0),
+        [](void* ptr)
+        {
+            delete static_cast<int*>(ptr);
+            connection_tracker::instance().release();
+        },
+    };
+}
 
 }    // namespace mux
 

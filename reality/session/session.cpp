@@ -1,12 +1,11 @@
 #include <vector>
-#include <utility>
-#include <cstddef>
 #include <cstdint>
+#include <utility>
 
-#include <boost/asio/error.hpp>
 #include <boost/system/error_code.hpp>
 
 #include "constants.h"
+#include "reality/types.h"
 #include "tls/cipher_suite.h"
 #include "tls/key_schedule.h"
 #include "reality/session/engine.h"
@@ -40,9 +39,7 @@ bool validate_negotiated_params(const negotiated_params& negotiated, boost::syst
 }    // namespace
 
 reality_session::reality_session(negotiated_params negotiated, traffic_key_material read_keys, traffic_key_material write_keys)
-    : negotiated_(std::move(negotiated)),
-      read_keys_(std::move(read_keys)),
-      write_keys_(std::move(write_keys))
+    : negotiated_(std::move(negotiated)), read_keys_(std::move(read_keys)), write_keys_(std::move(write_keys))
 {
 }
 
@@ -65,24 +62,20 @@ reality_session reality_session::build_from_parts(const negotiated_params& negot
     }
     const auto key_len = suite->key_len;
 
-    auto client_keys =
-        ::tls::key_schedule::derive_traffic_keys(secrets.c_app_secret, ec, key_len, constants::crypto::kIvLen, negotiated.md);
+    auto client_keys = ::tls::key_schedule::derive_traffic_keys(secrets.c_app_secret, ec, key_len, constants::crypto::kIvLen, negotiated.md);
     if (ec)
     {
         return {};
     }
-    auto server_keys =
-        ::tls::key_schedule::derive_traffic_keys(secrets.s_app_secret, ec, key_len, constants::crypto::kIvLen, negotiated.md);
+    auto server_keys = ::tls::key_schedule::derive_traffic_keys(secrets.s_app_secret, ec, key_len, constants::crypto::kIvLen, negotiated.md);
     if (ec)
     {
         return {};
     }
 
-    auto read_keys = make_traffic_key_material(
-        session_perspective == perspective::kClient ? std::move(server_keys) : std::move(client_keys));
-    auto write_keys = make_traffic_key_material(
-        session_perspective == perspective::kClient ? std::move(client_keys) : std::move(server_keys));
-    return reality_session(negotiated, std::move(read_keys), std::move(write_keys));
+    auto read_keys = make_traffic_key_material(session_perspective == perspective::kClient ? std::move(server_keys) : std::move(client_keys));
+    auto write_keys = make_traffic_key_material(session_perspective == perspective::kClient ? std::move(client_keys) : std::move(server_keys));
+    return {negotiated, std::move(read_keys), std::move(write_keys)};
 }
 
 reality_session reality_session::from_client_handshake(const client_handshake_result& handshake_result, boost::system::error_code& ec)
@@ -97,11 +90,7 @@ reality_session reality_session::from_authenticated_session(const authenticated_
 
 mux::reality_engine reality_session::take_engine() &&
 {
-    return mux::reality_engine(std::move(read_keys_.key),
-                               std::move(read_keys_.iv),
-                               std::move(write_keys_.key),
-                               std::move(write_keys_.iv),
-                               negotiated_.cipher);
+    return {std::move(read_keys_.key), std::move(read_keys_.iv), std::move(write_keys_.key), std::move(write_keys_.iv), negotiated_.cipher};
 }
 
 }    // namespace reality
