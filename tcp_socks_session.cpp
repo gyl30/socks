@@ -27,7 +27,6 @@
 #include "router.h"
 #include "protocol.h"
 #include "upstream.h"
-#include "mux_tunnel.h"
 #include "timeout_io.h"
 #include "scoped_exit.h"
 #include "connection_context.h"

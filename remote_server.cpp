@@ -44,7 +44,6 @@ extern "C"
 #include "protocol.h"
 #include "mux_codec.h"
 #include "constants.h"
-#include "mux_tunnel.h"
 #include "connection_tracker.h"
 #include "tls/core.h"
 #include "tls/crypto_util.h"
@@ -408,23 +407,22 @@ boost::asio::awaitable<void> remote_server::handle(boost::asio::io_context& io,
         co_return;
     }
     LOG_CTX_INFO(ctx, "{} tunnel starting", log_event::kConnEstablished);
-    auto tunnel = std::make_shared<mux_tunnel_impl>(std::move(*s), io, std::move(session), cfg_, pool_.get_task_group(io), conn_id, ctx.trace_id());
+    auto connection = std::make_shared<mux_connection>(std::move(*s), io, std::move(session), cfg_, pool_.get_task_group(io), conn_id, ctx.trace_id());
 
     std::weak_ptr<remote_server> weak_self = weak_from_this();
-    std::weak_ptr<mux_tunnel_impl> weak_tunnel = tunnel;
-    tunnel->set_new_stream_cb(
-        [weak_self, weak_tunnel, ctx](mux_frame frame) -> boost::asio::awaitable<void>
+    std::weak_ptr<mux_connection> weak_connection = connection;
+    connection->set_new_stream_cb(
+        [weak_self, weak_connection, ctx](mux_frame frame) -> boost::asio::awaitable<void>
         {
             const auto self = weak_self.lock();
-            const auto tunnel_ref = weak_tunnel.lock();
-            if (self == nullptr || tunnel_ref == nullptr)
+            const auto connection_ref = weak_connection.lock();
+            if (self == nullptr || connection_ref == nullptr)
             {
                 co_return;
             }
-            co_await self->process_stream_request(tunnel_ref, ctx, std::move(frame));
+            co_await self->process_stream_request(connection_ref, ctx, std::move(frame));
         });
-    tunnel->run();
-    const auto connection = tunnel->connection();
+    connection->start();
     if (connection != nullptr)
     {
         co_await connection->async_wait_stopped();
@@ -444,11 +442,10 @@ static boost::asio::awaitable<void> send_stream_reset(const std::shared_ptr<mux_
     co_await connection->send_async_with_timeout(std::move(frame), kRstSendTimeoutSec, ec);
 }
 
-boost::asio::awaitable<void> remote_server::process_stream_request(std::shared_ptr<mux_tunnel_impl> tunnel,
+boost::asio::awaitable<void> remote_server::process_stream_request(std::shared_ptr<mux_connection> connection,
                                                                    const connection_context& ctx,
                                                                    mux_frame frame)
 {
-    const auto connection = tunnel->connection();
     if (connection == nullptr)
     {
         LOG_CTX_WARN(ctx, "{} stream {} dropped without connection", log_event::kMux, frame.h.stream_id);
@@ -498,7 +495,6 @@ boost::asio::awaitable<void> remote_server::process_stream_request(std::shared_p
                      syn.port,
                      frame.payload.size());
         const auto sess = std::make_shared<remote_tcp_session>(connection, frame.h.stream_id, stream_ctx, cfg_);
-        sess->set_manager(tunnel);
         boost::asio::co_spawn(connection_io,
                               [sess, syn]() mutable -> boost::asio::awaitable<void> { co_await sess->start(syn); },
                               connection_group.adapt(boost::asio::detached));
@@ -508,7 +504,6 @@ boost::asio::awaitable<void> remote_server::process_stream_request(std::shared_p
     {
         LOG_CTX_INFO(stream_ctx, "{} stream {} type udp associate associated via tcp", log_event::kMux, frame.h.stream_id);
         const auto sess = std::make_shared<remote_udp_session>(connection, frame.h.stream_id, stream_ctx, cfg_);
-        sess->set_manager(tunnel);
         boost::asio::co_spawn(connection_io,
                               [sess]() mutable -> boost::asio::awaitable<void> { co_await sess->start(); },
                               connection_group.adapt(boost::asio::detached));

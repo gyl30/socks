@@ -14,7 +14,6 @@
 
 #include "config.h"
 #include "mux_stream.h"
-#include "mux_tunnel.h"
 #include "connection_context.h"
 #include "mux_protocol.h"
 #include "mux_connection.h"
@@ -32,8 +31,6 @@ class remote_tcp_session : std::enable_shared_from_this<remote_tcp_session>
 
     [[nodiscard]] boost::asio::awaitable<void> start(const syn_payload& syn);
 
-    void set_manager(const std::shared_ptr<mux_tunnel_impl>& m) { manager_ = m; }
-
    private:
     [[nodiscard]] boost::asio::awaitable<void> run(const syn_payload& syn);
     [[nodiscard]] boost::asio::awaitable<void> upstream();
@@ -50,7 +47,6 @@ class remote_tcp_session : std::enable_shared_from_this<remote_tcp_session>
     boost::asio::steady_timer idle_timer_;
     std::shared_ptr<mux_stream> stream_;
     std::weak_ptr<mux_connection> connection_;
-    std::weak_ptr<mux_tunnel_impl> manager_;
     std::uint64_t last_activity_time_ms_{0};
 };
 

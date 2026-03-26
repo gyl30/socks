@@ -28,7 +28,6 @@
 #include "log.h"
 #include "config.h"
 #include "protocol.h"
-#include "mux_tunnel.h"
 #include "timeout_io.h"
 #include "connection_tracker.h"
 #include "connection_context.h"
