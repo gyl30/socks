@@ -36,7 +36,6 @@ extern "C"
 #include "log.h"
 #include "config.h"
 #include "constants.h"
-#include "statistics.h"
 #include "timeout_io.h"
 #include "tls/core.h"
 #include "tls/crypto_util.h"
@@ -796,6 +795,7 @@ void consume_handshake_plaintext(const std::vector<std::uint8_t>& plaintext,
 void validate_server_handshake_chain(const handshake_validation_state& validation_state, const std::string& sni, boost::system::error_code& ec)
 {
     ec.clear();
+    (void)sni;
     if (!validation_state.cert_checked || !validation_state.cert_verify_checked)
     {
         LOG_ERROR("server auth chain incomplete");
@@ -804,18 +804,12 @@ void validate_server_handshake_chain(const handshake_validation_state& validatio
     }
     if (!validation_state.reality_cert_verified && !validation_state.real_cert_chain_verified)
     {
-        auto& stats = mux::statistics::instance();
-        stats.inc_cert_verify_failures();
-        stats.inc_handshake_failure_by_sni(mux::statistics::handshake_failure_reason::kCertVerify, sni);
         LOG_ERROR("server certificate verification failed on all supported path");
         ec = boost::system::errc::make_error_code(boost::system::errc::permission_denied);
         return;
     }
     if (!validation_state.cert_verify_signature_checked)
     {
-        auto& stats = mux::statistics::instance();
-        stats.inc_cert_verify_failures();
-        stats.inc_handshake_failure_by_sni(mux::statistics::handshake_failure_reason::kCertVerify, sni);
         LOG_ERROR("server certificate verify signature check failed");
         ec = boost::system::errc::make_error_code(boost::system::errc::permission_denied);
         return;

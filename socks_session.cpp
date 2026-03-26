@@ -30,7 +30,7 @@
 #include "protocol.h"
 #include "mux_tunnel.h"
 #include "timeout_io.h"
-#include "statistics.h"
+#include "connection_tracker.h"
 #include "log_context.h"
 #include "socks_session.h"
 #include "tcp_socks_session.h"
@@ -48,7 +48,7 @@ std::shared_ptr<void> make_active_connection_guard()
             [](void* ptr)
             {
                 delete static_cast<int*>(ptr);
-                statistics::instance().dec_active_connections();
+                connection_tracker::instance().release();
             }};
 }
 
@@ -107,8 +107,7 @@ socks_session::socks_session(boost::asio::ip::tcp::socket socket,
 {
     ctx_.new_trace_id();
     ctx_.conn_id(sid);
-    statistics::instance().inc_total_connections();
-    statistics::instance().inc_active_connections();
+    connection_tracker::instance().acquire();
     active_guard_ = make_active_connection_guard();
 }
 
@@ -299,7 +298,6 @@ boost::asio::awaitable<bool> socks_session::do_password_auth()
     if (!success)
     {
         LOG_WARN("socks session {} auth failed", sid_);
-        statistics::instance().inc_auth_failures();
         boost::asio::steady_timer delay_timer(ioc_);
         delay_timer.expires_after(std::chrono::milliseconds(kAuthFailDelayMs));
         boost::system::error_code delay_ec;
