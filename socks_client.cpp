@@ -26,7 +26,7 @@
 #include "log.h"
 #include "config.h"
 #include "router.h"
-#include "statistics.h"
+#include "connection_tracker.h"
 #include "context_pool.h"
 #include "socks_client.h"
 #include "socks_session.h"
@@ -158,10 +158,8 @@ boost::asio::awaitable<void> socks_client::accept_loop()
             continue;
         }
 
-        auto& stats = statistics::instance();
-        if (stats.active_connections() >= resolve_client_session_max_connections(cfg_.limits))
+        if (connection_tracker::instance().active_connections() >= resolve_client_session_max_connections(cfg_.limits))
         {
-            stats.inc_connection_limit_rejected();
             boost::system::error_code close_ec;
             socket.shutdown(boost::asio::ip::tcp::socket::shutdown_both, close_ec);
             socket.close(close_ec);

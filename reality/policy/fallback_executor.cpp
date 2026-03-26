@@ -11,7 +11,6 @@
 
 #include "log.h"
 #include "config.h"
-#include "statistics.h"
 #include "timeout_io.h"
 #include "log_context.h"
 #include "scoped_exit.h"
@@ -32,44 +31,17 @@ void close_tcp_socket(boost::asio::ip::tcp::socket& socket)
 
 void record_fallback_resolve_failure(const boost::system::error_code& ec)
 {
-    auto& stats = mux::statistics::instance();
-    stats.inc_fallback_resolve_failures();
-    if (ec == boost::asio::error::timed_out)
-    {
-        stats.inc_fallback_resolve_timeouts();
-    }
-    else
-    {
-        stats.inc_fallback_resolve_errors();
-    }
+    (void)ec;
 }
 
 void record_fallback_connect_failure(const boost::system::error_code& ec)
 {
-    auto& stats = mux::statistics::instance();
-    stats.inc_fallback_connect_failures();
-    if (ec == boost::asio::error::timed_out)
-    {
-        stats.inc_fallback_connect_timeouts();
-    }
-    else
-    {
-        stats.inc_fallback_connect_errors();
-    }
+    (void)ec;
 }
 
 void record_fallback_write_failure(const boost::system::error_code& ec)
 {
-    auto& stats = mux::statistics::instance();
-    stats.inc_fallback_write_failures();
-    if (ec == boost::asio::error::timed_out)
-    {
-        stats.inc_fallback_write_timeouts();
-    }
-    else
-    {
-        stats.inc_fallback_write_errors();
-    }
+    (void)ec;
 }
 
 [[nodiscard]] const char* normalize_reason(const char* reason)

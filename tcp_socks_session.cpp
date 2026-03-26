@@ -28,7 +28,6 @@
 #include "protocol.h"
 #include "upstream.h"
 #include "mux_tunnel.h"
-#include "statistics.h"
 #include "timeout_io.h"
 #include "scoped_exit.h"
 #include "log_context.h"
@@ -107,7 +106,6 @@ boost::asio::awaitable<void> tcp_socks_session::run(const std::string& host, con
     if (backend == nullptr)
     {
         LOG_CTX_WARN(ctx_, "{} blocked host {}", log_event::kRoute, host);
-        statistics::instance().inc_routing_blocked();
         co_await reply_error(socks::kRepNotAllowed);
         co_return;
     }

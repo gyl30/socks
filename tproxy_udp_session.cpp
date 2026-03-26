@@ -36,7 +36,7 @@
 #include "protocol.h"
 #include "timeout_io.h"
 #include "mux_tunnel.h"
-#include "statistics.h"
+#include "connection_tracker.h"
 #include "task_group.h"
 #include "log_context.h"
 #include "mux_protocol.h"
@@ -91,7 +91,7 @@ std::shared_ptr<void> make_active_connection_guard()
             [](void* ptr)
             {
                 delete static_cast<int*>(ptr);
-                statistics::instance().dec_active_connections();
+                connection_tracker::instance().release();
             }};
 }
 
@@ -220,7 +220,7 @@ tproxy_udp_session::tproxy_udp_session(boost::asio::io_context& io_context,
       packet_channel_(io_context_, kPacketChannelCapacity),
       reply_sockets_(kMaxReplySockets)
 {
-    statistics::instance().inc_active_connections();
+    connection_tracker::instance().acquire();
     active_guard_ = make_active_connection_guard();
     stream_close_command_.store(mux::kCmdFin, std::memory_order_relaxed);
 }

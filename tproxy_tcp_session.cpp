@@ -26,7 +26,7 @@
 #include "router.h"
 #include "upstream.h"
 #include "net_utils.h"
-#include "statistics.h"
+#include "connection_tracker.h"
 #include "timeout_io.h"
 #include "log_context.h"
 #include "client_tunnel_pool.h"
@@ -44,7 +44,7 @@ std::shared_ptr<void> make_active_connection_guard()
             [](void* ptr)
             {
                 delete static_cast<int*>(ptr);
-                statistics::instance().dec_active_connections();
+                connection_tracker::instance().release();
             }};
 }
 
@@ -69,7 +69,7 @@ tproxy_tcp_session::tproxy_tcp_session(boost::asio::ip::tcp::socket socket,
     ctx_.new_trace_id();
     ctx_.conn_id(sid);
     last_activity_time_ms_ = timeout_io::now_ms();
-    statistics::instance().inc_active_connections();
+    connection_tracker::instance().acquire();
     active_guard_ = make_active_connection_guard();
 }
 
@@ -189,7 +189,6 @@ boost::asio::awaitable<std::pair<route_type, std::shared_ptr<upstream>>> tproxy_
     if (router_ == nullptr)
     {
         LOG_CTX_WARN(ctx_, "{} router unavailable", log_event::kRoute);
-        statistics::instance().inc_routing_blocked();
         co_return std::make_pair(route_type::kBlock, std::shared_ptr<upstream>(nullptr));
     }
 
@@ -197,7 +196,6 @@ boost::asio::awaitable<std::pair<route_type, std::shared_ptr<upstream>>> tproxy_
     if (route == route_type::kBlock)
     {
         LOG_CTX_WARN(ctx_, "{} blocked host {}", log_event::kRoute, addr.to_string());
-        statistics::instance().inc_routing_blocked();
         co_return std::make_pair(route, std::shared_ptr<upstream>(nullptr));
     }
     if (route == route_type::kDirect)

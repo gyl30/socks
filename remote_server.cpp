@@ -45,7 +45,7 @@ extern "C"
 #include "mux_codec.h"
 #include "constants.h"
 #include "mux_tunnel.h"
-#include "statistics.h"
+#include "connection_tracker.h"
 #include "tls/core.h"
 #include "tls/crypto_util.h"
 #include "log_context.h"
@@ -74,7 +74,7 @@ std::shared_ptr<void> make_active_connection_guard()
             [](void* ptr)
             {
                 delete static_cast<int*>(ptr);
-                statistics::instance().dec_active_connections();
+                connection_tracker::instance().release();
             }};
 }
 
@@ -147,7 +147,6 @@ boost::asio::awaitable<void> remote_server::fallback_to_target_site(reality::fal
     const auto target = resolve_fallback_target(cfg_);
     if (!target.has_value())
     {
-        statistics::instance().inc_fallback_no_target();
         LOG_CTX_WARN(ctx, "{} reason {} no fallback target", log_event::kFallback, reason);
         co_return;
     }
@@ -325,10 +324,8 @@ boost::asio::awaitable<void> remote_server::accept_loop()
             continue;
         }
 
-        auto& stats = statistics::instance();
-        if (stats.active_connections() >= cfg_.limits.max_connections)
+        if (connection_tracker::instance().active_connections() >= cfg_.limits.max_connections)
         {
-            stats.inc_connection_limit_rejected();
             close_tcp_socket(*s);
             LOG_WARN("remote server connection limit reached drop");
             continue;
@@ -338,7 +335,7 @@ boost::asio::awaitable<void> remote_server::accept_loop()
         ec = s->set_option(boost::asio::ip::tcp::no_delay(true), ec);
         (void)ec;
         const std::uint32_t conn_id = next_conn_id_++;
-        stats.inc_active_connections();
+        connection_tracker::instance().acquire();
         boost::asio::co_spawn(
             io,
             [self = shared_from_this(), io = &io, s, conn_id]() -> boost::asio::awaitable<void>

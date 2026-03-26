@@ -35,7 +35,6 @@ extern "C"
 #include "config.h"
 #include "mux_stream.h"
 #include "timeout_io.h"
-#include "statistics.h"
 #include "log_context.h"
 #include "mux_protocol.h"
 #include "mux_connection.h"
@@ -124,11 +123,10 @@ mux_connection::mux_connection(boost::asio::ip::tcp::socket socket,
     }
     mux_dispatcher_.set_context(ctx_);
     mux_dispatcher_.set_max_buffer(cfg_.limits.max_buffer);
-    statistics::instance().inc_active_mux_sessions();
     LOG_CTX_INFO(ctx_, "{} mux initialized {}", log_event::kConnInit, ctx_.connection_info());
 }
 
-mux_connection::~mux_connection() { statistics::instance().dec_active_mux_sessions(); }
+mux_connection::~mux_connection() = default;
 
 std::uint64_t mux_connection::reserve_pending(const std::uint64_t bytes)
 {
@@ -304,7 +302,6 @@ boost::asio::awaitable<void> mux_connection::handle_unknown_stream(mux::frame_he
         }
         if (stream_limit_reached)
         {
-            statistics::instance().inc_stream_limit_rejected();
             LOG_WARN("mux {} reject stream {} max_streams {}", cid_, header.stream_id, cfg_.limits.max_streams);
             mux_frame rst;
             rst.h.command = mux::kCmdRst;
@@ -538,7 +535,6 @@ boost::asio::awaitable<void> mux_connection::read_loop()
         }
 
         read_bytes_ += n;
-        statistics::instance().add_bytes_read(n);
         last_read_time_ms_ = timeout_io::now_ms();
         reality_engine_.commit_read(n);
 
@@ -622,7 +618,6 @@ boost::asio::awaitable<void> mux_connection::write_loop()
             break;
         }
         write_bytes_ += n;
-        statistics::instance().add_bytes_written(n);
         last_write_time_ms_ = timeout_io::now_ms();
         if (msg.h.stream_id != mux::kStreamIdHeartbeat)
         {
@@ -742,7 +737,6 @@ std::shared_ptr<mux_stream> mux_connection::create_stream()
         std::lock_guard<std::mutex> lock(mutex_);
         if (cfg_.limits.max_streams > 0 && streams_.size() >= cfg_.limits.max_streams)
         {
-            statistics::instance().inc_stream_limit_rejected();
             LOG_WARN("mux {} create stream rejected max_streams {}", cid_, cfg_.limits.max_streams);
             return nullptr;
         }

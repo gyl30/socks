@@ -31,7 +31,6 @@ extern "C"
 #include "log.h"
 #include "config.h"
 #include "constants.h"
-#include "statistics.h"
 #include "timeout_io.h"
 #include "tls/core.h"
 #include "tls/ch_parser.h"
@@ -218,7 +217,6 @@ boost::asio::awaitable<const char*> read_client_hello_handshake(boost::asio::ip:
         {
             if (ccs_count >= kMaxTlsCompatCcsRecords)
             {
-                mux::statistics::instance().inc_client_finished_failures();
                 LOG_CTX_ERROR(ctx, "{} too many ccs records {}", mux::log_event::kHandshake, ccs_count);
                 ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
                 co_return "tls13_ccs_too_many";
@@ -226,7 +224,6 @@ boost::asio::awaitable<const char*> read_client_hello_handshake(boost::asio::ip:
             ccs_count++;
             if (record_len != 1)
             {
-                mux::statistics::instance().inc_client_finished_failures();
                 LOG_CTX_ERROR(ctx, "{} invalid ccs length {}", mux::log_event::kHandshake, record_len);
                 ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
                 co_return "tls13_ccs_len_invalid";
@@ -234,7 +231,6 @@ boost::asio::awaitable<const char*> read_client_hello_handshake(boost::asio::ip:
             co_await read_tls_record_body(socket, record_buf, record_len, handshake_start_ms, timeout, ec);
             if (ec)
             {
-                mux::statistics::instance().inc_client_finished_failures();
                 LOG_CTX_ERROR(ctx, "{} read tls record body failed {}", mux::log_event::kHandshake, ec.message());
                 co_return "read_tls_record_body_failed";
             }
@@ -243,7 +239,6 @@ boost::asio::awaitable<const char*> read_client_hello_handshake(boost::asio::ip:
             const auto ccs_body = record_buf[kTlsRecordHeaderSize];
             if (!::tls::is_valid_tls13_compat_ccs(header, ccs_body))
             {
-                mux::statistics::instance().inc_client_finished_failures();
                 LOG_CTX_ERROR(ctx, "{} invalid ccs body {}", mux::log_event::kHandshake, ccs_body);
                 ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
                 co_return "tls13_ccs_body_invalid";
@@ -280,7 +275,6 @@ boost::asio::awaitable<const char*> read_client_hello_handshake(boost::asio::ip:
         co_await read_tls_record_body(socket, record_buf, record_len, handshake_start_ms, timeout, ec);
         if (ec)
         {
-            mux::statistics::instance().inc_client_finished_failures();
             LOG_CTX_ERROR(ctx, "{} read tls record body failed {}", mux::log_event::kHandshake, ec.message());
             co_return "read_tls_record_body_failed";
         }
@@ -432,10 +426,9 @@ bool verify_auth_payload_fields(const auth_payload& auth,
                                 const server_handshake_context& handshake_ctx,
                                 const server_handshake_state& state)
 {
+    (void)state;
     if (auth.version_x != 1 || auth.version_y != 0 || auth.version_z != 0)
     {
-        auto& stats = mux::statistics::instance();
-        stats.inc_auth_failures();
         LOG_CTX_WARN(handshake_ctx.ctx, "{} auth fail version mismatch {}.{}.{}", mux::log_event::kAuth, auth.version_x, auth.version_y, auth.version_z);
         return false;
     }
@@ -455,10 +448,6 @@ bool verify_auth_payload_fields(const auth_payload& auth,
     std::ranges::copy(short_id_bytes, expected_short_id.begin());
     if (CRYPTO_memcmp(auth.short_id.data(), expected_short_id.data(), expected_short_id.size()) != 0)
     {
-        auto& stats = mux::statistics::instance();
-        stats.inc_auth_failures();
-        stats.inc_auth_short_id_failures();
-        stats.inc_handshake_failure_by_sni(mux::statistics::handshake_failure_reason::kShortId, state.client_hello.sni);
         LOG_CTX_WARN(handshake_ctx.ctx, "{} auth fail short id mismatch", mux::log_event::kAuth);
         return false;
     }
@@ -467,6 +456,7 @@ bool verify_auth_payload_fields(const auth_payload& auth,
 
 bool verify_auth_timestamp(const std::uint32_t timestamp, const server_handshake_context& handshake_ctx, const server_handshake_state& state)
 {
+    (void)state;
     const auto now_tp = std::chrono::system_clock::now();
     const auto ts_tp = std::chrono::system_clock::time_point(std::chrono::seconds(timestamp));
     const auto diff = (now_tp > ts_tp) ? (now_tp - ts_tp) : (ts_tp - now_tp);
@@ -474,10 +464,6 @@ bool verify_auth_timestamp(const std::uint32_t timestamp, const server_handshake
     const auto max_diff = std::chrono::seconds(constants::auth::kMaxClockSkewSec);
     if (diff > max_diff)
     {
-        auto& stats = mux::statistics::instance();
-        stats.inc_auth_failures();
-        stats.inc_auth_clock_skew_failures();
-        stats.inc_handshake_failure_by_sni(mux::statistics::handshake_failure_reason::kClockSkew, state.client_hello.sni);
         LOG_CTX_WARN(handshake_ctx.ctx, "{} clock skew too large diff {}s", mux::log_event::kAuth, diff_sec);
         return false;
     }
@@ -488,10 +474,6 @@ bool verify_replay_guard(mux::replay_cache& replay_cache, const server_handshake
 {
     if (!replay_cache.check_and_insert(state.client_hello.session_id))
     {
-        auto& stats = mux::statistics::instance();
-        stats.inc_auth_failures();
-        stats.inc_auth_replay_failures();
-        stats.inc_handshake_failure_by_sni(mux::statistics::handshake_failure_reason::kReplay, state.client_hello.sni);
         LOG_CTX_WARN(handshake_ctx.ctx, "{} replay attack detected sni {}", mux::log_event::kAuth, state.client_hello.sni);
         return false;
     }
@@ -845,7 +827,6 @@ boost::asio::awaitable<void> consume_tls13_compat_ccs(boost::asio::ip::tcp::sock
     }
     if (!::tls::is_valid_tls13_compat_ccs(header, ccs_body[0]))
     {
-        mux::statistics::instance().inc_client_finished_failures();
         LOG_CTX_ERROR(ctx, "{} invalid ccs body {}", mux::log_event::kHandshake, ccs_body[0]);
         ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
         co_return;
@@ -876,7 +857,6 @@ boost::asio::awaitable<void> read_tls_record_header_allow_ccs(boost::asio::ip::t
     {
         if (ccs_count >= kMaxTlsCompatCcsRecords)
         {
-            mux::statistics::instance().inc_client_finished_failures();
             LOG_CTX_ERROR(ctx, "{} too many ccs records {}", mux::log_event::kHandshake, ccs_count);
             ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
             co_return;
@@ -886,7 +866,6 @@ boost::asio::awaitable<void> read_tls_record_header_allow_ccs(boost::asio::ip::t
         const auto ccs_len = static_cast<std::uint16_t>((header[3] << 8) | header[4]);
         if (ccs_len != 1)
         {
-            mux::statistics::instance().inc_client_finished_failures();
             LOG_CTX_ERROR(ctx, "{} invalid ccs length {}", mux::log_event::kHandshake, ccs_len);
             ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
             co_return;
@@ -928,7 +907,6 @@ bool verify_client_finished_plaintext(const std::vector<std::uint8_t>& plaintext
 {
     if (content_type != ::tls::kContentTypeHandshake || plaintext.size() < 4 || plaintext[0] != 0x14)
     {
-        mux::statistics::instance().inc_client_finished_failures();
         LOG_CTX_ERROR(ctx, "{} client finished verification failed type {}", mux::log_event::kHandshake, static_cast<int>(content_type));
         return false;
     }
@@ -937,13 +915,11 @@ bool verify_client_finished_plaintext(const std::vector<std::uint8_t>& plaintext
         (static_cast<std::uint32_t>(plaintext[1]) << 16) | (static_cast<std::uint32_t>(plaintext[2]) << 8) | static_cast<std::uint32_t>(plaintext[3]);
     if (msg_len != expected_verify.size() || plaintext.size() != 4 + msg_len)
     {
-        mux::statistics::instance().inc_client_finished_failures();
         LOG_CTX_ERROR(ctx, "{} client finished length invalid {}", mux::log_event::kHandshake, plaintext.size());
         return false;
     }
     if (CRYPTO_memcmp(plaintext.data() + 4, expected_verify.data(), expected_verify.size()) != 0)
     {
-        mux::statistics::instance().inc_client_finished_failures();
         LOG_CTX_ERROR(ctx, "{} client finished hmac verification failed", mux::log_event::kHandshake);
         return false;
     }
@@ -1401,7 +1377,6 @@ boost::asio::awaitable<bool> complete_authenticated_handshake(server_handshake_c
     const auto body_len = static_cast<std::uint16_t>((header[3] << 8) | header[4]);
     if (body_len > kMaxTlsCiphertextRecordLen)
     {
-        mux::statistics::instance().inc_client_finished_failures();
         LOG_CTX_ERROR(ctx, "{} client finished record too large {}", mux::log_event::kHandshake, body_len);
         ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
         co_return false;
@@ -1420,7 +1395,6 @@ boost::asio::awaitable<bool> complete_authenticated_handshake(server_handshake_c
         ::tls::record_layer::decrypt_record(plan.crypto.cipher, plan.crypto.c_hs_keys.first, plan.crypto.c_hs_keys.second, 0, record, content_type, ec);
     if (ec)
     {
-        mux::statistics::instance().inc_client_finished_failures();
         LOG_CTX_ERROR(ctx, "{} client finished decrypt failed {}", mux::log_event::kHandshake, ec.message());
         co_return false;
     }
@@ -1429,7 +1403,6 @@ boost::asio::awaitable<bool> complete_authenticated_handshake(server_handshake_c
         plan.crypto.hs_keys.client_handshake_traffic_secret, state.transcript.finish(), plan.crypto.md, ec);
     if (ec)
     {
-        mux::statistics::instance().inc_client_finished_failures();
         LOG_CTX_ERROR(ctx, "{} client finished verify data failed {}", mux::log_event::kHandshake, ec.message());
         co_return false;
     }

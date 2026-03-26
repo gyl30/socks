@@ -2,7 +2,6 @@
 #include <utility>
 
 #include "log.h"
-#include "statistics.h"
 #include "timeout_io.h"
 #include "log_context.h"
 #include "reality/policy/fallback_gate.h"
@@ -78,7 +77,6 @@ fallback_gate::budget_ticket fallback_gate::try_acquire(const mux::connection_co
 
     if (active_fallbacks_ >= options_.max_concurrent)
     {
-        mux::statistics::instance().inc_fallback_rate_limited();
         LOG_CTX_WARN(ctx,
                      "{} reason {} stage rate_limit mode concurrency active {} limit {}",
                      mux::log_event::kFallback,
@@ -107,7 +105,6 @@ fallback_gate::budget_ticket fallback_gate::try_acquire(const mux::connection_co
         }
         if (fallback_attempts_by_remote_.size() >= options_.max_tracker_entries)
         {
-            mux::statistics::instance().inc_fallback_rate_limited();
             LOG_CTX_WARN(ctx,
                          "{} reason {} stage rate_limit mode tracker_capacity entries {} limit {}",
                          mux::log_event::kFallback,
@@ -130,7 +127,6 @@ fallback_gate::budget_ticket fallback_gate::try_acquire(const mux::connection_co
 
     if (attempts.size() >= options_.max_attempts_per_window_per_source)
     {
-        mux::statistics::instance().inc_fallback_rate_limited();
         LOG_CTX_WARN(ctx,
                      "{} reason {} stage rate_limit mode per_source remote {} attempts {} window_sec {} limit {}",
                      mux::log_event::kFallback,

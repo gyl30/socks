@@ -44,7 +44,6 @@ extern "C"
 #include "constants.h"
 #include "net_utils.h"
 #include "mux_tunnel.h"
-#include "statistics.h"
 #include "timeout_io.h"
 #include "tls/crypto_util.h"
 #include "log_context.h"
@@ -382,7 +381,6 @@ boost::asio::awaitable<client_tunnel_pool::handshake_result> client_tunnel_pool:
     ec.clear();
     if (!socket)
     {
-        statistics::instance().inc_client_tunnel_pool_handshake_errors();
         LOG_CTX_ERROR(ctx, "{} stage handshake target {}:{} error invalid_socket", log_event::kHandshake, remote_host_, remote_port_);
         ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
         co_return handshake_result{};
@@ -391,15 +389,6 @@ boost::asio::awaitable<client_tunnel_pool::handshake_result> client_tunnel_pool:
     auto handshake_res = co_await handshaker.run(*socket, ctx, ec);
     if (ec)
     {
-        auto& stats = statistics::instance();
-        if (ec == boost::asio::error::timed_out)
-        {
-            stats.inc_client_tunnel_pool_handshake_timeouts();
-        }
-        else
-        {
-            stats.inc_client_tunnel_pool_handshake_errors();
-        }
         LOG_CTX_ERROR(ctx, "{} stage handshake target {}:{} error {}", log_event::kHandshake, remote_host_, remote_port_, ec.message());
     }
     co_return handshake_res;
@@ -574,15 +563,6 @@ boost::asio::awaitable<void> client_tunnel_pool::tcp_connect_remote(boost::asio:
     const auto resolve_endpoints = co_await timeout_io::wait_resolve_with_timeout(resolver, remote_host_, remote_port_, timeout_sec, ec);
     if (ec)
     {
-        auto& stats = statistics::instance();
-        if (ec == boost::asio::error::timed_out)
-        {
-            stats.inc_client_tunnel_pool_resolve_timeouts();
-        }
-        else
-        {
-            stats.inc_client_tunnel_pool_resolve_errors();
-        }
         co_return;
     }
 
@@ -602,15 +582,12 @@ boost::asio::awaitable<void> client_tunnel_pool::tcp_connect_remote(boost::asio:
         }
     }
 
-    auto& stats = statistics::instance();
     if (ec == boost::asio::error::timed_out)
     {
-        stats.inc_client_tunnel_pool_connect_timeouts();
         LOG_CTX_ERROR(ctx, "{} stage connect target {}:{} timeout {}s", log_event::kConnInit, remote_host_, remote_port_, timeout_sec);
     }
     else
     {
-        stats.inc_client_tunnel_pool_connect_errors();
         LOG_CTX_ERROR(ctx, "{} stage connect target {}:{} error {}", log_event::kConnInit, remote_host_, remote_port_, ec.message());
     }
     co_return;
