@@ -141,10 +141,6 @@ def build_server_config(tmp_dir, server_port, private_key, public_key, short_id,
         },
         "timeout": timeouts,
         "limits": limits,
-        "monitor": {
-            "enabled": False,
-            "port": 0,
-        },
     }
 
 
@@ -188,10 +184,6 @@ def build_client_config(tmp_dir, socks_port, server_port, public_key, short_id, 
             "max_interval": 6,
             "min_padding": 32,
             "max_padding": 64,
-        },
-        "monitor": {
-            "enabled": False,
-            "port": 0,
         },
     }
 

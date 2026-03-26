@@ -45,8 +45,7 @@ REFLECT_STRUCT(mux::config::limits_t,
                max_streams,
                max_handshake_records);
 REFLECT_STRUCT(mux::config::heartbeat_t, enabled, idle_timeout, min_interval, max_interval, min_padding, max_padding);
-REFLECT_STRUCT(mux::config::monitor_t, enabled, port);
-REFLECT_STRUCT(mux::config, mode, workers, log, inbound, outbound, socks, tproxy, timeout, reality, limits, heartbeat, monitor);
+REFLECT_STRUCT(mux::config, mode, workers, log, inbound, outbound, socks, tproxy, timeout, reality, limits, heartbeat);
 
 }    // namespace reflect
 

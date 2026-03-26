@@ -14,11 +14,6 @@ package "Infrastructure" {
         + async_wait()
     }
 
-    class monitor_server {
-        + start()
-        + stop()
-        - accept_loop()
-    }
 }
 
 package "Client Inbound" {
@@ -208,9 +203,6 @@ remote_server ..> remote_udp_session : on SYN UDP_ASSOCIATE
 
 remote_tcp_session ..> mux_connection
 remote_udp_session ..> mux_connection
-
-monitor_server o-- io_context_pool
-monitor_server *-- task_group
 
 note right of tproxy_client
   TPROXY TCP/UDP 均已实现。

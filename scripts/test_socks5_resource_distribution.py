@@ -411,7 +411,6 @@ def build_server_config(tmp_dir, server_port, private_key, public_key, short_id,
             "max_streams": args.server_max_streams,
             "max_handshake_records": args.server_max_handshake_records,
         },
-        "monitor": {"enabled": False, "port": 0},
     }
 
 
@@ -468,7 +467,6 @@ def build_client_config(tmp_dir, socks_port, server_port, public_key, short_id, 
             "min_padding": args.heartbeat_min_padding,
             "max_padding": args.heartbeat_max_padding,
         },
-        "monitor": {"enabled": False, "port": 0},
     }
 
 

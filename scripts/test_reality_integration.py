@@ -264,10 +264,6 @@ def main():
                 "max_streams": 256,
                 "max_handshake_records": 256,
             },
-            "monitor": {
-                "enabled": False,
-                "port": 0,
-            },
         }
 
         client_cfg = {
@@ -319,10 +315,6 @@ def main():
                 "max_interval": 45,
                 "min_padding": 32,
                 "max_padding": 128,
-            },
-            "monitor": {
-                "enabled": False,
-                "port": 0,
             },
         }
 
