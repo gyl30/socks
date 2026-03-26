@@ -34,7 +34,7 @@ class lru_cache
         items_.clear();
     }
 
-    [[nodiscard]] bool contains(const Key& key) const { return index_.find(key) != index_.end(); }
+    [[nodiscard]] bool contains(const Key& key) const { return index_.contains(key); }
 
     // 读取并更新 LRU 顺序，返回值指针在后续 put/erase 后可能失效
     [[nodiscard]] Value* get(const Key& key)
@@ -108,14 +108,15 @@ class lru_cache
 
     bool erase(const Key& key)
     {
-        auto it = index_.find(key);
-        if (it == index_.end())
+        const auto it = index_.find(key);
+        const bool found = it != index_.end();
+        if (!found)
         {
-            return false;
+            return found;
         }
         items_.erase(it->second);
         index_.erase(it);
-        return true;
+        return found;
     }
 
     // Evict from LRU tail while predicate returns true.
@@ -141,7 +142,7 @@ class lru_cache
     std::size_t evict_if(Pred&& pred)
     {
         std::size_t count = 0;
-        for (auto it = items_.begin(); it != items_.end(); )
+        for (auto it = items_.begin(); it != items_.end();)
         {
             if (!pred(it->key, it->value))
             {
@@ -162,7 +163,7 @@ class lru_cache
         Value value;
     };
 
-    void touch(typename std::list<node>::iterator it)
+    void touch(std::list<node>::iterator it)
     {
         if (it != items_.begin())
         {

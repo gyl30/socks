@@ -2,7 +2,6 @@
 #define REALITY_FINGERPRINT_H
 
 #include <array>
-#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -22,7 +21,7 @@ enum class fingerprint_type : std::uint8_t
     kChrome120Mlkem768,
     kFirefox120,
     kIOS14,
-    kAndroid11OkHttp
+    kAndroid11OkHttp,
 };
 
 struct fingerprint_template_storage

@@ -1,3 +1,5 @@
+#include <deque>
+#include <mutex>
 #include <string>
 #include <utility>
 
@@ -23,16 +25,9 @@ std::string make_remote_addr_key(const mux::connection_context& ctx)
 
 }    // namespace
 
-fallback_gate::budget_ticket::~budget_ticket()
-{
-    release();
-}
+fallback_gate::budget_ticket::~budget_ticket() { release(); }
 
-fallback_gate::budget_ticket::budget_ticket(budget_ticket&& other) noexcept
-    : owner_(other.owner_)
-{
-    other.owner_ = nullptr;
-}
+fallback_gate::budget_ticket::budget_ticket(budget_ticket&& other) noexcept : owner_(other.owner_) { other.owner_ = nullptr; }
 
 fallback_gate::budget_ticket& fallback_gate::budget_ticket::operator=(budget_ticket&& other) noexcept
 {
@@ -58,9 +53,7 @@ void fallback_gate::budget_ticket::release()
     owner_ = nullptr;
 }
 
-fallback_gate::fallback_gate(dependencies deps)
-    : options_(deps.opts),
-      now_seconds_fn_(std::move(deps.now_seconds))
+fallback_gate::fallback_gate(dependencies deps) : options_(deps.opts), now_seconds_fn_(std::move(deps.now_seconds))
 {
     if (!now_seconds_fn_)
     {
@@ -73,7 +66,7 @@ fallback_gate::budget_ticket fallback_gate::try_acquire(const mux::connection_co
     const auto now_sec = now_seconds();
     const auto remote_addr = make_remote_addr_key(ctx);
     const char* log_reason = reason == nullptr ? "unknown" : reason;
-    std::lock_guard<std::mutex> lock(budget_mu_);
+    std::scoped_lock const lock(budget_mu_);
 
     if (active_fallbacks_ >= options_.max_concurrent)
     {
@@ -145,7 +138,7 @@ fallback_gate::budget_ticket fallback_gate::try_acquire(const mux::connection_co
 
 void fallback_gate::release_budget()
 {
-    const std::lock_guard<std::mutex> lock(budget_mu_);
+    const std::scoped_lock lock(budget_mu_);
     if (active_fallbacks_ == 0)
     {
         return;
@@ -153,9 +146,6 @@ void fallback_gate::release_budget()
     --active_fallbacks_;
 }
 
-std::uint64_t fallback_gate::now_seconds() const
-{
-    return now_seconds_fn_();
-}
+std::uint64_t fallback_gate::now_seconds() const { return now_seconds_fn_(); }
 
 }    // namespace reality

@@ -1,42 +1,42 @@
 #ifndef MUX_CONNECTION_H
 #define MUX_CONNECTION_H
 
+#include <span>
 #include <mutex>
 #include <atomic>
 #include <memory>
 #include <string>
 #include <vector>
-#include <cstddef>
-#include <cstdint>
 #include <unordered_map>
 
-#include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/awaitable.hpp>
-#include <boost/asio/io_context.hpp>
-#include <boost/asio/steady_timer.hpp>
-#include <boost/system/error_code.hpp>
 #include <boost/asio/experimental/concurrent_channel.hpp>
 
-#include "config.h"
-#include "task_group.h"
-#include "connection_context.h"
 #include "mux_protocol.h"
-#include "reality/session/session.h"
+#include "connection_context.h"
 #include "reality/session/engine.h"
+
+namespace reality
+{
+
+class reality_session;
+
+}    // namespace reality
 
 namespace mux
 {
 
+struct config;
+struct io_worker;
 class mux_stream;
 
 class mux_connection : public std::enable_shared_from_this<mux_connection>
 {
    public:
     mux_connection(boost::asio::ip::tcp::socket socket,
-                   boost::asio::io_context& io_context,
+                   io_worker& worker,
                    reality::reality_session session,
                    const config& cfg,
-                   task_group& group,
                    std::uint32_t conn_id,
                    const std::string& trace_id = "");
 
@@ -48,14 +48,13 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
 
    public:
     [[nodiscard]] bool is_active() const;
-    [[nodiscard]] boost::asio::io_context& io_context() const { return io_context_; }
     void start_accepting_streams();
     boost::asio::awaitable<void> async_wait_stopped();
-    [[nodiscard]] boost::asio::awaitable<mux_frame> async_receive_syn(boost::system::error_code& ec);
+    [[nodiscard]] boost::asio::awaitable<mux_frame> async_receive_syn(boost::system::error_code& ec) const;
     std::shared_ptr<mux_stream> create_stream();
-    void register_stream(const std::shared_ptr<mux_stream>& stream);
+    std::shared_ptr<mux_stream> create_incoming_stream(std::uint32_t stream_id);
     void close_and_remove_stream(const std::shared_ptr<mux_stream>& stream);
-    void remove_stream(const std::shared_ptr<mux_stream>&);
+    void remove_stream(const std::shared_ptr<mux_stream>& stream);
     [[nodiscard]] std::shared_ptr<mux_stream> find_stream(std::uint32_t stream_id);
     boost::asio::awaitable<void> send_async(mux_frame msg, boost::system::error_code& ec);
     boost::asio::awaitable<void> send_async_with_timeout(mux_frame msg, std::uint32_t timeout_sec, boost::system::error_code& ec);
@@ -78,13 +77,26 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     boost::asio::awaitable<void> on_mux_frame(mux::frame_header header, std::vector<std::uint8_t> payload);
     boost::asio::awaitable<void> handle_unknown_stream(mux::frame_header header, std::vector<std::uint8_t> payload);
     boost::asio::awaitable<void> handle_stream_frame(const mux::frame_header& header, std::vector<std::uint8_t> payload);
+    boost::asio::awaitable<boost::system::error_code> send_stream_rst(std::uint32_t stream_id);
+    boost::asio::awaitable<void> queue_incoming_syn(mux::frame_header header, std::vector<std::uint8_t> payload);
+    boost::asio::awaitable<void> process_tls_record(std::uint8_t type, std::span<const std::uint8_t> plaintext, boost::system::error_code& ec);
     [[nodiscard]] std::uint32_t acquire_next_id();
+    [[nodiscard]] bool is_stream_limit_reached();
+    void remember_closed_stream(std::uint32_t stream_id, bool rst_sent);
+    [[nodiscard]] bool handle_recently_closed_stream(const mux::frame_header& header, bool& send_rst);
+    void prune_closed_streams_locked(std::uint64_t now_ms);
 
    private:
+    struct closed_stream_state
+    {
+        std::uint64_t last_seen_ms = 0;
+        bool rst_sent = false;
+    };
+
     const config& cfg_;
     std::uint32_t cid_ = 0;
     connection_context ctx_;
-    task_group& group_;
+    io_worker& worker_;
     std::mutex mutex_;
     reality_engine reality_engine_;
     std::vector<std::uint8_t> pending_plaintext_;
@@ -95,7 +107,6 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     std::uint64_t last_write_time_ms_{0};
     std::uint64_t last_non_heartbeat_read_time_ms_{0};
     std::uint64_t last_non_heartbeat_write_time_ms_{0};
-    boost::asio::io_context& io_context_;
     boost::asio::ip::tcp::socket socket_;
     std::atomic<bool> stopped_{false};
     std::atomic<std::uint64_t> pending_bytes_total_{0};
@@ -108,6 +119,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     std::unique_ptr<channel_type> incoming_syn_channel_;
     std::unique_ptr<stop_channel_type> stop_channel_;
     std::unordered_map<uint32_t, std::shared_ptr<mux_stream>> streams_;
+    std::unordered_map<std::uint32_t, closed_stream_state> recently_closed_streams_;
 };
 
 }    // namespace mux

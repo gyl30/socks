@@ -5,8 +5,6 @@
 #include <memory>
 #include <vector>
 #include <cstddef>
-#include <cstdint>
-#include <expected>
 #include <functional>
 
 extern "C"

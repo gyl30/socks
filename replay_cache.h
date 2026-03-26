@@ -26,7 +26,7 @@ class replay_cache
     std::mutex mutex_;
     std::size_t max_entries_ = 100000;
     std::chrono::steady_clock::duration window_;
-    std::chrono::steady_clock::time_point current_start_{};
+    std::chrono::steady_clock::time_point current_start_;
     bool current_ready_ = false;
     std::unordered_set<std::string> current_;
     std::unordered_set<std::string> previous_;

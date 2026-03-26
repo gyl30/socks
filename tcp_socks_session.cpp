@@ -3,23 +3,12 @@
 #include <string>
 #include <vector>
 #include <cstddef>
-#include <cstdint>
 #include <utility>
 
-#include <boost/asio/error.hpp>
-#include <boost/asio/write.hpp>
-#include <boost/asio/buffer.hpp>
-#include <boost/asio/ip/tcp.hpp>
-#include <boost/asio/as_tuple.hpp>
-#include <boost/asio/co_spawn.hpp>
-#include <boost/asio/detached.hpp>
+#include <boost/asio.hpp>
 #include <boost/asio/awaitable.hpp>
-#include <boost/asio/io_context.hpp>
-#include <boost/asio/ip/address.hpp>
-#include <boost/system/error_code.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/asio/redirect_error.hpp>
-#include <boost/asio/bind_cancellation_slot.hpp>
 #include <boost/asio/experimental/awaitable_operators.hpp>
 
 #include "log.h"
@@ -29,8 +18,8 @@
 #include "upstream.h"
 #include "timeout_io.h"
 #include "scoped_exit.h"
-#include "connection_context.h"
 #include "tcp_socks_session.h"
+#include "connection_context.h"
 
 namespace mux
 {
@@ -47,18 +36,14 @@ namespace
 }    // namespace
 
 tcp_socks_session::tcp_socks_session(boost::asio::ip::tcp::socket socket,
-                                     boost::asio::io_context& io_context,
                                      std::shared_ptr<client_tunnel_pool> tunnel_pool,
                                      std::shared_ptr<router> router,
                                      const std::uint32_t sid,
                                      const config& cfg,
-                                     task_group& group,
                                      std::shared_ptr<void> active_connection_guard)
     : cfg_(cfg),
-      group_(group),
-      io_context_(io_context),
       socket_(std::move(socket)),
-      idle_timer_(io_context_),
+      idle_timer_(socket_.get_executor()),
       router_(std::move(router)),
       tunnel_pool_(std::move(tunnel_pool)),
       active_connection_guard_(std::move(active_connection_guard))
@@ -68,13 +53,7 @@ tcp_socks_session::tcp_socks_session(boost::asio::ip::tcp::socket socket,
     last_activity_time_ms_ = now_ms();
 }
 
-void tcp_socks_session::start(const std::string& host, const std::uint16_t port)
-{
-    boost::asio::co_spawn(
-        io_context_,
-        [self = shared_from_this(), host = host, port = port]() -> boost::asio::awaitable<void> { co_return co_await self->run(host, port); },
-        group_.adapt(boost::asio::detached));
-}
+boost::asio::awaitable<void> tcp_socks_session::start(const std::string& host, const std::uint16_t port) { co_await run(host, port); }
 
 void tcp_socks_session::stop() { close_client_socket(); }
 
@@ -89,10 +68,10 @@ boost::asio::awaitable<void> tcp_socks_session::run(const std::string& host, con
         co_return;
     }
 
-    boost::system::error_code parse_ec;
-    const auto target_addr = boost::asio::ip::make_address(host, parse_ec);
+    boost::system::error_code ec;
+    const auto target_addr = boost::asio::ip::make_address(host, ec);
     route_type route = route_type::kProxy;
-    if (parse_ec)
+    if (ec)
     {
         route = co_await router_->decide_domain(ctx_, host);
     }
@@ -108,13 +87,14 @@ boost::asio::awaitable<void> tcp_socks_session::run(const std::string& host, con
         co_await reply_error(socks::kRepNotAllowed);
         co_return;
     }
-    if (!co_await connect_backend(backend, host, port, route))
+    const auto connect_result = co_await connect_backend(backend, host, port, route);
+    if (connect_result.ec)
     {
         co_await backend->close();
         co_return;
     }
 
-    if (!co_await reply_success(backend))
+    if (!co_await reply_success(connect_result))
     {
         co_await backend->close();
         co_return;
@@ -137,36 +117,41 @@ boost::asio::awaitable<void> tcp_socks_session::run(const std::string& host, con
     LOG_CTX_INFO(ctx_, "{} finished {}", log_event::kConnClose, ctx_.stats_summary());
 }
 
-std::shared_ptr<upstream> tcp_socks_session::create_backend(const route_type route) const
+std::shared_ptr<upstream> tcp_socks_session::create_backend(const route_type route)
 {
     if (route == route_type::kDirect)
     {
-        return std::make_shared<direct_upstream>(io_context_, ctx_, cfg_);
+        return make_direct_upstream(socket_.get_executor(), ctx_, cfg_);
     }
     if (route == route_type::kProxy)
     {
-        return std::make_shared<proxy_upstream>(tunnel_pool_, io_context_, ctx_, cfg_);
+        return make_proxy_upstream(tunnel_pool_, ctx_, cfg_);
     }
     return nullptr;
 }
 
-boost::asio::awaitable<bool> tcp_socks_session::connect_backend(const std::shared_ptr<upstream>& backend,
-                                                                const std::string& host,
-                                                                const std::uint16_t port,
-                                                                const route_type route)
+boost::asio::awaitable<upstream_connect_result> tcp_socks_session::connect_backend(const std::shared_ptr<upstream>& backend,
+                                                                                   const std::string& host,
+                                                                                   const std::uint16_t port,
+                                                                                   const route_type route)
 {
     LOG_CTX_INFO(ctx_, "{} connecting {} {} via {}", log_event::kConnInit, host, port, mux::to_string(route));
-    boost::system::error_code ec;
-    co_await backend->connect(host, port, ec);
-    if (!ec)
+    const auto result = co_await backend->connect(host, port);
+    if (!result.ec)
     {
-        co_return true;
+        co_return result;
     }
 
-    const auto rep = backend->suggested_socks_rep(ec);
-    LOG_CTX_WARN(ctx_, "{} connect failed {} {} via {} error {} rep {}", log_event::kConnInit, host, port, mux::to_string(route), ec.message(), rep);
-    co_await reply_error(rep);
-    co_return false;
+    LOG_CTX_WARN(ctx_,
+                 "{} connect failed {} {} via {} error {} rep {}",
+                 log_event::kConnInit,
+                 host,
+                 port,
+                 mux::to_string(route),
+                 result.ec.message(),
+                 result.socks_rep);
+    co_await reply_error(result.socks_rep);
+    co_return result;
 }
 
 boost::asio::awaitable<void> tcp_socks_session::reply_error(const std::uint8_t code)
@@ -181,17 +166,14 @@ boost::asio::awaitable<void> tcp_socks_session::reply_error(const std::uint8_t c
     LOG_CTX_WARN(ctx_, "{} write error response failed {}", log_event::kSocks, ec.message());
 }
 
-boost::asio::awaitable<bool> tcp_socks_session::reply_success(const std::shared_ptr<upstream>& backend)
+boost::asio::awaitable<bool> tcp_socks_session::reply_success(const upstream_connect_result& connect_result)
 {
     std::vector<std::uint8_t> rep;
     rep.reserve(22);
     rep.push_back(socks::kVer);
     rep.push_back(socks::kRepSuccess);
     rep.push_back(0x00);
-    boost::system::error_code bind_ec;
-    boost::asio::ip::address bind_addr;
-    std::uint16_t bind_port = 0;
-    if (backend == nullptr || !backend->get_bind_endpoint(bind_addr, bind_port, bind_ec))
+    if (!connect_result.has_bind_endpoint)
     {
         LOG_CTX_WARN(ctx_, "{} backend bind endpoint unavailable fallback zero", log_event::kSocks);
         rep.push_back(socks::kAtypIpv4);
@@ -199,7 +181,8 @@ boost::asio::awaitable<bool> tcp_socks_session::reply_success(const std::shared_
     }
     else
     {
-        bind_addr = socks_codec::normalize_ip_address(bind_addr);
+        auto bind_addr = socks_codec::normalize_ip_address(connect_result.bind_addr);
+        const auto bind_port = connect_result.bind_port;
         if (bind_addr.is_v4())
         {
             rep.push_back(socks::kAtypIpv4);
@@ -268,7 +251,7 @@ boost::asio::awaitable<void> tcp_socks_session::client_to_upstream(std::shared_p
             }
             break;
         }
-        std::vector<uint8_t> data(buf.begin(), buf.begin() + static_cast<int>(n));
+        const std::vector<uint8_t> data(buf.begin(), buf.begin() + static_cast<int>(n));
         co_await backend->write(data, ec);
         if (ec)
         {
@@ -339,6 +322,7 @@ boost::asio::awaitable<void> tcp_socks_session::idle_watchdog(std::shared_ptr<up
             co_await backend->close();
             boost::system::error_code ignore;
             ignore = socket_.close(ignore);
+            (void)ignore;
             break;
         }
     }

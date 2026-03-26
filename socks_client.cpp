@@ -1,36 +1,23 @@
 #include <chrono>
-#include <cstdlib>
 #include <memory>
 #include <string>
-#include <cstdint>
+#include <cstdlib>
 #include <utility>
 
-#include <boost/asio/error.hpp>
-#include <boost/asio/as_tuple.hpp>
-#include <boost/asio/ip/tcp.hpp>
-#include <boost/asio/co_spawn.hpp>
-#include <boost/asio/detached.hpp>
+#include <boost/asio.hpp>
+
 #include <boost/asio/awaitable.hpp>
-#include <boost/asio/io_context.hpp>
-#include <boost/asio/ip/address.hpp>
-#include <boost/asio/ip/v6_only.hpp>
-#include <boost/asio/socket_base.hpp>
-#include <boost/asio/post.hpp>
-#include <boost/asio/steady_timer.hpp>
-#include <boost/asio/redirect_error.hpp>
-#include <boost/asio/cancellation_signal.hpp>
-#include <boost/asio/bind_cancellation_slot.hpp>
-#include <boost/system/error_code.hpp>
 #include <boost/asio/use_awaitable.hpp>
+#include <boost/asio/redirect_error.hpp>
 
 #include "log.h"
 #include "config.h"
 #include "router.h"
-#include "connection_tracker.h"
 #include "context_pool.h"
 #include "socks_client.h"
 #include "socks_session.h"
 #include "client_tunnel_pool.h"
+#include "connection_tracker.h"
 
 namespace mux
 {
@@ -81,14 +68,14 @@ void setup_acceptor(boost::asio::ip::tcp::acceptor& acceptor, const std::string&
 
 socks_client::socks_client(io_context_pool& pool, const config& cfg)
     : cfg_(cfg),
-      ioc_(pool.get_io_context()),
       pool_(pool),
+      owner_worker_(pool.get_io_worker()),
       router_(std::make_shared<mux::router>()),
       tunnel_pool_(std::make_shared<client_tunnel_pool>(pool, cfg))
 {
 }
 
-int socks_client::start()
+void socks_client::start()
 {
     auto tunnel_pool = tunnel_pool_;
     if (tunnel_pool == nullptr)
@@ -112,22 +99,37 @@ int socks_client::start()
     if (!cfg_.socks.enabled)
     {
         LOG_INFO("socks client disabled");
-        return 0;
+        return;
     }
 
+    tunnel_pool->start();
+    LOG_INFO("local socks5 waiting for upstream tunnel before listening on {}:{}", cfg_.socks.host, cfg_.socks.port);
+
+    owner_worker_.group.spawn([self = shared_from_this()]() { return self->start_acceptor_when_ready(); });
+}
+
+boost::asio::awaitable<void> socks_client::start_acceptor_when_ready()
+{
     boost::system::error_code ec;
+    const auto tunnel = co_await tunnel_pool_->wait_for_tunnel(0, ec);
+    if (ec || tunnel == nullptr)
+    {
+        if (ec != boost::asio::error::operation_aborted)
+        {
+            LOG_ERROR("socks5 wait for upstream tunnel failed {}", ec.message());
+        }
+        co_return;
+    }
+
     setup_acceptor(acceptor_, cfg_.socks.host, cfg_.socks.port, ec);
     if (ec)
     {
         LOG_ERROR("socks5 setup {}:{} failed {}", cfg_.socks.host, cfg_.socks.port, ec.message());
         std::exit(EXIT_FAILURE);
     }
+
     LOG_INFO("local socks5 listening on {}:{}", cfg_.socks.host, cfg_.socks.port);
-
-    tunnel_pool->start();
-
-    boost::asio::co_spawn(ioc_, accept_loop(), pool_.get_task_group(ioc_).adapt(boost::asio::detached));
-    return 0;
+    co_await accept_loop();
 }
 
 boost::asio::awaitable<void> socks_client::accept_loop()
@@ -135,9 +137,8 @@ boost::asio::awaitable<void> socks_client::accept_loop()
     boost::system::error_code ec;
     for (;;)
     {
-        auto& socket_io = pool_.get_io_context();
-        auto& socket_group = pool_.get_task_group(socket_io);
-        boost::asio::ip::tcp::socket socket(socket_io);
+        auto& socket_worker = pool_.get_io_worker();
+        boost::asio::ip::tcp::socket socket(socket_worker.io_context);
         co_await acceptor_.async_accept(socket, boost::asio::redirect_error(boost::asio::use_awaitable, ec));
         if (ec == boost::asio::error::operation_aborted)
         {
@@ -147,7 +148,7 @@ boost::asio::awaitable<void> socks_client::accept_loop()
         if (ec)
         {
             LOG_ERROR("socks5 accept failed {} retry", ec.message());
-            boost::asio::steady_timer retry_timer(ioc_);
+            boost::asio::steady_timer retry_timer(owner_worker_.io_context);
             retry_timer.expires_after(std::chrono::seconds(3));
             co_await retry_timer.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, ec));
             if (ec)
@@ -158,23 +159,20 @@ boost::asio::awaitable<void> socks_client::accept_loop()
             continue;
         }
 
-        if (connection_tracker::instance().active_connections() >= resolve_client_session_max_connections(cfg_.limits))
+        if (connection_tracker::instance().active_connections() >= cfg_.limits.client_session_max_connections)
         {
-            boost::system::error_code close_ec;
-            socket.shutdown(boost::asio::ip::tcp::socket::shutdown_both, close_ec);
-            socket.close(close_ec);
+            ec = socket.close(ec);
             LOG_WARN("socks5 connection limit reached drop");
             continue;
         }
 
-        boost::system::error_code ec;
         ec = socket.set_option(boost::asio::ip::tcp::no_delay(true), ec);
         if (ec)
         {
             LOG_WARN("failed to set no delay on local socket {}", ec.message());
         }
         const std::uint32_t sid = tunnel_pool_->next_session_id();
-        std::make_shared<socks_session>(std::move(socket), socket_io, tunnel_pool_, router_, sid, cfg_, socket_group)->start();
+        std::make_shared<socks_session>(std::move(socket), socket_worker, tunnel_pool_, router_, sid, cfg_)->start();
     }
     LOG_INFO("local socks5 acceptor stopped");
 }
@@ -186,27 +184,20 @@ void socks_client::stop()
         return;
     }
 
-    boost::asio::post(
-        ioc_,
-        [self = shared_from_this()]()
-        {
-            boost::system::error_code ec;
-            ec = self->acceptor_.close(ec);
-            if (ec && ec != boost::asio::error::bad_descriptor)
-            {
-                LOG_ERROR("acceptor close error {}", ec.message());
-            }
-            if (self->tunnel_pool_ != nullptr)
-            {
-                self->tunnel_pool_->stop();
-            }
-            self->pool_.emit_all(::boost::asio::cancellation_type::all);
-        });
-}
-
-boost::asio::awaitable<void> socks_client::wait_stopped()
-{
-    co_await pool_.async_wait_all();
+    boost::asio::post(owner_worker_.io_context,
+                      [self = shared_from_this()]()
+                      {
+                          boost::system::error_code ec;
+                          ec = self->acceptor_.close(ec);
+                          if (ec && ec != boost::asio::error::bad_descriptor)
+                          {
+                              LOG_ERROR("acceptor close error {}", ec.message());
+                          }
+                          if (self->tunnel_pool_ != nullptr)
+                          {
+                              self->tunnel_pool_->stop();
+                          }
+                      });
 }
 
 }    // namespace mux

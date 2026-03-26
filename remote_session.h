@@ -1,30 +1,27 @@
 #ifndef REMOTE_SESSION_H
 #define REMOTE_SESSION_H
 
-#include <atomic>
 #include <memory>
-#include <vector>
 #include <cstdint>
 
-#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio.hpp>
 #include <boost/asio/awaitable.hpp>
-#include <boost/asio/io_context.hpp>
-#include <boost/asio/steady_timer.hpp>
-#include <boost/system/error_code.hpp>
 
 #include "config.h"
 #include "mux_stream.h"
-#include "connection_context.h"
 #include "mux_protocol.h"
 #include "mux_connection.h"
+#include "connection_context.h"
 
 namespace mux
 {
 
-class remote_tcp_session : std::enable_shared_from_this<remote_tcp_session>
+
+class remote_tcp_session : public std::enable_shared_from_this<remote_tcp_session>
 {
    public:
-    remote_tcp_session(const std::shared_ptr<mux_connection>& connection,
+    remote_tcp_session(boost::asio::io_context& io_context,
+                       const std::shared_ptr<mux_connection>& connection,
                        std::uint32_t id,
                        const connection_context& ctx,
                        const config& cfg);

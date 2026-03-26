@@ -2,20 +2,17 @@
 #include <array>
 #include <string>
 #include <vector>
-#include <utility>
 #include <cstddef>
-#include <cstdint>
+#include <utility>
 #include <algorithm>
 
-#include <boost/asio/error.hpp>
-#include <boost/asio/buffer.hpp>
-#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio.hpp>
 #include <boost/asio/awaitable.hpp>
-#include <boost/system/error_code.hpp>
 
-#include "timeout_io.h"
 #include "tls/core.h"
+#include "timeout_io.h"
 #include "reality/session/engine.h"
+#include "reality/session/session.h"
 #include "reality/session/session_internal.h"
 #include "reality/session/lightweight_client.h"
 
@@ -55,13 +52,16 @@ std::string extract_http_status_line(const std::vector<std::uint8_t>& data)
     {
         return {};
     }
-    return std::string(data.begin(), status_end);
+    std::string ret(data.begin(), status_end);
+    return ret;
 }
 
 }    // namespace
 
-boost::asio::awaitable<lightweight_http_visit_result> run_lightweight_http_visit(
-    boost::asio::ip::tcp::socket& socket, reality_session session, const lightweight_http_visit_options& options, boost::system::error_code& ec)
+boost::asio::awaitable<lightweight_http_visit_result> run_lightweight_http_visit(boost::asio::ip::tcp::socket& socket,
+                                                                                 reality_session session,
+                                                                                 const lightweight_http_visit_options& options,
+                                                                                 boost::system::error_code& ec)
 {
     ec.clear();
     lightweight_http_visit_result result;
@@ -76,8 +76,8 @@ boost::asio::awaitable<lightweight_http_visit_result> run_lightweight_http_visit
         co_return result;
     }
 
-    const auto written =
-        co_await mux::timeout_io::wait_write_with_timeout(socket, boost::asio::buffer(ciphertext.data(), ciphertext.size()), options.write_timeout_sec, ec);
+    const auto written = co_await mux::timeout_io::wait_write_with_timeout(
+        socket, boost::asio::buffer(ciphertext.data(), ciphertext.size()), options.write_timeout_sec, ec);
     if (ec || written != ciphertext.size())
     {
         if (!ec)

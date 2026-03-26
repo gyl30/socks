@@ -1,16 +1,13 @@
 #include <atomic>
 #include <memory>
-#include <stdexcept>
 #include <thread>
 #include <vector>
 #include <cstddef>
 
-#include <boost/asio/as_tuple.hpp>
-#include <boost/asio/error.hpp>
-#include <boost/asio/io_context.hpp>
-#include <boost/asio/executor_work_guard.hpp>
-#include <boost/asio/post.hpp>
+#include <boost/asio.hpp>
+#include <boost/asio/awaitable.hpp>
 #include <boost/asio/use_awaitable.hpp>
+#include <boost/asio/executor_work_guard.hpp>
 
 #include "log.h"
 #include "context_pool.h"
@@ -34,7 +31,7 @@ io_context_pool::io_context_pool(std::size_t pool_size) : next_io_context_(0)
     }
 }
 
-void io_context_pool::run()
+void io_context_pool::run() const
 {
     std::vector<std::thread> threads;
     threads.reserve(workers_.size());
@@ -55,16 +52,6 @@ void io_context_pool::run()
     }
 }
 
-void io_context_pool::stop()
-{
-    shutdown();
-    LOG_INFO("io context pool force stopping all contexts");
-    for (const auto& worker : workers_)
-    {
-        worker->io_context.stop();
-    }
-}
-
 void io_context_pool::shutdown()
 {
     LOG_INFO("io context pool shutting down work guards");
@@ -77,33 +64,11 @@ io_worker& io_context_pool::get_io_worker()
     return *workers_[index];
 }
 
-boost::asio::io_context& io_context_pool::get_io_context()
-{
-    return get_io_worker().io_context;
-}
-
-task_group& io_context_pool::get_task_group(boost::asio::io_context& io_context) const
-{
-    for (const auto& worker : workers_)
-    {
-        if (&worker->io_context == &io_context)
-        {
-            return worker->group;
-        }
-    }
-    throw std::logic_error("io_context_pool missing task_group");
-}
-
 void io_context_pool::emit_all(const boost::asio::cancellation_type type) const
 {
     for (const auto& worker : workers_)
     {
-        boost::asio::post(
-            worker->io_context,
-            [worker, type]()
-            {
-                worker->group.emit(type);
-            });
+        boost::asio::post(worker->io_context, [worker, type]() { worker->group.emit(type); });
     }
 }
 

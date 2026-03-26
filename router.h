@@ -3,23 +3,22 @@
 
 #include <memory>
 #include <string>
-#include <cstdint>
 
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/ip/address.hpp>
 
-#include "ip_matcher.h"
-#include "connection_context.h"
-#include "domain_matcher.h"
-
 namespace mux
 {
+
+class connection_context;
+class ip_matcher;
+class domain_matcher;
 
 enum class route_type : std::uint8_t
 {
     kDirect,
     kProxy,
-    kBlock
+    kBlock,
 };
 
 std::string to_string(const route_type& t);

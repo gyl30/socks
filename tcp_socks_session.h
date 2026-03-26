@@ -6,62 +6,50 @@
 #include <string>
 #include <cstdint>
 
-#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio.hpp>
 #include <boost/asio/awaitable.hpp>
-#include <boost/asio/io_context.hpp>
-#include <boost/asio/steady_timer.hpp>
-#include <boost/asio/cancellation_signal.hpp>
 
-#include "config.h"
-#include "router.h"
 #include "upstream.h"
-#include "task_group.h"
 #include "connection_context.h"
 
 namespace mux
 {
 
-class client_tunnel_pool;
-
 class tcp_socks_session : public std::enable_shared_from_this<tcp_socks_session>
 {
    public:
     tcp_socks_session(boost::asio::ip::tcp::socket socket,
-                      boost::asio::io_context& io_context,
                       std::shared_ptr<client_tunnel_pool> tunnel_pool,
                       std::shared_ptr<router> router,
                       std::uint32_t sid,
                       const config& cfg,
-                      task_group& group,
                       std::shared_ptr<void> active_connection_guard);
 
-    void start(const std::string& host, std::uint16_t port);
+    [[nodiscard]] boost::asio::awaitable<void> start(const std::string& host, std::uint16_t port);
     void stop();
 
    private:
     [[nodiscard]] boost::asio::awaitable<void> run(const std::string& host, std::uint16_t port);
 
     [[nodiscard]] boost::asio::awaitable<void> reply_error(std::uint8_t code);
-    [[nodiscard]] boost::asio::awaitable<bool> connect_backend(const std::shared_ptr<upstream>& backend,
-                                                               const std::string& host,
-                                                               std::uint16_t port,
-                                                               route_type route);
-    [[nodiscard]] boost::asio::awaitable<bool> reply_success(const std::shared_ptr<upstream>& backend);
+    [[nodiscard]] boost::asio::awaitable<upstream_connect_result> connect_backend(const std::shared_ptr<upstream>& backend,
+                                                                                  const std::string& host,
+                                                                                  std::uint16_t port,
+                                                                                  route_type route);
+    [[nodiscard]] boost::asio::awaitable<bool> reply_success(const upstream_connect_result& connect_result);
 
     [[nodiscard]] boost::asio::awaitable<void> client_to_upstream(std::shared_ptr<upstream> backend);
 
     [[nodiscard]] boost::asio::awaitable<void> upstream_to_client(std::shared_ptr<upstream> backend);
     [[nodiscard]] boost::asio::awaitable<void> idle_watchdog(std::shared_ptr<upstream> backend);
-    [[nodiscard]] std::shared_ptr<upstream> create_backend(route_type route) const;
+    [[nodiscard]] std::shared_ptr<upstream> create_backend(route_type route);
 
     void close_client_socket();
 
    private:
     connection_context ctx_;
     const config& cfg_;
-    task_group& group_;
-    boost::asio::io_context& io_context_;
-    boost::asio::ip::tcp::socket socket_{io_context_};
+    boost::asio::ip::tcp::socket socket_;
     boost::asio::steady_timer idle_timer_;
     std::uint64_t last_activity_time_ms_{0};
     std::atomic<bool> backend_closed_{false};

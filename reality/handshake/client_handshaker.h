@@ -7,12 +7,10 @@
 #include <optional>
 #include <string_view>
 
-#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio.hpp>
 #include <boost/asio/awaitable.hpp>
-#include <boost/system/error_code.hpp>
 
 #include "reality/types.h"
-#include "reality/handshake/fingerprint.h"
 
 namespace mux
 {
@@ -25,6 +23,8 @@ class connection_context;
 namespace reality
 {
 
+enum class fingerprint_type : std::uint8_t;
+
 class client_handshaker
 {
    public:
@@ -35,8 +35,9 @@ class client_handshaker
                       std::optional<fingerprint_type> fingerprint_type,
                       std::uint32_t max_handshake_records);
 
-    [[nodiscard]] boost::asio::awaitable<client_handshake_result> run(
-        boost::asio::ip::tcp::socket& socket, const mux::connection_context& ctx, boost::system::error_code& ec) const;
+    [[nodiscard]] boost::asio::awaitable<client_handshake_result> run(boost::asio::ip::tcp::socket& socket,
+                                                                      const mux::connection_context& ctx,
+                                                                      boost::system::error_code& ec) const;
 
    private:
     const mux::config& cfg_;

@@ -24,6 +24,7 @@ Checks: '-*,
   -clang-analyzer-core.CallAndMessage,
   -clang-analyzer-core.NullDereference,
   -clang-analyzer-optin.cplusplus.UninitializedObject,
+  -misc-include-cleaner,
   -misc-use-anonymous-namespace,
   -misc-non-private-member-variables-in-classes
   '
