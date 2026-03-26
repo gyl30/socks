@@ -96,15 +96,13 @@ boost::asio::awaitable<void> send_stream_control_frame(const std::shared_ptr<mux
 
 remote_tcp_session::remote_tcp_session(const std::shared_ptr<mux_connection>& connection,
                                        const std::uint32_t id,
-                                       boost::asio::io_context& io_context,
                                        const connection_context& ctx,
                                        const config& cfg)
     : id_(id),
       cfg_(cfg),
-      io_context_(io_context),
-      socket_(io_context_),
-      idle_timer_(io_context_),
-      stream_(std::make_shared<mux_stream>(id, cfg, io_context, connection)),
+      socket_(connection->io_context()),
+      idle_timer_(connection->io_context()),
+      stream_(std::make_shared<mux_stream>(id, cfg, connection->io_context(), connection)),
       connection_(connection)
 {
     ctx_ = ctx;
@@ -118,7 +116,6 @@ remote_tcp_session::remote_tcp_session(const std::shared_ptr<mux_connection>& co
 
 boost::asio::awaitable<void> remote_tcp_session::start(const syn_payload& syn)
 {
-    co_await boost::asio::dispatch(io_context_, boost::asio::use_awaitable);
     co_await run(syn);
 }
 
@@ -167,7 +164,7 @@ boost::asio::awaitable<void> remote_tcp_session::run(const syn_payload& syn)
         boost::system::error_code ack_ec;
         co_await stream_->async_write(ack_frame, ack_ec);
     };
-    boost::asio::ip::tcp::resolver resolver_(io_context_);
+    boost::asio::ip::tcp::resolver resolver_(socket_.get_executor());
     auto resolve_res = co_await timeout_io::wait_resolve_with_timeout(resolver_, syn.addr, std::to_string(syn.port), cfg_.timeout.connect, ec);
     if (ec)
     {

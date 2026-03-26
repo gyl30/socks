@@ -82,16 +82,14 @@ void evict_expired(Cache& cache, const std::uint64_t now_ms)
 
 remote_udp_session::remote_udp_session(const std::shared_ptr<mux_connection>& connection,
                                        const std::uint32_t id,
-                                       boost::asio::io_context& io_context,
                                        const connection_context& ctx,
                                        const config& cfg)
     : id_(id),
       cfg_(cfg),
-      io_context_(io_context),
-      idle_timer_(io_context_),
-      udp_socket_(io_context_),
-      udp_resolver_(io_context_),
-      stream_(std::make_shared<mux_stream>(id, cfg, io_context, connection)),
+      idle_timer_(connection->io_context()),
+      udp_socket_(connection->io_context()),
+      udp_resolver_(connection->io_context()),
+      stream_(std::make_shared<mux_stream>(id, cfg, connection->io_context(), connection)),
       connection_(connection),
       resolved_targets_(kMaxUdpCacheEntries),
       allowed_reply_peers_(kMaxUdpCacheEntries)
@@ -109,7 +107,6 @@ remote_udp_session::remote_udp_session(const std::shared_ptr<mux_connection>& co
 
 boost::asio::awaitable<void> remote_udp_session::start()
 {
-    co_await boost::asio::dispatch(io_context_, boost::asio::use_awaitable);
     co_await start_impl();
 }
 

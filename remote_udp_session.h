@@ -33,7 +33,6 @@ class remote_udp_session : public std::enable_shared_from_this<remote_udp_sessio
    public:
     remote_udp_session(const std::shared_ptr<mux_connection>& connection,
                        std::uint32_t id,
-                       boost::asio::io_context& io_context,
                        const connection_context& ctx,
                        const config& cfg);
 
@@ -84,7 +83,6 @@ class remote_udp_session : public std::enable_shared_from_this<remote_udp_sessio
     std::uint32_t id_;
     const config& cfg_;
     connection_context ctx_;
-    boost::asio::io_context& io_context_;
     boost::asio::steady_timer idle_timer_;
     boost::asio::ip::udp::socket udp_socket_;
     boost::asio::ip::udp::resolver udp_resolver_;
