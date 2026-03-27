@@ -103,7 +103,21 @@ remote_tcp_session::remote_tcp_session(boost::asio::io_context& io_context,
     last_activity_time_ms_ = timeout_io::now_ms();
 }
 
-boost::asio::awaitable<void> remote_tcp_session::start(const syn_payload& syn) { co_await run(syn); }
+bool remote_tcp_session::has_stream() const
+{
+    return stream_ != nullptr;
+}
+
+boost::asio::awaitable<void> remote_tcp_session::start(const syn_payload& syn)
+{
+    if (stream_ == nullptr)
+    {
+        LOG_CTX_WARN(ctx_, "{} start tcp session without stream {}", log_event::kMux, id_);
+        co_return;
+    }
+
+    co_await run(syn);
+}
 
 void remote_tcp_session::close_from_fin()
 {

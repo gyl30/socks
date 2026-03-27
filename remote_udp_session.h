@@ -26,6 +26,7 @@ class remote_udp_session : public std::enable_shared_from_this<remote_udp_sessio
                        const connection_context& ctx,
                        const config& cfg);
 
+    [[nodiscard]] bool has_stream() const;
     boost::asio::awaitable<void> start();
 
    private:
