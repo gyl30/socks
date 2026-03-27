@@ -1667,7 +1667,7 @@ boost::asio::awaitable<void> send_client_finished(boost::asio::ip::tcp::socket& 
         co_return;
     }
     const auto fin_msg = tls::construct_finished(fin_verify);
-    auto fin_rec = tls::record_layer::encrypt_record(cipher, c_hs_keys.first, c_hs_keys.second, 0, fin_msg, tls::kContentTypeHandshake, ec);
+    auto fin_rec = tls::record_layer::encrypt_tls_record(cipher, c_hs_keys.first, c_hs_keys.second, 0, fin_msg, tls::kContentTypeHandshake, ec);
     if (ec)
     {
         co_return;

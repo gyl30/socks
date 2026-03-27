@@ -120,51 +120,51 @@ boost::asio::awaitable<lightweight_http_visit_result> run_lightweight_http_visit
 
         engine.commit_read(n);
         boost::system::error_code process_ec;
-        co_await engine.process_available_records(
-            [&](const std::uint8_t type,
-                const std::span<const std::uint8_t> plaintext,
-                boost::system::error_code& cb_ec) -> boost::asio::awaitable<void>
-            {
-                cb_ec.clear();
-                if (type == ::tls::kContentTypeApplicationData)
-                {
-                    result.saw_application_data = true;
-                    result.rx_plain_bytes += plaintext.size();
-
-                    const auto current_size = response_capture.size();
-                    const auto remaining =
-                        current_size < options.response_capture_limit ? options.response_capture_limit - current_size : static_cast<std::size_t>(0);
-                    const auto copy_len = std::min(remaining, plaintext.size());
-                    response_capture.insert(response_capture.end(), plaintext.begin(), plaintext.begin() + static_cast<std::ptrdiff_t>(copy_len));
-
-                    captured_bytes += plaintext.size();
-                    result.header_complete = result.header_complete || contains_http_header_terminator(response_capture);
-                    if (result.header_complete && (captured_bytes >= options.response_sufficient_bytes || response_capture.size() >= 2048))
-                    {
-                        response_complete = true;
-                    }
-                    if (captured_bytes >= options.response_capture_limit)
-                    {
-                        response_complete = true;
-                    }
-                    co_return;
-                }
-                if (type == ::tls::kContentTypeAlert)
-                {
-                    result.saw_alert = true;
-                    co_return;
-                }
-
-                co_return;
-            },
-            process_ec);
-        if (process_ec)
+        while (true)
         {
-            if (process_ec == boost::asio::error::eof)
+            const auto record = engine.decrypt_record(process_ec);
+            if (process_ec)
+            {
+                break;
+            }
+            if (!record.has_value())
+            {
+                break;
+            }
+
+            if (record->content_type == ::tls::kContentTypeApplicationData)
+            {
+                result.saw_application_data = true;
+                result.rx_plain_bytes += record->payload.size();
+
+                const auto current_size = response_capture.size();
+                const auto remaining =
+                    current_size < options.response_capture_limit ? options.response_capture_limit - current_size : static_cast<std::size_t>(0);
+                const auto copy_len = std::min(remaining, record->payload.size());
+                response_capture.insert(
+                    response_capture.end(), record->payload.begin(), record->payload.begin() + static_cast<std::ptrdiff_t>(copy_len));
+
+                captured_bytes += record->payload.size();
+                result.header_complete = result.header_complete || contains_http_header_terminator(response_capture);
+                if (result.header_complete && (captured_bytes >= options.response_sufficient_bytes || response_capture.size() >= 2048))
+                {
+                    response_complete = true;
+                }
+                if (captured_bytes >= options.response_capture_limit)
+                {
+                    response_complete = true;
+                }
+                continue;
+            }
+
+            if (record->content_type == ::tls::kContentTypeAlert)
             {
                 result.saw_alert = true;
                 break;
             }
+        }
+        if (process_ec)
+        {
             ec = process_ec;
             result.error_stage = "process_response";
             co_return result;

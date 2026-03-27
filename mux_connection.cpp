@@ -43,15 +43,8 @@ namespace mux
 namespace
 {
 
-[[nodiscard]] bool is_expected_socket_shutdown_error(const boost::system::error_code& ec)
-{
-    return ec == boost::asio::error::operation_aborted || ec == boost::asio::error::eof || ec == boost::asio::error::bad_descriptor ||
-           ec == boost::asio::error::connection_reset;
-}
-
 void handle_post_handshake_record(const std::uint32_t cid, const std::span<const std::uint8_t> plaintext, boost::system::error_code& ec)
 {
-    ec.clear();
     if (plaintext.empty())
     {
         LOG_WARN("mux {} empty post handshake record", cid);
@@ -330,10 +323,9 @@ boost::asio::awaitable<void> mux_connection::async_wait_stopped()
     {
         co_return;
     }
-
-    const auto [ec] = co_await stop_channel_->async_receive(boost::asio::as_tuple(boost::asio::use_awaitable));
-    if (ec && ec != boost::asio::experimental::error::channel_errors::channel_closed &&
-        ec != boost::asio::experimental::error::channel_errors::channel_cancelled && ec != boost::asio::error::operation_aborted)
+    boost::system::error_code ec;
+    co_await stop_channel_->async_receive(boost::asio::redirect_error(boost::asio::use_awaitable, ec));
+    if (ec)
     {
         LOG_WARN("mux {} wait stopped error {}", cid_, ec.message());
     }
@@ -341,7 +333,6 @@ boost::asio::awaitable<void> mux_connection::async_wait_stopped()
 
 boost::asio::awaitable<mux_frame> mux_connection::async_receive_syn(boost::system::error_code& ec) const
 {
-    ec.clear();
     if (incoming_syn_channel_ == nullptr)
     {
         ec = boost::asio::error::operation_not_supported;
@@ -375,30 +366,42 @@ boost::asio::awaitable<void> mux_connection::read_loop()
         last_read_time_ms_ = timeout_io::now_ms();
         reality_engine_.commit_read(n);
 
-        co_await reality_engine_.process_available_records(
-            [this](
-                const std::uint8_t type, const std::span<const std::uint8_t> plaintext, boost::system::error_code& ec) -> boost::asio::awaitable<void>
-            { co_await process_tls_record(type, plaintext, ec); },
-            ec);
+        while (true)
+        {
+            const auto record = reality_engine_.decrypt_record(ec);
+            if (ec)
+            {
+                break;
+            }
+            if (!record.has_value())
+            {
+                break;
+            }
+
+            const auto content_type = record->content_type;
+            co_await on_tls_record(content_type, record->payload, ec);
+            if (ec)
+            {
+                break;
+            }
+            if (content_type == ::tls::kContentTypeAlert)
+            {
+                ec = boost::asio::error::eof;
+                break;
+            }
+        }
         if (ec)
         {
-            if (is_expected_socket_shutdown_error(ec))
-            {
-                LOG_DEBUG("mux {} process decrypted records stopped {}", cid_, ec.message());
-            }
-            else
-            {
-                LOG_ERROR("mux {} process_decrypted_records error {}", cid_, ec.message());
-            }
+            LOG_ERROR("mux {} process_decrypted_records error {}", cid_, ec.message());
             break;
         }
     }
     LOG_DEBUG("mux {} read loop finished", cid_);
 }
 
-boost::asio::awaitable<void> mux_connection::process_tls_record(const std::uint8_t type,
-                                                                const std::span<const std::uint8_t> plaintext,
-                                                                boost::system::error_code& ec)
+boost::asio::awaitable<void> mux_connection::on_tls_record(const std::uint8_t type,
+                                                           const std::span<const std::uint8_t> plaintext,
+                                                           boost::system::error_code& ec)
 {
     if (type == ::tls::kContentTypeApplicationData)
     {

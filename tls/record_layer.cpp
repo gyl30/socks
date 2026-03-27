@@ -162,13 +162,13 @@ void record_layer::encrypt_record_append(const cipher_context& ctx,
     crypto_util::aead_encrypt_append(ctx, cipher, key, nonce, inner_plaintext, temp_header, output_buffer, ec);
 }
 
-std::vector<std::uint8_t> record_layer::encrypt_record(const EVP_CIPHER* cipher,
-                                                       const std::vector<std::uint8_t>& key,
-                                                       const std::vector<std::uint8_t>& iv,
-                                                       const std::uint64_t seq,
-                                                       const std::vector<std::uint8_t>& plaintext,
-                                                       const std::uint8_t content_type,
-                                                       boost::system::error_code& ec)
+std::vector<std::uint8_t> record_layer::encrypt_tls_record(const EVP_CIPHER* cipher,
+                                                           const std::vector<std::uint8_t>& key,
+                                                           const std::vector<std::uint8_t>& iv,
+                                                           const std::uint64_t seq,
+                                                           const std::vector<std::uint8_t>& plaintext,
+                                                           const std::uint8_t content_type,
+                                                           boost::system::error_code& ec)
 {
     const cipher_context ctx;
     std::vector<std::uint8_t> out;
@@ -180,17 +180,16 @@ std::vector<std::uint8_t> record_layer::encrypt_record(const EVP_CIPHER* cipher,
     return out;
 }
 
-std::size_t record_layer::decrypt_record(const cipher_context& ctx,
-                                         const EVP_CIPHER* cipher,
-                                         const std::vector<std::uint8_t>& key,
-                                         const std::vector<std::uint8_t>& iv,
-                                         const std::uint64_t seq,
-                                         const std::span<const std::uint8_t> record_data,
-                                         const std::span<std::uint8_t> output_buffer,
-                                         std::uint8_t& out_content_type,
-                                         boost::system::error_code& ec)
+std::size_t record_layer::decrypt_tls_record(const cipher_context& ctx,
+                                             const EVP_CIPHER* cipher,
+                                             const std::vector<std::uint8_t>& key,
+                                             const std::vector<std::uint8_t>& iv,
+                                             const std::uint64_t seq,
+                                             const std::span<const std::uint8_t> record_data,
+                                             const std::span<std::uint8_t> output_buffer,
+                                             std::uint8_t& out_content_type,
+                                             boost::system::error_code& ec)
 {
-    ec.clear();
     ensure_openssl_initialized();
 
     validate_record_for_decrypt(record_data, ec);
@@ -237,7 +236,7 @@ std::vector<std::uint8_t> record_layer::decrypt_record(const EVP_CIPHER* cipher,
         return {};
     }
     std::vector<std::uint8_t> out(ciphertext_with_header.size() - kTlsRecordHeaderSize - kAeadTagSize);
-    auto decrypt_result = decrypt_record(ctx, cipher, key, iv, seq, ciphertext_with_header, out, out_content_type, ec);
+    auto decrypt_result = decrypt_tls_record(ctx, cipher, key, iv, seq, ciphertext_with_header, out, out_content_type, ec);
     if (ec)
     {
         return {};

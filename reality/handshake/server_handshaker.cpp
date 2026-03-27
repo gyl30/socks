@@ -935,7 +935,7 @@ std::vector<std::uint8_t> compose_server_hello_flight(const std::vector<std::uin
         const auto end = offset + len;
         const std::vector<std::uint8_t> chunk(flight2_plain.begin() + static_cast<std::ptrdiff_t>(offset),
                                               flight2_plain.begin() + static_cast<std::ptrdiff_t>(end));
-        auto record = tls::record_layer::encrypt_record(cipher, s_hs_keys.first, s_hs_keys.second, seq++, chunk, tls::kContentTypeHandshake, ec);
+        auto record = tls::record_layer::encrypt_tls_record(cipher, s_hs_keys.first, s_hs_keys.second, seq++, chunk, tls::kContentTypeHandshake, ec);
         if (ec)
         {
             return false;
