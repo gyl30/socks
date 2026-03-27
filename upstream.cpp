@@ -57,6 +57,27 @@ namespace
            ec == boost::asio::experimental::error::channel_errors::channel_cancelled;
 }
 
+boost::asio::awaitable<void> send_connect_reset(const std::shared_ptr<mux_stream>& stream,
+                                                const connection_context& ctx,
+                                                const char* stage)
+{
+    if (stream == nullptr)
+    {
+        co_return;
+    }
+
+    mux_frame rst_frame;
+    rst_frame.h.stream_id = stream->id();
+    rst_frame.h.command = mux::kCmdRst;
+
+    boost::system::error_code rst_ec;
+    co_await stream->async_write(std::move(rst_frame), rst_ec);
+    if (rst_ec)
+    {
+        LOG_CTX_WARN(ctx.with_stream(stream->id()), "{} stage {} send rst failed {}", log_event::kRoute, stage, rst_ec.message());
+    }
+}
+
 }    // namespace
 
 class direct_upstream final : public upstream
@@ -348,6 +369,7 @@ boost::asio::awaitable<void> proxy_upstream::wait_connect_ack(const std::shared_
         LOG_CTX_ERROR(stream_ctx, "{} stage wait_ack target {}:{} error {}", log_event::kRoute, host, port, ack_ec.message());
         result.ec = ack_ec;
         result.socks_rep = map_connect_error_to_socks_rep(ack_ec);
+        co_await send_connect_reset(stream, ctx_, "wait_ack");
         co_return;
     }
     if (ack_frame.h.command != kCmdAck)
@@ -362,6 +384,7 @@ boost::asio::awaitable<void> proxy_upstream::wait_connect_ack(const std::shared_
                      ack_frame.payload.size());
         result.ec = boost::asio::error::connection_aborted;
         result.socks_rep = map_connect_error_to_socks_rep(result.ec);
+        co_await send_connect_reset(stream, ctx_, "wait_ack_unexpected_cmd");
         co_return;
     }
 
@@ -371,6 +394,7 @@ boost::asio::awaitable<void> proxy_upstream::wait_connect_ack(const std::shared_
         LOG_CTX_WARN(stream_ctx, "{} stage decode_ack target {}:{} error invalid_ack_payload", log_event::kRoute, host, port);
         result.ec = boost::asio::error::invalid_argument;
         result.socks_rep = map_connect_error_to_socks_rep(result.ec);
+        co_await send_connect_reset(stream, ctx_, "decode_ack");
         co_return;
     }
     result.socks_rep = ack.socks_rep;
