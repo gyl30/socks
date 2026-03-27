@@ -58,12 +58,6 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     [[nodiscard]] std::shared_ptr<mux_stream> find_stream(std::uint32_t stream_id);
     boost::asio::awaitable<void> send_async(mux_frame msg, boost::system::error_code& ec);
     boost::asio::awaitable<void> send_async_with_timeout(mux_frame msg, std::uint32_t timeout_sec, boost::system::error_code& ec);
-    std::uint64_t reserve_pending(std::uint64_t bytes);
-    void release_pending(std::uint64_t bytes);
-    std::uint64_t reserve_write_bytes(std::uint64_t bytes);
-    void release_write_bytes(std::uint64_t bytes);
-    std::uint64_t reserve_write_bytes(std::uint32_t stream_id, std::uint8_t command, std::uint64_t bytes);
-    void release_write_bytes(std::uint32_t stream_id, std::uint8_t command, std::uint64_t bytes);
 
    private:
     void stop_on_executor();
@@ -109,10 +103,6 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     std::uint64_t last_non_heartbeat_write_time_ms_{0};
     boost::asio::ip::tcp::socket socket_;
     std::atomic<bool> stopped_{false};
-    std::atomic<std::uint64_t> pending_bytes_total_{0};
-    std::atomic<std::uint64_t> write_pending_bytes_{0};
-    std::mutex write_limit_mutex_;
-    std::unordered_map<std::uint32_t, std::uint64_t> write_pending_bytes_by_stream_;
     using channel_type = boost::asio::experimental::concurrent_channel<void(boost::system::error_code, mux_frame)>;
     using stop_channel_type = boost::asio::experimental::concurrent_channel<void(boost::system::error_code)>;
     std::unique_ptr<channel_type> write_channel_;
