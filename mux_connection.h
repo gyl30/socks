@@ -72,7 +72,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     boost::asio::awaitable<void> handle_unknown_stream(mux::frame_header header, std::vector<std::uint8_t> payload);
     boost::asio::awaitable<void> handle_stream_frame(const mux::frame_header& header, std::vector<std::uint8_t> payload);
     boost::asio::awaitable<void> queue_incoming_syn(mux::frame_header header, std::vector<std::uint8_t> payload);
-    boost::asio::awaitable<void> process_tls_record(std::uint8_t type, std::span<const std::uint8_t> plaintext, boost::system::error_code& ec);
+    boost::asio::awaitable<void> on_tls_record(std::uint8_t type, std::span<const std::uint8_t> plaintext, boost::system::error_code& ec);
     [[nodiscard]] std::uint32_t acquire_next_id();
     [[nodiscard]] bool is_stream_limit_reached();
 
