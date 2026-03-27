@@ -32,7 +32,7 @@ class record_layer
                                       std::vector<std::uint8_t>& output_buffer,
                                       boost::system::error_code& ec);
 
-    [[nodiscard]] static std::vector<std::uint8_t> encrypt_record(const EVP_CIPHER* cipher,
+    [[nodiscard]] static std::vector<std::uint8_t> encrypt_tls_record(const EVP_CIPHER* cipher,
                                                                   const std::vector<std::uint8_t>& key,
                                                                   const std::vector<std::uint8_t>& iv,
                                                                   std::uint64_t seq,
@@ -40,7 +40,7 @@ class record_layer
                                                                   std::uint8_t content_type,
                                                                   boost::system::error_code& ec);
 
-    [[nodiscard]] static std::size_t decrypt_record(const cipher_context& ctx,
+    [[nodiscard]] static std::size_t decrypt_tls_record(const cipher_context& ctx,
                                                     const EVP_CIPHER* cipher,
                                                     const std::vector<std::uint8_t>& key,
                                                     const std::vector<std::uint8_t>& iv,
