@@ -47,6 +47,27 @@ constexpr std::size_t kMaxUdpPacketSize = 8192;
     return ec == boost::asio::error::operation_aborted || ec == boost::asio::error::bad_descriptor;
 }
 
+boost::asio::awaitable<void> send_udp_stream_reset(const std::shared_ptr<mux_stream>& stream,
+                                                   const connection_context& ctx,
+                                                   const char* stage)
+{
+    if (stream == nullptr)
+    {
+        co_return;
+    }
+
+    mux_frame rst_frame;
+    rst_frame.h.stream_id = stream->id();
+    rst_frame.h.command = mux::kCmdRst;
+
+    boost::system::error_code rst_ec;
+    co_await stream->async_write(std::move(rst_frame), rst_ec);
+    if (rst_ec)
+    {
+        LOG_CTX_WARN(ctx.with_stream(stream->id()), "{} stage {} send rst failed {}", log_event::kMux, stage, rst_ec.message());
+    }
+}
+
 void update_stream_close_command(std::atomic<std::uint8_t>& stream_close_command, const std::uint8_t next_command)
 {
     auto current = stream_close_command.load(std::memory_order_relaxed);
@@ -139,6 +160,7 @@ boost::asio::awaitable<std::shared_ptr<mux_stream>> connect_remote_udp_stream(co
     if (ec)
     {
         LOG_CTX_WARN(ctx, "{} read udp ack failed {}", log_event::kMux, ec.message());
+        co_await send_udp_stream_reset(stream, ctx, "read_udp_ack");
         tunnel->close_and_remove_stream(stream);
         co_return nullptr;
     }
@@ -146,6 +168,7 @@ boost::asio::awaitable<std::shared_ptr<mux_stream>> connect_remote_udp_stream(co
     {
         ec = boost::asio::error::invalid_argument;
         LOG_CTX_WARN(ctx, "{} unexpected udp ack command {}", log_event::kMux, ack_frame.h.command);
+        co_await send_udp_stream_reset(stream, ctx, "unexpected_udp_ack_command");
         tunnel->close_and_remove_stream(stream);
         co_return nullptr;
     }
@@ -155,6 +178,7 @@ boost::asio::awaitable<std::shared_ptr<mux_stream>> connect_remote_udp_stream(co
     {
         ec = boost::asio::error::invalid_argument;
         LOG_CTX_WARN(ctx, "{} invalid udp ack payload", log_event::kMux);
+        co_await send_udp_stream_reset(stream, ctx, "invalid_udp_ack_payload");
         tunnel->close_and_remove_stream(stream);
         co_return nullptr;
     }
