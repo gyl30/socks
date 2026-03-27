@@ -14,6 +14,8 @@ extern "C"
 
 namespace tls
 {
+constexpr std::uint8_t kHandshakeTypeNewSessionTicket = 0x04;
+constexpr std::uint8_t kHandshakeTypeKeyUpdate = 0x18;
 
 inline constexpr std::uint8_t kContentTypeChangeCipherSpec = 0x14;
 inline constexpr std::uint8_t kContentTypeAlert = 0x15;
