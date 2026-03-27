@@ -1,5 +1,6 @@
 #include <span>
 #include <array>
+#include <optional>
 #include <memory>
 #include <vector>
 #include <utility>
@@ -12,7 +13,6 @@ extern "C"
 }
 
 #include <boost/asio.hpp>
-#include <boost/asio/awaitable.hpp>
 #include <boost/asio/streambuf.hpp>
 
 #include "tls/core.h"
@@ -24,7 +24,7 @@ namespace mux
 
 namespace
 {
-constexpr std::size_t kMaxTlsCiphertextRecordLen = ::tls::kMaxTlsPlaintextLen + 256;
+constexpr std::size_t kMaxTlsCiphertextRecordLen = tls::kMaxTlsPlaintextLen + 256;
 }    // namespace
 
 reality_engine::reality_engine(std::vector<std::uint8_t> r_key,
@@ -47,7 +47,6 @@ reality_engine::reality_engine(std::vector<std::uint8_t> r_key,
 
 boost::asio::streambuf::mutable_buffers_type reality_engine::read_buffer(std::size_t size_hint, boost::system::error_code& ec) const
 {
-    ec.clear();
     const auto max_size = rx_buf_->max_size();
     const auto current_size = rx_buf_->size();
     if (current_size >= max_size)
@@ -68,16 +67,15 @@ std::span<const std::uint8_t> reality_engine::encrypt(const std::vector<std::uin
     {
         return std::span<const std::uint8_t>{};
     }
-    ec.clear();
     std::vector<std::uint8_t> plaintext_chunk;
-    plaintext_chunk.reserve(::tls::kMaxTlsApplicationDataPayloadLen);
+    plaintext_chunk.reserve(tls::kMaxTlsApplicationDataPayloadLen);
     for (std::size_t offset = 0; offset < plaintext.size();)
     {
-        const auto chunk_len = std::min(plaintext.size() - offset, ::tls::kMaxTlsApplicationDataPayloadLen);
+        const auto chunk_len = std::min(plaintext.size() - offset, tls::kMaxTlsApplicationDataPayloadLen);
         plaintext_chunk.assign(plaintext.begin() + static_cast<std::ptrdiff_t>(offset),
                                plaintext.begin() + static_cast<std::ptrdiff_t>(offset + chunk_len));
-        ::tls::record_layer::encrypt_record_append(
-            encrypt_ctx_, cipher_, write_key_, write_iv_, write_seq_, plaintext_chunk, ::tls::kContentTypeApplicationData, tx_buf_, ec);
+        tls::record_layer::encrypt_record_append(
+            encrypt_ctx_, cipher_, write_key_, write_iv_, write_seq_, plaintext_chunk, tls::kContentTypeApplicationData, tx_buf_, ec);
         if (ec)
         {
             return std::span<const std::uint8_t>{};
@@ -89,46 +87,35 @@ std::span<const std::uint8_t> reality_engine::encrypt(const std::vector<std::uin
     return std::span<const std::uint8_t>{tx_buf_.data(), tx_buf_.size()};
 }
 
-boost::asio::awaitable<void> reality_engine::process_available_records(const record_callback& callback, boost::system::error_code& ec)
+std::optional<mux::tls_record> reality_engine::decrypt_record(boost::system::error_code& ec)
 {
-    for (;;)
+    std::uint8_t content_type = 0;
+    std::size_t payload_len = 0;
+    const auto buffered_before = rx_buf_->size();
+    decrypt_tls_record(content_type, payload_len, ec);
+    if (ec)
     {
-        const auto buffered_before = rx_buf_->size();
-        std::uint8_t content_type = 0;
-        std::size_t payload_len = 0;
-        try_decrypt_next_record(content_type, payload_len, ec);
-        if (ec)
-        {
-            co_return;
-        }
-        if (rx_buf_->size() == buffered_before)
-        {
-            // No complete TLS record is available yet.
-            co_return;
-        }
-        co_await callback(content_type, std::span<const std::uint8_t>(scratch_buf_.data(), payload_len), ec);
-        if (ec)
-        {
-            co_return;
-        }
-        if (content_type == ::tls::kContentTypeAlert)
-        {
-            ec = boost::asio::error::eof;
-            co_return;
-        }
+        return std::nullopt;
     }
+
+    if (rx_buf_->size() == buffered_before)
+    {
+        return std::nullopt;
+    }
+
+    return mux::tls_record{.content_type = content_type, .payload = std::span<const std::uint8_t>(scratch_buf_.data(), payload_len)};
 }
 
-void reality_engine::try_decrypt_next_record(std::uint8_t& content_type, std::size_t& payload_len, boost::system::error_code& ec)
+void reality_engine::decrypt_tls_record(std::uint8_t& content_type, std::size_t& payload_len, boost::system::error_code& ec)
 {
-    if (rx_buf_->size() < ::tls::kTlsRecordHeaderSize)
+    if (rx_buf_->size() < tls::kTlsRecordHeaderSize)
     {
         return;
     }
 
     const auto data_buffers = rx_buf_->data();
-    std::array<std::uint8_t, ::tls::kTlsRecordHeaderSize> record_header{};
-    if (boost::asio::buffer_copy(boost::asio::buffer(record_header), data_buffers) < ::tls::kTlsRecordHeaderSize)
+    std::array<std::uint8_t, tls::kTlsRecordHeaderSize> record_header{};
+    if (boost::asio::buffer_copy(boost::asio::buffer(record_header), data_buffers) < tls::kTlsRecordHeaderSize)
     {
         return;
     }
@@ -140,7 +127,7 @@ void reality_engine::try_decrypt_next_record(std::uint8_t& content_type, std::si
         return;
     }
 
-    const std::uint32_t frame_size = ::tls::kTlsRecordHeaderSize + record_len;
+    const std::uint32_t frame_size = tls::kTlsRecordHeaderSize + record_len;
 
     if (rx_buf_->size() < frame_size)
     {
@@ -156,7 +143,7 @@ void reality_engine::try_decrypt_next_record(std::uint8_t& content_type, std::si
 
     const std::span<const std::uint8_t> record_data(record_buf_.data(), frame_size);
 
-    payload_len = ::tls::record_layer::decrypt_record(
+    payload_len = tls::record_layer::decrypt_tls_record(
         decrypt_ctx_, cipher_, read_key_, read_iv_, read_seq_, record_data, std::span<std::uint8_t>(scratch_buf_), content_type, ec);
     if (ec)
     {

@@ -413,7 +413,7 @@ std::pair<std::uint8_t, std::span<std::uint8_t>> decrypt_application_record(fetc
 {
     auto ciphertext_record = build_encrypted_record_bytes(header, record);
     std::uint8_t content_type = 0;
-    const auto plaintext_len = ::tls::record_layer::decrypt_record(
+    const auto plaintext_len = ::tls::record_layer::decrypt_tls_record(
         ctx.decrypt_ctx, ctx.negotiated_cipher, ctx.dec_key, ctx.dec_iv, ctx.seq++, ciphertext_record, plaintext_buffer, content_type, ec);
     if (ec)
     {
