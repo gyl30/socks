@@ -46,8 +46,6 @@ namespace
 constexpr std::uint32_t kControlFrameSendTimeoutSec = 1;
 constexpr std::uint8_t kHandshakeTypeNewSessionTicket = 0x04;
 constexpr std::uint8_t kHandshakeTypeKeyUpdate = 0x18;
-constexpr std::uint64_t kClosedStreamSuppressWindowMs = 5000;
-constexpr std::size_t kMaxRecentlyClosedStreams = 256;
 
 [[nodiscard]] bool is_expected_socket_shutdown_error(const boost::system::error_code& ec)
 {
@@ -130,80 +128,6 @@ std::shared_ptr<mux_stream> mux_connection::find_stream(const std::uint32_t stre
     return nullptr;
 }
 
-void mux_connection::prune_closed_streams_locked(const std::uint64_t now_ms)
-{
-    for (auto it = recently_closed_streams_.begin(); it != recently_closed_streams_.end();)
-    {
-        if (now_ms >= it->second.last_seen_ms && now_ms - it->second.last_seen_ms > kClosedStreamSuppressWindowMs)
-        {
-            it = recently_closed_streams_.erase(it);
-            continue;
-        }
-        ++it;
-    }
-
-    while (true)
-    {
-        if (recently_closed_streams_.size() <= kMaxRecentlyClosedStreams)
-        {
-            break;
-        }
-        auto oldest = recently_closed_streams_.begin();
-        for (auto it = std::next(recently_closed_streams_.begin()); it != recently_closed_streams_.end(); ++it)
-        {
-            if (it->second.last_seen_ms < oldest->second.last_seen_ms)
-            {
-                oldest = it;
-            }
-        }
-        recently_closed_streams_.erase(oldest);
-    }
-}
-
-void mux_connection::remember_closed_stream(const std::uint32_t stream_id, const bool rst_sent)
-{
-    if (stream_id == mux::kStreamIdHeartbeat)
-    {
-        return;
-    }
-
-    const auto now_ms = timeout_io::now_ms();
-    const std::scoped_lock<std::mutex> lock(mutex_);
-    auto& state = recently_closed_streams_[stream_id];
-    state.last_seen_ms = now_ms;
-    state.rst_sent = state.rst_sent || rst_sent;
-    prune_closed_streams_locked(now_ms);
-}
-
-bool mux_connection::handle_recently_closed_stream(const mux::frame_header& header, bool& send_rst)
-{
-    send_rst = false;
-    if (header.stream_id == mux::kStreamIdHeartbeat)
-    {
-        return false;
-    }
-
-    const auto now_ms = timeout_io::now_ms();
-    const std::scoped_lock<std::mutex> lock(mutex_);
-    prune_closed_streams_locked(now_ms);
-
-    const auto it = recently_closed_streams_.find(header.stream_id);
-    if (it == recently_closed_streams_.end())
-    {
-        return false;
-    }
-
-    it->second.last_seen_ms = now_ms;
-    if (header.command == mux::kCmdRst || header.command == mux::kCmdFin || it->second.rst_sent)
-    {
-        return true;
-    }
-
-    it->second.rst_sent = true;
-    send_rst = true;
-    return true;
-}
-
 void mux_connection::start_accepting_streams()
 {
     if (incoming_syn_channel_ != nullptr)
@@ -217,20 +141,6 @@ boost::asio::awaitable<void> mux_connection::handle_unknown_stream(mux::frame_he
 {
     if (header.command == mux::kCmdRst)
     {
-        remember_closed_stream(header.stream_id, true);
-        co_return;
-    }
-
-    bool send_rst_for_closed_stream = false;
-    if (handle_recently_closed_stream(header, send_rst_for_closed_stream))
-    {
-        if (send_rst_for_closed_stream)
-        {
-            if (const auto rst_ec = co_await send_stream_rst(header.stream_id))
-            {
-                LOG_DEBUG("mux {} closed stream {} resend rst failed {}", cid_, header.stream_id, rst_ec.message());
-            }
-        }
         co_return;
     }
 
@@ -239,7 +149,6 @@ boost::asio::awaitable<void> mux_connection::handle_unknown_stream(mux::frame_he
         if (is_stream_limit_reached())
         {
             LOG_WARN("mux {} reject stream {} max_streams {}", cid_, header.stream_id, cfg_.limits.max_streams);
-            remember_closed_stream(header.stream_id, true);
             if (const auto rst_ec = co_await send_stream_rst(header.stream_id))
             {
                 LOG_WARN("mux {} reject stream {} send rst failed {}", cid_, header.stream_id, rst_ec.message());
@@ -249,7 +158,6 @@ boost::asio::awaitable<void> mux_connection::handle_unknown_stream(mux::frame_he
         if (incoming_syn_channel_ == nullptr)
         {
             LOG_WARN("mux {} incoming syn on stream {} rejected without accept loop", cid_, header.stream_id);
-            remember_closed_stream(header.stream_id, true);
             if (const auto rst_ec = co_await send_stream_rst(header.stream_id))
             {
                 LOG_WARN("mux {} reject stream {} send rst failed {}", cid_, header.stream_id, rst_ec.message());
@@ -262,7 +170,6 @@ boost::asio::awaitable<void> mux_connection::handle_unknown_stream(mux::frame_he
     }
 
     LOG_DEBUG("mux {} recv frame for unknown stream {} cmd {}", cid_, header.stream_id, header.command);
-    remember_closed_stream(header.stream_id, true);
     if (const auto rst_ec = co_await send_stream_rst(header.stream_id))
     {
         LOG_WARN("mux {} unknown stream {} send rst failed {}", cid_, header.stream_id, rst_ec.message());
@@ -294,7 +201,6 @@ boost::asio::awaitable<void> mux_connection::handle_stream_frame(const mux::fram
             rst_frame.h.command = mux::kCmdRst;
             boost::system::error_code rst_ec;
             co_await send_async_with_timeout(std::move(rst_frame), kRstSendTimeoutSec, rst_ec);
-            remember_closed_stream(header.stream_id, true);
             if (rst_ec)
             {
                 LOG_WARN("mux {} stream {} send rst failed {}", cid_, header.stream_id, rst_ec.message());
@@ -344,12 +250,8 @@ boost::asio::awaitable<void> mux_connection::queue_incoming_syn(mux::frame_heade
 void mux_connection::remove_stream(const std::shared_ptr<mux_stream>& stream)
 {
     const auto stream_id = stream->id();
-    {
-        const std::scoped_lock<std::mutex> lock(mutex_);
-        streams_.erase(stream_id);
-        recently_closed_streams_[stream_id] = closed_stream_state{.last_seen_ms = timeout_io::now_ms(), .rst_sent = false};
-        prune_closed_streams_locked(timeout_io::now_ms());
-    }
+    const std::scoped_lock<std::mutex> lock(mutex_);
+    streams_.erase(stream_id);
 }
 
 void mux_connection::close_and_remove_stream(const std::shared_ptr<mux_stream>& stream)
@@ -714,7 +616,6 @@ std::shared_ptr<mux_stream> mux_connection::create_stream()
         {
             stream = std::make_shared<mux_stream>(stream_id, cfg_, worker_.io_context, shared_from_this());
             streams_.emplace(stream_id, stream);
-            recently_closed_streams_.erase(stream_id);
         }
     }
     if (stream_id == mux::kStreamIdHeartbeat)
@@ -744,7 +645,6 @@ std::shared_ptr<mux_stream> mux_connection::create_incoming_stream(const std::ui
 
     auto stream = std::make_shared<mux_stream>(stream_id, cfg_, worker_.io_context, shared_from_this());
     streams_.emplace(stream_id, stream);
-    recently_closed_streams_.erase(stream_id);
     return stream;
 }
 
