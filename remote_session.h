@@ -26,6 +26,7 @@ class remote_tcp_session : public std::enable_shared_from_this<remote_tcp_sessio
                        const connection_context& ctx,
                        const config& cfg);
 
+    [[nodiscard]] bool has_stream() const;
     [[nodiscard]] boost::asio::awaitable<void> start(const syn_payload& syn);
 
    private:

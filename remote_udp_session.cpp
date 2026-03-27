@@ -96,7 +96,21 @@ remote_udp_session::remote_udp_session(boost::asio::io_context& io_context,
     last_activity_time_ms_ = timeout_io::now_ms();
 }
 
-boost::asio::awaitable<void> remote_udp_session::start() { co_await start_impl(); }
+bool remote_udp_session::has_stream() const
+{
+    return stream_ != nullptr;
+}
+
+boost::asio::awaitable<void> remote_udp_session::start()
+{
+    if (stream_ == nullptr)
+    {
+        LOG_CTX_WARN(ctx_, "{} start udp session without stream {}", log_event::kMux, id_);
+        co_return;
+    }
+
+    co_await start_impl();
+}
 
 boost::asio::awaitable<void> remote_udp_session::start_impl()
 {
