@@ -17,7 +17,6 @@
 #include "socks_client.h"
 #include "socks_session.h"
 #include "client_tunnel_pool.h"
-#include "connection_tracker.h"
 
 namespace mux
 {
@@ -156,13 +155,6 @@ boost::asio::awaitable<void> socks_client::accept_loop()
                 LOG_ERROR("accept retry timer error {}", ec.message());
                 break;
             }
-            continue;
-        }
-
-        if (connection_tracker::instance().active_connections() >= cfg_.limits.client_session_max_connections)
-        {
-            ec = socket.close(ec);
-            LOG_WARN("socks5 connection limit reached drop");
             continue;
         }
 

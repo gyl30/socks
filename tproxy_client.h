@@ -38,7 +38,6 @@ class tproxy_client : public std::enable_shared_from_this<tproxy_client>
                                                              boost::asio::ip::udp::endpoint target_endpoint,
                                                              std::vector<std::uint8_t> payload);
     [[nodiscard]] bool is_udp_routing_loop(const boost::asio::ip::udp::endpoint& target_endpoint) const;
-    [[nodiscard]] bool can_create_udp_session() const;
     [[nodiscard]] connection_context make_udp_connection_context(const boost::asio::ip::udp::endpoint& client_endpoint,
                                                                  const boost::asio::ip::udp::endpoint& target_endpoint) const;
     [[nodiscard]] boost::asio::awaitable<route_type> decide_udp_route(const connection_context& ctx,
