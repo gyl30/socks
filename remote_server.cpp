@@ -454,6 +454,12 @@ boost::asio::awaitable<void> remote_server::process_stream_request(io_worker& wo
                      syn.port,
                      frame.payload.size());
         const auto sess = std::make_shared<remote_tcp_session>(worker.io_context, connection, frame.h.stream_id, stream_ctx, cfg_);
+        if (!sess->has_stream())
+        {
+            LOG_CTX_WARN(stream_ctx, "{} stream {} create incoming tcp stream failed", log_event::kMux, frame.h.stream_id);
+            co_await send_stream_reset(connection, std::move(frame));
+            co_return;
+        }
         worker.group.spawn([sess, syn]() mutable -> boost::asio::awaitable<void> { co_await sess->start(syn); });
         co_return;
     }
@@ -461,6 +467,12 @@ boost::asio::awaitable<void> remote_server::process_stream_request(io_worker& wo
     {
         LOG_CTX_INFO(stream_ctx, "{} stream {} type udp associate associated via tcp", log_event::kMux, frame.h.stream_id);
         const auto sess = std::make_shared<remote_udp_session>(worker.io_context, connection, frame.h.stream_id, stream_ctx, cfg_);
+        if (!sess->has_stream())
+        {
+            LOG_CTX_WARN(stream_ctx, "{} stream {} create incoming udp stream failed", log_event::kMux, frame.h.stream_id);
+            co_await send_stream_reset(connection, std::move(frame));
+            co_return;
+        }
         worker.group.spawn([sess]() mutable -> boost::asio::awaitable<void> { co_await sess->start(); });
         co_return;
     }
