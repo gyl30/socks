@@ -43,9 +43,6 @@ namespace mux
 namespace
 {
 
-constexpr std::uint8_t kHandshakeTypeNewSessionTicket = 0x04;
-constexpr std::uint8_t kHandshakeTypeKeyUpdate = 0x18;
-
 [[nodiscard]] bool is_expected_socket_shutdown_error(const boost::system::error_code& ec)
 {
     return ec == boost::asio::error::operation_aborted || ec == boost::asio::error::eof || ec == boost::asio::error::bad_descriptor ||
@@ -63,12 +60,12 @@ void handle_post_handshake_record(const std::uint32_t cid, const std::span<const
     }
 
     const auto handshake_type = plaintext.front();
-    if (handshake_type == kHandshakeTypeNewSessionTicket)
+    if (handshake_type == tls::kHandshakeTypeNewSessionTicket)
     {
         LOG_DEBUG("mux {} ignore new session ticket", cid);
         return;
     }
-    if (handshake_type == kHandshakeTypeKeyUpdate)
+    if (handshake_type == tls::kHandshakeTypeKeyUpdate)
     {
         LOG_WARN("mux {} key update unsupported", cid);
         ec = boost::asio::error::operation_not_supported;
