@@ -1,7 +1,6 @@
 #ifndef MUX_STREAM_H
 #define MUX_STREAM_H
 
-#include <atomic>
 #include <memory>
 
 #include <boost/asio/awaitable.hpp>
@@ -33,8 +32,6 @@ class mux_stream
    private:
     std::uint32_t id_ = 0;
     const config& cfg_;
-    static constexpr std::uint64_t kDefaultMaxPendingBytes = 256 * 1024ULL;
-    std::atomic<std::uint64_t> pending_bytes_{0};
     std::weak_ptr<mux_connection> connection_;
     boost::asio::experimental::concurrent_channel<void(boost::system::error_code, mux_frame)> recv_channel_;
 };
