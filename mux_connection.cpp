@@ -43,7 +43,6 @@ namespace mux
 namespace
 {
 
-constexpr std::uint32_t kControlFrameSendTimeoutSec = 1;
 constexpr std::uint8_t kHandshakeTypeNewSessionTicket = 0x04;
 constexpr std::uint8_t kHandshakeTypeKeyUpdate = 0x18;
 
@@ -139,29 +138,16 @@ void mux_connection::start_accepting_streams()
 
 boost::asio::awaitable<void> mux_connection::handle_unknown_stream(mux::frame_header header, std::vector<std::uint8_t> payload)
 {
-    if (header.command == mux::kCmdRst)
-    {
-        co_return;
-    }
-
     if (header.command == mux::kCmdSyn)
     {
         if (is_stream_limit_reached())
         {
-            LOG_WARN("mux {} reject stream {} max_streams {}", cid_, header.stream_id, cfg_.limits.max_streams);
-            if (const auto rst_ec = co_await send_stream_rst(header.stream_id))
-            {
-                LOG_WARN("mux {} reject stream {} send rst failed {}", cid_, header.stream_id, rst_ec.message());
-            }
+            LOG_WARN("mux {} drop incoming syn stream {} max_streams {}", cid_, header.stream_id, cfg_.limits.max_streams);
             co_return;
         }
         if (incoming_syn_channel_ == nullptr)
         {
-            LOG_WARN("mux {} incoming syn on stream {} rejected without accept loop", cid_, header.stream_id);
-            if (const auto rst_ec = co_await send_stream_rst(header.stream_id))
-            {
-                LOG_WARN("mux {} reject stream {} send rst failed {}", cid_, header.stream_id, rst_ec.message());
-            }
+            LOG_DEBUG("mux {} drop incoming syn on stream {} without accept loop", cid_, header.stream_id);
             co_return;
         }
 
@@ -169,11 +155,7 @@ boost::asio::awaitable<void> mux_connection::handle_unknown_stream(mux::frame_he
         co_return;
     }
 
-    LOG_DEBUG("mux {} recv frame for unknown stream {} cmd {}", cid_, header.stream_id, header.command);
-    if (const auto rst_ec = co_await send_stream_rst(header.stream_id))
-    {
-        LOG_WARN("mux {} unknown stream {} send rst failed {}", cid_, header.stream_id, rst_ec.message());
-    }
+    LOG_DEBUG("mux {} drop frame for unknown stream {} cmd {}", cid_, header.stream_id, header.command);
 }
 
 boost::asio::awaitable<void> mux_connection::handle_stream_frame(const mux::frame_header& header, std::vector<std::uint8_t> payload)
@@ -219,16 +201,6 @@ boost::asio::awaitable<void> mux_connection::handle_stream_frame(const mux::fram
         LOG_ERROR("mux {} deliver frame to stream {} failed {}", cid_, header.stream_id, ec.message());
         stop();
     }
-}
-
-boost::asio::awaitable<boost::system::error_code> mux_connection::send_stream_rst(const std::uint32_t stream_id)
-{
-    mux_frame rst;
-    rst.h.command = mux::kCmdRst;
-    rst.h.stream_id = stream_id;
-    boost::system::error_code rst_ec;
-    co_await send_async_with_timeout(std::move(rst), kControlFrameSendTimeoutSec, rst_ec);
-    co_return rst_ec;
 }
 
 boost::asio::awaitable<void> mux_connection::queue_incoming_syn(mux::frame_header header, std::vector<std::uint8_t> payload)
