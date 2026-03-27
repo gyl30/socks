@@ -61,7 +61,6 @@ struct config
     struct limits_t
     {
         std::uint32_t max_connections = 5;
-        std::uint32_t client_session_max_connections = 0;
         std::uint32_t tunnel_connections = 0;
         std::uint64_t max_buffer = 10L * 1024 * 1024;
         std::uint32_t max_streams = 1024;

@@ -23,7 +23,6 @@
 #include "tproxy_client.h"
 #include "client_tunnel_pool.h"
 #include "connection_context.h"
-#include "connection_tracker.h"
 #include "tproxy_tcp_session.h"
 #include "tproxy_udp_session.h"
 
@@ -288,15 +287,6 @@ void tproxy_client::on_tcp_socket(boost::asio::ip::tcp::socket&& socket)
         LOG_WARN("tproxy tcp set no delay failed code {}", ec.value());
     }
 
-    if (connection_tracker::instance().active_connections() >= cfg_.limits.client_session_max_connections)
-    {
-        boost::system::error_code close_ec;
-        close_ec = socket.close(close_ec);
-        (void)close_ec;
-        LOG_WARN("tproxy tcp connection limit reached drop");
-        return;
-    }
-
     const std::uint32_t sid = tunnel_pool_->next_session_id();
     const auto session = std::make_shared<tproxy_tcp_session>(std::move(socket), tunnel_pool_, router_, sid, cfg_);
     owner_worker_.group.spawn([session]() -> boost::asio::awaitable<void> { co_await session->start(); });
@@ -389,11 +379,6 @@ boost::asio::awaitable<void> tproxy_client::on_udp_packet(boost::asio::ip::udp::
         co_return;
     }
 
-    if (!can_create_udp_session())
-    {
-        co_return;
-    }
-
     auto ctx = make_udp_connection_context(client_endpoint, target_endpoint);
     const auto route = co_await decide_udp_route(ctx, target_endpoint);
     if (route == route_type::kBlock)
@@ -434,17 +419,6 @@ bool tproxy_client::is_udp_routing_loop(const boost::asio::ip::udp::endpoint& ta
     }
 
     return target_endpoint.port() == cfg_.tproxy.udp_port && net::normalize_address(target_endpoint.address()) == net::normalize_address(local_addr);
-}
-
-bool tproxy_client::can_create_udp_session() const
-{
-    if (connection_tracker::instance().active_connections() < cfg_.limits.client_session_max_connections)
-    {
-        return true;
-    }
-
-    LOG_WARN("tproxy udp connection limit reached drop packet");
-    return false;
 }
 
 connection_context tproxy_client::make_udp_connection_context(const boost::asio::ip::udp::endpoint& client_endpoint,
