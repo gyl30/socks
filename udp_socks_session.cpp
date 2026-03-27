@@ -131,6 +131,27 @@ void evict_expired(Cache& cache, const std::uint64_t now_ms)
     cache.evict_while([&](const auto&, const auto& entry) { return entry.expires_at <= now_ms; });
 }
 
+boost::asio::awaitable<void> send_udp_stream_reset(const std::shared_ptr<mux_stream>& stream,
+                                                   const connection_context& ctx,
+                                                   const char* stage)
+{
+    if (stream == nullptr)
+    {
+        co_return;
+    }
+
+    mux_frame rst_frame;
+    rst_frame.h.stream_id = stream->id();
+    rst_frame.h.command = mux::kCmdRst;
+
+    boost::system::error_code rst_ec;
+    co_await stream->async_write(std::move(rst_frame), rst_ec);
+    if (rst_ec)
+    {
+        LOG_CTX_WARN(ctx.with_stream(stream->id()), "{} stage {} send rst failed {}", log_event::kSocks, stage, rst_ec.message());
+    }
+}
+
 void bind_local_udp_address(const boost::asio::ip::tcp::socket& tcp_socket,
                             boost::asio::ip::udp::socket& udp_socket,
                             const connection_context& ctx,
@@ -219,12 +240,14 @@ boost::asio::awaitable<proxy_udp_stream> connect_remote_address(const std::share
     if (ec)
     {
         LOG_CTX_WARN(ctx, "{} ack failed {}", log_event::kSocks, ec.message());
+        co_await send_udp_stream_reset(stream, ctx, "read_udp_ack");
         co_return proxy_udp_stream{};
     }
     if (ack_frame.h.command != mux::kCmdAck)
     {
         ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
         LOG_CTX_WARN(ctx, "{} ack failed unexpected cmd {}", log_event::kSocks, ack_frame.h.command);
+        co_await send_udp_stream_reset(stream, ctx, "unexpected_udp_ack_command");
         co_return proxy_udp_stream{};
     }
 
@@ -233,6 +256,7 @@ boost::asio::awaitable<proxy_udp_stream> connect_remote_address(const std::share
     {
         ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
         LOG_CTX_WARN(ctx, "{} ack invalid payload", log_event::kSocks);
+        co_await send_udp_stream_reset(stream, ctx, "invalid_udp_ack_payload");
         co_return proxy_udp_stream{};
     }
     if (ack_pl.socks_rep != socks::kRepSuccess)
