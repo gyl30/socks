@@ -23,7 +23,6 @@ bytes_per_response="${BYTES_PER_RESPONSE:-4194304}"
 client_workers="${CLIENT_WORKERS:-2}"
 server_workers="${SERVER_WORKERS:-2}"
 max_connections="${MAX_CONNECTIONS:-8}"
-client_session_max_connections="${CLIENT_SESSION_MAX_CONNECTIONS:-0}"
 tunnel_connections="${TUNNEL_CONNECTIONS:-0}"
 server_max_connections="${SERVER_MAX_CONNECTIONS:-64}"
 read_timeout_sec="${READ_TIMEOUT_SEC:-10}"
@@ -176,7 +175,6 @@ cat >"$tmp_dir/client.json" <<EOF
   },
   "limits": {
     "max_connections": $max_connections,
-    "client_session_max_connections": $client_session_max_connections,
     "tunnel_connections": $tunnel_connections,
     "max_buffer": $client_max_buffer,
     "max_streams": $client_max_streams,
