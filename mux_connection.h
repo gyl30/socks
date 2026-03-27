@@ -76,16 +76,6 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     boost::asio::awaitable<void> process_tls_record(std::uint8_t type, std::span<const std::uint8_t> plaintext, boost::system::error_code& ec);
     [[nodiscard]] std::uint32_t acquire_next_id();
     [[nodiscard]] bool is_stream_limit_reached();
-    void remember_closed_stream(std::uint32_t stream_id, bool rst_sent);
-    [[nodiscard]] bool handle_recently_closed_stream(const mux::frame_header& header, bool& send_rst);
-    void prune_closed_streams_locked(std::uint64_t now_ms);
-
-   private:
-    struct closed_stream_state
-    {
-        std::uint64_t last_seen_ms = 0;
-        bool rst_sent = false;
-    };
 
     const config& cfg_;
     std::uint32_t cid_ = 0;
@@ -109,7 +99,6 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     std::unique_ptr<channel_type> incoming_syn_channel_;
     std::unique_ptr<stop_channel_type> stop_channel_;
     std::unordered_map<uint32_t, std::shared_ptr<mux_stream>> streams_;
-    std::unordered_map<std::uint32_t, closed_stream_state> recently_closed_streams_;
 };
 
 }    // namespace mux
