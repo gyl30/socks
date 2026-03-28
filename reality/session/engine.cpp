@@ -1,7 +1,6 @@
 #include <span>
 #include <array>
 #include <optional>
-#include <memory>
 #include <vector>
 #include <utility>
 #include <cstddef>
@@ -13,8 +12,6 @@ extern "C"
 }
 
 #include <boost/asio.hpp>
-#include <boost/asio/streambuf.hpp>
-
 #include "tls/core.h"
 #include "tls/record_layer.h"
 #include "reality/session/engine.h"
@@ -36,30 +33,37 @@ reality_engine::reality_engine(std::vector<std::uint8_t> r_key,
       read_iv_(std::move(r_iv)),
       write_key_(std::move(w_key)),
       write_iv_(std::move(w_iv)),
-      rx_buf_(std::make_unique<boost::asio::streambuf>(kMaxBufSize)),
       cipher_(cipher)
 {
-    rx_buf_->prepare(kInitialBufSize);
-    scratch_buf_.resize(kMaxBufSize);
     tx_buf_.reserve(kMaxBufSize);
-    record_buf_.reserve(kMaxBufSize);
 }
 
-boost::asio::streambuf::mutable_buffers_type reality_engine::read_buffer(std::size_t size_hint, boost::system::error_code& ec) const
+boost::asio::mutable_buffer reality_engine::read_buffer(std::size_t size_hint, boost::system::error_code& ec)
 {
-    const auto max_size = rx_buf_->max_size();
-    const auto current_size = rx_buf_->size();
-    if (current_size >= max_size)
+    if (rx_buf_size_ >= rx_buf_.size())
     {
         ec = boost::asio::error::no_buffer_space;
-        return rx_buf_->prepare(0);
+        return boost::asio::buffer(rx_buf_.data(), static_cast<std::size_t>(0));
     }
-    const auto remaining = max_size - current_size;
-    size_hint = std::min(size_hint, remaining);
-    return rx_buf_->prepare(size_hint);
+
+    auto tail_available = rx_buf_.size() - (rx_buf_offset_ + rx_buf_size_);
+    if (rx_buf_offset_ != 0 && size_hint > tail_available)
+    {
+        std::memmove(rx_buf_.data(), rx_buf_.data() + static_cast<std::ptrdiff_t>(rx_buf_offset_), rx_buf_size_);
+        rx_buf_offset_ = 0;
+        tail_available = rx_buf_.size() - rx_buf_size_;
+    }
+
+    size_hint = std::min(size_hint, tail_available);
+    return boost::asio::buffer(rx_buf_.data() + static_cast<std::ptrdiff_t>(rx_buf_offset_ + rx_buf_size_), size_hint);
 }
 
-std::span<const std::uint8_t> reality_engine::encrypt(const std::vector<std::uint8_t>& plaintext, boost::system::error_code& ec)
+void reality_engine::commit_read(const std::size_t n)
+{
+    rx_buf_size_ += n;
+}
+
+std::span<const std::uint8_t> reality_engine::encrypt_record(const std::vector<std::uint8_t>& plaintext, boost::system::error_code& ec)
 {
     tx_buf_.clear();
 
@@ -91,14 +95,14 @@ std::optional<mux::tls_record> reality_engine::decrypt_record(boost::system::err
 {
     std::uint8_t content_type = 0;
     std::size_t payload_len = 0;
-    const auto buffered_before = rx_buf_->size();
+    const auto buffered_before = rx_buf_size_;
     decrypt_tls_record(content_type, payload_len, ec);
     if (ec)
     {
         return std::nullopt;
     }
 
-    if (rx_buf_->size() == buffered_before)
+    if (rx_buf_size_ == buffered_before)
     {
         return std::nullopt;
     }
@@ -108,18 +112,12 @@ std::optional<mux::tls_record> reality_engine::decrypt_record(boost::system::err
 
 void reality_engine::decrypt_tls_record(std::uint8_t& content_type, std::size_t& payload_len, boost::system::error_code& ec)
 {
-    if (rx_buf_->size() < tls::kTlsRecordHeaderSize)
+    if (rx_buf_size_ < tls::kTlsRecordHeaderSize)
     {
         return;
     }
 
-    const auto data_buffers = rx_buf_->data();
-    std::array<std::uint8_t, tls::kTlsRecordHeaderSize> record_header{};
-    if (boost::asio::buffer_copy(boost::asio::buffer(record_header), data_buffers) < tls::kTlsRecordHeaderSize)
-    {
-        return;
-    }
-
+    const auto* record_header = rx_buf_.data() + static_cast<std::ptrdiff_t>(rx_buf_offset_);
     const auto record_len = static_cast<std::uint16_t>((static_cast<std::uint16_t>(record_header[3]) << 8) | record_header[4]);
     if (record_len > kMaxTlsCiphertextRecordLen)
     {
@@ -129,19 +127,12 @@ void reality_engine::decrypt_tls_record(std::uint8_t& content_type, std::size_t&
 
     const std::uint32_t frame_size = tls::kTlsRecordHeaderSize + record_len;
 
-    if (rx_buf_->size() < frame_size)
+    if (rx_buf_size_ < frame_size)
     {
         return;
     }
 
-    record_buf_.resize(frame_size);
-    if (boost::asio::buffer_copy(boost::asio::buffer(record_buf_), data_buffers) < frame_size)
-    {
-        ec = boost::asio::error::fault;
-        return;
-    }
-
-    const std::span<const std::uint8_t> record_data(record_buf_.data(), frame_size);
+    const std::span<const std::uint8_t> record_data(record_header, frame_size);
 
     payload_len = tls::record_layer::decrypt_tls_record(
         decrypt_ctx_, cipher_, read_key_, read_iv_, read_seq_, record_data, std::span<std::uint8_t>(scratch_buf_), content_type, ec);
@@ -151,7 +142,12 @@ void reality_engine::decrypt_tls_record(std::uint8_t& content_type, std::size_t&
     }
 
     read_seq_++;
-    rx_buf_->consume(frame_size);
+    rx_buf_offset_ += frame_size;
+    rx_buf_size_ -= frame_size;
+    if (rx_buf_size_ == 0)
+    {
+        rx_buf_offset_ = 0;
+    }
 }
 
 }    // namespace mux

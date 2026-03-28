@@ -100,7 +100,6 @@ void mux_codec::decode_frames(std::vector<std::uint8_t>& pending,
                               std::vector<mux_frame>& frames,
                               boost::system::error_code& ec)
 {
-    ec.clear();
     if (data.empty())
     {
         return;
