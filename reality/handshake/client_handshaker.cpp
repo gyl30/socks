@@ -1673,7 +1673,7 @@ boost::asio::awaitable<void> send_client_finished(boost::asio::ip::tcp::socket& 
         .iv = c_hs_keys.second,
     };
     std::vector<std::uint8_t> out_flight = {0x14, 0x03, 0x03, 0x00, 0x01, 0x01};
-    tls::record_layer::encrypt_record_append(record_ctx, cipher, key_material, 0, fin_msg, tls::kContentTypeHandshake, out_flight, ec);
+    tls::record_layer::encrypt_tls_record(record_ctx, cipher, key_material, 0, fin_msg, tls::kContentTypeHandshake, out_flight, ec);
     if (ec)
     {
         co_return;

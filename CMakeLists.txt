@@ -194,6 +194,7 @@ set(SOCKS_SOURCES
     reality/handshake/fingerprint.cpp
     tls/ch_parser.cpp
     tls/record_layer.cpp
+    tls/key_schedule.cpp
     ip_matcher.cpp
     remote_session.cpp
     remote_udp_session.cpp
