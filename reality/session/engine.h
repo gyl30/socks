@@ -16,6 +16,7 @@ extern "C"
 #include <boost/asio/buffer.hpp>
 #include <boost/system/error_code.hpp>
 
+#include "reality/types.h"
 #include "tls/cipher_context.h"
 
 namespace mux
@@ -32,11 +33,7 @@ class reality_engine
    public:
     static constexpr std::size_t kMaxBufSize = 65UL * 1024;
 
-    reality_engine(std::vector<std::uint8_t> r_key,
-                   std::vector<std::uint8_t> r_iv,
-                   std::vector<std::uint8_t> w_key,
-                   std::vector<std::uint8_t> w_iv,
-                   const EVP_CIPHER* cipher);
+    reality_engine(reality::negotiated_params negotiated, reality::traffic_key_material read_keys, reality::traffic_key_material write_keys);
 
     reality_engine(reality_engine&&) = default;
     reality_engine& operator=(reality_engine&&) = delete;

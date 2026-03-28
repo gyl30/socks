@@ -1,6 +1,7 @@
 #ifndef REALITY_TYPES_H
 #define REALITY_TYPES_H
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -38,6 +39,12 @@ struct traffic_secrets
 {
     std::vector<std::uint8_t> c_app_secret;
     std::vector<std::uint8_t> s_app_secret;
+};
+
+struct traffic_key_material
+{
+    std::vector<std::uint8_t> key;
+    std::vector<std::uint8_t> iv;
 };
 
 struct client_handshake_result
