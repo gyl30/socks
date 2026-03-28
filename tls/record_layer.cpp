@@ -15,6 +15,7 @@ extern "C"
 
 #include "tls/core.h"
 #include "tls/crypto_util.h"
+#include "reality/types.h"
 #include "tls/record_layer.h"
 #include "tls/cipher_context.h"
 
@@ -86,17 +87,15 @@ void validate_inner_plaintext_len(const std::size_t plaintext_len, boost::system
     ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
 }
 
-}    // namespace
-
-void record_layer::encrypt_record_append(const cipher_context& ctx,
-                                         const EVP_CIPHER* cipher,
-                                         const std::vector<std::uint8_t>& key,
-                                         const std::vector<std::uint8_t>& iv,
-                                         const std::uint64_t seq,
-                                         const std::vector<std::uint8_t>& plaintext,
-                                         const std::uint8_t content_type,
-                                         std::vector<std::uint8_t>& output_buffer,
-                                         boost::system::error_code& ec)
+void encrypt_record_append_impl(const cipher_context& ctx,
+                                const EVP_CIPHER* cipher,
+                                const std::vector<std::uint8_t>& key,
+                                const std::span<const std::uint8_t> iv,
+                                const std::uint64_t seq,
+                                const std::vector<std::uint8_t>& plaintext,
+                                const std::uint8_t content_type,
+                                std::vector<std::uint8_t>& output_buffer,
+                                boost::system::error_code& ec)
 {
     ec.clear();
     ensure_openssl_initialized();
@@ -162,6 +161,20 @@ void record_layer::encrypt_record_append(const cipher_context& ctx,
     crypto_util::aead_encrypt_append(ctx, cipher, key, nonce, inner_plaintext, temp_header, output_buffer, ec);
 }
 
+}    // namespace
+
+void record_layer::encrypt_record_append(const cipher_context& ctx,
+                                         const EVP_CIPHER* cipher,
+                                         const reality::traffic_key_material& key_material,
+                                         const std::uint64_t seq,
+                                         const std::vector<std::uint8_t>& plaintext,
+                                         const std::uint8_t content_type,
+                                         std::vector<std::uint8_t>& output_buffer,
+                                         boost::system::error_code& ec)
+{
+    encrypt_record_append_impl(ctx, cipher, key_material.key, key_material.iv, seq, plaintext, content_type, output_buffer, ec);
+}
+
 std::vector<std::uint8_t> record_layer::encrypt_tls_record(const EVP_CIPHER* cipher,
                                                            const std::vector<std::uint8_t>& key,
                                                            const std::vector<std::uint8_t>& iv,
@@ -172,7 +185,7 @@ std::vector<std::uint8_t> record_layer::encrypt_tls_record(const EVP_CIPHER* cip
 {
     const cipher_context ctx;
     std::vector<std::uint8_t> out;
-    encrypt_record_append(ctx, cipher, key, iv, seq, plaintext, content_type, out, ec);
+    encrypt_record_append_impl(ctx, cipher, key, iv, seq, plaintext, content_type, out, ec);
     if (ec)
     {
         return {};
