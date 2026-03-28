@@ -447,7 +447,7 @@ boost::asio::awaitable<void> mux_connection::write_loop()
         header.length = static_cast<std::uint16_t>(msg.payload.size());
         const auto mux_frame = mux_codec::encode_frame(header, msg.payload);
 
-        const auto ct = reality_engine_.encrypt(mux_frame, ec);
+        const auto ct = reality_engine_.encrypt_record(mux_frame, ec);
         if (ec)
         {
             LOG_ERROR("mux {} encrypt error {}", cid_, ec.message());

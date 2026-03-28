@@ -69,7 +69,7 @@ boost::asio::awaitable<lightweight_http_visit_result> run_lightweight_http_visit
 
     const auto request_text = build_minimal_http_request(options.host);
     const std::vector<std::uint8_t> request_bytes(request_text.begin(), request_text.end());
-    const auto ciphertext = engine.encrypt(request_bytes, ec);
+    const auto ciphertext = engine.encrypt_record(request_bytes, ec);
     if (ec)
     {
         result.error_stage = "encrypt_request";

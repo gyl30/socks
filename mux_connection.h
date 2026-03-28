@@ -9,6 +9,7 @@
 #include <vector>
 #include <unordered_map>
 
+#include <boost/asio.hpp>
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/experimental/concurrent_channel.hpp>
 
@@ -82,7 +83,6 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     io_worker& worker_;
     std::mutex mutex_;
     reality_engine reality_engine_;
-    std::vector<std::uint8_t> pending_plaintext_;
     std::uint32_t next_stream_id_ = 0;
     std::uint64_t read_bytes_ = 0;
     std::uint64_t write_bytes_ = 0;
@@ -92,6 +92,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     std::uint64_t last_non_heartbeat_write_time_ms_{0};
     boost::asio::ip::tcp::socket socket_;
     std::atomic<bool> stopped_{false};
+    std::vector<std::uint8_t> pending_plaintext_;
     using channel_type = boost::asio::experimental::concurrent_channel<void(boost::system::error_code, mux_frame)>;
     using stop_channel_type = boost::asio::experimental::concurrent_channel<void(boost::system::error_code)>;
     std::unique_ptr<channel_type> write_channel_;
