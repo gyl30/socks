@@ -30,7 +30,7 @@ struct tls_record
 class reality_engine
 {
    public:
-    static constexpr std::size_t kMaxBufSize = 65 * 1024;
+    static constexpr std::size_t kMaxBufSize = 65UL * 1024;
 
     reality_engine(std::vector<std::uint8_t> r_key,
                    std::vector<std::uint8_t> r_iv,
