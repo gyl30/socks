@@ -38,6 +38,9 @@ void ensure_openssl_initialized()
     std::call_once(init_flag, []() { (void)OPENSSL_init_crypto(OPENSSL_INIT_NO_LOAD_CONFIG, nullptr); });
 }
 
+namespace crypto_util
+{
+
 namespace
 {
 
@@ -527,7 +530,7 @@ std::size_t decrypt_aead_payload(const cipher_context& ctx,
 
 }    // namespace
 
-std::string crypto_util::bytes_to_hex(const std::vector<std::uint8_t>& bytes)
+std::string bytes_to_hex(const std::vector<std::uint8_t>& bytes)
 {
     static constexpr std::array<char, 16> kHexTable = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
 
@@ -542,7 +545,7 @@ std::string crypto_util::bytes_to_hex(const std::vector<std::uint8_t>& bytes)
     return hex;
 }
 
-std::vector<std::uint8_t> crypto_util::hex_to_bytes(const std::string& hex)
+std::vector<std::uint8_t> hex_to_bytes(const std::string& hex)
 {
     std::vector<std::uint8_t> result;
     result.reserve(hex.size() / 2);
@@ -578,7 +581,7 @@ std::vector<std::uint8_t> crypto_util::hex_to_bytes(const std::string& hex)
     return result;
 }
 
-bool crypto_util::base64_url_decode(const std::string& input, std::vector<std::uint8_t>& out)
+bool base64_url_decode(const std::string& input, std::vector<std::uint8_t>& out)
 {
     ensure_openssl_initialized();
 
@@ -609,7 +612,7 @@ bool crypto_util::base64_url_decode(const std::string& input, std::vector<std::u
     return true;
 }
 
-std::uint16_t crypto_util::random_grease()
+std::uint16_t random_grease()
 {
     ensure_openssl_initialized();
 
@@ -624,7 +627,7 @@ std::uint16_t crypto_util::random_grease()
     return kGreaseValues[idx % kGreaseValues.size()];
 }
 
-bool crypto_util::generate_x25519_keypair(std::uint8_t out_public[32], std::uint8_t out_private[32])
+bool generate_x25519_keypair(std::uint8_t out_public[32], std::uint8_t out_private[32])
 {
     ensure_openssl_initialized();
 
@@ -659,7 +662,7 @@ bool crypto_util::generate_x25519_keypair(std::uint8_t out_public[32], std::uint
     return false;
 }
 
-bool crypto_util::generate_ed25519_keypair(std::uint8_t out_public[32], std::uint8_t out_private[32])
+bool generate_ed25519_keypair(std::uint8_t out_public[32], std::uint8_t out_private[32])
 {
     ensure_openssl_initialized();
 
@@ -693,7 +696,7 @@ bool crypto_util::generate_ed25519_keypair(std::uint8_t out_public[32], std::uin
     return false;
 }
 
-std::vector<std::uint8_t> crypto_util::extract_public_key(const std::vector<std::uint8_t>& private_key, boost::system::error_code& ec)
+std::vector<std::uint8_t> extract_public_key(const std::vector<std::uint8_t>& private_key, boost::system::error_code& ec)
 {
     ensure_openssl_initialized();
 
@@ -721,7 +724,7 @@ std::vector<std::uint8_t> crypto_util::extract_public_key(const std::vector<std:
     return public_key;
 }
 
-std::vector<std::uint8_t> crypto_util::extract_ed25519_public_key(const std::vector<std::uint8_t>& private_key, boost::system::error_code& ec)
+std::vector<std::uint8_t> extract_ed25519_public_key(const std::vector<std::uint8_t>& private_key, boost::system::error_code& ec)
 {
     ensure_openssl_initialized();
 
@@ -749,7 +752,7 @@ std::vector<std::uint8_t> crypto_util::extract_ed25519_public_key(const std::vec
     return public_key;
 }
 
-std::vector<std::uint8_t> crypto_util::x25519_derive(const std::vector<std::uint8_t>& private_key,
+std::vector<std::uint8_t> x25519_derive(const std::vector<std::uint8_t>& private_key,
                                                      const std::vector<std::uint8_t>& peer_public_key,
                                                      boost::system::error_code& ec)
 {
@@ -768,7 +771,7 @@ std::vector<std::uint8_t> crypto_util::x25519_derive(const std::vector<std::uint
     return derive_x25519_shared_secret(keys.first, keys.second, ec);
 }
 
-bool crypto_util::generate_mlkem768_keypair(std::vector<std::uint8_t>& public_key,
+bool generate_mlkem768_keypair(std::vector<std::uint8_t>& public_key,
                                             std::vector<std::uint8_t>& private_key,
                                             boost::system::error_code& ec)
 {
@@ -783,7 +786,7 @@ bool crypto_util::generate_mlkem768_keypair(std::vector<std::uint8_t>& public_ke
     return export_mlkem768_keypair(pkey.get(), public_key, private_key, ec);
 }
 
-std::vector<std::uint8_t> crypto_util::mlkem768_encapsulate(const std::vector<std::uint8_t>& public_key,
+std::vector<std::uint8_t> mlkem768_encapsulate(const std::vector<std::uint8_t>& public_key,
                                                             std::vector<std::uint8_t>& shared_secret,
                                                             boost::system::error_code& ec)
 {
@@ -834,7 +837,7 @@ std::vector<std::uint8_t> crypto_util::mlkem768_encapsulate(const std::vector<st
     return ciphertext;
 }
 
-std::vector<std::uint8_t> crypto_util::mlkem768_decapsulate(const std::vector<std::uint8_t>& private_key,
+std::vector<std::uint8_t> mlkem768_decapsulate(const std::vector<std::uint8_t>& private_key,
                                                             const std::vector<std::uint8_t>& ciphertext,
                                                             boost::system::error_code& ec)
 {
@@ -881,7 +884,7 @@ std::vector<std::uint8_t> crypto_util::mlkem768_decapsulate(const std::vector<st
     return shared_secret;
 }
 
-std::vector<std::uint8_t> crypto_util::hkdf_extract(const std::vector<std::uint8_t>& salt,
+std::vector<std::uint8_t> hkdf_extract(const std::vector<std::uint8_t>& salt,
                                                     const std::vector<std::uint8_t>& ikm,
                                                     const EVP_MD* md,
                                                     boost::system::error_code& ec)
@@ -923,7 +926,7 @@ std::vector<std::uint8_t> crypto_util::hkdf_extract(const std::vector<std::uint8
     return prk;
 }
 
-std::vector<std::uint8_t> crypto_util::hkdf_expand(const std::vector<std::uint8_t>& prk,
+std::vector<std::uint8_t> hkdf_expand(const std::vector<std::uint8_t>& prk,
                                                    const std::vector<std::uint8_t>& info,
                                                    const std::size_t len,
                                                    const EVP_MD* md,
@@ -965,7 +968,7 @@ std::vector<std::uint8_t> crypto_util::hkdf_expand(const std::vector<std::uint8_
     return okm;
 }
 
-std::vector<std::uint8_t> crypto_util::hkdf_expand_label(const std::vector<std::uint8_t>& secret,
+std::vector<std::uint8_t> hkdf_expand_label(const std::vector<std::uint8_t>& secret,
                                                          const std::string& label,
                                                          const std::vector<std::uint8_t>& context,
                                                          std::size_t length,
@@ -991,7 +994,7 @@ std::vector<std::uint8_t> crypto_util::hkdf_expand_label(const std::vector<std::
     return hkdf_expand(secret, hkdf_label, length, md, ec);
 }
 
-std::size_t crypto_util::aead_decrypt(const cipher_context& ctx,
+std::size_t aead_decrypt(const cipher_context& ctx,
                                       const EVP_CIPHER* cipher,
                                       const std::vector<std::uint8_t>& key,
                                       const std::span<const std::uint8_t> nonce,
@@ -1024,7 +1027,7 @@ std::size_t crypto_util::aead_decrypt(const cipher_context& ctx,
     return decrypt_aead_payload(ctx, aad, ciphertext, pt_len, output_buffer, ec);
 }
 
-std::vector<std::uint8_t> crypto_util::aead_decrypt(const EVP_CIPHER* cipher,
+std::vector<std::uint8_t> aead_decrypt(const EVP_CIPHER* cipher,
                                                     const std::vector<std::uint8_t>& key,
                                                     const std::vector<std::uint8_t>& nonce,
                                                     const std::vector<std::uint8_t>& ciphertext,
@@ -1047,7 +1050,7 @@ std::vector<std::uint8_t> crypto_util::aead_decrypt(const EVP_CIPHER* cipher,
     return out;
 }
 
-void crypto_util::aead_encrypt_append(const cipher_context& ctx,
+void aead_encrypt_append(const cipher_context& ctx,
                                       const EVP_CIPHER* cipher,
                                       const std::vector<std::uint8_t>& key,
                                       const std::vector<std::uint8_t>& nonce,
@@ -1133,7 +1136,7 @@ void crypto_util::aead_encrypt_append(const cipher_context& ctx,
     output_buffer.resize(current_size + static_cast<std::size_t>(out_len) + static_cast<std::size_t>(final_len) + kAeadTagSize);
 }
 
-std::vector<std::uint8_t> crypto_util::aead_encrypt(const EVP_CIPHER* cipher,
+std::vector<std::uint8_t> aead_encrypt(const EVP_CIPHER* cipher,
                                                     const std::vector<std::uint8_t>& key,
                                                     const std::vector<std::uint8_t>& nonce,
                                                     const std::vector<std::uint8_t>& plaintext,
@@ -1150,7 +1153,7 @@ std::vector<std::uint8_t> crypto_util::aead_encrypt(const EVP_CIPHER* cipher,
     return out;
 }
 
-openssl_ptrs::evp_pkey_ptr crypto_util::extract_pubkey_from_cert(const std::vector<std::uint8_t>& cert_der, boost::system::error_code& ec)
+openssl_ptrs::evp_pkey_ptr extract_pubkey_from_cert(const std::vector<std::uint8_t>& cert_der, boost::system::error_code& ec)
 {
     ensure_openssl_initialized();
     auto x509 = parse_x509_from_der(cert_der, ec);
@@ -1169,7 +1172,7 @@ openssl_ptrs::evp_pkey_ptr crypto_util::extract_pubkey_from_cert(const std::vect
     return openssl_ptrs::evp_pkey_ptr(pkey);
 }
 
-std::vector<std::uint8_t> crypto_util::extract_raw_public_key(const EVP_PKEY* key, boost::system::error_code& ec)
+std::vector<std::uint8_t> extract_raw_public_key(const EVP_PKEY* key, boost::system::error_code& ec)
 {
     ensure_openssl_initialized();
 
@@ -1196,7 +1199,7 @@ std::vector<std::uint8_t> crypto_util::extract_raw_public_key(const EVP_PKEY* ke
     return raw_key;
 }
 
-std::vector<std::uint8_t> crypto_util::extract_certificate_signature(const std::vector<std::uint8_t>& cert_der, boost::system::error_code& ec)
+std::vector<std::uint8_t> extract_certificate_signature(const std::vector<std::uint8_t>& cert_der, boost::system::error_code& ec)
 {
     ensure_openssl_initialized();
 
@@ -1219,7 +1222,7 @@ std::vector<std::uint8_t> crypto_util::extract_certificate_signature(const std::
     return ret;
 }
 
-std::vector<std::uint8_t> crypto_util::create_self_signed_ed25519_certificate(const std::vector<std::uint8_t>& private_key,
+std::vector<std::uint8_t> create_self_signed_ed25519_certificate(const std::vector<std::uint8_t>& private_key,
                                                                               boost::system::error_code& ec)
 {
     ensure_openssl_initialized();
@@ -1310,7 +1313,7 @@ std::vector<std::uint8_t> crypto_util::create_self_signed_ed25519_certificate(co
     return cert_der;
 }
 
-std::vector<std::uint8_t> crypto_util::hmac_sha512(const std::vector<std::uint8_t>& key,
+std::vector<std::uint8_t> hmac_sha512(const std::vector<std::uint8_t>& key,
                                                    const std::vector<std::uint8_t>& data,
                                                    boost::system::error_code& ec)
 {
@@ -1327,7 +1330,7 @@ std::vector<std::uint8_t> crypto_util::hmac_sha512(const std::vector<std::uint8_
     return ret;
 }
 
-void crypto_util::verify_tls13_signature(EVP_PKEY* pub_key,
+void verify_tls13_signature(EVP_PKEY* pub_key,
                                          const std::uint16_t signature_scheme,
                                          const std::vector<std::uint8_t>& transcript_hash,
                                          const std::vector<std::uint8_t>& signature,
@@ -1400,5 +1403,7 @@ void crypto_util::verify_tls13_signature(EVP_PKEY* pub_key,
         return;
     }
 }
+
+}    // namespace crypto_util
 
 }    // namespace tls

@@ -70,7 +70,7 @@ std::span<const std::uint8_t> reality_engine::encrypt_record(const std::vector<s
         const auto chunk_len = std::min(plaintext.size() - offset, tls::kMaxTlsApplicationDataPayloadLen);
         plaintext_chunk.assign(plaintext.begin() + static_cast<std::ptrdiff_t>(offset),
                                plaintext.begin() + static_cast<std::ptrdiff_t>(offset + chunk_len));
-        tls::record_layer::encrypt_record_append(
+        tls::record_layer::encrypt_tls_record(
             encrypt_ctx_,
             context_.negotiated.cipher,
             context_.write_keys,
