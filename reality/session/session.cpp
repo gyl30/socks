@@ -91,7 +91,7 @@ reality_session reality_session::from_authenticated_session(const authenticated_
 
 mux::reality_engine reality_session::take_engine() &&
 {
-    return {std::move(read_keys_.key), std::move(read_keys_.iv), std::move(write_keys_.key), std::move(write_keys_.iv), negotiated_.cipher};
+    return {std::move(negotiated_), std::move(read_keys_), std::move(write_keys_)};
 }
 
 }    // namespace reality
