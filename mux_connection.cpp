@@ -240,24 +240,7 @@ boost::asio::awaitable<void> mux_connection::run_loop()
 {
     LOG_DEBUG("mux {} started loops", cid_);
     using boost::asio::experimental::awaitable_operators::operator||;
-    const bool enable_heartbeat = cfg_.heartbeat.enabled;
-    const bool enable_timeout = cfg_.timeout.idle != 0;
-    if (enable_heartbeat && enable_timeout)
-    {
-        co_await (read_loop() || write_loop() || timeout_loop() || heartbeat_loop());
-    }
-    else if (enable_heartbeat)
-    {
-        co_await (read_loop() || write_loop() || heartbeat_loop());
-    }
-    else if (enable_timeout)
-    {
-        co_await (read_loop() || write_loop() || timeout_loop());
-    }
-    else
-    {
-        co_await (read_loop() || write_loop());
-    }
+    co_await (read_loop() || write_loop() || timeout_loop() || heartbeat_loop());
     stop();
     LOG_INFO("mux {} loops finished stopped", cid_);
 }

@@ -16,7 +16,7 @@ REFLECT_STRUCT(mux::config::tproxy_t, enabled, listen_host, tcp_port, udp_port, 
 REFLECT_STRUCT(mux::config::timeout_t, read, write, connect, idle);
 REFLECT_STRUCT(mux::config::reality_t, sni, fingerprint, replay_cache_max_entries, private_key, public_key, short_id);
 REFLECT_STRUCT(mux::config::limits_t, max_connections, tunnel_connections, max_buffer, max_streams, max_handshake_records);
-REFLECT_STRUCT(mux::config::heartbeat_t, enabled, min_interval, max_interval, min_padding, max_padding);
+REFLECT_STRUCT(mux::config::heartbeat_t, min_interval, max_interval, min_padding, max_padding);
 REFLECT_STRUCT(mux::config, mode, workers, log, inbound, outbound, socks, tproxy, timeout, reality, limits, heartbeat);
 
 }    // namespace reflect
