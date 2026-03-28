@@ -162,28 +162,6 @@ void record_layer::encrypt_record_append(const cipher_context& ctx,
     crypto_util::aead_encrypt_append(ctx, cipher, key_material.key, nonce, inner_plaintext, temp_header, output_buffer, ec);
 }
 
-std::vector<std::uint8_t> record_layer::encrypt_tls_record(const EVP_CIPHER* cipher,
-                                                           const std::vector<std::uint8_t>& key,
-                                                           const std::vector<std::uint8_t>& iv,
-                                                           const std::uint64_t seq,
-                                                           const std::vector<std::uint8_t>& plaintext,
-                                                           const std::uint8_t content_type,
-                                                           boost::system::error_code& ec)
-{
-    const cipher_context ctx;
-    const reality::traffic_key_material key_material{
-        .key = key,
-        .iv = iv,
-    };
-    std::vector<std::uint8_t> out;
-    encrypt_record_append(ctx, cipher, key_material, seq, plaintext, content_type, out, ec);
-    if (ec)
-    {
-        return {};
-    }
-    return out;
-}
-
 std::size_t record_layer::decrypt_tls_record(const cipher_context& ctx,
                                              const EVP_CIPHER* cipher,
                                              const std::vector<std::uint8_t>& key,

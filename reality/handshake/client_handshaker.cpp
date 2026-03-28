@@ -1667,14 +1667,17 @@ boost::asio::awaitable<void> send_client_finished(boost::asio::ip::tcp::socket& 
         co_return;
     }
     const auto fin_msg = tls::construct_finished(fin_verify);
-    auto fin_rec = tls::record_layer::encrypt_tls_record(cipher, c_hs_keys.first, c_hs_keys.second, 0, fin_msg, tls::kContentTypeHandshake, ec);
+    const tls::cipher_context record_ctx;
+    const traffic_key_material key_material{
+        .key = c_hs_keys.first,
+        .iv = c_hs_keys.second,
+    };
+    std::vector<std::uint8_t> out_flight = {0x14, 0x03, 0x03, 0x00, 0x01, 0x01};
+    tls::record_layer::encrypt_record_append(record_ctx, cipher, key_material, 0, fin_msg, tls::kContentTypeHandshake, out_flight, ec);
     if (ec)
     {
         co_return;
     }
-
-    std::vector<std::uint8_t> out_flight = {0x14, 0x03, 0x03, 0x00, 0x01, 0x01};
-    out_flight.insert(out_flight.end(), fin_rec.begin(), fin_rec.end());
 
     const auto write_res = co_await mux::timeout_io::wait_write_with_timeout(socket, boost::asio::buffer(out_flight), write_timeout_sec, ec);
     if (ec)
