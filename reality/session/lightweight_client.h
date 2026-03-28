@@ -12,7 +12,7 @@
 namespace reality
 {
 
-struct reality_session;
+struct reality_record_context;
 
 struct lightweight_http_visit_options
 {
@@ -36,7 +36,7 @@ struct lightweight_http_visit_result
 };
 
 [[nodiscard]] boost::asio::awaitable<lightweight_http_visit_result> run_lightweight_http_visit(boost::asio::ip::tcp::socket& socket,
-                                                                                               reality_session session,
+                                                                                               reality_record_context record_context,
                                                                                                const lightweight_http_visit_options& options,
                                                                                                boost::system::error_code& ec);
 
