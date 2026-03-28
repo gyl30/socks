@@ -482,13 +482,7 @@ boost::asio::awaitable<void> mux_connection::timeout_loop()
         co_return;
     }
 
-    auto idle_timeout_ms = static_cast<std::uint64_t>(cfg_.timeout.idle) * 1000ULL;
-    if (cfg_.heartbeat.enabled && cfg_.heartbeat.idle_timeout > 0 && cfg_.heartbeat.max_interval > 0)
-    {
-        const auto heartbeat_guard_ms =
-            (static_cast<std::uint64_t>(cfg_.heartbeat.idle_timeout) + static_cast<std::uint64_t>(cfg_.heartbeat.max_interval)) * 1000ULL;
-        idle_timeout_ms = std::max(heartbeat_guard_ms, idle_timeout_ms);
-    }
+    const auto idle_timeout_ms = static_cast<std::uint64_t>(cfg_.timeout.idle) * 1000ULL;
     boost::system::error_code ec;
     boost::asio::steady_timer timer{worker_.io_context};
     while (true)
@@ -516,7 +510,6 @@ boost::asio::awaitable<void> mux_connection::heartbeat_loop()
 {
     static thread_local std::mt19937 rng(std::random_device{}());
     boost::asio::steady_timer heartbeat_timer(worker_.io_context);
-    const auto idle_timeout_ms = static_cast<std::uint64_t>(cfg_.heartbeat.idle_timeout) * 1000ULL;
 
     while (true)
     {
@@ -528,12 +521,6 @@ boost::asio::awaitable<void> mux_connection::heartbeat_loop()
         if (ec)
         {
             break;
-        }
-
-        const auto write_elapsed_ms = timeout_io::now_ms() - last_non_heartbeat_write_time_ms_;
-        if (write_elapsed_ms < idle_timeout_ms)
-        {
-            continue;
         }
 
         std::uniform_int_distribution<std::uint32_t> padding_dist(cfg_.heartbeat.min_padding, cfg_.heartbeat.max_padding);

@@ -280,7 +280,6 @@ def start_client_server_pair(repo_root, temp_root, binary, socks_port, server_po
         },
         "heartbeat": {
             "enabled": True,
-            "idle_timeout": 10,
             "min_interval": 15,
             "max_interval": 45,
             "min_padding": 32,

@@ -162,7 +162,6 @@ cat >"$tmp_dir/client.json" <<EOF
   },
   "heartbeat": {
     "enabled": true,
-    "idle_timeout": 10,
     "min_interval": 15,
     "max_interval": 45,
     "min_padding": 32,

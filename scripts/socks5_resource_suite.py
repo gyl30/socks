@@ -179,7 +179,6 @@ def build_client_config(tmp_dir, socks_port, server_port, public_key, short_id, 
         "limits": limits,
         "heartbeat": {
             "enabled": True,
-            "idle_timeout": 2,
             "min_interval": 4,
             "max_interval": 6,
             "min_padding": 32,

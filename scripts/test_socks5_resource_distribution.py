@@ -460,7 +460,6 @@ def build_client_config(tmp_dir, socks_port, server_port, public_key, short_id, 
         },
         "heartbeat": {
             "enabled": args.heartbeat_enabled,
-            "idle_timeout": args.heartbeat_idle_timeout,
             "min_interval": args.heartbeat_min_interval,
             "max_interval": args.heartbeat_max_interval,
             "min_padding": args.heartbeat_min_padding,
@@ -524,7 +523,6 @@ def parse_args():
     parser.add_argument("--client-max-handshake-records", type=int, default=env_int("CLIENT_MAX_HANDSHAKE_RECORDS", 256))
     parser.add_argument("--server-max-handshake-records", type=int, default=env_int("SERVER_MAX_HANDSHAKE_RECORDS", 256))
     parser.add_argument("--heartbeat-enabled", default=str(env_bool("HEARTBEAT_ENABLED", True)).lower())
-    parser.add_argument("--heartbeat-idle-timeout", type=int, default=env_int("HEARTBEAT_IDLE_TIMEOUT", 10))
     parser.add_argument("--heartbeat-min-interval", type=int, default=env_int("HEARTBEAT_MIN_INTERVAL", 15))
     parser.add_argument("--heartbeat-max-interval", type=int, default=env_int("HEARTBEAT_MAX_INTERVAL", 45))
     parser.add_argument("--heartbeat-min-padding", type=int, default=env_int("HEARTBEAT_MIN_PADDING", 32))

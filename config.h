@@ -70,7 +70,6 @@ struct config
     struct heartbeat_t
     {
         bool enabled = true;
-        std::uint32_t idle_timeout = 10;
         std::uint32_t min_interval = 15;
         std::uint32_t max_interval = 45;
         std::uint32_t min_padding = 32;
