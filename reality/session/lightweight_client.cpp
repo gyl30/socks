@@ -13,7 +13,6 @@
 #include "timeout_io.h"
 #include "reality/session/engine.h"
 #include "reality/session/session.h"
-#include "reality/session/session_internal.h"
 #include "reality/session/lightweight_client.h"
 
 namespace reality
@@ -65,7 +64,7 @@ boost::asio::awaitable<lightweight_http_visit_result> run_lightweight_http_visit
 {
     ec.clear();
     lightweight_http_visit_result result;
-    auto engine = session_internal::engine_access::take_engine(std::move(session));
+    auto engine = std::move(session).take_engine();
 
     const auto request_text = build_minimal_http_request(options.host);
     const std::vector<std::uint8_t> request_bytes(request_text.begin(), request_text.end());

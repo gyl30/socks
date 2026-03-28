@@ -35,7 +35,6 @@ extern "C"
 #include "connection_context.h"
 #include "reality/session/engine.h"
 #include "reality/session/session.h"
-#include "reality/session/session_internal.h"
 
 namespace mux
 {
@@ -80,7 +79,7 @@ mux_connection::mux_connection(boost::asio::ip::tcp::socket socket,
     : cfg_(cfg),
       cid_(conn_id),
       worker_(worker),
-      reality_engine_(reality::session_internal::engine_access::take_engine(std::move(session))),
+      reality_engine_(std::move(session).take_engine()),
       socket_(std::move(socket)),
       write_channel_(std::make_unique<channel_type>(worker.io_context, 1024)),
       stop_channel_(std::make_unique<stop_channel_type>(worker.io_context, 1))

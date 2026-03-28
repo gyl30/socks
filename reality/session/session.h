@@ -18,13 +18,6 @@ class reality_engine;
 namespace reality
 {
 
-namespace session_internal
-{
-
-class engine_access;
-
-}    // namespace session_internal
-
 struct traffic_key_material
 {
     std::vector<std::uint8_t> key;
@@ -43,10 +36,9 @@ class reality_session
     [[nodiscard]] static reality_session from_client_handshake(const client_handshake_result& handshake_result, boost::system::error_code& ec);
     [[nodiscard]] static reality_session from_authenticated_session(const authenticated_session& authenticated, boost::system::error_code& ec);
     [[nodiscard]] const negotiated_params& negotiated() const { return negotiated_; }
+    [[nodiscard]] mux::reality_engine take_engine() &&;
 
    private:
-    friend class session_internal::engine_access;
-
     enum class perspective : std::uint8_t
     {
         kClient,
@@ -58,7 +50,6 @@ class reality_session
                                                           perspective session_perspective,
                                                           boost::system::error_code& ec);
 
-    [[nodiscard]] mux::reality_engine take_engine() &&;
     reality_session(negotiated_params negotiated, traffic_key_material read_keys, traffic_key_material write_keys);
 
     negotiated_params negotiated_;
