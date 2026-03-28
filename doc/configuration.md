@@ -152,7 +152,6 @@
 字段：
 
 - `heartbeat.enabled`
-- `heartbeat.idle_timeout`
 - `heartbeat.min_interval` / `heartbeat.max_interval`
 - `heartbeat.min_padding` / `heartbeat.max_padding`
 
@@ -166,7 +165,8 @@
 
 运行行为：
 
-- 在 `mux_connection::heartbeat_loop()` 中发送心跳帧（`stream_id=heartbeat`）。
+- 在 `mux_connection::heartbeat_loop()` 中按随机区间持续发送心跳帧（`stream_id=heartbeat`），不再依赖业务流量是否空闲。
+- `heartbeat` 只控制保活/填充，不参与 `timeout.idle` 的空闲回收判定。
 
 ## 9. 限流与容量
 
