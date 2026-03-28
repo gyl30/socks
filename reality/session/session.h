@@ -17,13 +17,6 @@ class reality_engine;
 
 namespace reality
 {
-
-struct traffic_key_material
-{
-    std::vector<std::uint8_t> key;
-    std::vector<std::uint8_t> iv;
-};
-
 class reality_session
 {
    public:
@@ -35,7 +28,6 @@ class reality_session
 
     [[nodiscard]] static reality_session from_client_handshake(const client_handshake_result& handshake_result, boost::system::error_code& ec);
     [[nodiscard]] static reality_session from_authenticated_session(const authenticated_session& authenticated, boost::system::error_code& ec);
-    [[nodiscard]] const negotiated_params& negotiated() const { return negotiated_; }
     [[nodiscard]] mux::reality_engine take_engine() &&;
 
    private:
