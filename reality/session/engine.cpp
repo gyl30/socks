@@ -73,8 +73,7 @@ std::span<const std::uint8_t> reality_engine::encrypt_record(const std::vector<s
         tls::record_layer::encrypt_record_append(
             encrypt_ctx_,
             context_.negotiated.cipher,
-            context_.write_keys.key,
-            context_.write_keys.iv,
+            context_.write_keys,
             write_seq_,
             plaintext_chunk,
             tls::kContentTypeApplicationData,
