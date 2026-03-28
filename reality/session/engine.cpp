@@ -25,11 +25,7 @@ constexpr std::size_t kMaxTlsCiphertextRecordLen = tls::kMaxTlsPlaintextLen + 25
 }    // namespace
 
 reality_engine::reality_engine(reality::reality_record_context context)
-    : read_key_(std::move(context.read_keys.key)),
-      read_iv_(std::move(context.read_keys.iv)),
-      write_key_(std::move(context.write_keys.key)),
-      write_iv_(std::move(context.write_keys.iv)),
-      cipher_(context.negotiated.cipher)
+    : context_(std::move(context))
 {
     tx_buf_.reserve(kMaxBufSize);
 }
@@ -75,7 +71,15 @@ std::span<const std::uint8_t> reality_engine::encrypt_record(const std::vector<s
         plaintext_chunk.assign(plaintext.begin() + static_cast<std::ptrdiff_t>(offset),
                                plaintext.begin() + static_cast<std::ptrdiff_t>(offset + chunk_len));
         tls::record_layer::encrypt_record_append(
-            encrypt_ctx_, cipher_, write_key_, write_iv_, write_seq_, plaintext_chunk, tls::kContentTypeApplicationData, tx_buf_, ec);
+            encrypt_ctx_,
+            context_.negotiated.cipher,
+            context_.write_keys.key,
+            context_.write_keys.iv,
+            write_seq_,
+            plaintext_chunk,
+            tls::kContentTypeApplicationData,
+            tx_buf_,
+            ec);
         if (ec)
         {
             return std::span<const std::uint8_t>{};
@@ -131,7 +135,15 @@ void reality_engine::decrypt_tls_record(std::uint8_t& content_type, std::size_t&
     const std::span<const std::uint8_t> record_data(record_header, frame_size);
 
     payload_len = tls::record_layer::decrypt_tls_record(
-        decrypt_ctx_, cipher_, read_key_, read_iv_, read_seq_, record_data, std::span<std::uint8_t>(scratch_buf_), content_type, ec);
+        decrypt_ctx_,
+        context_.negotiated.cipher,
+        context_.read_keys.key,
+        context_.read_keys.iv,
+        read_seq_,
+        record_data,
+        std::span<std::uint8_t>(scratch_buf_),
+        content_type,
+        ec);
     if (ec)
     {
         return;

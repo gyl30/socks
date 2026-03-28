@@ -2,16 +2,11 @@
 #define REALITY_ENGINE_H
 
 #include <array>
-#include <span>
-#include <optional>
-#include <vector>
 #include <cstddef>
 #include <cstdint>
-
-extern "C"
-{
-#include <openssl/types.h>
-}
+#include <optional>
+#include <span>
+#include <vector>
 
 #include <boost/asio/buffer.hpp>
 #include <boost/system/error_code.hpp>
@@ -49,15 +44,11 @@ class reality_engine
    private:
     void decrypt_tls_record(std::uint8_t& content_type, std::size_t& payload_len, boost::system::error_code& ec);
 
-    std::vector<std::uint8_t> read_key_;
-    std::vector<std::uint8_t> read_iv_;
-    std::vector<std::uint8_t> write_key_;
-    std::vector<std::uint8_t> write_iv_;
+    reality::reality_record_context context_;
     ::tls::cipher_context decrypt_ctx_;
     ::tls::cipher_context encrypt_ctx_;
     std::uint64_t read_seq_ = 0;
     std::uint64_t write_seq_ = 0;
-    const EVP_CIPHER* cipher_;
     std::array<std::uint8_t, kMaxBufSize> rx_buf_{};
     std::size_t rx_buf_offset_ = 0;
     std::size_t rx_buf_size_ = 0;
