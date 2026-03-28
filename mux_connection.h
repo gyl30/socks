@@ -20,7 +20,7 @@
 namespace reality
 {
 
-class reality_session;
+struct reality_session;
 
 }    // namespace reality
 
