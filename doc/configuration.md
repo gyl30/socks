@@ -151,7 +151,6 @@
 
 字段：
 
-- `heartbeat.enabled`
 - `heartbeat.min_interval` / `heartbeat.max_interval`
 - `heartbeat.min_padding` / `heartbeat.max_padding`
 

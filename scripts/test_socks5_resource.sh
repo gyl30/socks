@@ -35,7 +35,6 @@ client_max_streams="${CLIENT_MAX_STREAMS:-2048}"
 server_max_streams="${SERVER_MAX_STREAMS:-2048}"
 client_max_handshake_records="${CLIENT_MAX_HANDSHAKE_RECORDS:-256}"
 server_max_handshake_records="${SERVER_MAX_HANDSHAKE_RECORDS:-256}"
-heartbeat_enabled="${HEARTBEAT_ENABLED:-true}"
 heartbeat_min_interval="${HEARTBEAT_MIN_INTERVAL:-15}"
 heartbeat_max_interval="${HEARTBEAT_MAX_INTERVAL:-45}"
 heartbeat_min_padding="${HEARTBEAT_MIN_PADDING:-32}"
@@ -180,7 +179,6 @@ cat >"$tmp_dir/client.json" <<EOF
     "max_handshake_records": $client_max_handshake_records
   },
   "heartbeat": {
-    "enabled": $heartbeat_enabled,
     "min_interval": $heartbeat_min_interval,
     "max_interval": $heartbeat_max_interval,
     "min_padding": $heartbeat_min_padding,
