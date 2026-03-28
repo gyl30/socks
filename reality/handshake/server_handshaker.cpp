@@ -918,6 +918,11 @@ std::vector<std::uint8_t> compose_server_hello_flight(const std::vector<std::uin
 
     std::size_t offset = 0;
     std::uint64_t seq = 0;
+    const tls::cipher_context record_ctx;
+    const traffic_key_material key_material{
+        .key = s_hs_keys.first,
+        .iv = s_hs_keys.second,
+    };
     const auto append_encrypted_chunk = [&](const std::size_t len) -> bool
     {
         if (len == 0 || offset >= flight2_plain.size())
@@ -935,12 +940,11 @@ std::vector<std::uint8_t> compose_server_hello_flight(const std::vector<std::uin
         const auto end = offset + len;
         const std::vector<std::uint8_t> chunk(flight2_plain.begin() + static_cast<std::ptrdiff_t>(offset),
                                               flight2_plain.begin() + static_cast<std::ptrdiff_t>(end));
-        auto record = tls::record_layer::encrypt_tls_record(cipher, s_hs_keys.first, s_hs_keys.second, seq++, chunk, tls::kContentTypeHandshake, ec);
+        tls::record_layer::encrypt_record_append(record_ctx, cipher, key_material, seq++, chunk, tls::kContentTypeHandshake, out_sh, ec);
         if (ec)
         {
             return false;
         }
-        out_sh.insert(out_sh.end(), record.begin(), record.end());
         offset += len;
         return true;
     };
