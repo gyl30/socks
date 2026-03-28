@@ -16,6 +16,13 @@ extern "C"
 
 #include "tls/cipher_context.h"
 
+namespace reality
+{
+
+struct traffic_key_material;
+
+}    // namespace reality
+
 namespace tls
 {
 
@@ -24,8 +31,7 @@ class record_layer
    public:
     static void encrypt_record_append(const cipher_context& ctx,
                                       const EVP_CIPHER* cipher,
-                                      const std::vector<std::uint8_t>& key,
-                                      const std::vector<std::uint8_t>& iv,
+                                      const reality::traffic_key_material& key_material,
                                       std::uint64_t seq,
                                       const std::vector<std::uint8_t>& plaintext,
                                       std::uint8_t content_type,
