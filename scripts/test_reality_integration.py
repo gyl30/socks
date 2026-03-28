@@ -310,7 +310,6 @@ def main():
             },
             "heartbeat": {
                 "enabled": True,
-                "idle_timeout": 10,
                 "min_interval": 15,
                 "max_interval": 45,
                 "min_padding": 32,
