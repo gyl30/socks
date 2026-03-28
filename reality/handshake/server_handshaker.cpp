@@ -940,7 +940,7 @@ std::vector<std::uint8_t> compose_server_hello_flight(const std::vector<std::uin
         const auto end = offset + len;
         const std::vector<std::uint8_t> chunk(flight2_plain.begin() + static_cast<std::ptrdiff_t>(offset),
                                               flight2_plain.begin() + static_cast<std::ptrdiff_t>(end));
-        tls::record_layer::encrypt_record_append(record_ctx, cipher, key_material, seq++, chunk, tls::kContentTypeHandshake, out_sh, ec);
+        tls::record_layer::encrypt_tls_record(record_ctx, cipher, key_material, seq++, chunk, tls::kContentTypeHandshake, out_sh, ec);
         if (ec)
         {
             return false;
