@@ -9,7 +9,6 @@
 #include "reality/types.h"
 #include "tls/cipher_suite.h"
 #include "tls/key_schedule.h"
-#include "reality/session/engine.h"
 #include "reality/session/session.h"
 
 namespace reality
@@ -17,6 +16,12 @@ namespace reality
 
 namespace
 {
+
+enum class perspective : std::uint8_t
+{
+    kClient,
+    kServer,
+};
 
 traffic_key_material make_traffic_key_material(std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> material)
 {
@@ -39,15 +44,10 @@ bool validate_negotiated_params(const negotiated_params& negotiated, boost::syst
 
 }    // namespace
 
-reality_session::reality_session(negotiated_params negotiated, traffic_key_material read_keys, traffic_key_material write_keys)
-    : negotiated_(std::move(negotiated)), read_keys_(std::move(read_keys)), write_keys_(std::move(write_keys))
-{
-}
-
-reality_session reality_session::build_from_parts(const negotiated_params& negotiated,
-                                                  const traffic_secrets& secrets,
-                                                  const perspective session_perspective,
-                                                  boost::system::error_code& ec)
+reality_session build_reality_session_from_parts(const negotiated_params& negotiated,
+                                                 const traffic_secrets& secrets,
+                                                 const perspective session_perspective,
+                                                 boost::system::error_code& ec)
 {
     ec.clear();
     if (!validate_negotiated_params(negotiated, ec))
@@ -76,22 +76,21 @@ reality_session reality_session::build_from_parts(const negotiated_params& negot
 
     auto read_keys = make_traffic_key_material(session_perspective == perspective::kClient ? std::move(server_keys) : std::move(client_keys));
     auto write_keys = make_traffic_key_material(session_perspective == perspective::kClient ? std::move(client_keys) : std::move(server_keys));
-    return {negotiated, std::move(read_keys), std::move(write_keys)};
+    return {
+        .negotiated = negotiated,
+        .read_keys = std::move(read_keys),
+        .write_keys = std::move(write_keys),
+    };
 }
 
-reality_session reality_session::from_client_handshake(const client_handshake_result& handshake_result, boost::system::error_code& ec)
+reality_session build_reality_session(const client_handshake_result& handshake_result, boost::system::error_code& ec)
 {
-    return build_from_parts(handshake_result.negotiated, handshake_result.secrets, perspective::kClient, ec);
+    return build_reality_session_from_parts(handshake_result.negotiated, handshake_result.secrets, perspective::kClient, ec);
 }
 
-reality_session reality_session::from_authenticated_session(const authenticated_session& authenticated, boost::system::error_code& ec)
+reality_session build_reality_session(const authenticated_session& authenticated, boost::system::error_code& ec)
 {
-    return build_from_parts(authenticated.negotiated, authenticated.secrets, perspective::kServer, ec);
-}
-
-mux::reality_engine reality_session::take_engine() &&
-{
-    return {std::move(negotiated_), std::move(read_keys_), std::move(write_keys_)};
+    return build_reality_session_from_parts(authenticated.negotiated, authenticated.secrets, perspective::kServer, ec);
 }
 
 }    // namespace reality
