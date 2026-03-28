@@ -24,14 +24,12 @@ namespace
 constexpr std::size_t kMaxTlsCiphertextRecordLen = tls::kMaxTlsPlaintextLen + 256;
 }    // namespace
 
-reality_engine::reality_engine(reality::negotiated_params negotiated,
-                               reality::traffic_key_material read_keys,
-                               reality::traffic_key_material write_keys)
-    : read_key_(std::move(read_keys.key)),
-      read_iv_(std::move(read_keys.iv)),
-      write_key_(std::move(write_keys.key)),
-      write_iv_(std::move(write_keys.iv)),
-      cipher_(negotiated.cipher)
+reality_engine::reality_engine(reality::reality_record_context context)
+    : read_key_(std::move(context.read_keys.key)),
+      read_iv_(std::move(context.read_keys.iv)),
+      write_key_(std::move(context.write_keys.key)),
+      write_iv_(std::move(context.write_keys.iv)),
+      cipher_(context.negotiated.cipher)
 {
     tx_buf_.reserve(kMaxBufSize);
 }

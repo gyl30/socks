@@ -58,13 +58,13 @@ std::string extract_http_status_line(const std::vector<std::uint8_t>& data)
 }    // namespace
 
 boost::asio::awaitable<lightweight_http_visit_result> run_lightweight_http_visit(boost::asio::ip::tcp::socket& socket,
-                                                                                 reality_session session,
+                                                                                 reality_record_context record_context,
                                                                                  const lightweight_http_visit_options& options,
                                                                                  boost::system::error_code& ec)
 {
     ec.clear();
     lightweight_http_visit_result result;
-    mux::reality_engine engine(std::move(session.negotiated), std::move(session.read_keys), std::move(session.write_keys));
+    mux::reality_engine engine(std::move(record_context));
 
     const auto request_text = build_minimal_http_request(options.host);
     const std::vector<std::uint8_t> request_bytes(request_text.begin(), request_text.end());

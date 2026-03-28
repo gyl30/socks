@@ -360,13 +360,13 @@ boost::asio::awaitable<void> remote_server::handle(io_worker& worker, std::share
     }
     LOG_CTX_INFO(ctx, "{} authorized sni {}", log_event::kAuth, ctx.sni());
 
-    auto session = reality::build_reality_session(accept_result.authenticated, ec);
+    auto record_context = reality::build_reality_record_context(accept_result.authenticated, ec);
     if (ec)
     {
         co_return;
     }
     LOG_CTX_INFO(ctx, "{} tunnel starting", log_event::kConnEstablished);
-    auto connection = std::make_shared<mux_connection>(std::move(*s), worker, std::move(session), cfg_, conn_id, ctx.trace_id());
+    auto connection = std::make_shared<mux_connection>(std::move(*s), worker, std::move(record_context), cfg_, conn_id, ctx.trace_id());
     connection->start_accepting_streams();
     connection->start();
     for (;;)

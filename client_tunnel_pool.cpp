@@ -276,13 +276,13 @@ std::shared_ptr<mux_connection> client_tunnel_pool::build_tunnel(boost::asio::ip
                                                                  const std::string& trace_id) const
 {
     boost::system::error_code ec;
-    auto session = reality::build_reality_session(handshake_ret, ec);
+    auto record_context = reality::build_reality_record_context(handshake_ret, ec);
     if (ec)
     {
         LOG_ERROR("build client reality session failed {}", ec.message());
         return nullptr;
     }
-    return std::make_shared<mux_connection>(std::move(socket), worker, std::move(session), cfg_, cid, trace_id);
+    return std::make_shared<mux_connection>(std::move(socket), worker, std::move(record_context), cfg_, cid, trace_id);
 }
 
 boost::asio::awaitable<void> client_tunnel_pool::run_real_certificate_fallback(boost::asio::ip::tcp::socket& socket,
@@ -304,7 +304,7 @@ boost::asio::awaitable<void> client_tunnel_pool::run_real_certificate_fallback(b
     }
 
     boost::system::error_code ec;
-    auto session = reality::build_reality_session(handshake_ret, ec);
+    auto record_context = reality::build_reality_record_context(handshake_ret, ec);
     if (ec)
     {
         LOG_CTX_WARN(fallback_ctx, "{} stage build_session error {}", log_event::kFallback, ec.message());
@@ -316,7 +316,7 @@ boost::asio::awaitable<void> client_tunnel_pool::run_real_certificate_fallback(b
     visit_options.write_timeout_sec = clamp_fallback_timeout(cfg_.timeout.write);
     visit_options.read_timeout_sec = clamp_fallback_timeout(cfg_.timeout.read);
 
-    const auto visit_result = co_await reality::run_lightweight_http_visit(socket, std::move(session), visit_options, ec);
+    const auto visit_result = co_await reality::run_lightweight_http_visit(socket, std::move(record_context), visit_options, ec);
     if (ec)
     {
         LOG_CTX_WARN(fallback_ctx, "{} stage {} error {}", log_event::kFallback, visit_result.error_stage, ec.message());
