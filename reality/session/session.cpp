@@ -44,10 +44,10 @@ bool validate_negotiated_params(const negotiated_params& negotiated, boost::syst
 
 }    // namespace
 
-reality_session build_reality_session_from_parts(const negotiated_params& negotiated,
-                                                 const traffic_secrets& secrets,
-                                                 const perspective session_perspective,
-                                                 boost::system::error_code& ec)
+reality_record_context build_reality_record_context_from_parts(const negotiated_params& negotiated,
+                                                               const traffic_secrets& secrets,
+                                                               const perspective session_perspective,
+                                                               boost::system::error_code& ec)
 {
     ec.clear();
     if (!validate_negotiated_params(negotiated, ec))
@@ -83,14 +83,14 @@ reality_session build_reality_session_from_parts(const negotiated_params& negoti
     };
 }
 
-reality_session build_reality_session(const client_handshake_result& handshake_result, boost::system::error_code& ec)
+reality_record_context build_reality_record_context(const client_handshake_result& handshake_result, boost::system::error_code& ec)
 {
-    return build_reality_session_from_parts(handshake_result.negotiated, handshake_result.secrets, perspective::kClient, ec);
+    return build_reality_record_context_from_parts(handshake_result.negotiated, handshake_result.secrets, perspective::kClient, ec);
 }
 
-reality_session build_reality_session(const authenticated_session& authenticated, boost::system::error_code& ec)
+reality_record_context build_reality_record_context(const authenticated_session& authenticated, boost::system::error_code& ec)
 {
-    return build_reality_session_from_parts(authenticated.negotiated, authenticated.secrets, perspective::kServer, ec);
+    return build_reality_record_context_from_parts(authenticated.negotiated, authenticated.secrets, perspective::kServer, ec);
 }
 
 }    // namespace reality
