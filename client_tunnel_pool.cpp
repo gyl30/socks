@@ -276,7 +276,7 @@ std::shared_ptr<mux_connection> client_tunnel_pool::build_tunnel(boost::asio::ip
                                                                  const std::string& trace_id) const
 {
     boost::system::error_code ec;
-    auto session = reality::reality_session::from_client_handshake(handshake_ret, ec);
+    auto session = reality::build_reality_session(handshake_ret, ec);
     if (ec)
     {
         LOG_ERROR("build client reality session failed {}", ec.message());
@@ -304,7 +304,7 @@ boost::asio::awaitable<void> client_tunnel_pool::run_real_certificate_fallback(b
     }
 
     boost::system::error_code ec;
-    auto session = reality::reality_session::from_client_handshake(handshake_ret, ec);
+    auto session = reality::build_reality_session(handshake_ret, ec);
     if (ec)
     {
         LOG_CTX_WARN(fallback_ctx, "{} stage build_session error {}", log_event::kFallback, ec.message());

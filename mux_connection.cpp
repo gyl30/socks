@@ -79,7 +79,7 @@ mux_connection::mux_connection(boost::asio::ip::tcp::socket socket,
     : cfg_(cfg),
       cid_(conn_id),
       worker_(worker),
-      reality_engine_(std::move(session).take_engine()),
+      reality_engine_(std::move(session.negotiated), std::move(session.read_keys), std::move(session.write_keys)),
       socket_(std::move(socket)),
       write_channel_(std::make_unique<channel_type>(worker.io_context, 1024)),
       stop_channel_(std::make_unique<stop_channel_type>(worker.io_context, 1))

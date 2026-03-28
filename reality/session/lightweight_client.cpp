@@ -64,7 +64,7 @@ boost::asio::awaitable<lightweight_http_visit_result> run_lightweight_http_visit
 {
     ec.clear();
     lightweight_http_visit_result result;
-    auto engine = std::move(session).take_engine();
+    mux::reality_engine engine(std::move(session.negotiated), std::move(session.read_keys), std::move(session.write_keys));
 
     const auto request_text = build_minimal_http_request(options.host);
     const std::vector<std::uint8_t> request_bytes(request_text.begin(), request_text.end());

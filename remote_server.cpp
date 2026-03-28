@@ -360,7 +360,7 @@ boost::asio::awaitable<void> remote_server::handle(io_worker& worker, std::share
     }
     LOG_CTX_INFO(ctx, "{} authorized sni {}", log_event::kAuth, ctx.sni());
 
-    auto session = reality::reality_session::from_authenticated_session(accept_result.authenticated, ec);
+    auto session = reality::build_reality_session(accept_result.authenticated, ec);
     if (ec)
     {
         co_return;

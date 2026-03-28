@@ -12,7 +12,7 @@
 namespace reality
 {
 
-class reality_session;
+struct reality_session;
 
 struct lightweight_http_visit_options
 {
