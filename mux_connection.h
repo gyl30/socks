@@ -20,7 +20,7 @@
 namespace reality
 {
 
-struct reality_session;
+struct reality_record_context;
 
 }    // namespace reality
 
@@ -36,7 +36,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
    public:
     mux_connection(boost::asio::ip::tcp::socket socket,
                    io_worker& worker,
-                   reality::reality_session session,
+                   reality::reality_record_context record_context,
                    const config& cfg,
                    std::uint32_t conn_id,
                    const std::string& trace_id = "");

@@ -72,14 +72,14 @@ void handle_post_handshake_record(const std::uint32_t cid, const std::span<const
 
 mux_connection::mux_connection(boost::asio::ip::tcp::socket socket,
                                io_worker& worker,
-                               reality::reality_session session,
+                               reality::reality_record_context record_context,
                                const config& cfg,
                                const std::uint32_t conn_id,
                                const std::string& trace_id)
     : cfg_(cfg),
       cid_(conn_id),
       worker_(worker),
-      reality_engine_(std::move(session.negotiated), std::move(session.read_keys), std::move(session.write_keys)),
+      reality_engine_(std::move(record_context)),
       socket_(std::move(socket)),
       write_channel_(std::make_unique<channel_type>(worker.io_context, 1024)),
       stop_channel_(std::make_unique<stop_channel_type>(worker.io_context, 1))
