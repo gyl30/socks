@@ -43,6 +43,7 @@ class socks_client : public std::enable_shared_from_this<socks_client>
     boost::asio::ip::tcp::acceptor acceptor_{owner_worker_.io_context};
     std::shared_ptr<mux::router> router_;
     std::shared_ptr<client_tunnel_pool> tunnel_pool_;
+    std::atomic<std::uint32_t> next_session_id_{1};
     std::atomic<bool> stopping_{false};
 };
 

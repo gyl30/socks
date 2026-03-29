@@ -85,9 +85,7 @@ package "Mux + Reality" {
         + start()
         + stop()
         + select_tunnel()
-        + next_session_id()
         - connect_remote_loop()
-        - perform_reality_handshake()
     }
 
     class mux_connection {
