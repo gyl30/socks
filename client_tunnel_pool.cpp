@@ -4,7 +4,6 @@
 #include <iterator>
 #include <memory>
 #include <mutex>
-#include <random>
 #include <string>
 #include <vector>
 #include <cstddef>
@@ -139,9 +138,9 @@ void prepare_socket_for_connect(boost::asio::ip::tcp::socket& socket,
 
 }    // namespace
 
-client_tunnel_pool::connect_options client_tunnel_pool::build_connect_options(const config& cfg)
+client_tunnel_connect_options client_tunnel_pool::build_connect_options(const config& cfg)
 {
-    connect_options options;
+    client_tunnel_connect_options options;
     options.sni = cfg.reality.sni;
     options.remote_host = cfg.outbound.host;
     options.remote_port = std::to_string(cfg.outbound.port);
@@ -222,20 +221,22 @@ std::shared_ptr<mux_connection> client_tunnel_pool::select_tunnel()
 
 std::uint32_t client_tunnel_pool::next_session_id() { return next_session_id_.fetch_add(1, std::memory_order_relaxed); }
 
-boost::asio::awaitable<void> client_tunnel_pool::run_real_certificate_fallback(boost::asio::ip::tcp::socket& socket,
-                                                                               const handshake_result& handshake_ret,
-                                                                               const connection_context& ctx) const
+static boost::asio::awaitable<void> run_real_certificate_fallback(const config& cfg,
+                                                                  const client_tunnel_connect_options& options,
+                                                                  boost::asio::ip::tcp::socket& socket,
+                                                                  const reality::client_handshake_result& handshake_ret,
+                                                                  const connection_context& ctx)
 {
     connection_context fallback_ctx = ctx;
-    fallback_ctx.sni(options_.sni);
-    fallback_ctx.set_target(options_.sni, kFallbackTlsPort);
+    fallback_ctx.sni(options.sni);
+    fallback_ctx.set_target(options.sni, kFallbackTlsPort);
 
     if (!handshake_ret.negotiated.negotiated_alpn.empty() && handshake_ret.negotiated.negotiated_alpn != "http/1.1")
     {
         LOG_CTX_INFO(fallback_ctx,
                      "{} stage skip_request host {} negotiated_alpn {}",
                      log_event::kFallback,
-                     options_.sni,
+                     options.sni,
                      handshake_ret.negotiated.negotiated_alpn);
         co_return;
     }
@@ -249,9 +250,9 @@ boost::asio::awaitable<void> client_tunnel_pool::run_real_certificate_fallback(b
     }
 
     reality::lightweight_http_visit_options visit_options;
-    visit_options.host = options_.sni;
-    visit_options.write_timeout_sec = clamp_fallback_timeout(cfg_.timeout.write);
-    visit_options.read_timeout_sec = clamp_fallback_timeout(cfg_.timeout.read);
+    visit_options.host = options.sni;
+    visit_options.write_timeout_sec = clamp_fallback_timeout(cfg.timeout.write);
+    visit_options.read_timeout_sec = clamp_fallback_timeout(cfg.timeout.read);
 
     const auto visit_result = co_await reality::run_lightweight_http_visit(socket, std::move(record_context), visit_options, ec);
     if (ec)
@@ -285,30 +286,23 @@ boost::asio::awaitable<void> client_tunnel_pool::run_real_certificate_fallback(b
     co_return;
 }
 
-boost::asio::awaitable<client_tunnel_pool::handshake_result> client_tunnel_pool::perform_reality_handshake_with_timeout(
-    const std::shared_ptr<boost::asio::ip::tcp::socket>& socket, const connection_context& ctx, boost::system::error_code& ec) const
+static boost::asio::awaitable<reality::client_handshake_result> perform_reality_handshake_with_timeout(const config& cfg,
+                                                                                                       const client_tunnel_connect_options& options,
+                                                                                                       boost::asio::ip::tcp::socket& socket,
+                                                                                                       const connection_context& ctx,
+                                                                                                       boost::system::error_code& ec)
 {
-    ec.clear();
-    if (!socket)
-    {
-        LOG_CTX_ERROR(ctx, "{} stage handshake target {}:{} error invalid_socket", log_event::kHandshake, options_.remote_host, options_.remote_port);
-        ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
-        co_return handshake_result{};
-    }
     const reality::client_handshaker handshaker(
-        cfg_, options_.sni, options_.server_pub_key, options_.short_id_bytes, options_.fingerprint_type, options_.max_handshake_records);
-    auto handshake_res = co_await handshaker.run(*socket, ctx, ec);
+        cfg, options.sni, options.server_pub_key, options.short_id_bytes, options.fingerprint_type, options.max_handshake_records);
+    auto handshake_res = co_await handshaker.run(socket, ctx, ec);
     if (ec)
     {
-        LOG_CTX_ERROR(
-            ctx, "{} stage handshake target {}:{} error {}", log_event::kHandshake, options_.remote_host, options_.remote_port, ec.message());
+        LOG_CTX_ERROR(ctx, "{} stage handshake target {}:{} error {}", log_event::kHandshake, options.remote_host, options.remote_port, ec.message());
     }
     co_return handshake_res;
 }
 
-static boost::asio::awaitable<void> wait_retry(const std::uint32_t index,
-                                               io_worker& worker,
-                                               const std::chrono::steady_clock::duration delay)
+static boost::asio::awaitable<void> wait_retry(const std::uint32_t index, io_worker& worker, const std::chrono::steady_clock::duration delay)
 {
     boost::asio::steady_timer retry_timer(worker.io_context);
     retry_timer.expires_after(delay);
@@ -322,6 +316,100 @@ static boost::asio::awaitable<void> wait_retry(const std::uint32_t index,
         LOG_ERROR("wait retry {} error {}", index, wait_ec.message());
     }
 }
+
+static boost::asio::awaitable<void> tcp_connect_remote(const config& cfg,
+                                                       const client_tunnel_connect_options& options,
+                                                       boost::asio::ip::tcp::socket& socket,
+                                                       const connection_context& ctx,
+                                                       boost::system::error_code& ec)
+{
+    const auto timeout_sec = cfg.timeout.connect;
+    boost::asio::ip::tcp::resolver resolver(socket.get_executor());
+    const auto resolve_endpoints =
+        co_await timeout_io::wait_resolve_with_timeout(resolver, options.remote_host, options.remote_port, timeout_sec, ec);
+    if (ec)
+    {
+        co_return;
+    }
+
+    for (const auto& entry : resolve_endpoints)
+    {
+        const auto endpoint = entry.endpoint();
+        prepare_socket_for_connect(socket, endpoint, options.connect_mark, ec);
+        if (ec)
+        {
+            continue;
+        }
+        co_await timeout_io::wait_connect_with_timeout(socket, endpoint, timeout_sec, ec);
+        if (!ec)
+        {
+            co_return;
+        }
+    }
+
+    if (ec == boost::asio::error::timed_out)
+    {
+        LOG_CTX_ERROR(ctx, "{} stage connect target {}:{} timeout {}s", log_event::kConnInit, options.remote_host, options.remote_port, timeout_sec);
+    }
+    else
+    {
+        LOG_CTX_ERROR(ctx, "{} stage connect target {}:{} error {}", log_event::kConnInit, options.remote_host, options.remote_port, ec.message());
+    }
+}
+
+static boost::asio::awaitable<std::shared_ptr<mux_connection>> connect_remote_once(const config& cfg,
+                                                                                   const client_tunnel_connect_options& options,
+                                                                                   const std::uint32_t index,
+                                                                                   io_worker& worker,
+                                                                                   const std::uint32_t cid,
+                                                                                   connection_context& ctx,
+                                                                                   boost::system::error_code& ec)
+{
+    LOG_CTX_INFO(
+        ctx, "{} init conn {}/{} to {} {}", log_event::kConnInit, index + 1, options.tunnel_connections, options.remote_host, options.remote_port);
+
+    boost::asio::ip::tcp::socket socket(worker.io_context);
+    co_await tcp_connect_remote(cfg, options, socket, ctx, ec);
+    if (ec)
+    {
+        co_return nullptr;
+    }
+
+    auto handshake_ret = co_await perform_reality_handshake_with_timeout(cfg, options, socket, ctx, ec);
+    if (ec)
+    {
+        co_return nullptr;
+    }
+
+    LOG_CTX_INFO(ctx,
+                 "{} handshake success cipher 0x{:04x} key share group 0x{:04x} {}",
+                 log_event::kHandshake,
+                 handshake_ret.negotiated.cipher_suite,
+                 handshake_ret.negotiated.key_share_group,
+                 tls::named_group_name(handshake_ret.negotiated.key_share_group));
+    if (handshake_ret.auth_mode == reality::client_auth_mode::kRealCertificateFallback)
+    {
+        LOG_CTX_WARN(ctx, "{} received real certificate fallback run lightweight visit", log_event::kHandshake);
+        co_await run_real_certificate_fallback(cfg, options, socket, handshake_ret, ctx);
+        boost::system::error_code close_ec;
+        close_ec = socket.close(close_ec);
+        if (close_ec)
+        {
+            LOG_CTX_WARN(ctx, "close failed {}", close_ec.message());
+        }
+        co_return nullptr;
+    }
+
+    auto record_context = reality::build_reality_record_context(handshake_ret, ec);
+    if (ec)
+    {
+        LOG_ERROR("build client reality session failed {}", ec.message());
+        co_return nullptr;
+    }
+
+    co_return std::make_shared<mux_connection>(std::move(socket), worker, std::move(record_context), cfg, cid, ctx.trace_id());
+}
+
 boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::uint32_t index, io_worker& worker)
 {
     boost::system::error_code ec;
@@ -331,71 +419,21 @@ boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::
         connection_context ctx;
         ctx.new_trace_id();
         ctx.conn_id(cid);
-        LOG_CTX_INFO(ctx,
-                     "{} init conn {}/{} to {} {}",
-                     log_event::kConnInit,
-                     index + 1,
-                     options_.tunnel_connections,
-                     options_.remote_host,
-                     options_.remote_port);
-        // step 1 create socket
-        const auto socket = std::make_shared<boost::asio::ip::tcp::socket>(worker.io_context);
-        // step 2 connect remote
-        co_await tcp_connect_remote(*socket, ctx, ec);
+        auto tunnel = co_await connect_remote_once(cfg_, options_, index, worker, cid, ctx, ec);
         if (ec == boost::asio::error::operation_aborted)
         {
             break;
         }
-
-        if (ec)
-        {
-            LOG_CTX_ERROR(ctx, "{} connect target {}:{} error {}", log_event::kConnInit, options_.remote_host, options_.remote_port, ec.message());
-            co_await wait_retry(index, worker, kReconnectRetryInterval);
-            continue;
-        }
-        // step 3 handshake
-        auto handshake_ret = co_await perform_reality_handshake_with_timeout(socket, ctx, ec);
-        if (ec == boost::asio::error::operation_aborted)
+        if (stop_)
         {
             break;
         }
-
-        if (ec)
+        if (tunnel == nullptr)
         {
-            LOG_CTX_ERROR(ctx, "{} handshake error {}", log_event::kHandshake, ec.message());
             co_await wait_retry(index, worker, kReconnectRetryInterval);
             continue;
         }
 
-        LOG_CTX_INFO(ctx,
-                     "{} handshake success cipher 0x{:04x} key share group 0x{:04x} {}",
-                     log_event::kHandshake,
-                     handshake_ret.negotiated.cipher_suite,
-                     handshake_ret.negotiated.key_share_group,
-                     tls::named_group_name(handshake_ret.negotiated.key_share_group));
-        if (handshake_ret.auth_mode == handshake_auth_mode::kRealCertificateFallback)
-        {
-            LOG_CTX_WARN(ctx, "{} received real certificate fallback run lightweight visit", log_event::kHandshake);
-            co_await run_real_certificate_fallback(*socket, handshake_ret, ctx);
-            boost::system::error_code close_ec;
-            close_ec = socket->close(close_ec);
-            if (close_ec)
-            {
-                LOG_CTX_WARN(ctx, "close failed {}", close_ec.message());
-            }
-            co_await wait_retry(index, worker, kReconnectRetryInterval);
-            continue;
-        }
-        // step 4 build tunnel
-        auto record_context = reality::build_reality_record_context(handshake_ret, ec);
-        if (ec)
-        {
-            LOG_ERROR("build client reality session failed {}", ec.message());
-            co_await wait_retry(index, worker, kReconnectRetryInterval);
-            continue;
-        }
-        auto tunnel = std::make_shared<mux_connection>(std::move(*socket), worker, std::move(record_context), cfg_, cid, ctx.trace_id());
-        // step 5 tunnel run
         tunnel->start();
         {
             const std::scoped_lock<std::mutex> lock(tunnel_mutex_);
@@ -411,54 +449,15 @@ boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::
                 tunnel_pool_[index].reset();
             }
         }
-
-        if (!stop_)
+        if (stop_)
         {
-            co_await wait_retry(index, worker, kReconnectRetryInterval);
+            break;
         }
+
+        co_await wait_retry(index, worker, kReconnectRetryInterval);
     }
 
     LOG_INFO("{} connect remote loop {} exited", log_event::kConnClose, index);
-}
-
-boost::asio::awaitable<void> client_tunnel_pool::tcp_connect_remote(boost::asio::ip::tcp::socket& socket,
-                                                                    const connection_context& ctx,
-                                                                    boost::system::error_code& ec) const
-{
-    const auto timeout_sec = cfg_.timeout.connect;
-    boost::asio::ip::tcp::resolver resolver(socket.get_executor());
-    const auto resolve_endpoints =
-        co_await timeout_io::wait_resolve_with_timeout(resolver, options_.remote_host, options_.remote_port, timeout_sec, ec);
-    if (ec)
-    {
-        co_return;
-    }
-
-    for (const auto& entry : resolve_endpoints)
-    {
-        const auto endpoint = entry.endpoint();
-        prepare_socket_for_connect(socket, endpoint, options_.connect_mark, ec);
-        if (ec)
-        {
-            continue;
-        }
-        co_await timeout_io::wait_connect_with_timeout(socket, endpoint, timeout_sec, ec);
-        if (!ec)
-        {
-            co_return;
-        }
-    }
-
-    if (ec == boost::asio::error::timed_out)
-    {
-        LOG_CTX_ERROR(
-            ctx, "{} stage connect target {}:{} timeout {}s", log_event::kConnInit, options_.remote_host, options_.remote_port, timeout_sec);
-    }
-    else
-    {
-        LOG_CTX_ERROR(ctx, "{} stage connect target {}:{} error {}", log_event::kConnInit, options_.remote_host, options_.remote_port, ec.message());
-    }
-    co_return;
 }
 
 }    // namespace mux
