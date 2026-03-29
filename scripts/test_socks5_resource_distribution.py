@@ -327,6 +327,24 @@ def wait_for_port(port, name, owners):
     raise RuntimeError(f"timeout waiting for {name} 127.0.0.1:{port}")
 
 
+def wait_for_proxy_ready(load_args, path, owners, deadline_seconds=20.0):
+    deadline = time.time() + deadline_seconds
+    last_error = None
+
+    while time.time() < deadline:
+        for owner in owners:
+            if owner.process.poll() is not None:
+                raise RuntimeError("proxy owner process exited early")
+        try:
+            asyncio.run(run_request(load_args, path))
+            return
+        except Exception as exc:
+            last_error = exc
+            time.sleep(0.2)
+
+    raise RuntimeError(f"timeout waiting for socks5 proxy ready last_error={last_error}")
+
+
 def write_json(path, data):
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(data, handle, indent=2)
@@ -589,6 +607,14 @@ def main():
         client = process_group.start([str(binary), "-c", str(tmp_dir / "client.json")], tmp_dir / "client.stdout.log")
         wait_for_port(http_port, "http_server", [http_server])
         wait_for_port(socks_port, "socks5_listener", [server, client])
+        smallest_entry = min(entries, key=lambda entry: entry["size_bytes"])
+        probe_args = argparse.Namespace(
+            socks_host="127.0.0.1",
+            socks_port=socks_port,
+            target_host="127.0.0.1",
+            target_port=http_port,
+        )
+        wait_for_proxy_ready(probe_args, f"/payload-{smallest_entry['size_bytes']}.bin", [server, client])
 
         resource_summary_path = tmp_dir / "resource-summary.json"
         monitor = process_group.start(

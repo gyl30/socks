@@ -71,6 +71,43 @@ def wait_for_log_text(path, needle, deadline_seconds, label):
     raise RuntimeError(f"timeout waiting for log text {needle!r} in {label}")
 
 
+def wait_for_proxy_ready(repo_root, proxy_port, target_port, processes, deadline_seconds=20.0):
+    deadline = time.time() + deadline_seconds
+    last_error = ""
+    args = [
+        sys.executable,
+        str(repo_root / "scripts/socks5_tcp_load.py"),
+        "--socks-host",
+        "127.0.0.1",
+        "--socks-port",
+        str(proxy_port),
+        "--target-host",
+        "127.0.0.1",
+        "--target-port",
+        str(target_port),
+        "--path",
+        "/fast-large?body_bytes=64&chunk_size=64&chunk_interval_ms=0",
+        "--concurrency",
+        "1",
+        "--requests-per-worker",
+        "1",
+    ]
+
+    while time.time() < deadline:
+        for process in processes:
+            if process.process.poll() is not None:
+                raise RuntimeError("proxy owner process exited early")
+
+        result = subprocess.run(args, text=True, capture_output=True)
+        if result.returncode == 0:
+            return
+
+        last_error = (result.stderr or result.stdout or f"rc={result.returncode}").strip()
+        time.sleep(0.2)
+
+    raise RuntimeError(f"timeout waiting for socks5 proxy ready last_error={last_error}")
+
+
 def tail_file(path, lines=80):
     if not path.exists():
         return ""
@@ -279,7 +316,6 @@ def start_client_server_pair(repo_root, temp_root, binary, socks_port, server_po
             "max_handshake_records": 256,
         },
         "heartbeat": {
-            "enabled": True,
             "min_interval": 15,
             "max_interval": 45,
             "min_padding": 32,
@@ -292,7 +328,7 @@ def start_client_server_pair(repo_root, temp_root, binary, socks_port, server_po
 
     server_process = ManagedProcess([str(binary), "-c", str(temp_root / f"server-{fingerprint}.json")], str(server_log))
     client_process = ManagedProcess([str(binary), "-c", str(temp_root / f"client-{fingerprint}.json")], str(client_log))
-    wait_for_log_text(server_log, "remote server listening for connections", 20, "server log")
+    wait_for_log_text(server_log, f"remote server listening on 127.0.0.1:{server_port}", 20, "server log")
     wait_for_log_text(client_log, f"local socks5 listening on 127.0.0.1:{socks_port}", 20, "client log")
     wait_for_port("127.0.0.1", socks_port, 20, "socks5 proxy")
     return {
@@ -340,7 +376,7 @@ def run_http_load_through_proxy(repo_root, proxy_port, target_port, body_bytes, 
 
 
 def measure_ttfb(proxy_port, cert_path, https_port, samples):
-    proxy_url = f"socks5h://127.0.0.1:{proxy_port}"
+    proxy_url = f"socks5://127.0.0.1:{proxy_port}"
     target_url = f"https://localhost:{https_port}/healthz.txt"
 
     run_checked(
@@ -428,6 +464,7 @@ def run_profile(
     try:
         pair = start_client_server_pair(repo_root, profile_root, binary, socks_port, server_port, fingerprint, server_log, client_log)
         processes.extend([pair["server"], pair["client"]])
+        wait_for_proxy_ready(repo_root, socks_port, shared["http_port"], [pair["server"], pair["client"]])
         monitor = ManagedProcess(
             [
                 sys.executable,

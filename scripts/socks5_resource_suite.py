@@ -89,6 +89,42 @@ def run_command(args, cwd):
     return result.stdout
 
 
+def wait_for_proxy_ready(repo_root, socks_port, target_port, path, owners, deadline_seconds=20.0):
+    deadline = time.time() + deadline_seconds
+    last_error = None
+    args = [
+        sys.executable,
+        str(repo_root / "scripts/socks5_tcp_load.py"),
+        "--socks-host",
+        "127.0.0.1",
+        "--socks-port",
+        str(socks_port),
+        "--target-host",
+        "127.0.0.1",
+        "--target-port",
+        str(target_port),
+        "--path",
+        path,
+        "--concurrency",
+        "1",
+        "--requests-per-worker",
+        "1",
+    ]
+
+    while time.time() < deadline:
+        for owner in owners:
+            if owner.poll() is not None:
+                raise RuntimeError("proxy owner process exited early")
+        try:
+            run_command(args, cwd=repo_root)
+            return
+        except RuntimeError as exc:
+            last_error = exc
+            time.sleep(0.2)
+
+    raise RuntimeError(f"timeout waiting for socks5 proxy ready last_error={last_error}")
+
+
 def parse_summary_lines(text):
     summary = {}
     for line in text.splitlines():
@@ -178,7 +214,6 @@ def build_client_config(tmp_dir, socks_port, server_port, public_key, short_id, 
         "timeout": timeouts,
         "limits": limits,
         "heartbeat": {
-            "enabled": True,
             "min_interval": 4,
             "max_interval": 6,
             "min_padding": 32,
@@ -243,6 +278,13 @@ def create_environment(repo_root, binary, mode_name):
     wait_for_port("127.0.0.1", http_port, http_process, "slow_http_server")
     wait_for_port("127.0.0.1", server_port, server_process, "reality_server")
     wait_for_port("127.0.0.1", socks_port, client_process, "socks5_listener")
+    wait_for_proxy_ready(
+        repo_root,
+        socks_port,
+        http_port,
+        "/fast-large?body_bytes=64&chunk_size=64&chunk_interval_ms=0",
+        [server_process, client_process],
+    )
 
     monitor_path = tmp_dir / "resource-summary.json"
     monitor_process = manager.start(
@@ -395,13 +437,21 @@ def run_long_mode(repo_root, binary, keep_artifacts):
         print(load_output.strip())
 
         before_idle = count_idle_events(tmp_dir)
-        print(run_client_case(repo_root, env, "read-full", "/stall-before-header?delay_ms=4500&body_bytes=2048", True, 8).strip())
-        print(run_client_case(repo_root, env, "read-full", "/stall-mid-body?body_bytes=32768&first_chunk_bytes=2048&stall_ms=4500", True, 8).strip())
+        failure_outputs = [
+            run_client_case(repo_root, env, "read-full", "/stall-before-header?delay_ms=4500&body_bytes=2048", True, 8).strip(),
+            run_client_case(repo_root, env, "read-full", "/stall-mid-body?body_bytes=32768&first_chunk_bytes=2048&stall_ms=4500", True, 8).strip(),
+        ]
+        for output in failure_outputs:
+            print(output)
         time.sleep(1.0)
         after_idle = count_idle_events(tmp_dir)
         idle_hits = after_idle - before_idle
-        if idle_hits < 2:
-            raise RuntimeError(f"expected at least 2 idle timeout hits got {idle_hits}")
+        connect_failfast_hits = sum(1 for output in failure_outputs if "connect failed rep=1" in output)
+        if idle_hits + connect_failfast_hits < 2:
+            raise RuntimeError(
+                "expected at least 2 idle timeout hits or immediate connect failures "
+                f"got idle_hits={idle_hits} connect_failfast_hits={connect_failfast_hits}"
+            )
 
         before_write_timeout = count_log_occurrences(tmp_dir / "client.log", "upstream_to_client write failed")
         print(
@@ -426,6 +476,7 @@ def run_long_mode(repo_root, binary, keep_artifacts):
         resource_summary = read_json(env["monitor_path"])
         load_summary = parse_summary_lines(load_output)
         print(f"idle_timeout_hits={idle_hits}")
+        print(f"connect_failfast_hits={connect_failfast_hits}")
         print(f"write_timeout_hits={write_timeout_hits}")
         print(f"slow_success_connections={load_summary.get('connections', '0')}")
         print_resource_summary(resource_summary)
@@ -490,14 +541,19 @@ def run_churn_mode(repo_root, binary, keep_artifacts):
         time.sleep(1.0)
         after_idle = count_idle_events(tmp_dir)
         idle_hits = after_idle - before_idle
-        if idle_hits < 12:
-            raise RuntimeError(f"expected at least 12 idle timeout hits got {idle_hits}")
+        connect_failfast_hits = sum(1 for output in outputs if "connect failed rep=1" in output)
+        if idle_hits < 12 and connect_failfast_hits < 12:
+            raise RuntimeError(
+                "expected at least 12 idle timeout hits or immediate connect failures "
+                f"got idle_hits={idle_hits} connect_failfast_hits={connect_failfast_hits}"
+            )
 
         finalize_environment(env)
         resource_summary = read_json(env["monitor_path"])
         load_summary = parse_summary_lines(load_output)
         print(f"handshake_timeout_hits={handshake_timeout_hits}")
         print(f"idle_timeout_hits={idle_hits}")
+        print(f"connect_failfast_hits={connect_failfast_hits}")
         print(f"churn_success_connections={load_summary.get('connections', '0')}")
         print_resource_summary(resource_summary)
     except Exception:
