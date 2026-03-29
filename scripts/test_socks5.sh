@@ -161,7 +161,6 @@ cat >"$tmp_dir/client.json" <<EOF
     "max_handshake_records": 256
   },
   "heartbeat": {
-    "enabled": true,
     "min_interval": 15,
     "max_interval": 45,
     "min_padding": 32,
@@ -227,6 +226,57 @@ PY
 
 wait_for_port 127.0.0.1 "$server_port" "reality_server"
 wait_for_port 127.0.0.1 "$socks_port" "socks5_listener"
+
+wait_for_proxy_ready() {
+    local socks_port="$1"
+    local target_url="$2"
+    SOCKS_PORT="$socks_port" TARGET_URL="$target_url" SERVER_PID="$server_pid" CLIENT_PID="$client_pid" python3 - <<'PY'
+import os
+import subprocess
+import sys
+import time
+
+deadline = time.time() + 20.0
+socks_port = int(os.environ["SOCKS_PORT"])
+target_url = os.environ["TARGET_URL"]
+last_error = ""
+
+while time.time() < deadline:
+    for pid_env in ("SERVER_PID", "CLIENT_PID"):
+        pid = int(os.environ[pid_env])
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            print("proxy owner process exited early", file=sys.stderr)
+            sys.exit(1)
+
+    result = subprocess.run(
+        [
+            "curl",
+            "--silent",
+            "--show-error",
+            "--fail",
+            "--max-time",
+            "2",
+            "--socks5-hostname",
+            f"127.0.0.1:{socks_port}",
+            target_url,
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0 and result.stdout.strip() == "ok-socks5":
+        sys.exit(0)
+
+    last_error = (result.stderr or result.stdout or f"rc={result.returncode}").strip()
+    time.sleep(0.2)
+
+print(f"timeout waiting for socks5 proxy ready last_error={last_error}", file=sys.stderr)
+sys.exit(1)
+PY
+}
+
+wait_for_proxy_ready "$socks_port" "http://127.0.0.1:$http_port/healthz.txt"
 
 tcp_payload="$(curl --silent --show-error --fail --socks5-hostname "127.0.0.1:$socks_port" "http://127.0.0.1:$http_port/healthz.txt")"
 if [[ "$tcp_payload" != "ok-socks5" ]]; then

@@ -276,6 +276,61 @@ pids+=("$client_pid")
 
 wait_for_port 127.0.0.1 "$socks_port" "socks5_listener" "$server_pid" "$client_pid"
 
+wait_for_proxy_ready() {
+    local socks_port="$1"
+    local target_port="$2"
+    local target_path="$3"
+    SOCKS_PORT="$socks_port" TARGET_PORT="$target_port" TARGET_PATH="$target_path" REPO_ROOT="$repo_root" SERVER_PID="$server_pid" CLIENT_PID="$client_pid" python3 - <<'PY'
+import os
+import subprocess
+import sys
+import time
+
+deadline = time.time() + 20.0
+repo_root = os.environ["REPO_ROOT"]
+cmd = [
+    sys.executable,
+    f"{repo_root}/scripts/socks5_tcp_load.py",
+    "--socks-host",
+    "127.0.0.1",
+    "--socks-port",
+    os.environ["SOCKS_PORT"],
+    "--target-host",
+    "127.0.0.1",
+    "--target-port",
+    os.environ["TARGET_PORT"],
+    "--path",
+    os.environ["TARGET_PATH"],
+    "--concurrency",
+    "1",
+    "--requests-per-worker",
+    "1",
+]
+last_error = ""
+
+while time.time() < deadline:
+    for pid_env in ("SERVER_PID", "CLIENT_PID"):
+        pid = int(os.environ[pid_env])
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            print("proxy owner process exited early", file=sys.stderr)
+            sys.exit(1)
+
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode == 0:
+        sys.exit(0)
+
+    last_error = (result.stderr or result.stdout or f"rc={result.returncode}").strip()
+    time.sleep(0.2)
+
+print(f"timeout waiting for socks5 proxy ready last_error={last_error}", file=sys.stderr)
+sys.exit(1)
+PY
+}
+
+wait_for_proxy_ready "$socks_port" "$http_port" "/payload.bin"
+
 python3 "$repo_root/scripts/process_resource_monitor.py" \
     --pid "client:$client_pid" \
     --pid "server:$server_pid" \
