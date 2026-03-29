@@ -155,23 +155,13 @@ void tproxy_client::start()
     }
 
     tunnel_pool_->start();
-    LOG_INFO("tproxy waiting for upstream tunnel before listening on tcp:{} udp:{}", cfg_.tproxy.tcp_port, cfg_.tproxy.udp_port);
-    owner_worker_.group.spawn([self = shared_from_this()]() { return self->start_listeners_when_ready(); });
+    LOG_INFO("tproxy starting listeners on tcp:{} udp:{}", cfg_.tproxy.tcp_port, cfg_.tproxy.udp_port);
+    owner_worker_.group.spawn([self = shared_from_this()]() { return self->start_listeners(); });
 }
 
-boost::asio::awaitable<void> tproxy_client::start_listeners_when_ready()
+boost::asio::awaitable<void> tproxy_client::start_listeners()
 {
     boost::system::error_code ec;
-    const auto tunnel = co_await tunnel_pool_->wait_for_tunnel(0, ec);
-    if (ec || tunnel == nullptr)
-    {
-        if (ec != boost::asio::error::operation_aborted)
-        {
-            LOG_ERROR("tproxy wait for upstream tunnel failed {}", ec.message());
-        }
-        co_return;
-    }
-
     if (cfg_.tproxy.tcp_port != 0)
     {
         open_tcp_listener(tcp_acceptor_, cfg_.tproxy.listen_host, cfg_.tproxy.tcp_port, ec);
@@ -202,6 +192,8 @@ boost::asio::awaitable<void> tproxy_client::start_listeners_when_ready()
     {
         owner_worker_.group.spawn([self = shared_from_this()]() { return self->accept_udp_loop(); });
     }
+
+    co_return;
 }
 
 void tproxy_client::stop()

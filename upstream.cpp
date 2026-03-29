@@ -57,9 +57,7 @@ namespace
            ec == boost::asio::experimental::error::channel_errors::channel_cancelled;
 }
 
-boost::asio::awaitable<void> send_connect_reset(const std::shared_ptr<mux_stream>& stream,
-                                                const connection_context& ctx,
-                                                const char* stage)
+boost::asio::awaitable<void> send_connect_reset(const std::shared_ptr<mux_stream>& stream, const connection_context& ctx, const char* stage)
 {
     if (stream == nullptr)
     {
@@ -432,14 +430,11 @@ boost::asio::awaitable<upstream_connect_result> proxy_upstream::connect(const st
     if (tunnel_pool_ != nullptr)
     {
         tunnel_.reset();
-        tunnel_ = co_await tunnel_pool_->wait_for_tunnel(cfg_.timeout.connect, ec);
-        if (ec || tunnel_ == nullptr)
+        tunnel_ = tunnel_pool_->select_tunnel();
+        if (tunnel_ == nullptr)
         {
-            if (!ec)
-            {
-                ec = boost::asio::error::not_connected;
-            }
-            LOG_CTX_ERROR(ctx_, "{} wait tunnel failed {}", log_event::kRoute, ec.message());
+            ec = boost::asio::error::not_connected;
+            LOG_CTX_ERROR(ctx_, "{} wait tunnel failed", log_event::kRoute);
             result.ec = ec;
             result.socks_rep = map_connect_error_to_socks_rep(ec);
             co_return result;

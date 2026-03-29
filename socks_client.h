@@ -33,7 +33,7 @@ class socks_client : public std::enable_shared_from_this<socks_client>
     void stop();
 
    private:
-    boost::asio::awaitable<void> start_acceptor_when_ready();
+    boost::asio::awaitable<void> start_acceptor();
     boost::asio::awaitable<void> accept_loop();
 
    private:

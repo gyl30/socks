@@ -131,9 +131,7 @@ void evict_expired(Cache& cache, const std::uint64_t now_ms)
     cache.evict_while([&](const auto&, const auto& entry) { return entry.expires_at <= now_ms; });
 }
 
-boost::asio::awaitable<void> send_udp_stream_reset(const std::shared_ptr<mux_stream>& stream,
-                                                   const connection_context& ctx,
-                                                   const char* stage)
+boost::asio::awaitable<void> send_udp_stream_reset(const std::shared_ptr<mux_stream>& stream, const connection_context& ctx, const char* stage)
 {
     if (stream == nullptr)
     {
@@ -184,26 +182,20 @@ void bind_local_udp_address(const boost::asio::ip::tcp::socket& tcp_socket,
 }
 
 boost::asio::awaitable<proxy_udp_stream> connect_remote_address(const std::shared_ptr<client_tunnel_pool>& tunnel_pool,
-                                                                const std::uint32_t connect_timeout_sec,
                                                                 const connection_context& ctx,
                                                                 boost::system::error_code& ec)
 {
-    ec.clear();
     if (tunnel_pool == nullptr)
     {
         ec = boost::asio::error::not_connected;
         LOG_CTX_ERROR(ctx, "{} failed to create stream no tunnel pool", log_event::kSocks);
         co_return proxy_udp_stream{};
     }
-
-    const auto tunnel = co_await tunnel_pool->wait_for_tunnel(connect_timeout_sec, ec);
-    if (ec || tunnel == nullptr)
+    auto tunnel = tunnel_pool->select_tunnel();
+    if (!tunnel)
     {
-        if (!ec)
-        {
-            ec = boost::asio::error::not_connected;
-        }
-        LOG_CTX_ERROR(ctx, "{} wait tunnel failed {}", log_event::kSocks, ec.message());
+        ec = boost::asio::error::not_connected;
+        LOG_CTX_ERROR(ctx, "{} wait tunnel failed", log_event::kSocks);
         co_return proxy_udp_stream{};
     }
 
@@ -482,7 +474,6 @@ void udp_socks_session::open_direct_udp_socket(boost::asio::ip::udp::socket& dir
                                                const char* family,
                                                boost::system::error_code& ec) const
 {
-    ec.clear();
     ec = direct_socket.open(protocol, ec);
     if (ec)
     {
@@ -568,7 +559,6 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> udp_socks_session::resolv
                                                                                                   const std::uint16_t port,
                                                                                                   boost::system::error_code& ec)
 {
-    ec.clear();
     const auto key = udp_target_key(host, port);
     const auto now_ms_value = now_ms();
     resolved_targets_.evict_if([&](const auto&, const auto& entry) { return entry.expires_at <= now_ms_value; });
@@ -641,7 +631,6 @@ boost::asio::awaitable<void> udp_socks_session::forward_direct_packet(const sock
                                                                       const std::size_t payload_len,
                                                                       boost::system::error_code& ec)
 {
-    ec.clear();
     const auto target = co_await resolve_target_endpoint(header.addr, header.port, ec);
     if (ec)
     {
@@ -772,7 +761,6 @@ boost::asio::awaitable<void> udp_socks_session::forward_direct_reply_to_client(c
                                                                                const std::size_t payload_len,
                                                                                boost::system::error_code& ec)
 {
-    ec.clear();
     if (!has_client_addr_)
     {
         co_return;
@@ -810,13 +798,12 @@ boost::asio::awaitable<void> udp_socks_session::forward_direct_reply_to_client(c
 
 boost::asio::awaitable<bool> udp_socks_session::ensure_proxy_stream(boost::system::error_code& ec)
 {
-    ec.clear();
     if (stream_ != nullptr && tunnel_ != nullptr)
     {
         co_return true;
     }
 
-    const auto proxy_stream = co_await connect_remote_address(tunnel_pool_, cfg_.timeout.connect, ctx_, ec);
+    const auto proxy_stream = co_await connect_remote_address(tunnel_pool_, ctx_, ec);
     if (ec || proxy_stream.stream == nullptr || proxy_stream.tunnel == nullptr)
     {
         if (!ec)

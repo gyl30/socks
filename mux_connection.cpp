@@ -297,8 +297,6 @@ void mux_connection::stop_on_executor()
     }
 }
 
-bool mux_connection::is_active() const { return !stopped_.load(std::memory_order_relaxed); }
-
 boost::asio::awaitable<void> mux_connection::async_wait_stopped()
 {
     if (stop_channel_ == nullptr)
@@ -547,6 +545,11 @@ std::shared_ptr<mux_stream> mux_connection::create_stream()
     std::uint32_t stream_id = mux::kStreamIdHeartbeat;
     {
         const std::scoped_lock<std::mutex> lock(mutex_);
+        if (stopped_.load(std::memory_order_relaxed))
+        {
+            LOG_WARN("mux {} create stream rejected stopped", cid_);
+            return nullptr;
+        }
         if (cfg_.limits.max_streams > 0 && streams_.size() >= cfg_.limits.max_streams)
         {
             LOG_WARN("mux {} create stream rejected max_streams {}", cid_, cfg_.limits.max_streams);

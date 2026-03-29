@@ -102,24 +102,14 @@ void socks_client::start()
     }
 
     tunnel_pool->start();
-    LOG_INFO("local socks5 waiting for upstream tunnel before listening on {}:{}", cfg_.socks.host, cfg_.socks.port);
+    LOG_INFO("local socks5 starting listener on {}:{}", cfg_.socks.host, cfg_.socks.port);
 
-    owner_worker_.group.spawn([self = shared_from_this()]() { return self->start_acceptor_when_ready(); });
+    owner_worker_.group.spawn([self = shared_from_this()]() { return self->start_acceptor(); });
 }
 
-boost::asio::awaitable<void> socks_client::start_acceptor_when_ready()
+boost::asio::awaitable<void> socks_client::start_acceptor()
 {
     boost::system::error_code ec;
-    const auto tunnel = co_await tunnel_pool_->wait_for_tunnel(0, ec);
-    if (ec || tunnel == nullptr)
-    {
-        if (ec != boost::asio::error::operation_aborted)
-        {
-            LOG_ERROR("socks5 wait for upstream tunnel failed {}", ec.message());
-        }
-        co_return;
-    }
-
     setup_acceptor(acceptor_, cfg_.socks.host, cfg_.socks.port, ec);
     if (ec)
     {
@@ -129,6 +119,7 @@ boost::asio::awaitable<void> socks_client::start_acceptor_when_ready()
 
     LOG_INFO("local socks5 listening on {}:{}", cfg_.socks.host, cfg_.socks.port);
     co_await accept_loop();
+    co_return;
 }
 
 boost::asio::awaitable<void> socks_client::accept_loop()

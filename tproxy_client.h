@@ -30,7 +30,7 @@ class tproxy_client : public std::enable_shared_from_this<tproxy_client>
     void stop();
 
    private:
-    boost::asio::awaitable<void> start_listeners_when_ready();
+    boost::asio::awaitable<void> start_listeners();
     boost::asio::awaitable<void> accept_tcp_loop();
     boost::asio::awaitable<void> accept_udp_loop();
     void on_tcp_socket(boost::asio::ip::tcp::socket&& socket);
