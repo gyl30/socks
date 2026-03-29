@@ -279,7 +279,7 @@ void tproxy_client::on_tcp_socket(boost::asio::ip::tcp::socket&& socket)
         LOG_WARN("tproxy tcp set no delay failed code {}", ec.value());
     }
 
-    const std::uint32_t sid = tunnel_pool_->next_session_id();
+    const std::uint32_t sid = next_session_id_.fetch_add(1, std::memory_order_relaxed);
     const auto session = std::make_shared<tproxy_tcp_session>(std::move(socket), tunnel_pool_, router_, sid, cfg_);
     owner_worker_.group.spawn([session]() -> boost::asio::awaitable<void> { co_await session->start(); });
 }
@@ -414,11 +414,11 @@ bool tproxy_client::is_udp_routing_loop(const boost::asio::ip::udp::endpoint& ta
 }
 
 connection_context tproxy_client::make_udp_connection_context(const boost::asio::ip::udp::endpoint& client_endpoint,
-                                                              const boost::asio::ip::udp::endpoint& target_endpoint) const
+                                                              const boost::asio::ip::udp::endpoint& target_endpoint)
 {
     connection_context ctx;
     ctx.new_trace_id();
-    ctx.conn_id(tunnel_pool_->next_session_id());
+    ctx.conn_id(next_session_id_.fetch_add(1, std::memory_order_relaxed));
     ctx.set_remote_endpoint(client_endpoint.address().to_string(), client_endpoint.port());
     ctx.set_target(target_endpoint.address().to_string(), target_endpoint.port());
     ctx.set_local_endpoint(target_endpoint.address().to_string(), target_endpoint.port());

@@ -39,7 +39,7 @@ class tproxy_client : public std::enable_shared_from_this<tproxy_client>
                                                              std::vector<std::uint8_t> payload);
     [[nodiscard]] bool is_udp_routing_loop(const boost::asio::ip::udp::endpoint& target_endpoint) const;
     [[nodiscard]] connection_context make_udp_connection_context(const boost::asio::ip::udp::endpoint& client_endpoint,
-                                                                 const boost::asio::ip::udp::endpoint& target_endpoint) const;
+                                                                 const boost::asio::ip::udp::endpoint& target_endpoint);
     [[nodiscard]] boost::asio::awaitable<route_type> decide_udp_route(const connection_context& ctx,
                                                                       const boost::asio::ip::udp::endpoint& target_endpoint) const;
     [[nodiscard]] std::shared_ptr<tproxy_udp_session> find_udp_session(const std::string& key) const;
@@ -68,6 +68,7 @@ class tproxy_client : public std::enable_shared_from_this<tproxy_client>
     std::unordered_map<std::string, std::shared_ptr<tproxy_udp_session>> udp_sessions_;
     std::list<std::string> udp_session_lru_;
     std::unordered_map<std::string, std::list<std::string>::iterator> udp_session_lru_index_;
+    std::atomic<std::uint32_t> next_session_id_{1};
     std::atomic<bool> stopping_{false};
 };
 

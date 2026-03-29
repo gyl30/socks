@@ -165,7 +165,6 @@ void validate_encrypted_extensions_message(const std::vector<std::uint8_t>& msg_
                                            std::string& negotiated_alpn,
                                            boost::system::error_code& ec)
 {
-    ec.clear();
     negotiated_alpn.clear();
     const auto encrypted_extensions = tls::parse_encrypted_extensions(msg_data);
     if (!encrypted_extensions.has_value())
@@ -198,7 +197,6 @@ void verify_reality_bound_certificate(const std::vector<std::uint8_t>& cert_der,
                                       handshake_validation_state& validation_state,
                                       boost::system::error_code& ec)
 {
-    ec.clear();
     auto server_pub_key = tls::crypto_util::extract_pubkey_from_cert(cert_der, ec);
     if (ec || server_pub_key == nullptr)
     {
@@ -245,7 +243,6 @@ void verify_reality_bound_certificate(const std::vector<std::uint8_t>& cert_der,
 
 tls::openssl_ptrs::x509_ptr parse_x509_from_der_local(const std::vector<std::uint8_t>& cert_der, boost::system::error_code& ec)
 {
-    ec.clear();
     if (cert_der.empty() || cert_der.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
     {
         ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
@@ -273,7 +270,6 @@ void verify_real_certificate_chain(const std::vector<std::uint8_t>& msg_data,
                                    handshake_validation_state& validation_state,
                                    boost::system::error_code& ec)
 {
-    ec.clear();
     if (validation_state.client_hello == nullptr || validation_state.client_hello->sni.empty())
     {
         ec = boost::asio::error::invalid_argument;
@@ -358,7 +354,6 @@ void load_server_public_key_from_certificate(const std::vector<std::uint8_t>& ms
                                              handshake_validation_state& validation_state,
                                              boost::system::error_code& ec)
 {
-    ec.clear();
     LOG_DEBUG("received certificate message size {}", msg_data.size());
     if (validation_state.cert_checked)
     {
@@ -406,7 +401,6 @@ void verify_server_certificate_verify_message(const std::vector<std::uint8_t>& m
                                               handshake_validation_state& validation_state,
                                               boost::system::error_code& ec)
 {
-    ec.clear();
     if (!validation_state.cert_checked)
     {
         LOG_ERROR("certificate verify received before certificate");
@@ -464,7 +458,6 @@ void verify_server_finished_message(const std::vector<std::uint8_t>& msg_data,
                                     const tls::transcript& trans,
                                     boost::system::error_code& ec)
 {
-    ec.clear();
     const std::uint32_t msg_len =
         (static_cast<std::uint32_t>(msg_data[1]) << 16) | (static_cast<std::uint32_t>(msg_data[2]) << 8) | static_cast<std::uint32_t>(msg_data[3]);
 
@@ -512,7 +505,6 @@ boost::asio::awaitable<encrypted_record> read_encrypted_record(boost::asio::ip::
                                                                const std::uint32_t timeout_sec,
                                                                boost::system::error_code& ec)
 {
-    ec.clear();
     std::array<std::uint8_t, 5> record_header{};
     const auto header_timeout = mux::timeout_io::remaining_timeout_seconds(handshake_start_ms, timeout_sec, ec);
     if (ec)
@@ -704,7 +696,6 @@ void consume_handshake_buffer(std::vector<std::uint8_t>& handshake_buffer,
                               tls::transcript& trans,
                               boost::system::error_code& ec)
 {
-    ec.clear();
     if (handshake_buffer_pos > handshake_buffer.size())
     {
         LOG_ERROR("handshake buffer position invalid {} {}", handshake_buffer_pos, handshake_buffer.size());
@@ -759,7 +750,6 @@ void consume_handshake_plaintext(const std::vector<std::uint8_t>& plaintext,
                                  tls::transcript& trans,
                                  boost::system::error_code& ec)
 {
-    ec.clear();
     if (handshake_buffer_pos > handshake_buffer.size())
     {
         LOG_ERROR("handshake buffer position invalid {} {}", handshake_buffer_pos, handshake_buffer.size());
@@ -789,7 +779,6 @@ void consume_handshake_plaintext(const std::vector<std::uint8_t>& plaintext,
 
 void validate_server_handshake_chain(const handshake_validation_state& validation_state, const std::string& sni, boost::system::error_code& ec)
 {
-    ec.clear();
     (void)sni;
     if (!validation_state.cert_checked || !validation_state.cert_verify_checked)
     {
@@ -818,7 +807,6 @@ boost::asio::awaitable<std::vector<std::uint8_t>> read_handshake_record_body(boo
                                                                              std::vector<std::uint8_t>& extra_handshake_data,
                                                                              boost::system::error_code& ec)
 {
-    ec.clear();
     extra_handshake_data.clear();
     const auto handshake_start_ms = mux::timeout_io::now_ms();
     auto read_exact = [&](const boost::asio::mutable_buffer& buffer) -> boost::asio::awaitable<bool>
@@ -953,7 +941,6 @@ std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> derive_client_au
                                                                                                 const std::vector<std::uint8_t>& server_pub_key,
                                                                                                 boost::system::error_code& ec)
 {
-    ec.clear();
     auto shared = tls::crypto_util::x25519_derive(std::vector<std::uint8_t>(private_key, private_key + 32), server_pub_key, ec);
     LOG_DEBUG("using server pub key size {}", server_pub_key.size());
     if (ec)
@@ -993,7 +980,6 @@ void build_client_hello_with_placeholder_sid(const fingerprint_template& spec,
                                              std::uint32_t& absolute_sid_offset,
                                              boost::system::error_code& ec)
 {
-    ec.clear();
     const std::vector<std::uint8_t> placeholder_session_id(32, 0);
     hello_body = client_hello_builder::build(
         spec, placeholder_session_id, client_random, std::vector<std::uint8_t>(public_key, public_key + 32), x25519_mlkem768_key_share, sni);
@@ -1040,7 +1026,6 @@ std::vector<std::uint8_t> encrypt_client_session_id(const std::vector<std::uint8
                                                     const std::vector<std::uint8_t>& hello_body,
                                                     boost::system::error_code& ec)
 {
-    ec.clear();
     auto sid = tls::crypto_util::aead_encrypt(EVP_aes_128_gcm(),
                                               auth_key,
                                               std::vector<std::uint8_t>(client_random.begin() + constants::auth::kSaltLen, client_random.end()),
@@ -1073,7 +1058,6 @@ authenticated_client_hello build_authenticated_client_hello(const std::uint8_t* 
                                                             const std::string& sni,
                                                             boost::system::error_code& ec)
 {
-    ec.clear();
     auto auth_material = derive_client_auth_key_material(private_key, server_pub_key, ec);
     if (ec)
     {
@@ -1139,8 +1123,6 @@ bool fingerprint_uses_hybrid_key_share(const fingerprint_template& spec)
 client_ephemeral_keys prepare_client_ephemeral_keys(const std::optional<reality::fingerprint_type>& selected_fingerprint_type,
                                                     boost::system::error_code& ec)
 {
-    ec.clear();
-
     client_ephemeral_keys keys;
     keys.template_spec = select_fingerprint_template(selected_fingerprint_type);
     keys.use_hybrid = fingerprint_uses_hybrid_key_share(keys.template_spec);
@@ -1215,7 +1197,6 @@ handshake_traffic_keys derive_handshake_traffic_keys(const tls::handshake_keys& 
                                                      const EVP_MD* negotiated_md,
                                                      boost::system::error_code& ec)
 {
-    ec.clear();
     const auto suite = tls::select_tls13_suite(cipher_suite);
     if (!suite.has_value())
     {
@@ -1246,7 +1227,6 @@ void prepare_server_hello_crypto(const std::vector<std::uint8_t>& sh_data,
                                  const EVP_CIPHER*& cipher,
                                  boost::system::error_code& ec)
 {
-    ec.clear();
     trans.update(sh_data);
     const auto parsed_server_hello = tls::parse_server_hello(sh_data);
     if (!parsed_server_hello.has_value())
@@ -1331,7 +1311,6 @@ std::vector<std::uint8_t> derive_server_hello_shared_secret(const std::uint8_t* 
                                                             const std::vector<std::uint8_t>& key_share_data,
                                                             boost::system::error_code& ec)
 {
-    ec.clear();
     if (key_share_group == tls::consts::group::kX25519)
     {
         if (key_share_data.size() != 32)
@@ -1406,7 +1385,6 @@ boost::asio::awaitable<void> process_handshake_record(boost::asio::ip::tcp::sock
                                                       const std::uint32_t timeout_sec,
                                                       boost::system::error_code& ec)
 {
-    ec.clear();
     const auto record = co_await read_encrypted_record(socket, handshake_start_ms, timeout_sec, ec);
     if (ec)
     {
@@ -1516,7 +1494,6 @@ boost::asio::awaitable<server_hello_res> process_server_hello(boost::asio::ip::t
                                                               const std::uint32_t read_timeout_sec,
                                                               boost::system::error_code& ec)
 {
-    ec.clear();
     std::uint32_t tls13_compat_ccs_count = 0;
     const auto sh_data =
         co_await read_handshake_record_body(socket, "server hello", read_timeout_sec, tls13_compat_ccs_count, extra_handshake_data, ec);
@@ -1574,7 +1551,6 @@ boost::asio::awaitable<client_handshake_read_result> handshake_read_loop(
     const std::uint32_t read_timeout_sec,
     boost::system::error_code& ec)
 {
-    ec.clear();
     const auto handshake_start_ms = mux::timeout_io::now_ms();
     bool handshake_fin = false;
     handshake_validation_state validation_state;
@@ -1660,7 +1636,6 @@ boost::asio::awaitable<void> send_client_finished(boost::asio::ip::tcp::socket& 
                                                   const std::uint32_t write_timeout_sec,
                                                   boost::system::error_code& ec)
 {
-    ec.clear();
     auto fin_verify = tls::key_schedule::compute_finished_verify_data(c_hs_secret, trans.finish(), md, ec);
     if (ec)
     {
@@ -1719,8 +1694,6 @@ boost::asio::awaitable<client_handshake_result> execute_client_handshake(boost::
                                                                          const std::uint32_t write_timeout_sec,
                                                                          boost::system::error_code& ec)
 {
-    ec.clear();
-
     tls::transcript trans;
     std::vector<std::uint8_t> auth_key;
     tls::client_hello_info client_hello;
@@ -1817,7 +1790,6 @@ boost::asio::awaitable<client_handshake_result> client_handshaker::run(boost::as
                                                                        const mux::connection_context& ctx,
                                                                        boost::system::error_code& ec) const
 {
-    ec.clear();
     auto keys = prepare_client_ephemeral_keys(fingerprint_type_, ec);
     if (ec)
     {
