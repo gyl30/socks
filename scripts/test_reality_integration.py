@@ -70,6 +70,40 @@ def wait_for_log_text(path, needle, deadline_seconds, label):
     raise RuntimeError(f"timeout waiting for log text {needle!r} in {label}")
 
 
+def wait_for_https_proxy_ready(proxy_url, cert_path, https_url, deadline_seconds, processes):
+    deadline = time.time() + deadline_seconds
+    last_error = ""
+    args = [
+        "curl",
+        "--silent",
+        "--show-error",
+        "--fail",
+        "--connect-timeout",
+        "5",
+        "--max-time",
+        "20",
+        "--proxy",
+        proxy_url,
+        "--cacert",
+        str(cert_path),
+        https_url,
+    ]
+
+    while time.time() < deadline:
+        for process in processes:
+            if process.process.poll() is not None:
+                raise RuntimeError("proxy owner process exited early")
+
+        result = subprocess.run(args, text=True, capture_output=True)
+        if result.returncode == 0 and result.stdout == "ok-https\n":
+            return result.stdout
+
+        last_error = (result.stderr or result.stdout or f"rc={result.returncode}").strip()
+        time.sleep(0.2)
+
+    raise RuntimeError(f"timeout waiting for https proxy ready last_error={last_error}")
+
+
 def tail_file(path, lines=80):
     if not path.exists():
         return ""
@@ -309,7 +343,6 @@ def main():
                 "max_handshake_records": 256,
             },
             "heartbeat": {
-                "enabled": True,
                 "min_interval": 15,
                 "max_interval": 45,
                 "min_padding": 32,
@@ -330,29 +363,19 @@ def main():
         wait_for_log_text(client_log, f"local socks5 listening on {socks_host}:{socks_port}", 20, "client log")
         wait_for_port(socks_host, socks_port, 20, "socks5 proxy")
 
-        proxy_url = f"socks5h://{socks_host}:{socks_port}"
+        proxy_url = f"socks5://{socks_host}:{socks_port}"
+        proxy_hostname_url = f"socks5h://{socks_host}:{socks_port}"
         https_url = f"https://{origin_host}:{https_port}/healthz.txt"
 
-        first_result = run_checked(
-            [
-                "curl",
-                "--silent",
-                "--show-error",
-                "--fail",
-                "--connect-timeout",
-                "5",
-                "--max-time",
-                "20",
-                "--proxy",
-                proxy_url,
-                "--cacert",
-                str(cert_path),
-                https_url,
-            ],
-            capture_output=True,
+        first_body = wait_for_https_proxy_ready(
+            proxy_url,
+            cert_path,
+            https_url,
+            20,
+            [server_process, client_process, https_process],
         )
-        if first_result.stdout != "ok-https\n":
-            raise RuntimeError(f"unexpected https response {first_result.stdout!r}")
+        if first_body != "ok-https\n":
+            raise RuntimeError(f"unexpected https response {first_body!r}")
 
         parallel_dir = temp_root / "parallel"
         parallel_dir.mkdir(parents=True, exist_ok=True)
@@ -430,7 +453,7 @@ def main():
                     "--max-time",
                     "30",
                     "--proxy",
-                    proxy_url,
+                    proxy_hostname_url,
                     args.real_url,
                 ],
                 capture_output=True,
