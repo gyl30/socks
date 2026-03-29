@@ -40,7 +40,6 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
     void stop();
 
     [[nodiscard]] std::shared_ptr<mux_connection> select_tunnel();
-    [[nodiscard]] boost::asio::awaitable<std::shared_ptr<mux_connection>> wait_for_tunnel(std::uint32_t timeout_sec, boost::system::error_code& ec);
 
     [[nodiscard]] std::uint32_t next_session_id();
 
@@ -63,19 +62,9 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
 
     [[nodiscard]] static connect_options build_connect_options(const config& cfg);
     boost::asio::awaitable<void> connect_remote_loop(std::uint32_t index, io_worker& worker);
-    [[nodiscard]] boost::asio::awaitable<void> tcp_connect_remote(boost::asio::ip::tcp::socket& socket,
-                                                                  const connection_context& ctx,
-                                                                  boost::system::error_code& ec) const;
-    [[nodiscard]] boost::asio::awaitable<handshake_result> perform_reality_handshake_with_timeout(
-        const std::shared_ptr<boost::asio::ip::tcp::socket>& socket, const connection_context& ctx, boost::system::error_code& ec) const;
-    [[nodiscard]] std::shared_ptr<mux_connection> build_tunnel(boost::asio::ip::tcp::socket socket,
-                                                               io_worker& worker,
-                                                               std::uint32_t cid,
-                                                               const handshake_result& handshake_ret,
-                                                               const std::string& trace_id) const;
-    [[nodiscard]] boost::asio::awaitable<void> run_real_certificate_fallback(boost::asio::ip::tcp::socket& socket,
-                                                                             const handshake_result& handshake_ret,
-                                                                             const connection_context& ctx) const;
+    [[nodiscard]] boost::asio::awaitable<void> tcp_connect_remote(boost::asio::ip::tcp::socket& socket, const connection_context& ctx, boost::system::error_code& ec) const;
+    [[nodiscard]] boost::asio::awaitable<handshake_result> perform_reality_handshake_with_timeout(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket, const connection_context& ctx, boost::system::error_code& ec) const;
+    [[nodiscard]] boost::asio::awaitable<void> run_real_certificate_fallback(boost::asio::ip::tcp::socket& socket, const handshake_result& handshake_ret, const connection_context& ctx) const;
 
    private:
     const config& cfg_;
@@ -86,7 +75,7 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
     std::atomic<std::uint32_t> next_session_id_{1};
     std::mutex tunnel_mutex_;
     std::vector<std::shared_ptr<mux_connection>> tunnel_pool_;
-    std::once_flag stop_once_;
+    std::atomic<bool> stop_ = false;
 };
 
 }    // namespace mux

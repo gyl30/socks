@@ -42,10 +42,7 @@ namespace mux
 namespace
 {
 
-constexpr std::uint32_t kReconnectBaseDelayMs = 200;
-constexpr std::uint32_t kReconnectMaxDelayMs = 10000;
-constexpr std::uint32_t kReconnectStableDurationMs = 30000;
-constexpr std::chrono::milliseconds kTunnelPollInterval(200);
+constexpr std::chrono::seconds kReconnectRetryInterval{2};
 constexpr std::uint16_t kFallbackTlsPort = 443;
 constexpr std::uint32_t kFallbackIoTimeoutSec = 2;
 
@@ -165,46 +162,38 @@ client_tunnel_pool::client_tunnel_pool(io_context_pool& pool, const config& cfg)
 void client_tunnel_pool::start()
 {
     LOG_INFO("client pool starting target {} port {} with {} connections", options_.remote_host, options_.remote_port, options_.tunnel_connections);
-
+    auto self = shared_from_this();
     for (std::uint32_t i = 0; i < options_.tunnel_connections; ++i)
     {
         auto& worker = pool_.get_io_worker();
-        worker.group.spawn([self = shared_from_this(), i, worker = &worker]() -> boost::asio::awaitable<void>
-                           { co_await self->connect_remote_loop(i, *worker); });
+        worker.group.spawn([self, i, worker = &worker]() -> boost::asio::awaitable<void> { co_await self->connect_remote_loop(i, *worker); });
     }
 }
 
 void client_tunnel_pool::stop()
 {
-    std::call_once(stop_once_,
-                   [this]()
-                   {
-                       std::vector<std::shared_ptr<mux_connection>> tunnels;
-                       {
-                           const std::scoped_lock lock(tunnel_mutex_);
-                           tunnels.reserve(tunnel_pool_.size());
-                           for (auto& tunnel : tunnel_pool_)
-                           {
-                               if (tunnel != nullptr)
-                               {
-                                   tunnels.push_back(tunnel);
-                                   tunnel.reset();
-                               }
-                           }
-                       }
+    if (stop_.exchange(true))
+    {
+        return;
+    }
 
-                       for (const auto& tunnel : tunnels)
-                       {
-                           if (tunnel == nullptr)
-                           {
-                               continue;
-                           }
-                           if (tunnel != nullptr)
-                           {
-                               tunnel->stop();
-                           }
-                       }
-                   });
+    std::vector<std::shared_ptr<mux_connection>> tunnels;
+    {
+        const std::scoped_lock lock(tunnel_mutex_);
+        for (auto&& tunnel : tunnel_pool_)
+        {
+            tunnels.push_back(tunnel);
+            tunnel.reset();
+        }
+    }
+
+    for (const auto& tunnel : tunnels)
+    {
+        if (tunnel != nullptr)
+        {
+            tunnel->stop();
+        }
+    }
 }
 
 std::shared_ptr<mux_connection> client_tunnel_pool::select_tunnel()
@@ -225,65 +214,13 @@ std::shared_ptr<mux_connection> client_tunnel_pool::select_tunnel()
         {
             continue;
         }
-        if (tunnel == nullptr || !tunnel->is_active())
-        {
-            continue;
-        }
         return tunnel;
     }
 
     return nullptr;
 }
 
-boost::asio::awaitable<std::shared_ptr<mux_connection>> client_tunnel_pool::wait_for_tunnel(const std::uint32_t timeout_sec,
-                                                                                            boost::system::error_code& ec)
-{
-    ec.clear();
-    const auto start_ms = timeout_io::now_ms();
-    const auto timeout_ms = timeout_io::timeout_seconds_to_milliseconds(timeout_sec);
-    auto executor = co_await boost::asio::this_coro::executor;
-    boost::asio::steady_timer retry_timer(executor);
-    for (;;)
-    {
-        const auto tunnel = select_tunnel();
-        if (tunnel != nullptr)
-        {
-            co_return tunnel;
-        }
-
-        if (timeout_ms != 0 && timeout_io::now_ms() - start_ms >= timeout_ms)
-        {
-            ec = boost::asio::error::timed_out;
-            co_return nullptr;
-        }
-
-        retry_timer.expires_after(kTunnelPollInterval);
-        const auto [wait_ec] = co_await retry_timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
-        if (wait_ec)
-        {
-            ec = wait_ec;
-            co_return nullptr;
-        }
-    }
-}
-
 std::uint32_t client_tunnel_pool::next_session_id() { return next_session_id_.fetch_add(1, std::memory_order_relaxed); }
-
-std::shared_ptr<mux_connection> client_tunnel_pool::build_tunnel(boost::asio::ip::tcp::socket socket,
-                                                                 io_worker& worker,
-                                                                 const std::uint32_t cid,
-                                                                 const handshake_result& handshake_ret,
-                                                                 const std::string& trace_id) const
-{
-    boost::system::error_code ec;
-    auto record_context = reality::build_reality_record_context(handshake_ret, ec);
-    if (ec)
-    {
-        LOG_ERROR("build client reality session failed {}", ec.message());
-        return nullptr;
-    }
-    return std::make_shared<mux_connection>(std::move(socket), worker, std::move(record_context), cfg_, cid, trace_id);
-}
 
 boost::asio::awaitable<void> client_tunnel_pool::run_real_certificate_fallback(boost::asio::ip::tcp::socket& socket,
                                                                                const handshake_result& handshake_ret,
@@ -369,34 +306,26 @@ boost::asio::awaitable<client_tunnel_pool::handshake_result> client_tunnel_pool:
     co_return handshake_res;
 }
 
+static boost::asio::awaitable<void> wait_retry(const std::uint32_t index,
+                                               io_worker& worker,
+                                               const std::chrono::steady_clock::duration delay)
+{
+    boost::asio::steady_timer retry_timer(worker.io_context);
+    retry_timer.expires_after(delay);
+    const auto [wait_ec] = co_await retry_timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
+    if (wait_ec == boost::asio::error::operation_aborted)
+    {
+        co_return;
+    }
+    if (wait_ec)
+    {
+        LOG_ERROR("wait retry {} error {}", index, wait_ec.message());
+    }
+}
 boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::uint32_t index, io_worker& worker)
 {
-    auto& io_context = worker.io_context;
     boost::system::error_code ec;
-    static thread_local std::mt19937 reconnect_gen(std::random_device{}());
-    std::uint32_t retry_delay_ms = kReconnectBaseDelayMs;
-    const auto wait_before_retry = [&](const connection_context& ctx, const char* stage) -> boost::asio::awaitable<bool>
-    {
-        std::uniform_int_distribution<std::uint32_t> jitter_dist(0, retry_delay_ms / 4);
-        const auto sleep_ms = retry_delay_ms + jitter_dist(reconnect_gen);
-        LOG_CTX_WARN(ctx, "{} stage {} retry_backoff {}ms", log_event::kConnInit, stage, sleep_ms);
-
-        boost::asio::steady_timer retry_timer(io_context);
-        retry_timer.expires_after(std::chrono::milliseconds(sleep_ms));
-        const auto [wait_ec] = co_await retry_timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
-        if (wait_ec == boost::asio::error::operation_aborted)
-        {
-            co_return false;
-        }
-        if (wait_ec)
-        {
-            LOG_CTX_WARN(ctx, "{} stage {} retry_backoff_wait_failed {}", log_event::kConnInit, stage, wait_ec.message());
-        }
-        retry_delay_ms = std::min(retry_delay_ms * 2, kReconnectMaxDelayMs);
-        co_return true;
-    };
-
-    while (true)
+    while (!stop_)
     {
         const std::uint32_t cid = next_conn_id_.fetch_add(1, std::memory_order_relaxed);
         connection_context ctx;
@@ -410,36 +339,31 @@ boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::
                      options_.remote_host,
                      options_.remote_port);
         // step 1 create socket
-        const auto socket = std::make_shared<boost::asio::ip::tcp::socket>(io_context);
+        const auto socket = std::make_shared<boost::asio::ip::tcp::socket>(worker.io_context);
         // step 2 connect remote
         co_await tcp_connect_remote(*socket, ctx, ec);
+        if (ec == boost::asio::error::operation_aborted)
+        {
+            break;
+        }
+
         if (ec)
         {
-            if (ec == boost::asio::error::operation_aborted)
-            {
-                break;
-            }
-            LOG_CTX_ERROR(
-                ctx, "{} stage connect target {}:{} error {}", log_event::kConnInit, options_.remote_host, options_.remote_port, ec.message());
-            if (!(co_await wait_before_retry(ctx, "connect")))
-            {
-                break;
-            }
+            LOG_CTX_ERROR(ctx, "{} connect target {}:{} error {}", log_event::kConnInit, options_.remote_host, options_.remote_port, ec.message());
+            co_await wait_retry(index, worker, kReconnectRetryInterval);
             continue;
         }
         // step 3 handshake
         auto handshake_ret = co_await perform_reality_handshake_with_timeout(socket, ctx, ec);
+        if (ec == boost::asio::error::operation_aborted)
+        {
+            break;
+        }
+
         if (ec)
         {
-            if (ec == boost::asio::error::operation_aborted)
-            {
-                break;
-            }
             LOG_CTX_ERROR(ctx, "{} handshake error {}", log_event::kHandshake, ec.message());
-            if (!(co_await wait_before_retry(ctx, "handshake")))
-            {
-                break;
-            }
+            co_await wait_retry(index, worker, kReconnectRetryInterval);
             continue;
         }
 
@@ -448,7 +372,7 @@ boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::
                      log_event::kHandshake,
                      handshake_ret.negotiated.cipher_suite,
                      handshake_ret.negotiated.key_share_group,
-                     ::tls::named_group_name(handshake_ret.negotiated.key_share_group));
+                     tls::named_group_name(handshake_ret.negotiated.key_share_group));
         if (handshake_ret.auth_mode == handshake_auth_mode::kRealCertificateFallback)
         {
             LOG_CTX_WARN(ctx, "{} received real certificate fallback run lightweight visit", log_event::kHandshake);
@@ -459,81 +383,41 @@ boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::
             {
                 LOG_CTX_WARN(ctx, "close failed {}", close_ec.message());
             }
-            if (!(co_await wait_before_retry(ctx, "real_certificate_fallback")))
-            {
-                break;
-            }
+            co_await wait_retry(index, worker, kReconnectRetryInterval);
             continue;
         }
         // step 4 build tunnel
-        auto tunnel = build_tunnel(std::move(*socket), worker, cid, handshake_ret, ctx.trace_id());
-        if (tunnel == nullptr)
+        auto record_context = reality::build_reality_record_context(handshake_ret, ec);
+        if (ec)
         {
-            LOG_CTX_ERROR(ctx, "{} build tunnel failed", log_event::kHandshake);
-            if (!(co_await wait_before_retry(ctx, "build_tunnel")))
-            {
-                break;
-            }
+            LOG_ERROR("build client reality session failed {}", ec.message());
+            co_await wait_retry(index, worker, kReconnectRetryInterval);
             continue;
         }
+        auto tunnel = std::make_shared<mux_connection>(std::move(*socket), worker, std::move(record_context), cfg_, cid, ctx.trace_id());
         // step 5 tunnel run
         tunnel->start();
-        const auto tunnel_start_ms = timeout_io::now_ms();
+        {
+            const std::scoped_lock<std::mutex> lock(tunnel_mutex_);
+            tunnel_pool_[index] = tunnel;
+        }
+
+        co_await tunnel->async_wait_stopped();
 
         {
             const std::scoped_lock<std::mutex> lock(tunnel_mutex_);
-            if (index < tunnel_pool_.size())
-            {
-                tunnel_pool_[index] = tunnel;
-            }
-        }
-
-        bool stop_loop = false;
-        while (true)
-        {
-            boost::asio::steady_timer hold_timer(io_context);
-            hold_timer.expires_after(std::chrono::seconds(1));
-            const auto [wait_ec] = co_await hold_timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
-            if (wait_ec)
-            {
-                if (wait_ec == boost::asio::error::operation_aborted)
-                {
-                    stop_loop = true;
-                }
-                break;
-            }
-
-            if (tunnel == nullptr || !tunnel->is_active())
-            {
-                break;
-            }
-        }
-
-        {
-            const std::scoped_lock<std::mutex> lock(tunnel_mutex_);
-            if (index < tunnel_pool_.size() && tunnel_pool_[index] == tunnel)
+            if (tunnel_pool_[index] == tunnel)
             {
                 tunnel_pool_[index].reset();
             }
         }
 
-        if (stop_loop)
+        if (!stop_)
         {
-            break;
-        }
-
-        const auto tunnel_alive_ms = timeout_io::now_ms() - tunnel_start_ms;
-        if (tunnel_alive_ms >= kReconnectStableDurationMs)
-        {
-            retry_delay_ms = kReconnectBaseDelayMs;
-            continue;
-        }
-        LOG_CTX_WARN(ctx, "{} stage tunnel_closed short_lived {}ms backoff before retry", log_event::kConnInit, tunnel_alive_ms);
-        if (!(co_await wait_before_retry(ctx, "tunnel_closed")))
-        {
-            break;
+            co_await wait_retry(index, worker, kReconnectRetryInterval);
         }
     }
+
     LOG_INFO("{} connect remote loop {} exited", log_event::kConnClose, index);
 }
 
