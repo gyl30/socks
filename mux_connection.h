@@ -48,7 +48,6 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     void stop();
 
    public:
-    [[nodiscard]] bool is_active() const;
     void start_accepting_streams();
     boost::asio::awaitable<void> async_wait_stopped();
     [[nodiscard]] boost::asio::awaitable<mux_frame> async_receive_syn(boost::system::error_code& ec) const;
