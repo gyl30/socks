@@ -422,7 +422,6 @@ boost::asio::awaitable<std::shared_ptr<mux_connection>> tproxy_udp_session::wait
     ec.clear();
     const auto start_ms = timeout_io::now_ms();
     const auto connect_timeout_ms = timeout_io::timeout_seconds_to_milliseconds(cfg_.timeout.connect);
-    boost::asio::steady_timer retry_timer(worker_.io_context);
 
     for (;;)
     {
@@ -444,8 +443,7 @@ boost::asio::awaitable<std::shared_ptr<mux_connection>> tproxy_udp_session::wait
             co_return nullptr;
         }
 
-        retry_timer.expires_after(kTunnelPollInterval);
-        const auto [wait_ec] = co_await retry_timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
+        const auto wait_ec = co_await timeout_io::wait_for(worker_.io_context, kTunnelPollInterval);
         if (wait_ec)
         {
             ec = wait_ec;

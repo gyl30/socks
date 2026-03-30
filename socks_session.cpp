@@ -279,10 +279,8 @@ boost::asio::awaitable<bool> socks_session::do_password_auth()
     if (!success)
     {
         LOG_WARN("socks session {} auth failed", sid_);
-        boost::asio::steady_timer delay_timer(worker_.io_context);
-        delay_timer.expires_after(std::chrono::milliseconds(kAuthFailDelayMs));
-        boost::system::error_code delay_ec;
-        co_await delay_timer.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, delay_ec));
+        const auto delay_ec = co_await timeout_io::wait_for(worker_.io_context, std::chrono::milliseconds(kAuthFailDelayMs));
+        (void)delay_ec;
     }
     else
     {
@@ -361,9 +359,8 @@ boost::asio::awaitable<void> socks_session::delay_invalid_request() const
 {
     static thread_local std::mt19937 delay_gen(std::random_device{}());
     std::uniform_int_distribution<std::uint32_t> delay_dist(10, 50);
-    boost::asio::steady_timer delay_timer(worker_.io_context);
-    delay_timer.expires_after(std::chrono::milliseconds(delay_dist(delay_gen)));
-    co_await delay_timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
+    const auto delay_ec = co_await timeout_io::wait_for(worker_.io_context, std::chrono::milliseconds(delay_dist(delay_gen)));
+    (void)delay_ec;
 }
 
 bool socks_session::is_supported_cmd(const std::uint8_t cmd) { return cmd == socks::kCmdConnect || cmd == socks::kCmdUdpAssociate; }

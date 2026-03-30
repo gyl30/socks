@@ -315,9 +315,7 @@ static boost::asio::awaitable<reality::client_handshake_result> perform_reality_
 
 static boost::asio::awaitable<void> wait_retry(const std::uint32_t index, io_worker& worker, const std::chrono::steady_clock::duration delay)
 {
-    boost::asio::steady_timer retry_timer(worker.io_context);
-    retry_timer.expires_after(delay);
-    const auto [wait_ec] = co_await retry_timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
+    const auto wait_ec = co_await timeout_io::wait_for(worker.io_context, delay);
     if (wait_ec == boost::asio::error::operation_aborted)
     {
         co_return;

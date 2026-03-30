@@ -20,6 +20,7 @@
 #include "router.h"
 #include "net_utils.h"
 #include "context_pool.h"
+#include "timeout_io.h"
 #include "tproxy_client.h"
 #include "client_tunnel_pool.h"
 #include "connection_context.h"
@@ -254,9 +255,7 @@ boost::asio::awaitable<void> tproxy_client::accept_tcp_loop()
         if (ec)
         {
             LOG_ERROR("tproxy tcp accept failed {} retry", ec.message());
-            boost::asio::steady_timer retry_timer(owner_worker_.io_context);
-            retry_timer.expires_after(std::chrono::seconds(3));
-            co_await retry_timer.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, ec));
+            ec = co_await timeout_io::wait_for(owner_worker_.io_context, std::chrono::seconds(3));
             if (ec)
             {
                 LOG_ERROR("tproxy accept retry timer error {}", ec.message());

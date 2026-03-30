@@ -464,11 +464,9 @@ boost::asio::awaitable<void> mux_connection::timeout_loop()
 
     const auto idle_timeout_ms = static_cast<std::uint64_t>(cfg_.timeout.idle) * 1000ULL;
     boost::system::error_code ec;
-    boost::asio::steady_timer timer{worker_.io_context};
     while (true)
     {
-        timer.expires_after(std::chrono::seconds(1));
-        co_await timer.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, ec));
+        ec = co_await timeout_io::wait_for(worker_.io_context, std::chrono::seconds(1));
         if (ec)
         {
             break;
@@ -489,15 +487,12 @@ boost::asio::awaitable<void> mux_connection::timeout_loop()
 boost::asio::awaitable<void> mux_connection::heartbeat_loop()
 {
     static thread_local std::mt19937 rng(std::random_device{}());
-    boost::asio::steady_timer heartbeat_timer(worker_.io_context);
 
     while (true)
     {
         std::uniform_int_distribution<std::uint32_t> interval_dist(cfg_.heartbeat.min_interval, cfg_.heartbeat.max_interval);
         const auto interval = interval_dist(rng);
-        heartbeat_timer.expires_after(std::chrono::seconds(interval));
-        boost::system::error_code ec;
-        co_await heartbeat_timer.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, ec));
+        auto ec = co_await timeout_io::wait_for(worker_.io_context, std::chrono::seconds(interval));
         if (ec)
         {
             break;
