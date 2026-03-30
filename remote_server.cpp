@@ -25,6 +25,7 @@ extern "C"
 #include "mux_codec.h"
 #include "mux_protocol.h"
 #include "context_pool.h"
+#include "timeout_io.h"
 #include "replay_cache.h"
 #include "remote_server.h"
 #include "reality/types.h"
@@ -268,7 +269,6 @@ void remote_server::stop()
 boost::asio::awaitable<void> remote_server::accept_loop()
 {
     auto self = shared_from_this();
-    boost::asio::steady_timer retry_timer(owner_worker_.io_context);
     while (true)
     {
         auto& worker = pool_.get_io_worker();
@@ -282,8 +282,7 @@ boost::asio::awaitable<void> remote_server::accept_loop()
                 break;
             }
             LOG_WARN("accept error {} retrying", accept_ec.message());
-            retry_timer.expires_after(std::chrono::milliseconds(200));
-            const auto [wait_ec] = co_await retry_timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
+            const auto wait_ec = co_await timeout_io::wait_for(owner_worker_.io_context, std::chrono::milliseconds(200));
             if (wait_ec && wait_ec != boost::asio::error::operation_aborted)
             {
                 LOG_WARN("accept retry wait error {}", wait_ec.message());
