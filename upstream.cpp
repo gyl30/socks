@@ -31,7 +31,7 @@ namespace mux
 namespace
 {
 
-[[nodiscard]] const char* mux_command_name(const std::uint8_t cmd)
+[[nodiscard]] const char* mux_command_name(const uint8_t cmd)
 {
     switch (cmd)
     {
@@ -88,9 +88,9 @@ class direct_upstream final : public upstream
 
     boost::asio::awaitable<void> close() override;
     boost::asio::awaitable<void> shutdown_send(boost::system::error_code& ec) override;
-    [[nodiscard]] boost::asio::awaitable<upstream_connect_result> connect(const std::string& host, std::uint16_t port) override;
-    boost::asio::awaitable<void> write(const std::vector<std::uint8_t>& data, boost::system::error_code& ec) override;
-    [[nodiscard]] boost::asio::awaitable<std::size_t> read(std::vector<std::uint8_t>& buf, boost::system::error_code& ec) override;
+    [[nodiscard]] boost::asio::awaitable<upstream_connect_result> connect(const std::string& host, uint16_t port) override;
+    boost::asio::awaitable<void> write(const std::vector<uint8_t>& data, boost::system::error_code& ec) override;
+    [[nodiscard]] boost::asio::awaitable<std::size_t> read(std::vector<uint8_t>& buf, boost::system::error_code& ec) override;
 
    private:
     const config& cfg_;
@@ -107,20 +107,20 @@ class proxy_upstream final : public upstream
 
     boost::asio::awaitable<void> close() override;
     boost::asio::awaitable<void> shutdown_send(boost::system::error_code& ec) override;
-    [[nodiscard]] boost::asio::awaitable<upstream_connect_result> connect(const std::string& host, std::uint16_t port) override;
-    boost::asio::awaitable<void> write(const std::vector<std::uint8_t>& data, boost::system::error_code& ec) override;
-    [[nodiscard]] boost::asio::awaitable<std::size_t> read(std::vector<std::uint8_t>& buf, boost::system::error_code& ec) override;
+    [[nodiscard]] boost::asio::awaitable<upstream_connect_result> connect(const std::string& host, uint16_t port) override;
+    boost::asio::awaitable<void> write(const std::vector<uint8_t>& data, boost::system::error_code& ec) override;
+    [[nodiscard]] boost::asio::awaitable<std::size_t> read(std::vector<uint8_t>& buf, boost::system::error_code& ec) override;
 
    private:
     boost::asio::awaitable<void> send_syn_request(const std::shared_ptr<mux_stream>& stream,
                                                   const std::string& host,
-                                                  std::uint16_t port,
+                                                  uint16_t port,
                                                   boost::system::error_code& ec) const;
     boost::asio::awaitable<void> wait_connect_ack(const std::shared_ptr<mux_stream>& stream,
                                                   const std::string& host,
-                                                  std::uint16_t port,
+                                                  uint16_t port,
                                                   upstream_connect_result& result) const;
-    [[nodiscard]] std::uint32_t connect_ack_timeout() const;
+    [[nodiscard]] uint32_t connect_ack_timeout() const;
 
    private:
     const config& cfg_;
@@ -133,7 +133,7 @@ class proxy_upstream final : public upstream
     bool protocol_error_ = false;
 };
 
-[[nodiscard]] static std::uint8_t map_connect_error_to_socks_rep(const boost::system::error_code& ec)
+[[nodiscard]] static uint8_t map_connect_error_to_socks_rep(const boost::system::error_code& ec)
 {
     if (ec == boost::asio::error::connection_refused)
     {
@@ -154,7 +154,7 @@ class proxy_upstream final : public upstream
     return socks::kRepGenFail;
 }
 
-[[nodiscard]] static boost::system::error_code map_socks_rep_to_connect_error(const std::uint8_t rep)
+[[nodiscard]] static boost::system::error_code map_socks_rep_to_connect_error(const uint8_t rep)
 {
     switch (rep)
     {
@@ -179,7 +179,7 @@ class proxy_upstream final : public upstream
     }
 }
 
-boost::asio::awaitable<upstream_connect_result> direct_upstream::connect(const std::string& host, const std::uint16_t port)
+boost::asio::awaitable<upstream_connect_result> direct_upstream::connect(const std::string& host, const uint16_t port)
 {
     upstream_connect_result result;
     result.socks_rep = socks::kRepSuccess;
@@ -248,13 +248,13 @@ boost::asio::awaitable<upstream_connect_result> direct_upstream::connect(const s
     co_return result;
 }
 
-boost::asio::awaitable<std::size_t> direct_upstream::read(std::vector<std::uint8_t>& buf, boost::system::error_code& ec)
+boost::asio::awaitable<std::size_t> direct_upstream::read(std::vector<uint8_t>& buf, boost::system::error_code& ec)
 {
     auto n = co_await socket_.async_read_some(boost::asio::buffer(buf), boost::asio::redirect_error(boost::asio::use_awaitable, ec));
     co_return n;
 }
 
-boost::asio::awaitable<void> direct_upstream::write(const std::vector<std::uint8_t>& data, boost::system::error_code& ec)
+boost::asio::awaitable<void> direct_upstream::write(const std::vector<uint8_t>& data, boost::system::error_code& ec)
 {
     co_await timeout_io::wait_write_with_timeout(socket_, boost::asio::buffer(data), cfg_.timeout.write, ec);
 }
@@ -311,7 +311,7 @@ std::shared_ptr<upstream> make_proxy_upstream(std::shared_ptr<client_tunnel_pool
     return std::make_shared<proxy_upstream>(std::move(tunnel_pool), std::move(ctx), cfg);
 }
 
-std::uint32_t proxy_upstream::connect_ack_timeout() const
+uint32_t proxy_upstream::connect_ack_timeout() const
 {
     if (cfg_.timeout.connect == 0)
     {
@@ -323,12 +323,12 @@ std::uint32_t proxy_upstream::connect_ack_timeout() const
 
 boost::asio::awaitable<void> proxy_upstream::send_syn_request(const std::shared_ptr<mux_stream>& stream,
                                                               const std::string& host,
-                                                              const std::uint16_t port,
+                                                              const uint16_t port,
                                                               boost::system::error_code& ec) const
 {
     const auto stream_ctx = ctx_.with_stream(stream->id());
     const syn_payload syn{.socks_cmd = socks::kCmdConnect, .addr = host, .port = port, .trace_id = ctx_.trace_id()};
-    std::vector<std::uint8_t> syn_data;
+    std::vector<uint8_t> syn_data;
     if (!mux_codec::encode_syn(syn, syn_data))
     {
         ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
@@ -356,7 +356,7 @@ boost::asio::awaitable<void> proxy_upstream::send_syn_request(const std::shared_
 
 boost::asio::awaitable<void> proxy_upstream::wait_connect_ack(const std::shared_ptr<mux_stream>& stream,
                                                               const std::string& host,
-                                                              const std::uint16_t port,
+                                                              const uint16_t port,
                                                               upstream_connect_result& result) const
 {
     const auto stream_ctx = ctx_.with_stream(stream->id());
@@ -419,7 +419,7 @@ boost::asio::awaitable<void> proxy_upstream::wait_connect_ack(const std::shared_
     LOG_CTX_INFO(stream_ctx, "{} stage wait_ack target {}:{} bind {}:{}", log_event::kRoute, host, port, ack.bnd_addr, ack.bnd_port);
 }
 
-boost::asio::awaitable<upstream_connect_result> proxy_upstream::connect(const std::string& host, const std::uint16_t port)
+boost::asio::awaitable<upstream_connect_result> proxy_upstream::connect(const std::string& host, const uint16_t port)
 {
     upstream_connect_result result;
     result.socks_rep = socks::kRepSuccess;
@@ -478,7 +478,7 @@ boost::asio::awaitable<upstream_connect_result> proxy_upstream::connect(const st
     co_return result;
 }
 
-boost::asio::awaitable<std::size_t> proxy_upstream::read(std::vector<std::uint8_t>& buf, boost::system::error_code& ec)
+boost::asio::awaitable<std::size_t> proxy_upstream::read(std::vector<uint8_t>& buf, boost::system::error_code& ec)
 {
     const auto stream = stream_;
     if (stream == nullptr)
@@ -541,7 +541,7 @@ boost::asio::awaitable<std::size_t> proxy_upstream::read(std::vector<std::uint8_
     co_return data_frame.payload.size();
 }
 
-boost::asio::awaitable<void> proxy_upstream::write(const std::vector<std::uint8_t>& data, boost::system::error_code& ec)
+boost::asio::awaitable<void> proxy_upstream::write(const std::vector<uint8_t>& data, boost::system::error_code& ec)
 {
     const auto stream = stream_;
     if (stream == nullptr)

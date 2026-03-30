@@ -30,7 +30,7 @@ namespace mux
 namespace
 {
 
-[[nodiscard]] const char* mux_command_name(const std::uint8_t cmd)
+[[nodiscard]] const char* mux_command_name(const uint8_t cmd)
 {
     switch (cmd)
     {
@@ -49,7 +49,7 @@ namespace
     }
 }
 
-[[nodiscard]] std::uint8_t map_connect_error_to_socks_rep(const boost::system::error_code& ec)
+[[nodiscard]] uint8_t map_connect_error_to_socks_rep(const boost::system::error_code& ec)
 {
     if (ec == boost::asio::error::connection_refused)
     {
@@ -71,7 +71,7 @@ namespace
 }
 
 boost::asio::awaitable<void> send_stream_control_frame(const std::shared_ptr<mux_stream>& stream,
-                                                       const std::uint8_t command,
+                                                       const uint8_t command,
                                                        boost::system::error_code& ec)
 {
     ec.clear();
@@ -88,7 +88,7 @@ boost::asio::awaitable<void> send_stream_control_frame(const std::shared_ptr<mux
 }    // namespace
 remote_tcp_session::remote_tcp_session(boost::asio::io_context& io_context,
                                        const std::shared_ptr<mux_connection>& connection,
-                                       const std::uint32_t id,
+                                       const uint32_t id,
                                        const connection_context& ctx,
                                        const config& cfg)
     : id_(id),
@@ -147,10 +147,10 @@ boost::asio::awaitable<void> remote_tcp_session::run(const syn_payload& syn)
     ctx_.set_target(syn.addr, syn.port);
     LOG_CTX_INFO(ctx_, "{} connecting {} {}", log_event::kMux, syn.addr, syn.port);
     boost::system::error_code ec;
-    const auto send_fail_ack = [&](const std::uint8_t rep) -> boost::asio::awaitable<void>
+    const auto send_fail_ack = [&](const uint8_t rep) -> boost::asio::awaitable<void>
     {
         const ack_payload ack{.socks_rep = rep, .bnd_addr = "0.0.0.0", .bnd_port = 0};
-        std::vector<std::uint8_t> ack_data;
+        std::vector<uint8_t> ack_data;
         if (!mux_codec::encode_ack(ack, ack_data))
         {
             co_return;
@@ -226,7 +226,7 @@ boost::asio::awaitable<void> remote_tcp_session::run(const syn_payload& syn)
     uint16_t bind_port = local_ep.port();
 
     const ack_payload ack{.socks_rep = socks::kRepSuccess, .bnd_addr = bind_addr, .bnd_port = bind_port};
-    std::vector<std::uint8_t> ack_data;
+    std::vector<uint8_t> ack_data;
     if (!mux_codec::encode_ack(ack, ack_data))
     {
         LOG_CTX_WARN(ctx_, "{} send ack encode failed", log_event::kMux);
@@ -336,7 +336,7 @@ boost::asio::awaitable<void> remote_tcp_session::upstream()
 
 boost::asio::awaitable<void> remote_tcp_session::downstream()
 {
-    std::vector<std::uint8_t> buf(8192);
+    std::vector<uint8_t> buf(8192);
     for (;;)
     {
         boost::system::error_code ec;
@@ -390,7 +390,7 @@ boost::asio::awaitable<void> remote_tcp_session::idle_watchdog()
     {
         co_return;
     }
-    const auto idle_timeout_ms = static_cast<std::uint64_t>(cfg_.timeout.idle) * 1000ULL;
+    const auto idle_timeout_ms = static_cast<uint64_t>(cfg_.timeout.idle) * 1000ULL;
 
     while (true)
     {

@@ -14,9 +14,9 @@ namespace
 
 constexpr std::array<const char*, 4> kHostnames = {"example.com", "www.example.com", "localhost", "a.example.net"};
 
-std::vector<std::uint8_t> take_bytes(const std::uint8_t* data, const std::size_t size, const std::size_t offset, const std::size_t len)
+std::vector<uint8_t> take_bytes(const uint8_t* data, const std::size_t size, const std::size_t offset, const std::size_t len)
 {
-    std::vector<std::uint8_t> out(len, 0x00);
+    std::vector<uint8_t> out(len, 0x00);
     if (data == nullptr || size == 0 || len == 0)
     {
         return out;
@@ -29,7 +29,7 @@ std::vector<std::uint8_t> take_bytes(const std::uint8_t* data, const std::size_t
     return out;
 }
 
-reality::fingerprint_type select_fingerprint_type(const std::uint8_t* data, const std::size_t size)
+reality::fingerprint_type select_fingerprint_type(const uint8_t* data, const std::size_t size)
 {
     if (data == nullptr || size == 0)
     {
@@ -49,7 +49,7 @@ reality::fingerprint_type select_fingerprint_type(const std::uint8_t* data, cons
     }
 }
 
-std::string select_hostname(const std::uint8_t* data, const std::size_t size, const bool with_sni)
+std::string select_hostname(const uint8_t* data, const std::size_t size, const bool with_sni)
 {
     if (!with_sni)
     {
@@ -64,19 +64,19 @@ std::string select_hostname(const std::uint8_t* data, const std::size_t size, co
     return kHostnames[idx];
 }
 
-std::vector<std::uint8_t> build_client_hello(const std::uint8_t* data, const std::size_t size, const bool with_sni)
+std::vector<uint8_t> build_client_hello(const uint8_t* data, const std::size_t size, const bool with_sni)
 {
     auto spec = reality::fingerprint_factory::get(select_fingerprint_type(data, size));
     const auto session_id_len = (data == nullptr || size == 0) ? std::size_t{0} : static_cast<std::size_t>(data[0] % 33);
     const auto session_id = take_bytes(data, size, 1, session_id_len);
     const auto random = take_bytes(data, size, 2, 32);
     const auto x25519_pubkey = take_bytes(data, size, 34, 32);
-    std::vector<std::uint8_t> x25519_mlkem768_key_share;
+    std::vector<uint8_t> x25519_mlkem768_key_share;
 
     if (data != nullptr && size != 0 && (data[0] & 0x04) != 0)
     {
-        x25519_mlkem768_key_share = take_bytes(data, size, 66, ::tls::kMlkem768PublicKeySize + 32);
-        reality::fingerprint_append_key_share_group(spec, ::tls::consts::group::kX25519MLKEM768);
+        x25519_mlkem768_key_share = take_bytes(data, size, 66, tls::kMlkem768PublicKeySize + 32);
+        reality::fingerprint_append_key_share_group(spec, tls::consts::group::kX25519MLKEM768);
     }
 
     const auto hostname = select_hostname(data, size, with_sni);
@@ -85,26 +85,26 @@ std::vector<std::uint8_t> build_client_hello(const std::uint8_t* data, const std
 
 }    // namespace
 
-extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size)
+extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, std::size_t size)
 {
-    std::vector<std::uint8_t> raw;
+    std::vector<uint8_t> raw;
     if (data != nullptr && size != 0)
     {
         raw.assign(data, data + size);
     }
 
-    (void)::tls::client_hello_parser::parse(raw);
+    (void)tls::client_hello_parser::parse(raw);
 
     const auto hello_with_sni = build_client_hello(data, size, true);
     if (!hello_with_sni.empty())
     {
-        (void)::tls::client_hello_parser::parse(hello_with_sni);
+        (void)tls::client_hello_parser::parse(hello_with_sni);
     }
 
     const auto hello_without_sni = build_client_hello(data, size, false);
     if (!hello_without_sni.empty())
     {
-        (void)::tls::client_hello_parser::parse(hello_without_sni);
+        (void)tls::client_hello_parser::parse(hello_without_sni);
     }
 
     return 0;

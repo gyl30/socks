@@ -25,7 +25,7 @@ struct fallback_request
 {
     boost::asio::ip::tcp::socket* client_socket = nullptr;
     mux::connection_context ctx;
-    std::vector<std::uint8_t> client_hello_record;
+    std::vector<uint8_t> client_hello_record;
 };
 
 class fallback_executor
@@ -34,20 +34,20 @@ class fallback_executor
     explicit fallback_executor(boost::asio::io_context& io_context, const mux::config& cfg);
 
     [[nodiscard]] boost::asio::awaitable<void> run(
-        fallback_request& request, const std::string& host, std::uint16_t port, const char* reason, boost::system::error_code& ec) const;
+        fallback_request& request, const std::string& host, uint16_t port, const char* reason, boost::system::error_code& ec) const;
 
    private:
     [[nodiscard]] boost::asio::awaitable<void> connect_target(boost::asio::ip::tcp::socket& upstream_socket,
                                                               const mux::connection_context& ctx,
                                                               const std::string& host,
-                                                              std::uint16_t port,
+                                                              uint16_t port,
                                                               boost::system::error_code& ec) const;
 
     [[nodiscard]] boost::asio::awaitable<void> write_initial_client_hello(boost::asio::ip::tcp::socket& upstream_socket,
                                                                           const mux::connection_context& ctx,
                                                                           const std::string& host,
-                                                                          std::uint16_t port,
-                                                                          const std::vector<std::uint8_t>& client_hello_record,
+                                                                          uint16_t port,
+                                                                          const std::vector<uint8_t>& client_hello_record,
                                                                           boost::system::error_code& ec) const;
 
     [[nodiscard]] boost::asio::awaitable<void> relay_data(boost::asio::ip::tcp::socket& src,

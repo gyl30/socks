@@ -12,17 +12,17 @@ namespace tls
 
 struct client_hello_info
 {
-    std::vector<std::uint8_t> session_id;
-    std::vector<std::uint8_t> random;
-    std::vector<std::uint8_t> x25519_pub;
-    std::vector<std::uint8_t> x25519_mlkem768_share;
-    std::vector<std::uint8_t> compression_methods;
-    std::vector<std::uint16_t> cipher_suites;
-    std::vector<std::uint16_t> supported_groups;
-    std::vector<std::uint16_t> supported_versions;
-    std::vector<std::uint16_t> signature_algorithms;
+    std::vector<uint8_t> session_id;
+    std::vector<uint8_t> random;
+    std::vector<uint8_t> x25519_pub;
+    std::vector<uint8_t> x25519_mlkem768_share;
+    std::vector<uint8_t> compression_methods;
+    std::vector<uint16_t> cipher_suites;
+    std::vector<uint16_t> supported_groups;
+    std::vector<uint16_t> supported_versions;
+    std::vector<uint16_t> signature_algorithms;
     std::vector<std::string> alpn_protocols;
-    std::vector<std::uint8_t> secure_renegotiation;
+    std::vector<uint8_t> secure_renegotiation;
     std::string sni;
     bool malformed_sni = false;
     bool malformed_extensions = false;
@@ -35,28 +35,28 @@ struct client_hello_info
     bool has_x25519_share = false;
     bool has_x25519_mlkem768_share = false;
     bool has_renegotiation_info = false;
-    std::uint16_t key_share_group = 0;
-    std::uint32_t sid_offset = 0;
+    uint16_t key_share_group = 0;
+    uint32_t sid_offset = 0;
 };
 
 class client_hello_parser
 {
    public:
-    [[nodiscard]] static client_hello_info parse(const std::vector<std::uint8_t>& buf);
+    [[nodiscard]] static client_hello_info parse(const std::vector<uint8_t>& buf);
 
    private:
     class reader
     {
        public:
-        explicit reader(const std::vector<std::uint8_t>& buf) : ptr_(buf.data()), end_(buf.data() + buf.size()), start_(buf.data()) {}
-        reader(const std::uint8_t* p, const std::size_t len, const std::uint8_t* s) : ptr_(p), end_(p + len), start_(s) {}
+        explicit reader(const std::vector<uint8_t>& buf) : ptr_(buf.data()), end_(buf.data() + buf.size()), start_(buf.data()) {}
+        reader(const uint8_t* p, const std::size_t len, const uint8_t* s) : ptr_(p), end_(p + len), start_(s) {}
 
         [[nodiscard]] bool valid() const { return ptr_ != nullptr; }
         [[nodiscard]] bool has(const std::size_t n) const { return valid() && std::cmp_less_equal(n, end_ - ptr_); }
         [[nodiscard]] std::size_t remaining() const { return valid() ? static_cast<std::size_t>(end_ - ptr_) : 0; }
         [[nodiscard]] std::size_t offset() const { return valid() ? static_cast<std::size_t>(ptr_ - start_) : 0; }
-        [[nodiscard]] std::uint8_t peek(const std::size_t off) const { return has(off + 1) ? ptr_[off] : static_cast<std::uint8_t>(0); }
-        [[nodiscard]] const std::uint8_t* data() const { return ptr_; }
+        [[nodiscard]] uint8_t peek(const std::size_t off) const { return has(off + 1) ? ptr_[off] : static_cast<uint8_t>(0); }
+        [[nodiscard]] const uint8_t* data() const { return ptr_; }
 
         bool skip(const std::size_t n)
         {
@@ -68,7 +68,7 @@ class client_hello_parser
             return true;
         }
 
-        bool read_u8(std::uint8_t& out)
+        bool read_u8(uint8_t& out)
         {
             if (!has(1))
             {
@@ -78,18 +78,18 @@ class client_hello_parser
             return true;
         }
 
-        bool read_u16(std::uint16_t& out)
+        bool read_u16(uint16_t& out)
         {
             if (!has(2))
             {
                 return false;
             }
-            out = static_cast<std::uint16_t>((ptr_[0] << 8) | ptr_[1]);
+            out = static_cast<uint16_t>((ptr_[0] << 8) | ptr_[1]);
             ptr_ += 2;
             return true;
         }
 
-        bool read_vector(std::vector<std::uint8_t>& out, const std::size_t n)
+        bool read_vector(std::vector<uint8_t>& out, const std::size_t n)
         {
             if (!has(n))
             {
@@ -112,19 +112,19 @@ class client_hello_parser
         }
 
        private:
-        const std::uint8_t* ptr_;
-        const std::uint8_t* end_;
-        const std::uint8_t* start_;
+        const uint8_t* ptr_;
+        const uint8_t* end_;
+        const uint8_t* start_;
     };
 
     static bool read_client_hello_prefix(reader& r, client_hello_info& info);
     static bool read_session_id(reader& r, client_hello_info& info);
     static bool parse_cipher_suites_and_compression(reader& r, client_hello_info& info);
-    static bool read_extension_header(reader& r, std::uint16_t& type, std::uint16_t& len);
-    static bool read_sni_item_header(reader& r, std::uint8_t& type, std::uint16_t& len);
-    static bool handle_sni_item(reader& r, std::uint8_t type, std::uint16_t len, client_hello_info& info);
-    static bool read_key_share_item_header(reader& r, std::uint16_t& group, std::uint16_t& len);
-    static void handle_key_share_item(const reader& r, std::uint16_t group, std::uint16_t len, client_hello_info& info);
+    static bool read_extension_header(reader& r, uint16_t& type, uint16_t& len);
+    static bool read_sni_item_header(reader& r, uint8_t& type, uint16_t& len);
+    static bool handle_sni_item(reader& r, uint8_t type, uint16_t len, client_hello_info& info);
+    static bool read_key_share_item_header(reader& r, uint16_t& group, uint16_t& len);
+    static void handle_key_share_item(const reader& r, uint16_t group, uint16_t len, client_hello_info& info);
     static void finalize_key_share_info(client_hello_info& info);
     static void finalize_tls13_info(client_hello_info& info);
     static bool parse_before_extensions(reader& r, client_hello_info& info);

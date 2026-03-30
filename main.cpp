@@ -47,17 +47,17 @@ void print_usage(std::string_view prog)
 
 void dump_x25519()
 {
-    std::uint8_t public_key[32];
-    std::uint8_t private_key[32];
-    if (!::tls::crypto_util::generate_x25519_keypair(public_key, private_key))
+    uint8_t public_key[32];
+    uint8_t private_key[32];
+    if (!tls::crypto_util::generate_x25519_keypair(public_key, private_key))
     {
         std::fputs("failed to generate keypair\n", stdout);
         return;
     }
-    const std::vector<std::uint8_t> vec_private_key(private_key, private_key + 32);
-    const std::vector<std::uint8_t> vec_public_key(public_key, public_key + 32);
-    const std::string private_key_hex = ::tls::crypto_util::bytes_to_hex(vec_private_key);
-    const std::string public_key_hex = ::tls::crypto_util::bytes_to_hex(vec_public_key);
+    const std::vector<uint8_t> vec_private_key(private_key, private_key + 32);
+    const std::vector<uint8_t> vec_public_key(public_key, public_key + 32);
+    const std::string private_key_hex = tls::crypto_util::bytes_to_hex(vec_private_key);
+    const std::string public_key_hex = tls::crypto_util::bytes_to_hex(vec_public_key);
     std::cout << "private key: " << private_key_hex << '\n' << "public key:  " << public_key_hex << '\n';
 }
 
@@ -73,7 +73,7 @@ int register_signal(boost::asio::signal_set& signals, const int signal, const ch
     return 0;
 }
 
-std::uint32_t resolve_worker_threads(const mux::config& cfg)
+uint32_t resolve_worker_threads(const mux::config& cfg)
 {
     if (cfg.workers > 0)
     {

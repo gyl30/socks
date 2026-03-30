@@ -16,6 +16,7 @@
 
 #include "log.h"
 #include "config.h"
+#include "constants.h"
 #include "router.h"
 #include "protocol.h"
 #include "mux_codec.h"
@@ -35,12 +36,6 @@ namespace mux
 
 namespace
 {
-
-constexpr std::size_t kPacketChannelCapacity = 1024;
-constexpr std::chrono::milliseconds kTunnelPollInterval(200);
-constexpr std::uint8_t kNoStreamControl = 0;
-constexpr std::size_t kMaxReplySockets = 512;
-constexpr std::size_t kMaxUdpPacketSize = 8192;
 
 [[nodiscard]] bool is_normal_close_error(const boost::system::error_code& ec)
 {
@@ -68,19 +63,19 @@ boost::asio::awaitable<void> send_udp_stream_reset(const std::shared_ptr<mux_str
     }
 }
 
-void update_stream_close_command(std::atomic<std::uint8_t>& stream_close_command, const std::uint8_t next_command)
+void update_stream_close_command(std::atomic<uint8_t>& stream_close_command, const uint8_t next_command)
 {
     auto current = stream_close_command.load(std::memory_order_relaxed);
     for (;;)
     {
-        std::uint8_t desired = current;
+        uint8_t desired = current;
         if (next_command == mux::kCmdRst)
         {
             desired = mux::kCmdRst;
         }
-        else if (next_command == kNoStreamControl && current != mux::kCmdRst)
+        else if (next_command == mux::kNoStreamControl && current != mux::kCmdRst)
         {
-            desired = kNoStreamControl;
+            desired = mux::kNoStreamControl;
         }
         if (desired == current)
         {
@@ -135,7 +130,7 @@ boost::asio::awaitable<std::shared_ptr<mux_stream>> connect_remote_udp_stream(co
         .port = 0,
         .trace_id = ctx.trace_id(),
     };
-    std::vector<std::uint8_t> syn_data;
+    std::vector<uint8_t> syn_data;
     if (!mux_codec::encode_syn(syn, syn_data))
     {
         ec = boost::asio::error::invalid_argument;
@@ -214,8 +209,8 @@ tproxy_udp_session::tproxy_udp_session(io_worker& worker,
       client_endpoint_(net::normalize_endpoint(client_endpoint)),
       target_endpoint_(net::normalize_endpoint(target_endpoint)),
       on_close_(std::move(on_close)),
-      packet_channel_(worker.io_context, kPacketChannelCapacity),
-      reply_sockets_(kMaxReplySockets)
+      packet_channel_(worker.io_context, constants::udp::kPacketChannelCapacity),
+      reply_sockets_(constants::udp::kMaxReplySockets)
 {
     active_guard_ = acquire_active_connection_guard();
     stream_close_command_.store(mux::kCmdFin, std::memory_order_relaxed);
@@ -228,16 +223,20 @@ void tproxy_udp_session::start()
 
 void tproxy_udp_session::stop() { close_impl(); }
 
-boost::asio::awaitable<udp_enqueue_result> tproxy_udp_session::enqueue_packet(std::vector<std::uint8_t> payload)
+boost::asio::awaitable<udp_enqueue_result> tproxy_udp_session::enqueue_packet(std::vector<uint8_t> payload)
 {
     if (stopped_.load(std::memory_order_relaxed))
     {
         co_return udp_enqueue_result::kClosed;
     }
 
-    if (payload.size() > kMaxUdpPacketSize)
+    if (payload.size() > constants::udp::kMaxPacketSize)
     {
-        LOG_CTX_WARN(ctx_, "{} drop udp packet because payload too large size {} max {}", log_event::kMux, payload.size(), kMaxUdpPacketSize);
+        LOG_CTX_WARN(ctx_,
+                     "{} drop udp packet because payload too large size {} max {}",
+                     log_event::kMux,
+                     payload.size(),
+                     constants::udp::kMaxPacketSize);
         co_return udp_enqueue_result::kDroppedOverflow;
     }
 
@@ -315,7 +314,7 @@ boost::asio::awaitable<bool> tproxy_udp_session::run_proxy_mode()
     }
 
     const auto close_command = stream_close_command_.load(std::memory_order_relaxed);
-    if (stream_ != nullptr && close_command != kNoStreamControl)
+    if (stream_ != nullptr && close_command != mux::kNoStreamControl)
     {
         mux_frame close_frame;
         close_frame.h.stream_id = stream_->id();
@@ -443,7 +442,8 @@ boost::asio::awaitable<std::shared_ptr<mux_connection>> tproxy_udp_session::wait
             co_return nullptr;
         }
 
-        const auto wait_ec = co_await timeout_io::wait_for(worker_.io_context, kTunnelPollInterval);
+        const auto wait_ec =
+            co_await timeout_io::wait_for(worker_.io_context, std::chrono::milliseconds(constants::udp::kTunnelPollIntervalMs));
         if (wait_ec)
         {
             ec = wait_ec;
@@ -478,7 +478,7 @@ boost::asio::awaitable<void> tproxy_udp_session::packets_to_direct()
 
 boost::asio::awaitable<void> tproxy_udp_session::direct_to_client()
 {
-    std::vector<std::uint8_t> buffer(65535);
+    std::vector<uint8_t> buffer(65535);
     const auto normalized_target = net::normalize_endpoint(target_endpoint_);
     boost::system::error_code ec;
     for (;;)
@@ -551,12 +551,12 @@ boost::asio::awaitable<void> tproxy_udp_session::proxy_to_client()
             {
                 continue;
             }
-            update_stream_close_command(stream_close_command_, kNoStreamControl);
+            update_stream_close_command(stream_close_command_, mux::kNoStreamControl);
             break;
         }
         if (frame.h.command == mux::kCmdFin || frame.h.command == mux::kCmdRst)
         {
-            update_stream_close_command(stream_close_command_, kNoStreamControl);
+            update_stream_close_command(stream_close_command_, mux::kNoStreamControl);
             break;
         }
         if (frame.h.command != mux::kCmdDat)
@@ -633,7 +633,7 @@ boost::asio::awaitable<void> tproxy_udp_session::idle_watchdog()
 }
 
 boost::asio::awaitable<bool> tproxy_udp_session::send_to_client(const boost::asio::ip::udp::endpoint& source,
-                                                                const std::uint8_t* payload,
+                                                                const uint8_t* payload,
                                                                 const std::size_t payload_len)
 {
     if (stopped_.load(std::memory_order_relaxed))

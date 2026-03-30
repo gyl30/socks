@@ -25,6 +25,7 @@ extern "C"
 
 #include "log.h"
 #include "config.h"
+#include "constants.h"
 #include "tls/core.h"
 #include "context_pool.h"
 #include "mux_codec.h"
@@ -42,7 +43,7 @@ namespace mux
 namespace
 {
 
-void handle_post_handshake_record(const std::uint32_t cid, const std::span<const std::uint8_t> plaintext, boost::system::error_code& ec)
+void handle_post_handshake_record(const uint32_t cid, const std::span<const uint8_t> plaintext, boost::system::error_code& ec)
 {
     if (plaintext.empty())
     {
@@ -74,15 +75,15 @@ mux_connection::mux_connection(boost::asio::ip::tcp::socket socket,
                                io_worker& worker,
                                reality::reality_record_context record_context,
                                const config& cfg,
-                               const std::uint32_t conn_id,
+                               const uint32_t conn_id,
                                const std::string& trace_id)
     : cfg_(cfg),
       cid_(conn_id),
       worker_(worker),
       reality_engine_(std::move(record_context)),
       socket_(std::move(socket)),
-      write_channel_(std::make_unique<channel_type>(worker.io_context, 1024)),
-      stop_channel_(std::make_unique<stop_channel_type>(worker.io_context, 1))
+      write_channel_(std::make_unique<channel_type>(worker.io_context, constants::mux::kWriteChannelCapacity)),
+      stop_channel_(std::make_unique<stop_channel_type>(worker.io_context, constants::mux::kStopChannelCapacity))
 {
     ctx_.trace_id(trace_id);
     ctx_.conn_id(conn_id);
@@ -105,7 +106,7 @@ mux_connection::mux_connection(boost::asio::ip::tcp::socket socket,
 
 mux_connection::~mux_connection() = default;
 
-std::shared_ptr<mux_stream> mux_connection::find_stream(const std::uint32_t stream_id)
+std::shared_ptr<mux_stream> mux_connection::find_stream(const uint32_t stream_id)
 {
     const std::scoped_lock<std::mutex> lock(mutex_);
     const auto it = streams_.find(stream_id);
@@ -125,7 +126,7 @@ void mux_connection::start_accepting_streams()
     incoming_syn_channel_ = std::make_unique<channel_type>(worker_.io_context, 1);
 }
 
-boost::asio::awaitable<void> mux_connection::handle_unknown_stream(mux::frame_header header, std::vector<std::uint8_t> payload)
+boost::asio::awaitable<void> mux_connection::handle_unknown_stream(mux::frame_header header, std::vector<uint8_t> payload)
 {
     if (header.command == mux::kCmdSyn)
     {
@@ -147,7 +148,7 @@ boost::asio::awaitable<void> mux_connection::handle_unknown_stream(mux::frame_he
     LOG_DEBUG("mux {} drop frame for unknown stream {} cmd {}", cid_, header.stream_id, header.command);
 }
 
-boost::asio::awaitable<void> mux_connection::handle_stream_frame(const mux::frame_header& header, std::vector<std::uint8_t> payload)
+boost::asio::awaitable<void> mux_connection::handle_stream_frame(const mux::frame_header& header, std::vector<uint8_t> payload)
 {
     auto stream = find_stream(header.stream_id);
     if (stream == nullptr)
@@ -166,12 +167,11 @@ boost::asio::awaitable<void> mux_connection::handle_stream_frame(const mux::fram
             LOG_WARN("mux {} stream {} backpressure timeout reset only this stream", cid_, header.stream_id);
             close_and_remove_stream(stream);
 
-            constexpr std::uint32_t kRstSendTimeoutSec = 1;
             mux_frame rst_frame;
             rst_frame.h.stream_id = header.stream_id;
             rst_frame.h.command = mux::kCmdRst;
             boost::system::error_code rst_ec;
-            co_await send_async_with_timeout(std::move(rst_frame), kRstSendTimeoutSec, rst_ec);
+            co_await send_async_with_timeout(std::move(rst_frame), constants::mux::kControlFrameSendTimeoutSec, rst_ec);
             if (rst_ec)
             {
                 LOG_WARN("mux {} stream {} send rst failed {}", cid_, header.stream_id, rst_ec.message());
@@ -192,7 +192,7 @@ boost::asio::awaitable<void> mux_connection::handle_stream_frame(const mux::fram
     }
 }
 
-boost::asio::awaitable<void> mux_connection::queue_incoming_syn(mux::frame_header header, std::vector<std::uint8_t> payload)
+boost::asio::awaitable<void> mux_connection::queue_incoming_syn(mux::frame_header header, std::vector<uint8_t> payload)
 {
     mux_frame frame;
     frame.h = header;
@@ -364,7 +364,7 @@ boost::asio::awaitable<void> mux_connection::read_loop()
             {
                 break;
             }
-            if (content_type == ::tls::kContentTypeAlert)
+            if (content_type == tls::kContentTypeAlert)
             {
                 ec = boost::asio::error::eof;
                 break;
@@ -379,11 +379,11 @@ boost::asio::awaitable<void> mux_connection::read_loop()
     LOG_DEBUG("mux {} read loop finished", cid_);
 }
 
-boost::asio::awaitable<void> mux_connection::on_tls_record(const std::uint8_t type,
-                                                           const std::span<const std::uint8_t> plaintext,
+boost::asio::awaitable<void> mux_connection::on_tls_record(const uint8_t type,
+                                                           const std::span<const uint8_t> plaintext,
                                                            boost::system::error_code& ec)
 {
-    if (type == ::tls::kContentTypeApplicationData)
+    if (type == tls::kContentTypeApplicationData)
     {
         std::vector<mux_frame> frames;
         mux_codec::decode_frames(pending_plaintext_, plaintext, cfg_.limits.max_buffer, frames, ec);
@@ -399,11 +399,11 @@ boost::asio::awaitable<void> mux_connection::on_tls_record(const std::uint8_t ty
         co_return;
     }
 
-    if (type == ::tls::kContentTypeAlert)
+    if (type == tls::kContentTypeAlert)
     {
         co_return;
     }
-    if (type == ::tls::kContentTypeHandshake)
+    if (type == tls::kContentTypeHandshake)
     {
         handle_post_handshake_record(cid_, plaintext, ec);
         co_return;
@@ -424,7 +424,7 @@ boost::asio::awaitable<void> mux_connection::write_loop()
             break;
         }
         frame_header header = msg.h;
-        header.length = static_cast<std::uint16_t>(msg.payload.size());
+        header.length = static_cast<uint16_t>(msg.payload.size());
         const auto mux_frame = mux_codec::encode_frame(header, msg.payload);
 
         const auto ct = reality_engine_.encrypt_record(mux_frame, ec);
@@ -462,7 +462,7 @@ boost::asio::awaitable<void> mux_connection::timeout_loop()
         co_return;
     }
 
-    const auto idle_timeout_ms = static_cast<std::uint64_t>(cfg_.timeout.idle) * 1000ULL;
+    const auto idle_timeout_ms = static_cast<uint64_t>(cfg_.timeout.idle) * 1000ULL;
     boost::system::error_code ec;
     while (true)
     {
@@ -490,7 +490,7 @@ boost::asio::awaitable<void> mux_connection::heartbeat_loop()
 
     while (true)
     {
-        std::uniform_int_distribution<std::uint32_t> interval_dist(cfg_.heartbeat.min_interval, cfg_.heartbeat.max_interval);
+        std::uniform_int_distribution<uint32_t> interval_dist(cfg_.heartbeat.min_interval, cfg_.heartbeat.max_interval);
         const auto interval = interval_dist(rng);
         auto ec = co_await timeout_io::wait_for(worker_.io_context, std::chrono::seconds(interval));
         if (ec)
@@ -498,10 +498,10 @@ boost::asio::awaitable<void> mux_connection::heartbeat_loop()
             break;
         }
 
-        std::uniform_int_distribution<std::uint32_t> padding_dist(cfg_.heartbeat.min_padding, cfg_.heartbeat.max_padding);
+        std::uniform_int_distribution<uint32_t> padding_dist(cfg_.heartbeat.min_padding, cfg_.heartbeat.max_padding);
         const auto padding_len = padding_dist(rng);
         const auto heartbeat_padding_len = std::min<std::size_t>(padding_len, mux::kMaxPayload);
-        std::vector<std::uint8_t> padding(heartbeat_padding_len);
+        std::vector<uint8_t> padding(heartbeat_padding_len);
         if (heartbeat_padding_len > 0 && RAND_bytes(padding.data(), static_cast<int>(heartbeat_padding_len)) != 1)
         {
             LOG_ERROR("mux {} heartbeat rand failed", cid_);
@@ -520,7 +520,7 @@ boost::asio::awaitable<void> mux_connection::heartbeat_loop()
     LOG_DEBUG("mux {} heartbeat loop finished", cid_);
 }
 
-boost::asio::awaitable<void> mux_connection::on_mux_frame(const mux::frame_header header, std::vector<std::uint8_t> payload)
+boost::asio::awaitable<void> mux_connection::on_mux_frame(const mux::frame_header header, std::vector<uint8_t> payload)
 {
     LOG_TRACE("mux {} recv frame stream {} cmd {} len {} payload size {}", cid_, header.stream_id, header.command, header.length, payload.size());
 
@@ -537,7 +537,7 @@ boost::asio::awaitable<void> mux_connection::on_mux_frame(const mux::frame_heade
 std::shared_ptr<mux_stream> mux_connection::create_stream()
 {
     std::shared_ptr<mux_stream> stream;
-    std::uint32_t stream_id = mux::kStreamIdHeartbeat;
+    uint32_t stream_id = mux::kStreamIdHeartbeat;
     {
         const std::scoped_lock<std::mutex> lock(mutex_);
         if (stopped_.load(std::memory_order_relaxed))
@@ -566,7 +566,7 @@ std::shared_ptr<mux_stream> mux_connection::create_stream()
     return stream;
 }
 
-std::shared_ptr<mux_stream> mux_connection::create_incoming_stream(const std::uint32_t stream_id)
+std::shared_ptr<mux_stream> mux_connection::create_incoming_stream(const uint32_t stream_id)
 {
     if (stream_id == mux::kStreamIdHeartbeat)
     {
@@ -603,7 +603,7 @@ boost::asio::awaitable<void> mux_connection::send_async(mux_frame msg, boost::sy
     co_return co_await send_async_with_timeout(std::move(msg), 0, ec);
 }
 
-boost::asio::awaitable<void> mux_connection::send_async_with_timeout(mux_frame msg, const std::uint32_t timeout_sec, boost::system::error_code& ec)
+boost::asio::awaitable<void> mux_connection::send_async_with_timeout(mux_frame msg, const uint32_t timeout_sec, boost::system::error_code& ec)
 {
     if (msg.payload.size() > mux::kMaxPayload)
     {
@@ -626,7 +626,7 @@ boost::asio::awaitable<void> mux_connection::send_async_with_timeout(mux_frame m
     co_return;
 }
 
-std::uint32_t mux_connection::acquire_next_id()
+uint32_t mux_connection::acquire_next_id()
 {
     const std::size_t max_attempts = (((cfg_.limits.max_streams > 0) ? cfg_.limits.max_streams : (streams_.size() + 1)) * 2) + 2;
 

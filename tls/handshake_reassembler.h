@@ -14,11 +14,11 @@ class handshake_reassembler
 {
    public:
     handshake_reassembler();
-    void append(std::span<const std::uint8_t> data);
-    bool next(std::vector<std::uint8_t>& out, boost::system::error_code& ec);
+    void append(std::span<const uint8_t> data);
+    bool next(std::vector<uint8_t>& out, boost::system::error_code& ec);
 
    private:
-    boost::circular_buffer<std::uint8_t> buffer_;
+    boost::circular_buffer<uint8_t> buffer_;
     bool overflowed_ = false;
 };
 

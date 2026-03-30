@@ -18,7 +18,7 @@
 namespace mux
 {
 
-enum class udp_enqueue_result : std::uint8_t
+enum class udp_enqueue_result : uint8_t
 {
     kEnqueued,
     kDroppedOverflow,
@@ -39,10 +39,10 @@ class tproxy_udp_session : public std::enable_shared_from_this<tproxy_udp_sessio
 
     void start();
     void stop();
-    [[nodiscard]] boost::asio::awaitable<udp_enqueue_result> enqueue_packet(std::vector<std::uint8_t> payload);
+    [[nodiscard]] boost::asio::awaitable<udp_enqueue_result> enqueue_packet(std::vector<uint8_t> payload);
 
    private:
-    using packet_channel_type = boost::asio::experimental::concurrent_channel<void(boost::system::error_code, std::vector<std::uint8_t>)>;
+    using packet_channel_type = boost::asio::experimental::concurrent_channel<void(boost::system::error_code, std::vector<uint8_t>)>;
 
     [[nodiscard]] boost::asio::awaitable<void> run();
     [[nodiscard]] boost::asio::awaitable<bool> open_direct_socket();
@@ -56,7 +56,7 @@ class tproxy_udp_session : public std::enable_shared_from_this<tproxy_udp_sessio
     [[nodiscard]] boost::asio::awaitable<void> proxy_to_client();
     [[nodiscard]] boost::asio::awaitable<void> idle_watchdog();
     [[nodiscard]] boost::asio::awaitable<bool> send_to_client(const boost::asio::ip::udp::endpoint& source,
-                                                              const std::uint8_t* payload,
+                                                              const uint8_t* payload,
                                                               std::size_t payload_len);
     [[nodiscard]] std::shared_ptr<boost::asio::ip::udp::socket> get_or_create_reply_socket(const boost::asio::ip::udp::endpoint& source,
                                                                                            boost::system::error_code& ec);
@@ -71,13 +71,13 @@ class tproxy_udp_session : public std::enable_shared_from_this<tproxy_udp_sessio
     std::shared_ptr<void> active_guard_;
     route_type route_;
     std::atomic<bool> stopped_{false};
-    std::uint64_t last_activity_time_ms_ = 0;
+    uint64_t last_activity_time_ms_ = 0;
     boost::asio::steady_timer idle_timer_;
     boost::asio::ip::udp::socket upstream_socket_;
     std::shared_ptr<client_tunnel_pool> tunnel_pool_;
     std::shared_ptr<mux_connection> tunnel_;
     std::shared_ptr<mux_stream> stream_;
-    std::atomic<std::uint8_t> stream_close_command_{0};
+    std::atomic<uint8_t> stream_close_command_{0};
     boost::asio::ip::udp::endpoint client_endpoint_;
     boost::asio::ip::udp::endpoint target_endpoint_;
     std::function<void()> on_close_;

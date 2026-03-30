@@ -18,19 +18,19 @@ struct config;
 class mux_stream
 {
    public:
-    mux_stream(std::uint32_t id, const config& cfg, boost::asio::io_context& io_context, const std::shared_ptr<mux_connection>& connection);
+    mux_stream(uint32_t id, const config& cfg, boost::asio::io_context& io_context, const std::shared_ptr<mux_connection>& connection);
 
     ~mux_stream();
 
-    [[nodiscard]] std::uint32_t id() const;
+    [[nodiscard]] uint32_t id() const;
     void close();
     [[nodiscard]] boost::asio::awaitable<mux_frame> async_read(boost::system::error_code& ec);
-    [[nodiscard]] boost::asio::awaitable<mux_frame> async_read(std::uint32_t timeout_sec, boost::system::error_code& ec);
+    [[nodiscard]] boost::asio::awaitable<mux_frame> async_read(uint32_t timeout_sec, boost::system::error_code& ec);
     [[nodiscard]] boost::asio::awaitable<void> on_frame(mux_frame, boost::system::error_code& ec);
     [[nodiscard]] boost::asio::awaitable<void> async_write(mux_frame, boost::system::error_code& ec) const;
 
    private:
-    std::uint32_t id_ = 0;
+    uint32_t id_ = 0;
     const config& cfg_;
     std::weak_ptr<mux_connection> connection_;
     boost::asio::experimental::concurrent_channel<void(boost::system::error_code, mux_frame)> recv_channel_;

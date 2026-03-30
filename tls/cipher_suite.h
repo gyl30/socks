@@ -20,7 +20,7 @@ struct negotiated_tls13_suite
     std::size_t key_len = 0;
 };
 
-[[nodiscard]] std::optional<negotiated_tls13_suite> select_tls13_suite(std::uint16_t cipher_suite);
+[[nodiscard]] std::optional<negotiated_tls13_suite> select_tls13_suite(uint16_t cipher_suite);
 
 }    // namespace tls
 

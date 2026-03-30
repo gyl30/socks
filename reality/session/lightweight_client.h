@@ -17,9 +17,9 @@ struct reality_record_context;
 struct lightweight_http_visit_options
 {
     std::string host;
-    std::uint32_t write_timeout_sec = 0;
-    std::uint32_t read_timeout_sec = 0;
-    std::uint32_t max_read_iterations = 8;
+    uint32_t write_timeout_sec = 0;
+    uint32_t read_timeout_sec = 0;
+    uint32_t max_read_iterations = 8;
     std::size_t response_capture_limit = 16L * 1024;
     std::size_t response_sufficient_bytes = 512;
 };

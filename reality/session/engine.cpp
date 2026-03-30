@@ -12,17 +12,13 @@ extern "C"
 }
 
 #include <boost/asio.hpp>
+#include "constants.h"
 #include "tls/core.h"
 #include "tls/record_layer.h"
 #include "reality/session/engine.h"
 
 namespace mux
 {
-
-namespace
-{
-constexpr std::size_t kMaxTlsCiphertextRecordLen = tls::kMaxTlsPlaintextLen + 256;
-}    // namespace
 
 reality_engine::reality_engine(reality::reality_record_context context)
     : context_(std::move(context))
@@ -55,15 +51,15 @@ void reality_engine::commit_read(const std::size_t n)
     rx_buf_size_ += n;
 }
 
-std::span<const std::uint8_t> reality_engine::encrypt_record(const std::vector<std::uint8_t>& plaintext, boost::system::error_code& ec)
+std::span<const uint8_t> reality_engine::encrypt_record(const std::vector<uint8_t>& plaintext, boost::system::error_code& ec)
 {
     tx_buf_.clear();
 
     if (plaintext.empty())
     {
-        return std::span<const std::uint8_t>{};
+        return std::span<const uint8_t>{};
     }
-    std::vector<std::uint8_t> plaintext_chunk;
+    std::vector<uint8_t> plaintext_chunk;
     plaintext_chunk.reserve(tls::kMaxTlsApplicationDataPayloadLen);
     for (std::size_t offset = 0; offset < plaintext.size();)
     {
@@ -81,18 +77,18 @@ std::span<const std::uint8_t> reality_engine::encrypt_record(const std::vector<s
             ec);
         if (ec)
         {
-            return std::span<const std::uint8_t>{};
+            return std::span<const uint8_t>{};
         }
         write_seq_++;
         offset += chunk_len;
     }
 
-    return std::span<const std::uint8_t>{tx_buf_.data(), tx_buf_.size()};
+    return std::span<const uint8_t>{tx_buf_.data(), tx_buf_.size()};
 }
 
 std::optional<mux::tls_record> reality_engine::decrypt_record(boost::system::error_code& ec)
 {
-    std::uint8_t content_type = 0;
+    uint8_t content_type = 0;
     std::size_t payload_len = 0;
     const auto buffered_before = rx_buf_size_;
     decrypt_tls_record(content_type, payload_len, ec);
@@ -106,10 +102,10 @@ std::optional<mux::tls_record> reality_engine::decrypt_record(boost::system::err
         return std::nullopt;
     }
 
-    return mux::tls_record{.content_type = content_type, .payload = std::span<const std::uint8_t>(scratch_buf_.data(), payload_len)};
+    return mux::tls_record{.content_type = content_type, .payload = std::span<const uint8_t>(scratch_buf_.data(), payload_len)};
 }
 
-void reality_engine::decrypt_tls_record(std::uint8_t& content_type, std::size_t& payload_len, boost::system::error_code& ec)
+void reality_engine::decrypt_tls_record(uint8_t& content_type, std::size_t& payload_len, boost::system::error_code& ec)
 {
     if (rx_buf_size_ < tls::kTlsRecordHeaderSize)
     {
@@ -117,21 +113,21 @@ void reality_engine::decrypt_tls_record(std::uint8_t& content_type, std::size_t&
     }
 
     const auto* record_header = rx_buf_.data() + static_cast<std::ptrdiff_t>(rx_buf_offset_);
-    const auto record_len = static_cast<std::uint16_t>((static_cast<std::uint16_t>(record_header[3]) << 8) | record_header[4]);
-    if (record_len > kMaxTlsCiphertextRecordLen)
+    const auto record_len = static_cast<uint16_t>((static_cast<uint16_t>(record_header[3]) << 8) | record_header[4]);
+    if (record_len > constants::tls_limits::kMaxCiphertextRecordLen)
     {
         ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
         return;
     }
 
-    const std::uint32_t frame_size = tls::kTlsRecordHeaderSize + record_len;
+    const uint32_t frame_size = tls::kTlsRecordHeaderSize + record_len;
 
     if (rx_buf_size_ < frame_size)
     {
         return;
     }
 
-    const std::span<const std::uint8_t> record_data(record_header, frame_size);
+    const std::span<const uint8_t> record_data(record_header, frame_size);
 
     payload_len = tls::record_layer::decrypt_tls_record(
         decrypt_ctx_,
@@ -140,7 +136,7 @@ void reality_engine::decrypt_tls_record(std::uint8_t& content_type, std::size_t&
         context_.read_keys.iv,
         read_seq_,
         record_data,
-        std::span<std::uint8_t>(scratch_buf_),
+        std::span<uint8_t>(scratch_buf_),
         content_type,
         ec);
     if (ec)

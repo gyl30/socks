@@ -19,13 +19,13 @@ class connection_tracker
 
     void acquire() { active_connections_.fetch_add(1, std::memory_order_relaxed); }
     void release() { active_connections_.fetch_sub(1, std::memory_order_relaxed); }
-    [[nodiscard]] std::uint64_t active_connections() const { return active_connections_.load(std::memory_order_relaxed); }
+    [[nodiscard]] uint64_t active_connections() const { return active_connections_.load(std::memory_order_relaxed); }
 
    private:
     connection_tracker() = default;
 
    private:
-    std::atomic<std::uint64_t> active_connections_{0};
+    std::atomic<uint64_t> active_connections_{0};
 };
 
 [[nodiscard]] inline std::shared_ptr<void> acquire_active_connection_guard()
