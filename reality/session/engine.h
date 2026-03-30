@@ -19,8 +19,8 @@ namespace mux
 
 struct tls_record
 {
-    std::uint8_t content_type = 0;
-    std::span<const std::uint8_t> payload;
+    uint8_t content_type = 0;
+    std::span<const uint8_t> payload;
 };
 
 class reality_engine
@@ -39,21 +39,21 @@ class reality_engine
 
     [[nodiscard]] std::optional<tls_record> decrypt_record(boost::system::error_code& ec);
 
-    [[nodiscard]] std::span<const std::uint8_t> encrypt_record(const std::vector<std::uint8_t>& plaintext, boost::system::error_code& ec);
+    [[nodiscard]] std::span<const uint8_t> encrypt_record(const std::vector<uint8_t>& plaintext, boost::system::error_code& ec);
 
    private:
-    void decrypt_tls_record(std::uint8_t& content_type, std::size_t& payload_len, boost::system::error_code& ec);
+    void decrypt_tls_record(uint8_t& content_type, std::size_t& payload_len, boost::system::error_code& ec);
 
     reality::reality_record_context context_;
-    ::tls::cipher_context decrypt_ctx_;
-    ::tls::cipher_context encrypt_ctx_;
-    std::uint64_t read_seq_ = 0;
-    std::uint64_t write_seq_ = 0;
-    std::array<std::uint8_t, kMaxBufSize> rx_buf_{};
+    tls::cipher_context decrypt_ctx_;
+    tls::cipher_context encrypt_ctx_;
+    uint64_t read_seq_ = 0;
+    uint64_t write_seq_ = 0;
+    std::array<uint8_t, kMaxBufSize> rx_buf_{};
     std::size_t rx_buf_offset_ = 0;
     std::size_t rx_buf_size_ = 0;
-    std::vector<std::uint8_t> tx_buf_;
-    std::array<std::uint8_t, kMaxBufSize> scratch_buf_{};
+    std::vector<uint8_t> tx_buf_;
+    std::array<uint8_t, kMaxBufSize> scratch_buf_{};
 };
 
 }    // namespace mux

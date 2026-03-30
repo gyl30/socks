@@ -10,19 +10,14 @@
 namespace mux
 {
 
-namespace
-{
-constexpr auto kReplayCacheWindow = std::chrono::seconds(constants::auth::kMaxClockSkewSec * 2);
-}
-
-replay_cache::replay_cache(const std::size_t max_entries) : replay_cache(max_entries, kReplayCacheWindow) {}
+replay_cache::replay_cache(const std::size_t max_entries) : replay_cache(max_entries, constants::replay::kWindow) {}
 
 replay_cache::replay_cache(const std::size_t max_entries, const std::chrono::steady_clock::duration window)
     : max_entries_(max_entries > 0 ? max_entries : 1), window_(window)
 {
 }
 
-bool replay_cache::check_and_insert(const std::vector<std::uint8_t>& sid)
+bool replay_cache::check_and_insert(const std::vector<uint8_t>& sid)
 {
     if (sid.size() != 32)
     {

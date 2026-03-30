@@ -46,7 +46,7 @@ std::string describe_endpoint_error(const boost::system::error_code& ec) { retur
 tproxy_tcp_session::tproxy_tcp_session(boost::asio::ip::tcp::socket socket,
                                        std::shared_ptr<client_tunnel_pool> tunnel_pool,
                                        std::shared_ptr<router> router,
-                                       const std::uint32_t sid,
+                                       const uint32_t sid,
                                        const config& cfg)
     : socket_(std::move(socket)), idle_timer_(socket_.get_executor()), tunnel_pool_(std::move(tunnel_pool)), router_(std::move(router)), cfg_(cfg)
 
@@ -204,7 +204,7 @@ boost::asio::awaitable<std::pair<route_type, std::shared_ptr<upstream>>> tproxy_
 
 boost::asio::awaitable<void> tproxy_tcp_session::client_to_upstream(std::shared_ptr<upstream> backend)
 {
-    std::vector<std::uint8_t> buf(8192);
+    std::vector<uint8_t> buf(8192);
     boost::system::error_code ec;
     for (;;)
     {
@@ -227,7 +227,7 @@ boost::asio::awaitable<void> tproxy_tcp_session::client_to_upstream(std::shared_
             }
             break;
         }
-        const std::vector<std::uint8_t> data_buf(buf.begin(), buf.begin() + static_cast<int>(n));
+        const std::vector<uint8_t> data_buf(buf.begin(), buf.begin() + static_cast<int>(n));
         co_await backend->write(data_buf, ec);
         if (ec)
         {
@@ -243,7 +243,7 @@ boost::asio::awaitable<void> tproxy_tcp_session::client_to_upstream(std::shared_
 
 boost::asio::awaitable<void> tproxy_tcp_session::upstream_to_client(std::shared_ptr<upstream> backend)
 {
-    std::vector<std::uint8_t> buf(8192);
+    std::vector<uint8_t> buf(8192);
     boost::system::error_code ec;
     for (;;)
     {
@@ -298,7 +298,7 @@ boost::asio::awaitable<void> tproxy_tcp_session::idle_watchdog()
         co_return;
     }
 
-    const auto idle_timeout_ms = static_cast<std::uint64_t>(cfg_.timeout.idle) * 1000ULL;
+    const auto idle_timeout_ms = static_cast<uint64_t>(cfg_.timeout.idle) * 1000ULL;
 
     while (socket_.is_open())
     {

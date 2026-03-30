@@ -14,7 +14,7 @@ class connection_context;
 class ip_matcher;
 class domain_matcher;
 
-enum class route_type : std::uint8_t
+enum class route_type : uint8_t
 {
     kDirect,
     kProxy,

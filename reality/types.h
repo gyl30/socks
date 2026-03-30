@@ -13,13 +13,13 @@ extern "C"
 namespace reality
 {
 
-enum class client_auth_mode : std::uint8_t
+enum class client_auth_mode : uint8_t
 {
     kRealityTunnel,
     kRealCertificateFallback,
 };
 
-enum class accept_mode : std::uint8_t
+enum class accept_mode : uint8_t
 {
     kAuthenticated,
     kFallbackToTarget,
@@ -28,8 +28,8 @@ enum class accept_mode : std::uint8_t
 
 struct negotiated_params
 {
-    std::uint16_t cipher_suite = 0;
-    std::uint16_t key_share_group = 0;
+    uint16_t cipher_suite = 0;
+    uint16_t key_share_group = 0;
     std::string negotiated_alpn;
     const EVP_MD* md = nullptr;
     const EVP_CIPHER* cipher = nullptr;
@@ -37,14 +37,14 @@ struct negotiated_params
 
 struct traffic_secrets
 {
-    std::vector<std::uint8_t> c_app_secret;
-    std::vector<std::uint8_t> s_app_secret;
+    std::vector<uint8_t> c_app_secret;
+    std::vector<uint8_t> s_app_secret;
 };
 
 struct traffic_key_material
 {
-    std::vector<std::uint8_t> key;
-    std::vector<std::uint8_t> iv;
+    std::vector<uint8_t> key;
+    std::vector<uint8_t> iv;
 };
 
 struct client_handshake_result
@@ -56,7 +56,7 @@ struct client_handshake_result
 
 struct accept_decision_context
 {
-    std::vector<std::uint8_t> client_hello_record;
+    std::vector<uint8_t> client_hello_record;
 };
 
 struct authenticated_session

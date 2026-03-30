@@ -28,7 +28,7 @@ class task_group
     template <typename CompletionToken>
     auto adapt(CompletionToken&& completion_token)
     {
-        auto lg = std::scoped_lock<::std::mutex>{mtx_};
+        auto lg = std::scoped_lock<std::mutex>{mtx_};
         auto cs = css_.emplace(css_.end(), std::make_shared<boost::asio::cancellation_signal>());
 
         class remover
@@ -39,7 +39,7 @@ class task_group
 
            public:
             remover(task_group* tg, cancellation_list::iterator cs) : tg_{tg}, cs_{cs} {}
-            remover(remover&& other) noexcept : tg_{::std::exchange(other.tg_, nullptr)}, cs_{other.cs_} {}
+            remover(remover&& other) noexcept : tg_{std::exchange(other.tg_, nullptr)}, cs_{other.cs_} {}
             ~remover()
             {
                 if (tg_ == nullptr)
@@ -49,7 +49,7 @@ class task_group
 
                 std::vector<waiter_ptr> snapshot;
                 {
-                    auto lg = std::scoped_lock<::std::mutex>{tg_->mtx_};
+                    auto lg = std::scoped_lock<std::mutex>{tg_->mtx_};
                     tg_->css_.erase(cs_);
                     if (tg_->css_.empty())
                     {
@@ -65,7 +65,7 @@ class task_group
                 {
                     auto exec = tg_->exec_;
                     boost::asio::post(exec,
-                                      [snapshot = ::std::move(snapshot)]() mutable
+                                      [snapshot = std::move(snapshot)]() mutable
                                       {
                                           for (const auto& waiter : snapshot)
                                           {
@@ -77,27 +77,27 @@ class task_group
         };
 
         return boost::asio::bind_cancellation_slot((*cs)->slot(),
-                                                   boost::asio::consign(::std::forward<CompletionToken>(completion_token), remover{this, cs}));
+                                                   boost::asio::consign(std::forward<CompletionToken>(completion_token), remover{this, cs}));
     }
 
     template <typename Executor, typename AwaitableFactory>
     void spawn(Executor&& exec, AwaitableFactory&& task)
     {
-        boost::asio::co_spawn(::std::forward<Executor>(exec), ::std::forward<AwaitableFactory>(task), adapt(boost::asio::detached));
+        boost::asio::co_spawn(std::forward<Executor>(exec), std::forward<AwaitableFactory>(task), adapt(boost::asio::detached));
     }
 
    public:
     template <typename AwaitableFactory>
     void spawn(AwaitableFactory&& task)
     {
-        spawn(exec_, ::std::forward<AwaitableFactory>(task));
+        spawn(exec_, std::forward<AwaitableFactory>(task));
     }
 
     void emit(boost::asio::cancellation_type type)
     {
         std::vector<cancellation_signal_ptr> snapshot;
         {
-            auto lg = std::scoped_lock<::std::mutex>{mtx_};
+            auto lg = std::scoped_lock<std::mutex>{mtx_};
             snapshot.reserve(css_.size());
             for (const auto& cs : css_)
             {
@@ -123,7 +123,7 @@ class task_group
         waiter_list::iterator waiter_it;
         waiter_ptr waiter;
         {
-            auto lg = std::scoped_lock<::std::mutex>{mtx_};
+            auto lg = std::scoped_lock<std::mutex>{mtx_};
             if (css_.empty())
             {
                 co_return boost::system::error_code{};
@@ -135,7 +135,7 @@ class task_group
         const auto [ec] = co_await waiter->async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
 
         {
-            auto lg = std::scoped_lock<::std::mutex>{mtx_};
+            auto lg = std::scoped_lock<std::mutex>{mtx_};
             waiters_.erase(waiter_it);
         }
 

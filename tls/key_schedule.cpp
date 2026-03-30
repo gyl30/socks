@@ -35,7 +35,7 @@ namespace
 
 }    // namespace
 
-std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> derive_traffic_keys(const std::vector<std::uint8_t>& secret,
+std::pair<std::vector<uint8_t>, std::vector<uint8_t>> derive_traffic_keys(const std::vector<uint8_t>& secret,
                                                                                      boost::system::error_code& ec,
                                                                                      const std::size_t key_len,
                                                                                      const std::size_t iv_len,
@@ -55,8 +55,8 @@ std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> derive_traffic_k
     return std::pair{std::move(key), std::move(iv)};
 }
 
-handshake_keys derive_handshake_keys(const std::vector<std::uint8_t>& shared_secret,
-                                     const std::vector<std::uint8_t>& server_hello_hash,
+handshake_keys derive_handshake_keys(const std::vector<uint8_t>& shared_secret,
+                                     const std::vector<uint8_t>& server_hello_hash,
                                      const EVP_MD* md,
                                      boost::system::error_code& ec)
 {
@@ -66,14 +66,14 @@ handshake_keys derive_handshake_keys(const std::vector<std::uint8_t>& shared_sec
     {
         return {};
     }
-    const std::vector<std::uint8_t> zero_ikm(hash_len, 0);
+    const std::vector<uint8_t> zero_ikm(hash_len, 0);
     auto early_secret = crypto_util::hkdf_extract(zero_ikm, zero_ikm, md, ec);
     if (ec)
     {
         return {};
     }
 
-    std::vector<std::uint8_t> empty_hash(hash_len);
+    std::vector<uint8_t> empty_hash(hash_len);
     unsigned int hl = 0;
     if (EVP_Digest(nullptr, 0, empty_hash.data(), &hl, md, nullptr) != 1 || hl != hash_len)
     {
@@ -119,8 +119,8 @@ handshake_keys derive_handshake_keys(const std::vector<std::uint8_t>& shared_sec
                           .master_secret = std::move(master_secret)};
 }
 
-std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> derive_application_secrets(const std::vector<std::uint8_t>& master_secret,
-                                                                                             const std::vector<std::uint8_t>& handshake_hash,
+std::pair<std::vector<uint8_t>, std::vector<uint8_t>> derive_application_secrets(const std::vector<uint8_t>& master_secret,
+                                                                                             const std::vector<uint8_t>& handshake_hash,
                                                                                              const EVP_MD* md,
                                                                                              boost::system::error_code& ec)
 {
@@ -143,8 +143,8 @@ std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> derive_applicati
     return std::pair{std::move(c_app_secret), std::move(s_app_secret)};
 }
 
-std::vector<std::uint8_t> compute_finished_verify_data(const std::vector<std::uint8_t>& base_key,
-                                                       const std::vector<std::uint8_t>& handshake_hash,
+std::vector<uint8_t> compute_finished_verify_data(const std::vector<uint8_t>& base_key,
+                                                       const std::vector<uint8_t>& handshake_hash,
                                                        const EVP_MD* md,
                                                        boost::system::error_code& ec)
 {
@@ -160,7 +160,7 @@ std::vector<std::uint8_t> compute_finished_verify_data(const std::vector<std::ui
         return {};
     }
 
-    std::uint8_t hmac_out[EVP_MAX_MD_SIZE] = {};
+    uint8_t hmac_out[EVP_MAX_MD_SIZE] = {};
     unsigned int hmac_len = 0;
     if (HMAC(md, finished_key.data(), static_cast<int>(finished_key.size()), handshake_hash.data(), handshake_hash.size(), hmac_out, &hmac_len) ==
             nullptr ||
@@ -169,7 +169,7 @@ std::vector<std::uint8_t> compute_finished_verify_data(const std::vector<std::ui
         ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
         return {};
     }
-    return std::vector<std::uint8_t>{hmac_out, hmac_out + hmac_len};
+    return std::vector<uint8_t>{hmac_out, hmac_out + hmac_len};
 }
 
 }    // namespace key_schedule

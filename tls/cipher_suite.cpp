@@ -7,7 +7,7 @@
 namespace tls
 {
 
-std::optional<negotiated_tls13_suite> select_tls13_suite(const std::uint16_t cipher_suite)
+std::optional<negotiated_tls13_suite> select_tls13_suite(const uint16_t cipher_suite)
 {
     if (cipher_suite == 0x1301)
     {

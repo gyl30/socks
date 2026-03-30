@@ -13,11 +13,11 @@ namespace reality
 class client_hello_builder
 {
    public:
-    static std::vector<std::uint8_t> build(const fingerprint_template& spec,
-                                           const std::vector<std::uint8_t>& session_id,
-                                           const std::vector<std::uint8_t>& random,
-                                           const std::vector<std::uint8_t>& x25519_pubkey,
-                                           const std::vector<std::uint8_t>& x25519_mlkem768_key_share,
+    static std::vector<uint8_t> build(const fingerprint_template& spec,
+                                           const std::vector<uint8_t>& session_id,
+                                           const std::vector<uint8_t>& random,
+                                           const std::vector<uint8_t>& x25519_pubkey,
+                                           const std::vector<uint8_t>& x25519_mlkem768_key_share,
                                            const std::string& hostname);
 };
 

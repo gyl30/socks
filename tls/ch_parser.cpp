@@ -11,12 +11,12 @@ namespace tls
 
 namespace
 {
-constexpr std::uint16_t kMaxSniLen = 255;
+constexpr uint16_t kMaxSniLen = 255;
 }
 
 bool client_hello_parser::read_client_hello_prefix(reader& r, client_hello_info& info)
 {
-    std::uint8_t handshake_type = 0;
+    uint8_t handshake_type = 0;
     if (!r.read_u8(handshake_type) || handshake_type != 0x01)
     {
         return false;
@@ -37,13 +37,13 @@ bool client_hello_parser::read_client_hello_prefix(reader& r, client_hello_info&
 
 bool client_hello_parser::read_session_id(reader& r, client_hello_info& info)
 {
-    std::uint8_t sid_len = 0;
+    uint8_t sid_len = 0;
     if (!r.read_u8(sid_len))
     {
         return false;
     }
 
-    info.sid_offset = static_cast<std::uint32_t>(r.offset());
+    info.sid_offset = static_cast<uint32_t>(r.offset());
     if (sid_len == 0)
     {
         return true;
@@ -54,7 +54,7 @@ bool client_hello_parser::read_session_id(reader& r, client_hello_info& info)
 
 bool client_hello_parser::parse_cipher_suites_and_compression(reader& r, client_hello_info& info)
 {
-    std::uint16_t cs_len = 0;
+    uint16_t cs_len = 0;
     if (!r.read_u16(cs_len))
     {
         return false;
@@ -70,7 +70,7 @@ bool client_hello_parser::parse_cipher_suites_and_compression(reader& r, client_
     }
     while (suites_r.remaining() >= 2)
     {
-        std::uint16_t suite = 0;
+        uint16_t suite = 0;
         if (!suites_r.read_u16(suite))
         {
             return false;
@@ -82,7 +82,7 @@ bool client_hello_parser::parse_cipher_suites_and_compression(reader& r, client_
         return false;
     }
 
-    std::uint8_t comp_len = 0;
+    uint8_t comp_len = 0;
     if (!r.read_u8(comp_len))
     {
         return false;
@@ -90,11 +90,11 @@ bool client_hello_parser::parse_cipher_suites_and_compression(reader& r, client_
     return r.read_vector(info.compression_methods, comp_len);
 }
 
-bool client_hello_parser::read_extension_header(reader& r, std::uint16_t& type, std::uint16_t& len) { return r.read_u16(type) && r.read_u16(len); }
+bool client_hello_parser::read_extension_header(reader& r, uint16_t& type, uint16_t& len) { return r.read_u16(type) && r.read_u16(len); }
 
-bool client_hello_parser::read_sni_item_header(reader& r, std::uint8_t& type, std::uint16_t& len) { return r.read_u8(type) && r.read_u16(len); }
+bool client_hello_parser::read_sni_item_header(reader& r, uint8_t& type, uint16_t& len) { return r.read_u8(type) && r.read_u16(len); }
 
-bool client_hello_parser::handle_sni_item(reader& r, const std::uint8_t type, const std::uint16_t len, client_hello_info& info)
+bool client_hello_parser::handle_sni_item(reader& r, const uint8_t type, const uint16_t len, client_hello_info& info)
 {
     if (type == 0x00)
     {
@@ -115,12 +115,12 @@ bool client_hello_parser::handle_sni_item(reader& r, const std::uint8_t type, co
     return false;
 }
 
-bool client_hello_parser::read_key_share_item_header(reader& r, std::uint16_t& group, std::uint16_t& len)
+bool client_hello_parser::read_key_share_item_header(reader& r, uint16_t& group, uint16_t& len)
 {
     return r.read_u16(group) && r.read_u16(len);
 }
 
-void client_hello_parser::handle_key_share_item(const reader& r, const std::uint16_t group, const std::uint16_t len, client_hello_info& info)
+void client_hello_parser::handle_key_share_item(const reader& r, const uint16_t group, const uint16_t len, client_hello_info& info)
 {
     if (group == consts::group::kX25519)
     {
@@ -209,7 +209,7 @@ bool client_hello_parser::parse_before_extensions(reader& r, client_hello_info& 
 
 void client_hello_parser::parse_extension_block(reader& r, client_hello_info& info)
 {
-    std::uint16_t ext_len = 0;
+    uint16_t ext_len = 0;
     if (!r.read_u16(ext_len))
     {
         if (r.remaining() != 0)
@@ -232,7 +232,7 @@ void client_hello_parser::parse_extension_block(reader& r, client_hello_info& in
     }
 }
 
-client_hello_info client_hello_parser::parse(const std::vector<std::uint8_t>& buf)
+client_hello_info client_hello_parser::parse(const std::vector<uint8_t>& buf)
 {
     client_hello_info info;
     reader r(buf);
@@ -255,8 +255,8 @@ void client_hello_parser::parse_extensions(reader& r, client_hello_info& info)
             return;
         }
 
-        std::uint16_t type = 0;
-        std::uint16_t ext_len = 0;
+        uint16_t type = 0;
+        uint16_t ext_len = 0;
         if (!read_extension_header(r, type, ext_len))
         {
             info.malformed_extensions = true;
@@ -303,7 +303,7 @@ void client_hello_parser::parse_extensions(reader& r, client_hello_info& info)
 
 void client_hello_parser::parse_sni(reader& r, client_hello_info& info)
 {
-    std::uint16_t list_len = 0;
+    uint16_t list_len = 0;
     if (!r.read_u16(list_len))
     {
         info.malformed_sni = true;
@@ -325,8 +325,8 @@ void client_hello_parser::parse_sni(reader& r, client_hello_info& info)
     bool host_name_seen = false;
     while (list_r.remaining() >= 3)
     {
-        std::uint8_t type = 0;
-        std::uint16_t len = 0;
+        uint8_t type = 0;
+        uint16_t len = 0;
         if (!read_sni_item_header(list_r, type, len))
         {
             info.malformed_sni = true;
@@ -362,7 +362,7 @@ void client_hello_parser::parse_sni(reader& r, client_hello_info& info)
 
 void client_hello_parser::parse_alpn(reader& r, client_hello_info& info)
 {
-    std::uint16_t list_len = 0;
+    uint16_t list_len = 0;
     if (!r.read_u16(list_len))
     {
         return;
@@ -376,7 +376,7 @@ void client_hello_parser::parse_alpn(reader& r, client_hello_info& info)
 
     while (list_r.remaining() >= 1)
     {
-        std::uint8_t proto_len = 0;
+        uint8_t proto_len = 0;
         if (!list_r.read_u8(proto_len) || proto_len == 0 || !list_r.has(proto_len))
         {
             info.alpn_protocols.clear();
@@ -397,7 +397,7 @@ void client_hello_parser::parse_alpn(reader& r, client_hello_info& info)
 
 void client_hello_parser::parse_key_share(reader& r, client_hello_info& info)
 {
-    std::uint16_t share_len = 0;
+    uint16_t share_len = 0;
     if (!r.read_u16(share_len))
     {
         info.malformed_key_share = true;
@@ -417,8 +417,8 @@ void client_hello_parser::parse_key_share(reader& r, client_hello_info& info)
 
     while (shares_r.remaining() >= 4)
     {
-        std::uint16_t group = 0;
-        std::uint16_t len = 0;
+        uint16_t group = 0;
+        uint16_t len = 0;
         if (!read_key_share_item_header(shares_r, group, len))
         {
             info.malformed_key_share = true;
@@ -460,7 +460,7 @@ void client_hello_parser::parse_key_share(reader& r, client_hello_info& info)
 
 void client_hello_parser::parse_supported_groups(reader& r, client_hello_info& info)
 {
-    std::uint16_t groups_len = 0;
+    uint16_t groups_len = 0;
     if (!r.read_u16(groups_len) || groups_len == 0 || (groups_len % 2) != 0)
     {
         info.malformed_supported_groups = true;
@@ -476,7 +476,7 @@ void client_hello_parser::parse_supported_groups(reader& r, client_hello_info& i
 
     while (groups_r.remaining() >= 2)
     {
-        std::uint16_t group = 0;
+        uint16_t group = 0;
         if (!groups_r.read_u16(group))
         {
             info.malformed_supported_groups = true;
@@ -492,7 +492,7 @@ void client_hello_parser::parse_supported_groups(reader& r, client_hello_info& i
 
 void client_hello_parser::parse_supported_versions(reader& r, client_hello_info& info)
 {
-    std::uint8_t versions_len = 0;
+    uint8_t versions_len = 0;
     if (!r.read_u8(versions_len) || versions_len == 0 || (versions_len % 2) != 0)
     {
         info.malformed_supported_versions = true;
@@ -508,7 +508,7 @@ void client_hello_parser::parse_supported_versions(reader& r, client_hello_info&
 
     while (versions_r.remaining() >= 2)
     {
-        std::uint16_t version = 0;
+        uint16_t version = 0;
         if (!versions_r.read_u16(version))
         {
             info.malformed_supported_versions = true;
@@ -524,7 +524,7 @@ void client_hello_parser::parse_supported_versions(reader& r, client_hello_info&
 
 void client_hello_parser::parse_signature_algorithms(reader& r, client_hello_info& info)
 {
-    std::uint16_t algorithms_len = 0;
+    uint16_t algorithms_len = 0;
     if (!r.read_u16(algorithms_len) || algorithms_len == 0 || (algorithms_len % 2) != 0)
     {
         info.malformed_signature_algorithms = true;
@@ -542,7 +542,7 @@ void client_hello_parser::parse_signature_algorithms(reader& r, client_hello_inf
 
     while (algorithms_r.remaining() >= 2)
     {
-        std::uint16_t sig_alg = 0;
+        uint16_t sig_alg = 0;
         if (!algorithms_r.read_u16(sig_alg))
         {
             info.malformed_signature_algorithms = true;
@@ -564,7 +564,7 @@ void client_hello_parser::parse_renegotiation_info(reader& r, client_hello_info&
     info.has_renegotiation_info = true;
     info.secure_renegotiation.clear();
 
-    std::uint8_t renegotiation_len = 0;
+    uint8_t renegotiation_len = 0;
     if (!r.read_u8(renegotiation_len))
     {
         info.malformed_renegotiation_info = true;
