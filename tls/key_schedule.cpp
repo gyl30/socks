@@ -35,11 +35,8 @@ namespace
 
 }    // namespace
 
-std::pair<std::vector<uint8_t>, std::vector<uint8_t>> derive_traffic_keys(const std::vector<uint8_t>& secret,
-                                                                                     boost::system::error_code& ec,
-                                                                                     const std::size_t key_len,
-                                                                                     const std::size_t iv_len,
-                                                                                     const EVP_MD* md)
+std::pair<std::vector<uint8_t>, std::vector<uint8_t>> derive_traffic_keys(
+    const std::vector<uint8_t>& secret, boost::system::error_code& ec, const std::size_t key_len, const std::size_t iv_len, const EVP_MD* md)
 {
     ec.clear();
     auto key = crypto_util::hkdf_expand_label(secret, "key", {}, key_len, md, ec);
@@ -120,9 +117,9 @@ handshake_keys derive_handshake_keys(const std::vector<uint8_t>& shared_secret,
 }
 
 std::pair<std::vector<uint8_t>, std::vector<uint8_t>> derive_application_secrets(const std::vector<uint8_t>& master_secret,
-                                                                                             const std::vector<uint8_t>& handshake_hash,
-                                                                                             const EVP_MD* md,
-                                                                                             boost::system::error_code& ec)
+                                                                                 const std::vector<uint8_t>& handshake_hash,
+                                                                                 const EVP_MD* md,
+                                                                                 boost::system::error_code& ec)
 {
     ec.clear();
     const auto hash_len = hash_size(md, ec);
@@ -144,9 +141,9 @@ std::pair<std::vector<uint8_t>, std::vector<uint8_t>> derive_application_secrets
 }
 
 std::vector<uint8_t> compute_finished_verify_data(const std::vector<uint8_t>& base_key,
-                                                       const std::vector<uint8_t>& handshake_hash,
-                                                       const EVP_MD* md,
-                                                       boost::system::error_code& ec)
+                                                  const std::vector<uint8_t>& handshake_hash,
+                                                  const EVP_MD* md,
+                                                  boost::system::error_code& ec)
 {
     ec.clear();
     const auto hash_len = hash_size(md, ec);

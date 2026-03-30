@@ -43,8 +43,7 @@ namespace
 
 [[nodiscard]] uint64_t now_ms()
 {
-    return static_cast<uint64_t>(
-        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
 }
 
 void update_stream_close_command(std::atomic<uint8_t>& stream_close_command, const uint8_t next_command)
@@ -580,20 +579,26 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> udp_socks_session::resolv
     if (ec)
     {
         LOG_CTX_WARN(ctx_, "{} udp direct resolve failed {}:{} error {}", log_event::kRoute, host, port, ec.message());
-        resolved_targets_.put(
-            key,
-            endpoint_cache_entry{
-                .endpoint = {}, .expires_at = now_ms_value + constants::udp::kNegativeCacheTtlMs, .last_error = ec, .negative = true});
+        resolved_targets_.put(key,
+                              endpoint_cache_entry{
+                                  .endpoint = {},
+                                  .expires_at = now_ms_value + constants::udp::kNegativeCacheTtlMs,
+                                  .last_error = ec,
+                                  .negative = true,
+                              });
         co_return boost::asio::ip::udp::endpoint{};
     }
     if (endpoints.begin() == endpoints.end())
     {
         ec = boost::asio::error::host_not_found;
         LOG_CTX_WARN(ctx_, "{} udp direct resolve empty {}:{}", log_event::kRoute, host, port);
-        resolved_targets_.put(
-            key,
-            endpoint_cache_entry{
-                .endpoint = {}, .expires_at = now_ms_value + constants::udp::kNegativeCacheTtlMs, .last_error = ec, .negative = true});
+        resolved_targets_.put(key,
+                              endpoint_cache_entry{
+                                  .endpoint = {},
+                                  .expires_at = now_ms_value + constants::udp::kNegativeCacheTtlMs,
+                                  .last_error = ec,
+                                  .negative = true,
+                              });
         co_return boost::asio::ip::udp::endpoint{};
     }
 
@@ -614,10 +619,13 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> udp_socks_session::resolv
     {
         ec = boost::asio::error::address_family_not_supported;
         LOG_CTX_WARN(ctx_, "{} udp direct resolve no compatible endpoint {}:{}", log_event::kRoute, host, port);
-        resolved_targets_.put(
-            key,
-            endpoint_cache_entry{
-                .endpoint = {}, .expires_at = now_ms_value + constants::udp::kNegativeCacheTtlMs, .last_error = ec, .negative = true});
+        resolved_targets_.put(key,
+                              endpoint_cache_entry{
+                                  .endpoint = {},
+                                  .expires_at = now_ms_value + constants::udp::kNegativeCacheTtlMs,
+                                  .last_error = ec,
+                                  .negative = true,
+                              });
         co_return boost::asio::ip::udp::endpoint{};
     }
     const auto expires_at = now_ms_value + constants::udp::kCacheTtlMs;

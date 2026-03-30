@@ -61,8 +61,7 @@ inline boost::asio::awaitable<void> await_with_timeout(const uint32_t timeout_se
 inline uint64_t timeout_seconds_to_milliseconds(const uint32_t timeout_sec) { return static_cast<uint64_t>(timeout_sec) * 1000ULL; }
 inline uint64_t now_ms()
 {
-    return static_cast<uint64_t>(
-        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
 }
 inline uint32_t remaining_timeout_seconds(const uint64_t start_ms, const uint32_t timeout_sec, boost::system::error_code& ec)
 {

@@ -91,10 +91,7 @@ remote_udp_session::remote_udp_session(boost::asio::io_context& io_context,
     last_activity_time_ms_ = timeout_io::now_ms();
 }
 
-bool remote_udp_session::has_stream() const
-{
-    return stream_ != nullptr;
-}
+bool remote_udp_session::has_stream() const { return stream_ != nullptr; }
 
 boost::asio::awaitable<void> remote_udp_session::start()
 {
@@ -492,7 +489,7 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> remote_udp_session::resol
         co_return boost::asio::ip::udp::endpoint{};
     }
     const auto expires_at = now_ms + constants::udp::kCacheTtlMs;
-    resolved_targets_.put(key, endpoint_cache_entry{.endpoint=target, .expires_at=expires_at, .last_error={}, .negative=false});
+    resolved_targets_.put(key, endpoint_cache_entry{.endpoint = target, .expires_at = expires_at, .last_error = {}, .negative = false});
     co_return target;
 }
 

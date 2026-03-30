@@ -41,8 +41,7 @@ bool handshake_reassembler::next(std::vector<uint8_t>& out, boost::system::error
         return false;
     }
 
-    const uint32_t msg_len =
-        (static_cast<uint32_t>(buffer_[1]) << 16) | (static_cast<uint32_t>(buffer_[2]) << 8) | static_cast<uint32_t>(buffer_[3]);
+    const uint32_t msg_len = (static_cast<uint32_t>(buffer_[1]) << 16) | (static_cast<uint32_t>(buffer_[2]) << 8) | static_cast<uint32_t>(buffer_[3]);
 
     if (msg_len > constants::tls_limits::kMaxHandshakeMessageSize)
     {
