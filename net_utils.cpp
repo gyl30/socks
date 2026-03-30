@@ -66,8 +66,7 @@ uint64_t fnv1a_update(uint64_t hash, const unsigned char* data, const std::size_
 #ifdef __linux__
 uint64_t monotonic_ms()
 {
-    return static_cast<uint64_t>(
-        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
 }
 
 cmsghdr* next_cmsg_header(const msghdr& msg, cmsghdr* current)

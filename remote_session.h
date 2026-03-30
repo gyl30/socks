@@ -16,7 +16,6 @@
 namespace mux
 {
 
-
 class remote_tcp_session : public std::enable_shared_from_this<remote_tcp_session>
 {
    public:

@@ -84,8 +84,7 @@ const char* fingerprint_name(const fingerprint_type fingerprint)
     }
 }
 
-std::pair<uint8_t, std::span<uint8_t>> copy_plaintext_record(std::vector<uint8_t>& plaintext_buffer,
-                                                                       const std::vector<uint8_t>& record)
+std::pair<uint8_t, std::span<uint8_t>> copy_plaintext_record(std::vector<uint8_t>& plaintext_buffer, const std::vector<uint8_t>& record)
 {
     if (plaintext_buffer.size() < record.size())
     {
@@ -111,8 +110,7 @@ boost::system::error_code derive_server_record_protection(fetch_context& ctx,
 
     const auto server_public_key = tls::extract_server_public_key(server_hello);
     boost::system::error_code ec;
-    auto shared_secret =
-        tls::crypto_util::x25519_derive(std::vector<uint8_t>(ctx.client_private, ctx.client_private + 32), server_public_key, ec);
+    auto shared_secret = tls::crypto_util::x25519_derive(std::vector<uint8_t>(ctx.client_private, ctx.client_private + 32), server_public_key, ec);
     if (ec)
     {
         LOG_CTX_ERROR(ctx.ctx, "{} x25519 derive failed", mux::log_event::kCert);
@@ -345,8 +343,8 @@ boost::system::error_code perform_handshake_start(fetch_context& ctx)
     }
 
     const auto spec = fingerprint_factory::get(ctx.fingerprint);
-    auto client_hello = client_hello_builder::build(
-        spec, session_id, client_random, std::vector<uint8_t>(ctx.client_public, ctx.client_public + 32), {}, ctx.sni);
+    auto client_hello =
+        client_hello_builder::build(spec, session_id, client_random, std::vector<uint8_t>(ctx.client_public, ctx.client_public + 32), {}, ctx.sni);
     if (client_hello.empty())
     {
         LOG_CTX_ERROR(
@@ -395,10 +393,10 @@ void read_record_body(fetch_context& ctx, const uint16_t len, std::vector<uint8_
 }
 
 std::pair<uint8_t, std::span<uint8_t>> decrypt_application_record(fetch_context& ctx,
-                                                                            const uint8_t header[5],
-                                                                            const std::vector<uint8_t>& record,
-                                                                            std::vector<uint8_t>& plaintext_buffer,
-                                                                            boost::system::error_code& ec)
+                                                                  const uint8_t header[5],
+                                                                  const std::vector<uint8_t>& record,
+                                                                  std::vector<uint8_t>& plaintext_buffer,
+                                                                  boost::system::error_code& ec)
 {
     auto ciphertext_record = build_encrypted_record_bytes(header, record);
     uint8_t content_type = 0;
@@ -412,10 +410,10 @@ std::pair<uint8_t, std::span<uint8_t>> decrypt_application_record(fetch_context&
 }
 
 std::pair<uint8_t, std::span<uint8_t>> handle_record_by_content_type(fetch_context& ctx,
-                                                                               const uint8_t header[5],
-                                                                               const std::vector<uint8_t>& record,
-                                                                               std::vector<uint8_t>& plaintext_buffer,
-                                                                               boost::system::error_code& ec)
+                                                                     const uint8_t header[5],
+                                                                     const std::vector<uint8_t>& record,
+                                                                     std::vector<uint8_t>& plaintext_buffer,
+                                                                     boost::system::error_code& ec)
 {
     ec.clear();
     switch (header[0])
@@ -437,9 +435,7 @@ std::pair<uint8_t, std::span<uint8_t>> handle_record_by_content_type(fetch_conte
     }
 }
 
-std::pair<uint8_t, std::span<uint8_t>> read_record(fetch_context& ctx,
-                                                             std::vector<uint8_t>& plaintext_buffer,
-                                                             boost::system::error_code& ec)
+std::pair<uint8_t, std::span<uint8_t>> read_record(fetch_context& ctx, std::vector<uint8_t>& plaintext_buffer, boost::system::error_code& ec)
 {
     ec.clear();
     uint8_t header[5] = {0};

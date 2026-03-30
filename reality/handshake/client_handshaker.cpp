@@ -58,10 +58,7 @@ namespace
 
 std::optional<std::vector<uint8_t>> extract_first_cert_der(const std::vector<uint8_t>& cert_msg);
 
-bool read_handshake_message_header(const std::vector<uint8_t>& handshake_buffer,
-                                   const std::size_t offset,
-                                   uint8_t& msg_type,
-                                   uint32_t& msg_len)
+bool read_handshake_message_header(const std::vector<uint8_t>& handshake_buffer, const std::size_t offset, uint8_t& msg_type, uint32_t& msg_len)
 {
     if (offset > handshake_buffer.size() || handshake_buffer.size() - offset < 4)
     {
@@ -261,9 +258,7 @@ tls::openssl_ptrs::x509_ptr parse_x509_from_der_local(const std::vector<uint8_t>
     return x509;
 }
 
-void verify_real_certificate_chain(const std::vector<uint8_t>& msg_data,
-                                   handshake_validation_state& validation_state,
-                                   boost::system::error_code& ec)
+void verify_real_certificate_chain(const std::vector<uint8_t>& msg_data, handshake_validation_state& validation_state, boost::system::error_code& ec)
 {
     if (validation_state.client_hello == nullptr || validation_state.client_hello->sni.empty())
     {
@@ -795,146 +790,218 @@ void validate_server_handshake_chain(const handshake_validation_state& validatio
     }
 }
 
+boost::asio::awaitable<bool> read_handshake_bytes(boost::asio::ip::tcp::socket& socket,
+                                                  const uint64_t handshake_start_ms,
+                                                  const uint32_t timeout_sec,
+                                                  const boost::asio::mutable_buffer& buffer,
+                                                  boost::system::error_code& ec)
+{
+    auto* data = static_cast<uint8_t*>(buffer.data());
+    const auto size = buffer.size();
+    std::size_t total_read = 0;
+    while (total_read < size)
+    {
+        const auto read_timeout = mux::timeout_io::remaining_timeout_seconds(handshake_start_ms, timeout_sec, ec);
+        if (ec)
+        {
+            co_return false;
+        }
+
+        const auto read_size =
+            co_await mux::timeout_io::wait_read_with_timeout(socket, boost::asio::buffer(data + total_read, size - total_read), read_timeout, ec);
+        if (ec)
+        {
+            co_return false;
+        }
+        if (read_size == 0)
+        {
+            ec = boost::asio::error::eof;
+            co_return false;
+        }
+        total_read += read_size;
+    }
+
+    co_return true;
+}
+
+bool validate_handshake_record_header(const std::array<uint8_t, 5>& header, const char* step, boost::system::error_code& ec)
+{
+    if (header[1] != 0x03 || header[2] != 0x03)
+    {
+        LOG_ERROR("invalid tls record version for {} {} {}", step, header[1], header[2]);
+        ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
+        return false;
+    }
+
+    const auto body_len = static_cast<uint16_t>((header[3] << 8) | header[4]);
+    if (body_len > tls::kMaxTlsPlaintextLen)
+    {
+        LOG_ERROR("oversized {} body {}", step, body_len);
+        ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
+        return false;
+    }
+
+    return true;
+}
+
+boost::asio::awaitable<bool> read_handshake_record(boost::asio::ip::tcp::socket& socket,
+                                                   const char* step,
+                                                   const uint64_t handshake_start_ms,
+                                                   const uint32_t timeout_sec,
+                                                   std::array<uint8_t, 5>& header,
+                                                   std::vector<uint8_t>& body,
+                                                   boost::system::error_code& ec)
+{
+    if (!(co_await read_handshake_bytes(socket, handshake_start_ms, timeout_sec, boost::asio::buffer(header), ec)))
+    {
+        LOG_ERROR("error reading {} header {}", step, ec.message());
+        co_return false;
+    }
+    if (!validate_handshake_record_header(header, step, ec))
+    {
+        co_return false;
+    }
+
+    const auto body_len = static_cast<uint16_t>((header[3] << 8) | header[4]);
+    body.resize(body_len);
+    if (!(co_await read_handshake_bytes(socket, handshake_start_ms, timeout_sec, boost::asio::buffer(body), ec)))
+    {
+        LOG_ERROR("error reading {} body {}", step, ec.message());
+        co_return false;
+    }
+
+    co_return true;
+}
+
+bool try_skip_tls13_compat_ccs_record(const std::array<uint8_t, 5>& header,
+                                      const std::vector<uint8_t>& body,
+                                      const char* step,
+                                      const std::vector<uint8_t>& handshake_data,
+                                      uint32_t& tls13_compat_ccs_count,
+                                      boost::system::error_code& ec)
+{
+    if (header[0] != tls::kContentTypeChangeCipherSpec)
+    {
+        return false;
+    }
+
+    const uint8_t ccs_body = body.size() == 1 ? body[0] : 0;
+    if (!handshake_data.empty())
+    {
+        LOG_ERROR("unexpected ccs during fragmented {}", step);
+        ec = boost::asio::error::invalid_argument;
+        return false;
+    }
+    if (!tls::is_valid_tls13_compat_ccs(header, ccs_body))
+    {
+        LOG_ERROR("invalid tls13 compat ccs before {}", step);
+        ec = boost::asio::error::invalid_argument;
+        return false;
+    }
+    if (tls13_compat_ccs_count >= constants::tls_limits::kMaxCompatCcsRecords)
+    {
+        LOG_ERROR("too many tls13 compat ccs before {}", step);
+        ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
+        return false;
+    }
+
+    tls13_compat_ccs_count++;
+    LOG_DEBUG("skip tls13 compat ccs before {} count {}", step, tls13_compat_ccs_count);
+    return true;
+}
+
+bool try_complete_handshake_message(const std::array<uint8_t, 5>& header,
+                                    const std::vector<uint8_t>& body,
+                                    const char* step,
+                                    std::vector<uint8_t>& handshake_data,
+                                    std::vector<uint8_t>& extra_handshake_data,
+                                    boost::system::error_code& ec)
+{
+    if (header[0] != tls::kContentTypeHandshake)
+    {
+        LOG_ERROR("unexpected record type for {} {}", step, header[0]);
+        ec = boost::asio::error::invalid_argument;
+        return false;
+    }
+
+    handshake_data.insert(handshake_data.end(), body.begin(), body.end());
+    if (handshake_data.size() < 4)
+    {
+        return false;
+    }
+    if (handshake_data[0] != 0x02)
+    {
+        LOG_ERROR("unexpected handshake type for {} {}", step, handshake_data[0]);
+        ec = boost::asio::error::invalid_argument;
+        return false;
+    }
+
+    const auto msg_len =
+        (static_cast<uint32_t>(handshake_data[1]) << 16) | (static_cast<uint32_t>(handshake_data[2]) << 8) | static_cast<uint32_t>(handshake_data[3]);
+    if (msg_len > constants::reality_limits::kMaxHandshakeMessageSize)
+    {
+        LOG_ERROR("oversized {} message {}", step, msg_len);
+        ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
+        return false;
+    }
+
+    const auto total_len = static_cast<std::size_t>(msg_len) + 4;
+    if (handshake_data.size() < total_len)
+    {
+        return false;
+    }
+    if (handshake_data.size() > total_len)
+    {
+        extra_handshake_data.assign(handshake_data.begin() + static_cast<std::ptrdiff_t>(total_len), handshake_data.end());
+        handshake_data.resize(total_len);
+        LOG_DEBUG("extra handshake bytes in {} {}", step, extra_handshake_data.size());
+    }
+
+    return true;
+}
+
 boost::asio::awaitable<std::vector<uint8_t>> read_handshake_record_body(boost::asio::ip::tcp::socket& socket,
-                                                                             const char* step,
-                                                                             const uint32_t timeout_sec,
-                                                                             uint32_t& tls13_compat_ccs_count,
-                                                                             std::vector<uint8_t>& extra_handshake_data,
-                                                                             boost::system::error_code& ec)
+                                                                        const char* step,
+                                                                        const uint32_t timeout_sec,
+                                                                        uint32_t& tls13_compat_ccs_count,
+                                                                        std::vector<uint8_t>& extra_handshake_data,
+                                                                        boost::system::error_code& ec)
 {
     extra_handshake_data.clear();
     const auto handshake_start_ms = mux::timeout_io::now_ms();
-    auto read_exact = [&](const boost::asio::mutable_buffer& buffer) -> boost::asio::awaitable<bool>
-    {
-        auto* data = static_cast<uint8_t*>(buffer.data());
-        const auto size = buffer.size();
-        std::size_t total_read = 0;
-        while (total_read < size)
-        {
-            const auto read_timeout = mux::timeout_io::remaining_timeout_seconds(handshake_start_ms, timeout_sec, ec);
-            if (ec)
-            {
-                co_return false;
-            }
-            const auto read_size =
-                co_await mux::timeout_io::wait_read_with_timeout(socket, boost::asio::buffer(data + total_read, size - total_read), read_timeout, ec);
-            if (ec)
-            {
-                co_return false;
-            }
-            if (read_size == 0)
-            {
-                ec = boost::asio::error::eof;
-                co_return false;
-            }
-            total_read += read_size;
-        }
-        co_return true;
-    };
-
     std::vector<uint8_t> handshake_data;
     while (true)
     {
         std::array<uint8_t, 5> header = {};
-        if (!(co_await read_exact(boost::asio::buffer(header))))
+        std::vector<uint8_t> body;
+        if (!(co_await read_handshake_record(socket, step, handshake_start_ms, timeout_sec, header, body, ec)))
         {
-            LOG_ERROR("error reading {} header {}", step, ec.message());
-            co_return std::vector<uint8_t>{};
-        }
-        if (header[1] != 0x03 || header[2] != 0x03)
-        {
-            LOG_ERROR("invalid tls record version for {} {} {}", step, header[1], header[2]);
-            ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
             co_return std::vector<uint8_t>{};
         }
 
-        const auto body_len = static_cast<uint16_t>((header[3] << 8) | header[4]);
-        if (body_len > tls::kMaxTlsPlaintextLen)
-        {
-            LOG_ERROR("oversized {} body {}", step, body_len);
-            ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
-            co_return std::vector<uint8_t>{};
-        }
-
-        std::vector<uint8_t> body(body_len);
-        if (!(co_await read_exact(boost::asio::buffer(body))))
-        {
-            LOG_ERROR("error reading {} body {}", step, ec.message());
-            co_return std::vector<uint8_t>{};
-        }
-
-        if (header[0] == tls::kContentTypeChangeCipherSpec)
-        {
-            const uint8_t ccs_body = body_len == 1 ? body[0] : 0;
-            if (!handshake_data.empty())
-            {
-                LOG_ERROR("unexpected ccs during fragmented {}", step);
-                ec = boost::asio::error::invalid_argument;
-                co_return std::vector<uint8_t>{};
-            }
-            if (!tls::is_valid_tls13_compat_ccs(header, ccs_body))
-            {
-                LOG_ERROR("invalid tls13 compat ccs before {}", step);
-                ec = boost::asio::error::invalid_argument;
-                co_return std::vector<uint8_t>{};
-            }
-            if (tls13_compat_ccs_count >= constants::tls_limits::kMaxCompatCcsRecords)
-            {
-                LOG_ERROR("too many tls13 compat ccs before {}", step);
-                ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
-                co_return std::vector<uint8_t>{};
-            }
-
-            tls13_compat_ccs_count++;
-            LOG_DEBUG("skip tls13 compat ccs before {} count {}", step, tls13_compat_ccs_count);
-            continue;
-        }
-        if (header[0] != tls::kContentTypeHandshake)
-        {
-            LOG_ERROR("unexpected record type for {} {}", step, header[0]);
-            ec = boost::asio::error::invalid_argument;
-            co_return std::vector<uint8_t>{};
-        }
-        handshake_data.insert(handshake_data.end(), body.begin(), body.end());
-
-        if (handshake_data.size() < 4)
+        if (try_skip_tls13_compat_ccs_record(header, body, step, handshake_data, tls13_compat_ccs_count, ec))
         {
             continue;
         }
-        if (handshake_data[0] != 0x02)
+        if (ec)
         {
-            LOG_ERROR("unexpected handshake type for {} {}", step, handshake_data[0]);
-            ec = boost::asio::error::invalid_argument;
             co_return std::vector<uint8_t>{};
         }
 
-        const auto msg_len = (static_cast<uint32_t>(handshake_data[1]) << 16) | (static_cast<uint32_t>(handshake_data[2]) << 8) |
-                             static_cast<uint32_t>(handshake_data[3]);
-        if (msg_len > constants::reality_limits::kMaxHandshakeMessageSize)
+        if (try_complete_handshake_message(header, body, step, handshake_data, extra_handshake_data, ec))
         {
-            LOG_ERROR("oversized {} message {}", step, msg_len);
-            ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
+            co_return handshake_data;
+        }
+        if (ec)
+        {
             co_return std::vector<uint8_t>{};
         }
-
-        const auto total_len = static_cast<std::size_t>(msg_len) + 4;
-        if (handshake_data.size() < total_len)
-        {
-            continue;
-        }
-        if (handshake_data.size() > total_len)
-        {
-            extra_handshake_data.assign(handshake_data.begin() + static_cast<std::ptrdiff_t>(total_len), handshake_data.end());
-            handshake_data.resize(total_len);
-            LOG_DEBUG("extra handshake bytes in {} {}", step, extra_handshake_data.size());
-        }
-        co_return handshake_data;
     }
 }
 
 std::pair<std::vector<uint8_t>, std::vector<uint8_t>> derive_client_auth_key_material(const uint8_t* private_key,
-                                                                                                const std::vector<uint8_t>& server_pub_key,
-                                                                                                boost::system::error_code& ec)
+                                                                                      const std::vector<uint8_t>& server_pub_key,
+                                                                                      boost::system::error_code& ec)
 {
     auto shared = tls::crypto_util::x25519_derive(std::vector<uint8_t>(private_key, private_key + 32), server_pub_key, ec);
     LOG_DEBUG("using server pub key size {}", server_pub_key.size());
@@ -1016,10 +1083,10 @@ void build_client_hello_with_placeholder_sid(const fingerprint_template& spec,
 }
 
 std::vector<uint8_t> encrypt_client_session_id(const std::vector<uint8_t>& auth_key,
-                                                    const std::vector<uint8_t>& client_random,
-                                                    const std::array<uint8_t, kAuthPayloadLen>& payload,
-                                                    const std::vector<uint8_t>& hello_body,
-                                                    boost::system::error_code& ec)
+                                               const std::vector<uint8_t>& client_random,
+                                               const std::array<uint8_t, kAuthPayloadLen>& payload,
+                                               const std::vector<uint8_t>& hello_body,
+                                               boost::system::error_code& ec)
 {
     auto sid = tls::crypto_util::aead_encrypt(EVP_aes_128_gcm(),
                                               auth_key,
@@ -1296,10 +1363,10 @@ void prepare_server_hello_crypto(const std::vector<uint8_t>& sh_data,
 }
 
 std::vector<uint8_t> derive_server_hello_shared_secret(const uint8_t* private_key,
-                                                            const std::vector<uint8_t>& mlkem768_private_key,
-                                                            const uint16_t key_share_group,
-                                                            const std::vector<uint8_t>& key_share_data,
-                                                            boost::system::error_code& ec)
+                                                       const std::vector<uint8_t>& mlkem768_private_key,
+                                                       const uint16_t key_share_group,
+                                                       const std::vector<uint8_t>& key_share_data,
+                                                       boost::system::error_code& ec)
 {
     if (key_share_group == tls::consts::group::kX25519)
     {
@@ -1337,8 +1404,7 @@ std::vector<uint8_t> derive_server_hello_shared_secret(const uint8_t* private_ke
         return {};
     }
 
-    const std::vector<uint8_t> ciphertext(key_share_data.begin(),
-                                               key_share_data.begin() + static_cast<std::ptrdiff_t>(tls::kMlkem768CiphertextSize));
+    const std::vector<uint8_t> ciphertext(key_share_data.begin(), key_share_data.begin() + static_cast<std::ptrdiff_t>(tls::kMlkem768CiphertextSize));
     auto mlkem768_shared = tls::crypto_util::mlkem768_decapsulate(mlkem768_private_key, ciphertext, ec);
     if (ec)
     {
@@ -1526,20 +1592,19 @@ boost::asio::awaitable<server_hello_res> process_server_hello(boost::asio::ip::t
     };
 }
 
-boost::asio::awaitable<client_handshake_read_result> handshake_read_loop(
-    boost::asio::ip::tcp::socket& socket,
-    const std::pair<std::vector<uint8_t>, std::vector<uint8_t>>& s_hs_keys,
-    const tls::handshake_keys& hs_keys,
-    const std::vector<uint8_t>& auth_key,
-    const tls::client_hello_info& client_hello,
-    const std::string& sni,
-    tls::transcript& trans,
-    std::vector<uint8_t> initial_handshake_data,
-    const EVP_CIPHER* cipher,
-    const EVP_MD* md,
-    const uint32_t max_handshake_records,
-    const uint32_t read_timeout_sec,
-    boost::system::error_code& ec)
+boost::asio::awaitable<client_handshake_read_result> handshake_read_loop(boost::asio::ip::tcp::socket& socket,
+                                                                         const std::pair<std::vector<uint8_t>, std::vector<uint8_t>>& s_hs_keys,
+                                                                         const tls::handshake_keys& hs_keys,
+                                                                         const std::vector<uint8_t>& auth_key,
+                                                                         const tls::client_hello_info& client_hello,
+                                                                         const std::string& sni,
+                                                                         tls::transcript& trans,
+                                                                         std::vector<uint8_t> initial_handshake_data,
+                                                                         const EVP_CIPHER* cipher,
+                                                                         const EVP_MD* md,
+                                                                         const uint32_t max_handshake_records,
+                                                                         const uint32_t read_timeout_sec,
+                                                                         boost::system::error_code& ec)
 {
     const auto handshake_start_ms = mux::timeout_io::now_ms();
     bool handshake_fin = false;

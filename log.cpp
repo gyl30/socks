@@ -4,6 +4,8 @@
 #include <vector>
 #include <cstdint>
 #include <cstdlib>
+#include <charconv>
+#include <string_view>
 #include "spdlog/common.h"
 #include "spdlog/logger.h"
 
@@ -52,11 +54,11 @@ static void init_default_log(const std::string& filename)
 static void set_log_level()
 {
     spdlog::set_level(spdlog::level::info);
-    if (getenv("TRACE") != nullptr)
+    if (std::getenv("TRACE") != nullptr)
     {
         spdlog::set_level(spdlog::level::trace);
     }
-    else if (getenv("DEBUG") != nullptr)
+    else if (std::getenv("DEBUG") != nullptr)
     {
         spdlog::set_level(spdlog::level::debug);
     }
@@ -91,20 +93,30 @@ static spdlog::level::level_enum parse_level_name(const std::string& level)
 
 static uint32_t get_log_file_size()
 {
-    char* file_size = getenv("kLogFileSize");
-    if (file_size != nullptr)
+    if (const char* env_value = std::getenv("kLogFileSize"); env_value != nullptr && *env_value != '\0')
     {
-        return static_cast<uint32_t>(atoi(file_size));
+        uint32_t file_size = 0;
+        const std::string_view value(env_value);
+        const auto [ptr, ec] = std::from_chars(value.data(), value.data() + value.size(), file_size);
+        if (ec == std::errc() && ptr == value.data() + value.size())
+        {
+            return file_size;
+        }
     }
     return constants::log::kFileSize;
 }
 
 static uint32_t get_log_file_count()
 {
-    char* file_count = getenv("kLogFileCount");
-    if (file_count != nullptr)
+    if (const char* env_value = std::getenv("kLogFileCount"); env_value != nullptr && *env_value != '\0')
     {
-        return static_cast<uint32_t>(atoi(file_count));
+        uint32_t file_count = 0;
+        const std::string_view value(env_value);
+        const auto [ptr, ec] = std::from_chars(value.data(), value.data() + value.size(), file_count);
+        if (ec == std::errc() && ptr == value.data() + value.size())
+        {
+            return file_count;
+        }
     }
     return constants::log::kFileCount;
 }

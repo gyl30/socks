@@ -113,11 +113,8 @@ server_accept_result make_decision_result(const accept_mode mode, std::string re
     return result;
 }
 
-boost::asio::awaitable<void> read_tls_record_header(boost::asio::ip::tcp::socket& socket,
-                                                    std::vector<uint8_t>& buf,
-                                                    const uint64_t start_ms,
-                                                    const uint32_t timeout,
-                                                    boost::system::error_code& ec)
+boost::asio::awaitable<void> read_tls_record_header(
+    boost::asio::ip::tcp::socket& socket, std::vector<uint8_t>& buf, const uint64_t start_ms, const uint32_t timeout, boost::system::error_code& ec)
 {
     while (buf.size() < tls::kTlsRecordHeaderSize)
     {
@@ -164,6 +161,142 @@ boost::asio::awaitable<void> read_tls_record_body(boost::asio::ip::tcp::socket& 
     co_return;
 }
 
+const char* validate_client_hello_record_header(const std::vector<uint8_t>& record_buf,
+                                                const mux::connection_context& ctx,
+                                                boost::system::error_code& ec)
+{
+    if (record_buf[1] != 0x03 || record_buf[2] != 0x03)
+    {
+        LOG_CTX_ERROR(ctx, "{} invalid tls record version {} {}", mux::log_event::kHandshake, record_buf[1], record_buf[2]);
+        ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
+        return "invalid_tls_record_version";
+    }
+
+    return nullptr;
+}
+
+const char* validate_client_hello_ccs_record(const std::vector<uint8_t>& record_buf,
+                                             const uint16_t record_len,
+                                             uint32_t& ccs_count,
+                                             const mux::connection_context& ctx,
+                                             boost::system::error_code& ec)
+{
+    if (ccs_count >= constants::tls_limits::kMaxCompatCcsRecords)
+    {
+        LOG_CTX_ERROR(ctx, "{} too many ccs records {}", mux::log_event::kHandshake, ccs_count);
+        ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
+        return "tls13_ccs_too_many";
+    }
+
+    ccs_count++;
+    if (record_len != 1)
+    {
+        LOG_CTX_ERROR(ctx, "{} invalid ccs length {}", mux::log_event::kHandshake, record_len);
+        ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
+        return "tls13_ccs_len_invalid";
+    }
+
+    const std::array<uint8_t, 5> header = {record_buf[0], record_buf[1], record_buf[2], record_buf[3], record_buf[4]};
+    const auto ccs_body = record_buf[tls::kTlsRecordHeaderSize];
+    if (!tls::is_valid_tls13_compat_ccs(header, ccs_body))
+    {
+        LOG_CTX_ERROR(ctx, "{} invalid ccs body {}", mux::log_event::kHandshake, ccs_body);
+        ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
+        return "tls13_ccs_body_invalid";
+    }
+
+    return nullptr;
+}
+
+const char* validate_client_hello_handshake_record(const std::vector<uint8_t>& record_buf,
+                                                   const uint16_t record_len,
+                                                   const std::size_t record_count,
+                                                   const std::size_t max_records,
+                                                   const mux::connection_context& ctx,
+                                                   boost::system::error_code& ec)
+{
+    if (record_buf[0] != 0x16)
+    {
+        LOG_CTX_ERROR(ctx, "{} unexpected tls record type {}", mux::log_event::kHandshake, record_buf[0]);
+        ec = boost::asio::error::invalid_argument;
+        return "unexpected_tls_record_type";
+    }
+    if (record_len > tls::kMaxTlsPlaintextLen)
+    {
+        LOG_CTX_ERROR(ctx, "{} client hello record too large {}", mux::log_event::kHandshake, record_len);
+        ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
+        return "client_hello_record_too_large";
+    }
+    if (record_len == 0)
+    {
+        LOG_CTX_ERROR(ctx, "{} client hello record empty", mux::log_event::kHandshake);
+        ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
+        return "client_hello_record_empty";
+    }
+    if (record_count >= max_records)
+    {
+        LOG_CTX_ERROR(ctx, "{} client hello record too many {}", mux::log_event::kHandshake, record_count);
+        ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
+        return "client_hello_record_too_many";
+    }
+
+    return nullptr;
+}
+
+const char* append_client_hello_record(const std::vector<uint8_t>& record_buf,
+                                       std::vector<uint8_t>& wire_buf,
+                                       std::vector<uint8_t>& handshake_buf,
+                                       const std::size_t max_wire_len,
+                                       const std::size_t max_handshake_len,
+                                       const mux::connection_context& ctx,
+                                       bool& handshake_complete,
+                                       boost::system::error_code& ec)
+{
+    handshake_complete = false;
+    if (record_buf.size() > max_wire_len - wire_buf.size())
+    {
+        LOG_CTX_ERROR(ctx, "{} client hello wire too large {}", mux::log_event::kHandshake, wire_buf.size() + record_buf.size());
+        ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
+        return "client_hello_wire_too_large";
+    }
+
+    wire_buf.insert(wire_buf.end(), record_buf.begin(), record_buf.end());
+    handshake_buf.insert(handshake_buf.end(), record_buf.begin() + static_cast<std::ptrdiff_t>(tls::kTlsRecordHeaderSize), record_buf.end());
+    if (handshake_buf.size() < 4)
+    {
+        return nullptr;
+    }
+    if (handshake_buf[0] != 0x01)
+    {
+        LOG_CTX_ERROR(ctx, "{} unexpected client hello type {}", mux::log_event::kHandshake, handshake_buf[0]);
+        ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
+        return "unexpected_client_hello_type";
+    }
+
+    const auto hello_msg_len =
+        (static_cast<uint32_t>(handshake_buf[1]) << 16) | (static_cast<uint32_t>(handshake_buf[2]) << 8) | static_cast<uint32_t>(handshake_buf[3]);
+    const auto total_len = static_cast<std::size_t>(hello_msg_len) + 4;
+    if (total_len > max_handshake_len)
+    {
+        LOG_CTX_ERROR(ctx, "{} client hello message too large {}", mux::log_event::kHandshake, total_len);
+        ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
+        return "client_hello_message_too_large";
+    }
+    if (handshake_buf.size() < total_len)
+    {
+        return nullptr;
+    }
+    if (handshake_buf.size() != total_len)
+    {
+        LOG_CTX_ERROR(ctx, "{} client hello message has trailing data {}", mux::log_event::kHandshake, handshake_buf.size() - total_len);
+        ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
+        return "client_hello_message_has_trailing_data";
+    }
+
+    handshake_complete = true;
+    return nullptr;
+}
+
 boost::asio::awaitable<const char*> read_client_hello_handshake(boost::asio::ip::tcp::socket& socket,
                                                                 std::vector<uint8_t>& wire_buf,
                                                                 std::vector<uint8_t>& handshake_buf,
@@ -191,70 +324,31 @@ boost::asio::awaitable<const char*> read_client_hello_handshake(boost::asio::ip:
             LOG_CTX_ERROR(ctx, "{} read tls record header failed {}", mux::log_event::kHandshake, ec.message());
             co_return "read_tls_record_header_failed";
         }
-        if (record_buf[1] != 0x03 || record_buf[2] != 0x03)
+        if (const auto* error_reason = validate_client_hello_record_header(record_buf, ctx, ec); error_reason != nullptr)
         {
-            LOG_CTX_ERROR(ctx, "{} invalid tls record version {} {}", mux::log_event::kHandshake, record_buf[1], record_buf[2]);
-            ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
-            co_return "invalid_tls_record_version";
+            co_return error_reason;
         }
 
         const auto record_len = static_cast<uint16_t>((record_buf[3] << 8) | record_buf[4]);
         if (record_buf[0] == 0x14)
         {
-            if (ccs_count >= constants::tls_limits::kMaxCompatCcsRecords)
-            {
-                LOG_CTX_ERROR(ctx, "{} too many ccs records {}", mux::log_event::kHandshake, ccs_count);
-                ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
-                co_return "tls13_ccs_too_many";
-            }
-            ccs_count++;
-            if (record_len != 1)
-            {
-                LOG_CTX_ERROR(ctx, "{} invalid ccs length {}", mux::log_event::kHandshake, record_len);
-                ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
-                co_return "tls13_ccs_len_invalid";
-            }
             co_await read_tls_record_body(socket, record_buf, record_len, handshake_start_ms, timeout, ec);
             if (ec)
             {
                 LOG_CTX_ERROR(ctx, "{} read tls record body failed {}", mux::log_event::kHandshake, ec.message());
                 co_return "read_tls_record_body_failed";
             }
-
-            const std::array<uint8_t, 5> header = {record_buf[0], record_buf[1], record_buf[2], record_buf[3], record_buf[4]};
-            const auto ccs_body = record_buf[tls::kTlsRecordHeaderSize];
-            if (!tls::is_valid_tls13_compat_ccs(header, ccs_body))
+            if (const auto* error_reason = validate_client_hello_ccs_record(record_buf, record_len, ccs_count, ctx, ec); error_reason != nullptr)
             {
-                LOG_CTX_ERROR(ctx, "{} invalid ccs body {}", mux::log_event::kHandshake, ccs_body);
-                ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
-                co_return "tls13_ccs_body_invalid";
+                co_return error_reason;
             }
             continue;
         }
 
-        if (record_buf[0] != 0x16)
+        if (const auto* error_reason = validate_client_hello_handshake_record(record_buf, record_len, record_count, max_records, ctx, ec);
+            error_reason != nullptr)
         {
-            LOG_CTX_ERROR(ctx, "{} unexpected tls record type {}", mux::log_event::kHandshake, record_buf[0]);
-            ec = boost::asio::error::invalid_argument;
-            co_return "unexpected_tls_record_type";
-        }
-        if (record_len > tls::kMaxTlsPlaintextLen)
-        {
-            LOG_CTX_ERROR(ctx, "{} client hello record too large {}", mux::log_event::kHandshake, record_len);
-            ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
-            co_return "client_hello_record_too_large";
-        }
-        if (record_len == 0)
-        {
-            LOG_CTX_ERROR(ctx, "{} client hello record empty", mux::log_event::kHandshake);
-            ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
-            co_return "client_hello_record_empty";
-        }
-        if (record_count >= max_records)
-        {
-            LOG_CTX_ERROR(ctx, "{} client hello record too many {}", mux::log_event::kHandshake, record_count);
-            ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
-            co_return "client_hello_record_too_many";
+            co_return error_reason;
         }
         record_count++;
 
@@ -265,45 +359,17 @@ boost::asio::awaitable<const char*> read_client_hello_handshake(boost::asio::ip:
             co_return "read_tls_record_body_failed";
         }
 
-        if (record_buf.size() > max_wire_len - wire_buf.size())
+        bool handshake_complete = false;
+        if (const auto* error_reason =
+                append_client_hello_record(record_buf, wire_buf, handshake_buf, max_wire_len, max_handshake_len, ctx, handshake_complete, ec);
+            error_reason != nullptr)
         {
-            LOG_CTX_ERROR(ctx, "{} client hello wire too large {}", mux::log_event::kHandshake, wire_buf.size() + record_buf.size());
-            ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
-            co_return "client_hello_wire_too_large";
+            co_return error_reason;
         }
-        wire_buf.insert(wire_buf.end(), record_buf.begin(), record_buf.end());
-        handshake_buf.insert(handshake_buf.end(), record_buf.begin() + static_cast<std::ptrdiff_t>(tls::kTlsRecordHeaderSize), record_buf.end());
-        if (handshake_buf.size() < 4)
+        if (handshake_complete)
         {
-            continue;
+            co_return nullptr;
         }
-        if (handshake_buf[0] != 0x01)
-        {
-            LOG_CTX_ERROR(ctx, "{} unexpected client hello type {}", mux::log_event::kHandshake, handshake_buf[0]);
-            ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
-            co_return "unexpected_client_hello_type";
-        }
-
-        const auto hello_msg_len = (static_cast<uint32_t>(handshake_buf[1]) << 16) | (static_cast<uint32_t>(handshake_buf[2]) << 8) |
-                                   static_cast<uint32_t>(handshake_buf[3]);
-        const auto total_len = static_cast<std::size_t>(hello_msg_len) + 4;
-        if (total_len > max_handshake_len)
-        {
-            LOG_CTX_ERROR(ctx, "{} client hello message too large {}", mux::log_event::kHandshake, total_len);
-            ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
-            co_return "client_hello_message_too_large";
-        }
-        if (handshake_buf.size() < total_len)
-        {
-            continue;
-        }
-        if (handshake_buf.size() != total_len)
-        {
-            LOG_CTX_ERROR(ctx, "{} client hello message has trailing data {}", mux::log_event::kHandshake, handshake_buf.size() - total_len);
-            ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
-            co_return "client_hello_message_has_trailing_data";
-        }
-        co_return nullptr;
     }
 }
 
@@ -519,14 +585,14 @@ handshake_crypto_result build_handshake_crypto(const server_handshake_context& h
     }
 
     const auto key_len = suite->key_len;
-    out.c_hs_keys = tls::key_schedule::derive_traffic_keys(
-        out.hs_keys.client_handshake_traffic_secret, ec, key_len, constants::crypto::kIvLen, out.md);
+    out.c_hs_keys =
+        tls::key_schedule::derive_traffic_keys(out.hs_keys.client_handshake_traffic_secret, ec, key_len, constants::crypto::kIvLen, out.md);
     if (ec)
     {
         return {};
     }
-    out.s_hs_keys = tls::key_schedule::derive_traffic_keys(
-        out.hs_keys.server_handshake_traffic_secret, ec, key_len, constants::crypto::kIvLen, out.md);
+    out.s_hs_keys =
+        tls::key_schedule::derive_traffic_keys(out.hs_keys.server_handshake_traffic_secret, ec, key_len, constants::crypto::kIvLen, out.md);
     if (ec)
     {
         return {};
@@ -592,9 +658,9 @@ std::vector<uint8_t> generate_server_random(boost::system::error_code& ec)
 }
 
 std::vector<uint8_t> build_reality_bound_certificate(const std::vector<uint8_t>& cert_template,
-                                                          const std::vector<uint8_t>& auth_key,
-                                                          const std::vector<uint8_t>& cert_public_key,
-                                                          boost::system::error_code& ec)
+                                                     const std::vector<uint8_t>& auth_key,
+                                                     const std::vector<uint8_t>& cert_public_key,
+                                                     boost::system::error_code& ec)
 {
     ec.clear();
     auto template_signature = tls::crypto_util::extract_certificate_signature(cert_template, ec);
@@ -645,8 +711,7 @@ bool client_offers_signature_scheme(const tls::client_hello_info& hello, uint16_
     return std::ranges::find(hello.signature_algorithms, scheme) != hello.signature_algorithms.end();
 }
 
-std::vector<std::vector<uint8_t>> build_reality_certificate_chain(const std::vector<uint8_t>& leaf_cert_der,
-                                                                       const site_material* site_material)
+std::vector<std::vector<uint8_t>> build_reality_certificate_chain(const std::vector<uint8_t>& leaf_cert_der, const site_material* site_material)
 {
     std::vector<std::vector<uint8_t>> cert_chain;
     cert_chain.push_back(leaf_cert_der);
@@ -893,12 +958,12 @@ bool verify_client_finished_plaintext(const std::vector<uint8_t>& plaintext,
 }
 
 std::vector<uint8_t> compose_server_hello_flight(const std::vector<uint8_t>& sh_msg,
-                                                      const std::vector<uint8_t>& flight2_plain,
-                                                      const bool send_change_cipher_spec,
-                                                      std::span<const uint16_t> encrypted_handshake_record_sizes,
-                                                      const EVP_CIPHER* cipher,
-                                                      const std::pair<std::vector<uint8_t>, std::vector<uint8_t>>& s_hs_keys,
-                                                      boost::system::error_code& ec)
+                                                 const std::vector<uint8_t>& flight2_plain,
+                                                 const bool send_change_cipher_spec,
+                                                 std::span<const uint16_t> encrypted_handshake_record_sizes,
+                                                 const EVP_CIPHER* cipher,
+                                                 const std::pair<std::vector<uint8_t>, std::vector<uint8_t>>& s_hs_keys,
+                                                 boost::system::error_code& ec)
 {
     ec.clear();
     std::vector<uint8_t> out_sh;
@@ -933,7 +998,7 @@ std::vector<uint8_t> compose_server_hello_flight(const std::vector<uint8_t>& sh_
 
         const auto end = offset + len;
         const std::vector<uint8_t> chunk(flight2_plain.begin() + static_cast<std::ptrdiff_t>(offset),
-                                              flight2_plain.begin() + static_cast<std::ptrdiff_t>(end));
+                                         flight2_plain.begin() + static_cast<std::ptrdiff_t>(end));
         tls::record_layer::encrypt_tls_record(record_ctx, cipher, key_material, seq++, chunk, tls::kContentTypeHandshake, out_sh, ec);
         if (ec)
         {
@@ -985,14 +1050,13 @@ boost::asio::awaitable<bool> read_client_hello_or_decide(const server_handshake_
     }
 
     const auto& ctx = handshake_ctx.ctx;
-    const auto* read_failure_reason = co_await read_client_hello_handshake(
-        *handshake_ctx.socket,
-        state.client_hello_record,
-        state.client_hello_handshake,
-        ctx,
-        cfg.timeout.read,
-        constants::tls_limits::kMaxUnauthenticatedClientHelloLen,
-        ec);
+    const auto* read_failure_reason = co_await read_client_hello_handshake(*handshake_ctx.socket,
+                                                                           state.client_hello_record,
+                                                                           state.client_hello_handshake,
+                                                                           ctx,
+                                                                           cfg.timeout.read,
+                                                                           constants::tls_limits::kMaxUnauthenticatedClientHelloLen,
+                                                                           ec);
     if (read_failure_reason != nullptr)
     {
         ec.clear();
@@ -1009,13 +1073,9 @@ boost::asio::awaitable<bool> read_client_hello_or_decide(const server_handshake_
     co_return true;
 }
 
-std::optional<server_accept_result> validate_client_hello_and_authenticate(server_handshake_context& handshake_ctx,
-                                                                           server_handshake_state& state,
-                                                                           const mux::config& cfg,
-                                                                           const std::vector<uint8_t>& private_key,
-                                                                           const std::vector<uint8_t>& short_id_bytes,
-                                                                           mux::replay_cache& replay_cache,
-                                                                           boost::system::error_code& ec)
+std::optional<server_accept_result> validate_client_hello_sni_and_extensions(server_handshake_context& handshake_ctx,
+                                                                             server_handshake_state& state,
+                                                                             const mux::config& cfg)
 {
     auto& ctx = handshake_ctx.ctx;
     if (state.client_hello.malformed_sni)
@@ -1062,6 +1122,13 @@ std::optional<server_accept_result> validate_client_hello_and_authenticate(serve
         LOG_CTX_ERROR(ctx, "{} auth fail malformed signature algorithms extension", mux::log_event::kAuth);
         return make_decision_result(accept_mode::kFallbackToTarget, "malformed_signature_algorithms", state);
     }
+
+    return std::nullopt;
+}
+
+std::optional<server_accept_result> validate_client_hello_tls13_requirements(server_handshake_context& handshake_ctx, server_handshake_state& state)
+{
+    auto& ctx = handshake_ctx.ctx;
     if (state.client_hello.signature_algorithms.empty())
     {
         LOG_CTX_ERROR(ctx, "{} auth fail missing signature algorithms extension", mux::log_event::kAuth);
@@ -1104,6 +1171,13 @@ std::optional<server_accept_result> validate_client_hello_and_authenticate(serve
         LOG_CTX_WARN(ctx, "{} auth fail non-empty renegotiation info len {}", mux::log_event::kAuth, state.client_hello.secure_renegotiation.size());
         return make_decision_result(accept_mode::kFallbackToTarget, "non_empty_renegotiation_info", state);
     }
+
+    return std::nullopt;
+}
+
+std::optional<server_accept_result> extract_client_key_share(server_handshake_context& handshake_ctx, server_handshake_state& state)
+{
+    auto& ctx = handshake_ctx.ctx;
     if (state.client_hello.key_share_group == tls::consts::group::kX25519MLKEM768 &&
         state.client_hello.x25519_mlkem768_share.size() == tls::kMlkem768PublicKeySize + 32)
     {
@@ -1117,12 +1191,22 @@ std::optional<server_accept_result> validate_client_hello_and_authenticate(serve
         state.key_share_group = tls::consts::group::kX25519;
         state.x25519_peer_pub = state.client_hello.x25519_pub;
     }
+
     if (state.x25519_peer_pub.size() != 32)
     {
         LOG_CTX_ERROR(ctx, "{} auth fail missing valid x25519 key share", mux::log_event::kAuth);
         return make_decision_result(accept_mode::kFallbackToTarget, "missing_x25519_share", state);
     }
 
+    return std::nullopt;
+}
+
+std::optional<server_accept_result> authenticate_client_hello(server_handshake_context& handshake_ctx,
+                                                              server_handshake_state& state,
+                                                              const std::vector<uint8_t>& private_key,
+                                                              const std::vector<uint8_t>& short_id_bytes,
+                                                              boost::system::error_code& ec)
+{
     auto auth = decrypt_auth_payload(handshake_ctx, state, private_key, ec);
     if (ec)
     {
@@ -1138,6 +1222,14 @@ std::optional<server_accept_result> validate_client_hello_and_authenticate(serve
         return make_decision_result(accept_mode::kFallbackToTarget, "verify_auth_timestamp_failed", state);
     }
 
+    return std::nullopt;
+}
+
+std::optional<server_accept_result> finalize_client_hello_authentication(server_handshake_context& handshake_ctx,
+                                                                         server_handshake_state& state,
+                                                                         mux::replay_cache& replay_cache)
+{
+    auto& ctx = handshake_ctx.ctx;
     LOG_CTX_INFO(ctx,
                  "{} client hello selected key share group 0x{:04x} {} client hybrid {} client x25519 {}",
                  mux::log_event::kHandshake,
@@ -1154,8 +1246,37 @@ std::optional<server_accept_result> validate_client_hello_and_authenticate(serve
     {
         return make_decision_result(accept_mode::kReject, "replay_attack", state);
     }
+
     state.transcript.update(state.client_hello_handshake);
     return std::nullopt;
+}
+
+std::optional<server_accept_result> validate_client_hello_and_authenticate(server_handshake_context& handshake_ctx,
+                                                                           server_handshake_state& state,
+                                                                           const mux::config& cfg,
+                                                                           const std::vector<uint8_t>& private_key,
+                                                                           const std::vector<uint8_t>& short_id_bytes,
+                                                                           mux::replay_cache& replay_cache,
+                                                                           boost::system::error_code& ec)
+{
+    if (auto result = validate_client_hello_sni_and_extensions(handshake_ctx, state, cfg); result.has_value())
+    {
+        return result;
+    }
+    if (auto result = validate_client_hello_tls13_requirements(handshake_ctx, state); result.has_value())
+    {
+        return result;
+    }
+    if (auto result = extract_client_key_share(handshake_ctx, state); result.has_value())
+    {
+        return result;
+    }
+    if (auto result = authenticate_client_hello(handshake_ctx, state, private_key, short_id_bytes, ec); result.has_value())
+    {
+        return result;
+    }
+
+    return finalize_client_hello_authentication(handshake_ctx, state, replay_cache);
 }
 
 authenticated_handshake_plan prepare_authenticated_handshake(const server_handshake_context& handshake_ctx,
@@ -1197,8 +1318,8 @@ authenticated_handshake_plan prepare_authenticated_handshake(const server_handsh
                   mux::log_event::kHandshake,
                   tls::crypto_util::bytes_to_hex(std::vector<uint8_t>(ephemeral_public_key.begin(), ephemeral_public_key.end())));
 
-    auto x25519_shared = tls::crypto_util::x25519_derive(
-        std::vector<uint8_t>(ephemeral_private_key.begin(), ephemeral_private_key.end()), state.x25519_peer_pub, ec);
+    auto x25519_shared =
+        tls::crypto_util::x25519_derive(std::vector<uint8_t>(ephemeral_private_key.begin(), ephemeral_private_key.end()), state.x25519_peer_pub, ec);
     if (ec)
     {
         LOG_CTX_ERROR(ctx, "{} x25519 derive failed", mux::log_event::kHandshake);

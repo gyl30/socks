@@ -65,8 +65,8 @@ void mux_codec::encode_header(const frame_header& h, std::vector<uint8_t>& buf)
 
 void mux_codec::decode_header(const uint8_t* buf, frame_header& out)
 {
-    out.stream_id = (static_cast<uint32_t>(buf[0]) << 24) | (static_cast<uint32_t>(buf[1]) << 16) |
-                    (static_cast<uint32_t>(buf[2]) << 8) | (static_cast<uint32_t>(buf[3]));
+    out.stream_id = (static_cast<uint32_t>(buf[0]) << 24) | (static_cast<uint32_t>(buf[1]) << 16) | (static_cast<uint32_t>(buf[2]) << 8) |
+                    (static_cast<uint32_t>(buf[3]));
 
     out.length = static_cast<uint16_t>((static_cast<uint16_t>(buf[4]) << 8) | static_cast<uint16_t>(buf[5]));
     out.command = buf[6];

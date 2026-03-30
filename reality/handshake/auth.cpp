@@ -58,8 +58,8 @@ std::optional<auth_payload> parse_auth_payload(std::span<const uint8_t> payload)
     out.version_y = payload[1];
     out.version_z = payload[2];
 
-    out.timestamp = (static_cast<uint32_t>(payload[4]) << 24) | (static_cast<uint32_t>(payload[5]) << 16) |
-                    (static_cast<uint32_t>(payload[6]) << 8) | static_cast<uint32_t>(payload[7]);
+    out.timestamp = (static_cast<uint32_t>(payload[4]) << 24) | (static_cast<uint32_t>(payload[5]) << 16) | (static_cast<uint32_t>(payload[6]) << 8) |
+                    static_cast<uint32_t>(payload[7]);
 
     std::copy(payload.begin() + 8, payload.begin() + 16, out.short_id.begin());
 

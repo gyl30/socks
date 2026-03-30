@@ -38,8 +38,7 @@ bool read_u24_at(const std::span<const uint8_t> data, std::size_t& pos, uint32_t
     {
         return false;
     }
-    value =
-        (static_cast<uint32_t>(data[pos]) << 16) | (static_cast<uint32_t>(data[pos + 1]) << 8) | static_cast<uint32_t>(data[pos + 2]);
+    value = (static_cast<uint32_t>(data[pos]) << 16) | (static_cast<uint32_t>(data[pos + 1]) << 8) | static_cast<uint32_t>(data[pos + 2]);
     pos += 3;
     return true;
 }
@@ -51,8 +50,7 @@ bool read_handshake_message_len(const std::span<const uint8_t> data, std::size_t
         return false;
     }
 
-    const auto payload_len =
-        (static_cast<uint32_t>(data[1]) << 16) | (static_cast<uint32_t>(data[2]) << 8) | static_cast<uint32_t>(data[3]);
+    const auto payload_len = (static_cast<uint32_t>(data[1]) << 16) | (static_cast<uint32_t>(data[2]) << 8) | static_cast<uint32_t>(data[3]);
     full_len = static_cast<std::size_t>(payload_len) + 4U;
     return full_len <= data.size();
 }
@@ -69,10 +67,8 @@ bool parse_extension_types(const std::span<const uint8_t> ext_block, handshake_e
         {
             return false;
         }
-        const auto ext_type =
-            static_cast<uint16_t>((static_cast<uint16_t>(ext_block[pos]) << 8) | static_cast<uint16_t>(ext_block[pos + 1]));
-        const auto ext_len =
-            static_cast<uint16_t>((static_cast<uint16_t>(ext_block[pos + 2]) << 8) | static_cast<uint16_t>(ext_block[pos + 3]));
+        const auto ext_type = static_cast<uint16_t>((static_cast<uint16_t>(ext_block[pos]) << 8) | static_cast<uint16_t>(ext_block[pos + 1]));
+        const auto ext_len = static_cast<uint16_t>((static_cast<uint16_t>(ext_block[pos + 2]) << 8) | static_cast<uint16_t>(ext_block[pos + 3]));
         pos += 4;
         if (pos + ext_len > ext_block.size())
         {
@@ -102,7 +98,8 @@ bool validate_certificate_der(const std::span<const uint8_t> certificate_der)
 {
     const auto* der_begin = certificate_der.data();
     const auto* parse_cursor = der_begin;
-    const tls::openssl_ptrs::x509_ptr certificate(d2i_X509(nullptr, &parse_cursor, static_cast<long>(certificate_der.size())));
+    const auto der_len = static_cast<int64_t>(certificate_der.size());
+    const tls::openssl_ptrs::x509_ptr certificate(d2i_X509(nullptr, &parse_cursor, der_len));
     if (certificate == nullptr)
     {
         return false;
@@ -156,8 +153,7 @@ bool locate_server_hello_body(const std::span<const uint8_t> server_hello, std::
     return end >= pos && end == server_hello.size();
 }
 
-bool parse_extension_header(
-    const std::span<const uint8_t> server_hello, const std::size_t end, std::size_t& pos, uint16_t& type, uint16_t& ext_len)
+bool parse_extension_header(const std::span<const uint8_t> server_hello, const std::size_t end, std::size_t& pos, uint16_t& type, uint16_t& ext_len)
 {
     if (pos + 4 > end)
     {
@@ -247,11 +243,56 @@ std::optional<server_key_share_info> parse_server_key_share_entry(const std::spa
     return info;
 }
 
-bool parse_server_hello_extensions(const std::span<const uint8_t> server_hello,
-                                   std::size_t pos,
-                                   const std::size_t end,
-                                   server_hello_info& info,
-                                   const bool is_hello_retry_request)
+bool parse_server_hello_key_share_extension(const std::span<const uint8_t> server_hello,
+                                            const std::size_t pos,
+                                            const std::size_t ext_end,
+                                            server_hello_info& info,
+                                            const bool is_hello_retry_request)
+{
+    if (info.has_key_share)
+    {
+        return false;
+    }
+    if (is_hello_retry_request)
+    {
+        return parse_hrr_key_share_extension(server_hello, pos, ext_end, info);
+    }
+
+    const auto key_share = parse_server_key_share_entry(server_hello, pos, ext_end);
+    if (!key_share.has_value())
+    {
+        return false;
+    }
+    info.key_share = *key_share;
+    info.has_key_share = true;
+    return true;
+}
+
+bool parse_server_hello_extension_by_type(const std::span<const uint8_t> server_hello,
+                                          const uint16_t type,
+                                          const std::size_t pos,
+                                          const std::size_t ext_end,
+                                          server_hello_info& info,
+                                          const bool is_hello_retry_request)
+{
+    if (type == tls::consts::ext::kSupportedVersions)
+    {
+        return !info.has_supported_version && parse_supported_version_extension(server_hello, pos, ext_end, info);
+    }
+    if (type == tls::consts::ext::kKeyShare)
+    {
+        return parse_server_hello_key_share_extension(server_hello, pos, ext_end, info, is_hello_retry_request);
+    }
+    if (is_forbidden_tls13_server_hello_extension(type))
+    {
+        info.has_forbidden_tls13_extension = true;
+    }
+
+    return true;
+}
+
+bool parse_server_hello_extensions(
+    const std::span<const uint8_t> server_hello, std::size_t pos, const std::size_t end, server_hello_info& info, const bool is_hello_retry_request)
 {
     while (pos + 4 <= end)
     {
@@ -267,40 +308,9 @@ bool parse_server_hello_extensions(const std::span<const uint8_t> server_hello,
         }
 
         const auto ext_end = pos + ext_len;
-        if (type == tls::consts::ext::kSupportedVersions)
+        if (!parse_server_hello_extension_by_type(server_hello, type, pos, ext_end, info, is_hello_retry_request))
         {
-            if (info.has_supported_version || !parse_supported_version_extension(server_hello, pos, ext_end, info))
-            {
-                return false;
-            }
-        }
-        else if (type == tls::consts::ext::kKeyShare)
-        {
-            if (info.has_key_share)
-            {
-                return false;
-            }
-            if (is_hello_retry_request)
-            {
-                if (!parse_hrr_key_share_extension(server_hello, pos, ext_end, info))
-                {
-                    return false;
-                }
-            }
-            else
-            {
-                const auto key_share = parse_server_key_share_entry(server_hello, pos, ext_end);
-                if (!key_share.has_value())
-                {
-                    return false;
-                }
-                info.key_share = *key_share;
-                info.has_key_share = true;
-            }
-        }
-        else if (is_forbidden_tls13_server_hello_extension(type))
-        {
-            info.has_forbidden_tls13_extension = true;
+            return false;
         }
 
         if (!advance_extension_payload(pos, end, ext_len))
@@ -351,9 +361,7 @@ bool read_extension_header(const std::span<const uint8_t> msg, std::size_t& pos,
     return pos + len <= end;
 }
 
-std::optional<std::string> parse_alpn_extension_body(const std::span<const uint8_t> encrypted_extensions,
-                                                     const std::size_t pos,
-                                                     const uint16_t len)
+std::optional<std::string> parse_alpn_extension_body(const std::span<const uint8_t> encrypted_extensions, const std::size_t pos, const uint16_t len)
 {
     if (len < 3)
     {
