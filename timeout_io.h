@@ -26,22 +26,6 @@ namespace mux::timeout_io
 namespace detail
 {
 
-inline boost::system::error_code timeout_error(const boost::system::error_code& wait_ec)
-{
-    if (wait_ec)
-    {
-        return wait_ec;
-    }
-    return {boost::asio::error::timed_out};
-}
-
-template <typename WaitResult>
-inline void assign_timeout_error(const WaitResult& wait_result, boost::system::error_code& ec)
-{
-    const auto& [wait_ec] = wait_result;
-    ec = timeout_error(wait_ec);
-}
-
 template <typename OpFactory, typename SuccessHandler, typename TimeoutHandler>
 inline boost::asio::awaitable<void> await_with_timeout(const std::uint32_t timeout_sec,
                                                        OpFactory&& op_factory,
@@ -104,6 +88,16 @@ inline std::uint64_t now_second()
     return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
 }
 
+template <typename Rep, typename Period>
+inline boost::asio::awaitable<boost::system::error_code> wait_for(boost::asio::io_context& io_context,
+                                                                  const std::chrono::duration<Rep, Period>& delay)
+{
+    boost::asio::steady_timer timer(io_context);
+    timer.expires_after(delay);
+    const auto [wait_ec] = co_await timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
+    co_return wait_ec;
+}
+
 inline boost::asio::awaitable<void> wait_connect_with_timeout(boost::asio::ip::tcp::socket& socket,
                                                               const boost::asio::ip::tcp::endpoint& endpoint,
                                                               const std::uint32_t timeout_sec,
@@ -117,7 +111,11 @@ inline boost::asio::awaitable<void> wait_connect_with_timeout(boost::asio::ip::t
             const auto& [op_ec] = result;
             ec = op_ec;
         },
-        [&](const auto& wait_result) { detail::assign_timeout_error(wait_result, ec); });
+        [&](const auto& wait_result)
+        {
+            const auto& [wait_ec] = wait_result;
+            ec = wait_ec ? wait_ec : boost::system::error_code{boost::asio::error::timed_out};
+        });
 }
 
 template <typename MultipleBufferSequence>
@@ -138,7 +136,8 @@ inline boost::asio::awaitable<std::size_t> wait_read_with_timeout(boost::asio::i
         },
         [&](const auto& wait_result)
         {
-            detail::assign_timeout_error(wait_result, ec);
+            const auto& [wait_ec] = wait_result;
+            ec = wait_ec ? wait_ec : boost::system::error_code{boost::asio::error::timed_out};
             read_size = 0;
         });
     co_return read_size;
@@ -162,7 +161,8 @@ inline boost::asio::awaitable<std::size_t> wait_write_with_timeout(boost::asio::
         },
         [&](const auto& wait_result)
         {
-            detail::assign_timeout_error(wait_result, ec);
+            const auto& [wait_ec] = wait_result;
+            ec = wait_ec ? wait_ec : boost::system::error_code{boost::asio::error::timed_out};
             write_size = 0;
         });
     co_return write_size;
@@ -186,7 +186,8 @@ inline boost::asio::awaitable<std::size_t> wait_read_some_with_timeout(boost::as
         },
         [&](const auto& wait_result)
         {
-            detail::assign_timeout_error(wait_result, ec);
+            const auto& [wait_ec] = wait_result;
+            ec = wait_ec ? wait_ec : boost::system::error_code{boost::asio::error::timed_out};
             read_size = 0;
         });
     co_return read_size;
@@ -210,7 +211,8 @@ inline boost::asio::awaitable<std::size_t> wait_write_some_with_timeout(boost::a
         },
         [&](const auto& wait_result)
         {
-            detail::assign_timeout_error(wait_result, ec);
+            const auto& [wait_ec] = wait_result;
+            ec = wait_ec ? wait_ec : boost::system::error_code{boost::asio::error::timed_out};
             write_size = 0;
         });
     co_return write_size;
@@ -237,7 +239,8 @@ inline boost::asio::awaitable<typename boost::asio::ip::basic_resolver<InternetP
         },
         [&](const auto& wait_result)
         {
-            detail::assign_timeout_error(wait_result, ec);
+            const auto& [wait_ec] = wait_result;
+            ec = wait_ec ? wait_ec : boost::system::error_code{boost::asio::error::timed_out};
             results = results_type{};
         });
     co_return results;
@@ -263,7 +266,8 @@ inline boost::asio::awaitable<ValueType> wait_receive_with_timeout(
         },
         [&](const auto& wait_result)
         {
-            detail::assign_timeout_error(wait_result, ec);
+            const auto& [wait_ec] = wait_result;
+            ec = wait_ec ? wait_ec : boost::system::error_code{boost::asio::error::timed_out};
             data = ValueType{};
         });
     co_return data;
@@ -284,7 +288,11 @@ inline boost::asio::awaitable<void> wait_send_with_timeout(
             const auto& [op_ec] = result;
             ec = op_ec;
         },
-        [&](const auto& wait_result) { detail::assign_timeout_error(wait_result, ec); });
+        [&](const auto& wait_result)
+        {
+            const auto& [wait_ec] = wait_result;
+            ec = wait_ec ? wait_ec : boost::system::error_code{boost::asio::error::timed_out};
+        });
 }
 
 }    // namespace mux::timeout_io

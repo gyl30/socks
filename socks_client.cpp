@@ -14,6 +14,7 @@
 #include "config.h"
 #include "router.h"
 #include "context_pool.h"
+#include "timeout_io.h"
 #include "socks_client.h"
 #include "socks_session.h"
 #include "client_tunnel_pool.h"
@@ -76,21 +77,7 @@ socks_client::socks_client(io_context_pool& pool, const config& cfg)
 
 void socks_client::start()
 {
-    auto tunnel_pool = tunnel_pool_;
-    if (tunnel_pool == nullptr)
-    {
-        LOG_ERROR("tunnel pool unavailable");
-        std::exit(EXIT_FAILURE);
-    }
-
-    auto router = router_;
-    if (router == nullptr)
-    {
-        LOG_ERROR("router unavailable");
-        std::exit(EXIT_FAILURE);
-    }
-
-    if (!router->load())
+    if (!router_->load())
     {
         LOG_ERROR("failed to load router data");
         std::exit(EXIT_FAILURE);
@@ -101,7 +88,7 @@ void socks_client::start()
         return;
     }
 
-    tunnel_pool->start();
+    tunnel_pool_->start();
     LOG_INFO("local socks5 starting listener on {}:{}", cfg_.socks.host, cfg_.socks.port);
 
     owner_worker_.group.spawn([self = shared_from_this()]() { return self->start_acceptor(); });
@@ -138,9 +125,7 @@ boost::asio::awaitable<void> socks_client::accept_loop()
         if (ec)
         {
             LOG_ERROR("socks5 accept failed {} retry", ec.message());
-            boost::asio::steady_timer retry_timer(owner_worker_.io_context);
-            retry_timer.expires_after(std::chrono::seconds(3));
-            co_await retry_timer.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, ec));
+            ec = co_await timeout_io::wait_for(owner_worker_.io_context, std::chrono::seconds(3));
             if (ec)
             {
                 LOG_ERROR("accept retry timer error {}", ec.message());
