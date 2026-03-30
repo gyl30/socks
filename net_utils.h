@@ -16,7 +16,7 @@ using socket_handle_t = std::uintptr_t;
 using socket_handle_t = int;
 #endif
 
-void set_socket_mark(socket_handle_t fd, std::uint32_t mark, boost::system::error_code& ec);
+void set_socket_mark(socket_handle_t fd, uint32_t mark, boost::system::error_code& ec);
 
 void set_socket_transparent_v4(int fd, boost::system::error_code& ec);
 
@@ -40,7 +40,7 @@ struct udp_endpoint_hash
     {
         const auto normalized = normalize_endpoint(ep);
         std::size_t h = 1469598103934665603ULL;
-        auto mix = [&](std::uint8_t b)
+        auto mix = [&](uint8_t b)
         {
             h ^= b;
             h *= 1099511628211ULL;
@@ -62,8 +62,8 @@ struct udp_endpoint_hash
             }
         }
         const auto port = normalized.port();
-        mix(static_cast<std::uint8_t>(port >> 8));
-        mix(static_cast<std::uint8_t>(port & 0xFF));
+        mix(static_cast<uint8_t>(port >> 8));
+        mix(static_cast<uint8_t>(port & 0xFF));
         return h;
     }
 };
@@ -76,9 +76,9 @@ struct udp_endpoint_equal
     }
 };
 
-[[nodiscard]] std::uint64_t fnv1a_64(std::string_view data);
+[[nodiscard]] uint64_t fnv1a_64(std::string_view data);
 
-[[nodiscard]] std::uint64_t endpoint_hash(const boost::asio::ip::udp::endpoint& endpoint);
+[[nodiscard]] uint64_t endpoint_hash(const boost::asio::ip::udp::endpoint& endpoint);
 
 [[nodiscard]] std::optional<boost::asio::ip::udp::endpoint> parse_original_dst(const msghdr& msg);
 

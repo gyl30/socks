@@ -79,25 +79,25 @@ std::string dump_config(const config& cfg) { return reflect::serialize_struct(cf
 std::string dump_default_config()
 {
     config cfg;
-    std::uint8_t public_key[32] = {0};
-    std::uint8_t private_key[32] = {0};
-    std::uint8_t short_id[8] = {0};
+    uint8_t public_key[32] = {0};
+    uint8_t private_key[32] = {0};
+    uint8_t short_id[8] = {0};
     const auto wipe_keys = [&]()
     {
         OPENSSL_cleanse(private_key, sizeof(private_key));
         OPENSSL_cleanse(public_key, sizeof(public_key));
         OPENSSL_cleanse(short_id, sizeof(short_id));
     };
-    if (::tls::crypto_util::generate_x25519_keypair(public_key, private_key))
+    if (tls::crypto_util::generate_x25519_keypair(public_key, private_key))
     {
-        cfg.reality.private_key = ::tls::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(private_key, private_key + 32));
-        cfg.reality.public_key = ::tls::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(public_key, public_key + 32));
+        cfg.reality.private_key = tls::crypto_util::bytes_to_hex(std::vector<uint8_t>(private_key, private_key + 32));
+        cfg.reality.public_key = tls::crypto_util::bytes_to_hex(std::vector<uint8_t>(public_key, public_key + 32));
     }
     if (RAND_bytes(short_id, sizeof(short_id)) != 1)
     {
         std::memcpy(short_id, private_key, sizeof(short_id));
     }
-    cfg.reality.short_id = ::tls::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(short_id, short_id + sizeof(short_id)));
+    cfg.reality.short_id = tls::crypto_util::bytes_to_hex(std::vector<uint8_t>(short_id, short_id + sizeof(short_id)));
     wipe_keys();
     return dump_config(cfg);
 }

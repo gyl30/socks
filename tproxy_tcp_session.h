@@ -22,7 +22,7 @@ class tproxy_tcp_session : public std::enable_shared_from_this<tproxy_tcp_sessio
     tproxy_tcp_session(boost::asio::ip::tcp::socket socket,
                        std::shared_ptr<client_tunnel_pool> tunnel_pool,
                        std::shared_ptr<router> router,
-                       std::uint32_t sid,
+                       uint32_t sid,
                        const config& cfg);
 
     [[nodiscard]] boost::asio::awaitable<void> start();
@@ -43,7 +43,7 @@ class tproxy_tcp_session : public std::enable_shared_from_this<tproxy_tcp_sessio
     std::shared_ptr<router> router_;
     const config& cfg_;
     std::shared_ptr<void> active_guard_;
-    std::uint64_t last_activity_time_ms_{0};
+    uint64_t last_activity_time_ms_{0};
     std::atomic<bool> backend_closed_{false};
 };
 

@@ -11,7 +11,7 @@ namespace mux
 struct config
 {
     std::string mode = "server";
-    std::uint32_t workers = 0;
+    uint32_t workers = 0;
 
     struct log_t
     {
@@ -22,20 +22,20 @@ struct config
     struct inbound_t
     {
         std::string host = "0.0.0.0";
-        std::uint16_t port = 8844;
+        uint16_t port = 8844;
     } inbound;
 
     struct outbound_t
     {
         std::string host = "0.0.0.0";
-        std::uint16_t port = 8844;
+        uint16_t port = 8844;
     } outbound;
 
     struct socks_t
     {
         bool enabled = true;
         std::string host = "127.0.0.1";
-        std::uint16_t port = 1080;
+        uint16_t port = 1080;
         bool auth = false;
         std::string username;
         std::string password;
@@ -45,41 +45,41 @@ struct config
     {
         bool enabled = false;
         std::string listen_host = "::";
-        std::uint16_t tcp_port = 1081;
-        std::uint16_t udp_port = 0;
-        std::uint32_t mark = 0x11;
+        uint16_t tcp_port = 1081;
+        uint16_t udp_port = 0;
+        uint32_t mark = 0x11;
     } tproxy;
 
     struct timeout_t
     {
-        std::uint32_t read = 100;
-        std::uint32_t write = 100;
-        std::uint32_t connect = 10;
-        std::uint32_t idle = 300;
+        uint32_t read = 100;
+        uint32_t write = 100;
+        uint32_t connect = 10;
+        uint32_t idle = 300;
     } timeout;
 
     struct limits_t
     {
-        std::uint32_t max_connections = 5;
-        std::uint32_t tunnel_connections = 0;
-        std::uint64_t max_buffer = 10L * 1024 * 1024;
-        std::uint32_t max_streams = 1024;
-        std::uint32_t max_handshake_records = 256;
+        uint32_t max_connections = 5;
+        uint32_t tunnel_connections = 0;
+        uint64_t max_buffer = 10L * 1024 * 1024;
+        uint32_t max_streams = 1024;
+        uint32_t max_handshake_records = 256;
     } limits;
 
     struct heartbeat_t
     {
-        std::uint32_t min_interval = 15;
-        std::uint32_t max_interval = 45;
-        std::uint32_t min_padding = 32;
-        std::uint32_t max_padding = 1024;
+        uint32_t min_interval = 15;
+        uint32_t max_interval = 45;
+        uint32_t min_padding = 32;
+        uint32_t max_padding = 1024;
     } heartbeat;
 
     struct reality_t
     {
         std::string sni = "www.apple.com";
         std::string fingerprint = "random";
-        std::uint32_t replay_cache_max_entries = 100000;
+        uint32_t replay_cache_max_entries = 100000;
         std::string private_key;
         std::string public_key;
         std::string short_id;

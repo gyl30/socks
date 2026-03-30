@@ -25,25 +25,25 @@ namespace tls
 
 namespace key_schedule
 {
-[[nodiscard]] std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> derive_traffic_keys(const std::vector<std::uint8_t>& secret,
+[[nodiscard]] std::pair<std::vector<uint8_t>, std::vector<uint8_t>> derive_traffic_keys(const std::vector<uint8_t>& secret,
                                                                                                    boost::system::error_code& ec,
                                                                                                    std::size_t key_len = 16,
                                                                                                    std::size_t iv_len = 12,
                                                                                                    const EVP_MD* md = EVP_sha256());
 
-[[nodiscard]] handshake_keys derive_handshake_keys(const std::vector<std::uint8_t>& shared_secret,
-                                                   const std::vector<std::uint8_t>& server_hello_hash,
+[[nodiscard]] handshake_keys derive_handshake_keys(const std::vector<uint8_t>& shared_secret,
+                                                   const std::vector<uint8_t>& server_hello_hash,
                                                    const EVP_MD* md,
                                                    boost::system::error_code& ec);
 
-[[nodiscard]] std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> derive_application_secrets(
-    const std::vector<std::uint8_t>& master_secret,
-    const std::vector<std::uint8_t>& handshake_hash,
+[[nodiscard]] std::pair<std::vector<uint8_t>, std::vector<uint8_t>> derive_application_secrets(
+    const std::vector<uint8_t>& master_secret,
+    const std::vector<uint8_t>& handshake_hash,
     const EVP_MD* md,
     boost::system::error_code& ec);
 
-[[nodiscard]] std::vector<std::uint8_t> compute_finished_verify_data(const std::vector<std::uint8_t>& base_key,
-                                                                     const std::vector<std::uint8_t>& handshake_hash,
+[[nodiscard]] std::vector<uint8_t> compute_finished_verify_data(const std::vector<uint8_t>& base_key,
+                                                                     const std::vector<uint8_t>& handshake_hash,
                                                                      const EVP_MD* md,
                                                                      boost::system::error_code& ec);
 

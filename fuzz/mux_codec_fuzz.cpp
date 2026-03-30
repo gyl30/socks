@@ -10,11 +10,11 @@
 namespace
 {
 
-constexpr std::array<std::uint8_t, 5> kCommands = {mux::kCmdSyn, mux::kCmdAck, mux::kCmdDat, mux::kCmdFin, mux::kCmdRst};
+constexpr std::array<uint8_t, 5> kCommands = {mux::kCmdSyn, mux::kCmdAck, mux::kCmdDat, mux::kCmdFin, mux::kCmdRst};
 
-std::vector<std::uint8_t> make_buffer(const std::uint8_t* data, const std::size_t size)
+std::vector<uint8_t> make_buffer(const uint8_t* data, const std::size_t size)
 {
-    std::vector<std::uint8_t> out;
+    std::vector<uint8_t> out;
     if (data != nullptr && size != 0)
     {
         out.assign(data, data + size);
@@ -22,32 +22,32 @@ std::vector<std::uint8_t> make_buffer(const std::uint8_t* data, const std::size_
     return out;
 }
 
-std::uint16_t read_u16(const std::uint8_t* data, const std::size_t size, const std::size_t offset)
+uint16_t read_u16(const uint8_t* data, const std::size_t size, const std::size_t offset)
 {
     if (data == nullptr || size == 0)
     {
         return 0;
     }
-    const auto hi = static_cast<std::uint16_t>(data[offset % size]);
-    const auto lo = static_cast<std::uint16_t>(data[(offset + 1) % size]);
-    return static_cast<std::uint16_t>((hi << 8) | lo);
+    const auto hi = static_cast<uint16_t>(data[offset % size]);
+    const auto lo = static_cast<uint16_t>(data[(offset + 1) % size]);
+    return static_cast<uint16_t>((hi << 8) | lo);
 }
 
-std::uint32_t read_u32(const std::uint8_t* data, const std::size_t size, const std::size_t offset)
+uint32_t read_u32(const uint8_t* data, const std::size_t size, const std::size_t offset)
 {
     if (data == nullptr || size == 0)
     {
         return 0;
     }
-    const auto b0 = static_cast<std::uint32_t>(data[offset % size]);
-    const auto b1 = static_cast<std::uint32_t>(data[(offset + 1) % size]);
-    const auto b2 = static_cast<std::uint32_t>(data[(offset + 2) % size]);
-    const auto b3 = static_cast<std::uint32_t>(data[(offset + 3) % size]);
+    const auto b0 = static_cast<uint32_t>(data[offset % size]);
+    const auto b1 = static_cast<uint32_t>(data[(offset + 1) % size]);
+    const auto b2 = static_cast<uint32_t>(data[(offset + 2) % size]);
+    const auto b3 = static_cast<uint32_t>(data[(offset + 3) % size]);
     return (b0 << 24) | (b1 << 16) | (b2 << 8) | b3;
 }
 
 std::string make_printable_text(
-    const std::uint8_t* data, const std::size_t size, const std::size_t offset, const std::size_t max_len, const char* fallback)
+    const uint8_t* data, const std::size_t size, const std::size_t offset, const std::size_t max_len, const char* fallback)
 {
     static constexpr char kAlphabet[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-_:/";
     if (data == nullptr || size == 0)
@@ -67,7 +67,7 @@ std::string make_printable_text(
 
 }    // namespace
 
-extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size)
+extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, std::size_t size)
 {
     const auto raw = make_buffer(data, size);
     const auto* raw_ptr = raw.empty() ? nullptr : raw.data();
@@ -78,10 +78,10 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
     if (!raw.empty())
     {
         header.stream_id = read_u32(data, size, 0);
-        header.length = static_cast<std::uint16_t>(raw.size());
+        header.length = static_cast<uint16_t>(raw.size());
         header.command = kCommands[static_cast<std::size_t>(data[0]) % kCommands.size()];
 
-        std::vector<std::uint8_t> encoded_header;
+        std::vector<uint8_t> encoded_header;
         mux::mux_codec::encode_header(header, encoded_header);
 
         mux::frame_header decoded_header{};
@@ -106,7 +106,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
     synthetic_syn.port = read_u16(data, size, 2);
     synthetic_syn.trace_id = make_printable_text(data, size, 4, 32, "trace");
 
-    std::vector<std::uint8_t> syn_buf;
+    std::vector<uint8_t> syn_buf;
     if (mux::mux_codec::encode_syn(synthetic_syn, syn_buf))
     {
         mux::syn_payload decoded_syn{};
@@ -118,7 +118,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
     synthetic_ack.bnd_addr = make_printable_text(data, size, 6, 64, "127.0.0.1");
     synthetic_ack.bnd_port = read_u16(data, size, 8);
 
-    std::vector<std::uint8_t> ack_buf;
+    std::vector<uint8_t> ack_buf;
     if (mux::mux_codec::encode_ack(synthetic_ack, ack_buf))
     {
         mux::ack_payload decoded_ack{};

@@ -21,6 +21,7 @@ extern "C"
 
 #include "log.h"
 #include "config.h"
+#include "constants.h"
 #include "protocol.h"
 #include "mux_codec.h"
 #include "mux_protocol.h"
@@ -59,7 +60,7 @@ void close_tcp_socket(boost::asio::ip::tcp::socket& socket)    // NOLINT(misc-co
     (void)ec;
 }
 
-connection_context build_connection_context(const std::shared_ptr<boost::asio::ip::tcp::socket>& s, std::uint32_t conn_id)
+connection_context build_connection_context(const std::shared_ptr<boost::asio::ip::tcp::socket>& s, uint32_t conn_id)
 {
     connection_context ctx;
     ctx.new_trace_id();
@@ -96,7 +97,7 @@ connection_context build_connection_context(const std::shared_ptr<boost::asio::i
 struct fallback_target
 {
     std::string host;
-    std::uint16_t port = 443;
+    uint16_t port = constants::reality_limits::kDefaultTlsPort;
 };
 
 std::optional<fallback_target> resolve_fallback_target(const config& cfg)
@@ -106,7 +107,7 @@ std::optional<fallback_target> resolve_fallback_target(const config& cfg)
         return std::nullopt;
     }
 
-    return fallback_target{.host = cfg.reality.sni, .port = 443};
+    return fallback_target{.host = cfg.reality.sni, .port = constants::reality_limits::kDefaultTlsPort};
 }
 
 }    // namespace
@@ -139,7 +140,7 @@ remote_server::remote_server(io_context_pool& pool, const config& cfg)
       fallback_gate_(make_fallback_gate_dependencies()),
       fallback_executor_(owner_worker_.io_context, cfg)
 {
-    private_key_ = ::tls::crypto_util::hex_to_bytes(cfg.reality.private_key);
+    private_key_ = tls::crypto_util::hex_to_bytes(cfg.reality.private_key);
     if (private_key_.size() != 32)
     {
         LOG_ERROR("private key length invalid {}", private_key_.size());
@@ -147,19 +148,19 @@ remote_server::remote_server(io_context_pool& pool, const config& cfg)
     }
     boost::algorithm::unhex(cfg.reality.short_id, std::back_inserter(short_id_bytes_));
     boost::system::error_code ec;
-    auto pub = ::tls::crypto_util::extract_public_key(private_key_, ec);
+    auto pub = tls::crypto_util::extract_public_key(private_key_, ec);
     LOG_INFO("server public key size {}", ec ? 0 : pub.size());
 
-    std::uint8_t cert_public_key[32] = {};
-    if (!::tls::crypto_util::generate_ed25519_keypair(cert_public_key, reality_cert_private_key_.data()))
+    uint8_t cert_public_key[32] = {};
+    if (!tls::crypto_util::generate_ed25519_keypair(cert_public_key, reality_cert_private_key_.data()))
     {
         LOG_ERROR("failed to generate reality certificate identity");
         OPENSSL_cleanse(reality_cert_private_key_.data(), reality_cert_private_key_.size());
         return;
     }
     reality_cert_public_key_.assign(cert_public_key, cert_public_key + 32);
-    auto cert_template = ::tls::crypto_util::create_self_signed_ed25519_certificate(
-        std::vector<std::uint8_t>(reality_cert_private_key_.begin(), reality_cert_private_key_.end()), ec);
+    auto cert_template = tls::crypto_util::create_self_signed_ed25519_certificate(
+        std::vector<uint8_t>(reality_cert_private_key_.begin(), reality_cert_private_key_.end()), ec);
     if (ec)
     {
         LOG_ERROR("failed to build reality certificate template {}", ec.message());
@@ -300,7 +301,7 @@ boost::asio::awaitable<void> remote_server::accept_loop()
         boost::system::error_code ec;
         ec = s->set_option(boost::asio::ip::tcp::no_delay(true), ec);
         (void)ec;
-        const std::uint32_t conn_id = next_conn_id_++;
+        const uint32_t conn_id = next_conn_id_++;
         worker.group.spawn(
             [self, worker = &worker, s, conn_id]() -> boost::asio::awaitable<void>
             {
@@ -312,7 +313,7 @@ boost::asio::awaitable<void> remote_server::accept_loop()
     LOG_INFO("accept loop exited");
 }
 
-boost::asio::awaitable<void> remote_server::handle(io_worker& worker, std::shared_ptr<boost::asio::ip::tcp::socket> s, std::uint32_t conn_id)
+boost::asio::awaitable<void> remote_server::handle(io_worker& worker, std::shared_ptr<boost::asio::ip::tcp::socket> s, uint32_t conn_id)
 {
     reality::server_handshake_context reality_ctx;
     reality_ctx.socket = s.get();
@@ -395,11 +396,10 @@ static boost::asio::awaitable<void> send_stream_reset(const std::shared_ptr<mux_
     frame.h.command = mux::kCmdRst;
     if (!frame.payload.empty())
     {
-        std::vector<std::uint8_t>().swap(frame.payload);
+        std::vector<uint8_t>().swap(frame.payload);
     }
     boost::system::error_code ec;
-    constexpr std::uint32_t kRstSendTimeoutSec = 1;
-    co_await connection->send_async_with_timeout(std::move(frame), kRstSendTimeoutSec, ec);
+    co_await connection->send_async_with_timeout(std::move(frame), constants::mux::kControlFrameSendTimeoutSec, ec);
 }
 
 boost::asio::awaitable<void> remote_server::process_stream_request(io_worker& worker,

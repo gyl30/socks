@@ -13,9 +13,9 @@ namespace reality
 class fingerprint_template_mutation
 {
    public:
-    static void set_client_version(fingerprint_template& spec, const std::uint16_t client_version) { spec.client_version_ = client_version; }
+    static void set_client_version(fingerprint_template& spec, const uint16_t client_version) { spec.client_version_ = client_version; }
 
-    [[nodiscard]] static std::vector<std::uint16_t>& cipher_suites(fingerprint_template& spec) { return spec.cipher_suites_; }
+    [[nodiscard]] static std::vector<uint16_t>& cipher_suites(fingerprint_template& spec) { return spec.cipher_suites_; }
 
     [[nodiscard]] static std::vector<std::shared_ptr<extension_blueprint>>& extensions(fingerprint_template& spec) { return spec.extensions_; }
 

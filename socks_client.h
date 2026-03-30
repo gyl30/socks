@@ -17,7 +17,7 @@ struct config;
 class router;
 class client_tunnel_pool;
 
-enum class socks_client_state : std::uint8_t
+enum class socks_client_state : uint8_t
 {
     kStopped,
     kRunning,
@@ -43,7 +43,7 @@ class socks_client : public std::enable_shared_from_this<socks_client>
     boost::asio::ip::tcp::acceptor acceptor_{owner_worker_.io_context};
     std::shared_ptr<mux::router> router_;
     std::shared_ptr<client_tunnel_pool> tunnel_pool_;
-    std::atomic<std::uint32_t> next_session_id_{1};
+    std::atomic<uint32_t> next_session_id_{1};
     std::atomic<bool> stopping_{false};
 };
 

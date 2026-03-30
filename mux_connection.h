@@ -38,7 +38,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
                    io_worker& worker,
                    reality::reality_record_context record_context,
                    const config& cfg,
-                   std::uint32_t conn_id,
+                   uint32_t conn_id,
                    const std::string& trace_id = "");
 
     virtual ~mux_connection();
@@ -52,12 +52,12 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     boost::asio::awaitable<void> async_wait_stopped();
     [[nodiscard]] boost::asio::awaitable<mux_frame> async_receive_syn(boost::system::error_code& ec) const;
     std::shared_ptr<mux_stream> create_stream();
-    std::shared_ptr<mux_stream> create_incoming_stream(std::uint32_t stream_id);
+    std::shared_ptr<mux_stream> create_incoming_stream(uint32_t stream_id);
     void close_and_remove_stream(const std::shared_ptr<mux_stream>& stream);
     void remove_stream(const std::shared_ptr<mux_stream>& stream);
-    [[nodiscard]] std::shared_ptr<mux_stream> find_stream(std::uint32_t stream_id);
+    [[nodiscard]] std::shared_ptr<mux_stream> find_stream(uint32_t stream_id);
     boost::asio::awaitable<void> send_async(mux_frame msg, boost::system::error_code& ec);
-    boost::asio::awaitable<void> send_async_with_timeout(mux_frame msg, std::uint32_t timeout_sec, boost::system::error_code& ec);
+    boost::asio::awaitable<void> send_async_with_timeout(mux_frame msg, uint32_t timeout_sec, boost::system::error_code& ec);
 
    private:
     void stop_on_executor();
@@ -68,30 +68,30 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     boost::asio::awaitable<void> heartbeat_loop();
 
    private:
-    boost::asio::awaitable<void> on_mux_frame(mux::frame_header header, std::vector<std::uint8_t> payload);
-    boost::asio::awaitable<void> handle_unknown_stream(mux::frame_header header, std::vector<std::uint8_t> payload);
-    boost::asio::awaitable<void> handle_stream_frame(const mux::frame_header& header, std::vector<std::uint8_t> payload);
-    boost::asio::awaitable<void> queue_incoming_syn(mux::frame_header header, std::vector<std::uint8_t> payload);
-    boost::asio::awaitable<void> on_tls_record(std::uint8_t type, std::span<const std::uint8_t> plaintext, boost::system::error_code& ec);
-    [[nodiscard]] std::uint32_t acquire_next_id();
+    boost::asio::awaitable<void> on_mux_frame(mux::frame_header header, std::vector<uint8_t> payload);
+    boost::asio::awaitable<void> handle_unknown_stream(mux::frame_header header, std::vector<uint8_t> payload);
+    boost::asio::awaitable<void> handle_stream_frame(const mux::frame_header& header, std::vector<uint8_t> payload);
+    boost::asio::awaitable<void> queue_incoming_syn(mux::frame_header header, std::vector<uint8_t> payload);
+    boost::asio::awaitable<void> on_tls_record(uint8_t type, std::span<const uint8_t> plaintext, boost::system::error_code& ec);
+    [[nodiscard]] uint32_t acquire_next_id();
     [[nodiscard]] bool is_stream_limit_reached();
 
     const config& cfg_;
-    std::uint32_t cid_ = 0;
+    uint32_t cid_ = 0;
     connection_context ctx_;
     io_worker& worker_;
     std::mutex mutex_;
     reality_engine reality_engine_;
-    std::uint32_t next_stream_id_ = 0;
-    std::uint64_t read_bytes_ = 0;
-    std::uint64_t write_bytes_ = 0;
-    std::uint64_t last_read_time_ms_{0};
-    std::uint64_t last_write_time_ms_{0};
-    std::uint64_t last_non_heartbeat_read_time_ms_{0};
-    std::uint64_t last_non_heartbeat_write_time_ms_{0};
+    uint32_t next_stream_id_ = 0;
+    uint64_t read_bytes_ = 0;
+    uint64_t write_bytes_ = 0;
+    uint64_t last_read_time_ms_{0};
+    uint64_t last_write_time_ms_{0};
+    uint64_t last_non_heartbeat_read_time_ms_{0};
+    uint64_t last_non_heartbeat_write_time_ms_{0};
     boost::asio::ip::tcp::socket socket_;
     std::atomic<bool> stopped_{false};
-    std::vector<std::uint8_t> pending_plaintext_;
+    std::vector<uint8_t> pending_plaintext_;
     using channel_type = boost::asio::experimental::concurrent_channel<void(boost::system::error_code, mux_frame)>;
     using stop_channel_type = boost::asio::experimental::concurrent_channel<void(boost::system::error_code)>;
     std::unique_ptr<channel_type> write_channel_;

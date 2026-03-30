@@ -83,7 +83,7 @@ void transcript::set_protocol_hash(const EVP_MD* new_md)
     valid_ = true;
 }
 
-void transcript::update(const std::vector<std::uint8_t>& data)
+void transcript::update(const std::vector<uint8_t>& data)
 {
     buffer_.insert(buffer_.end(), data.begin(), data.end());
     if (!valid_ || data.empty())
@@ -97,7 +97,7 @@ void transcript::update(const std::vector<std::uint8_t>& data)
     }
 }
 
-std::vector<std::uint8_t> transcript::finish() const
+std::vector<uint8_t> transcript::finish() const
 {
     if (!valid_ || ctx_ == nullptr || md_ == nullptr)
     {
@@ -115,7 +115,7 @@ std::vector<std::uint8_t> transcript::finish() const
     {
         return {};
     }
-    std::vector<std::uint8_t> h(static_cast<std::size_t>(hash_len));
+    std::vector<uint8_t> h(static_cast<std::size_t>(hash_len));
     unsigned int l = 0;
     if (EVP_DigestFinal_ex(c.get(), h.data(), &l) != 1 || l != h.size())
     {

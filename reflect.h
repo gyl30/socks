@@ -147,7 +147,7 @@ bool read_unsigned_integer(JsonReader& vis, T& out)
         return false;
     }
     const auto value = vis.m->GetUint64();
-    if (value > static_cast<std::uint64_t>(std::numeric_limits<T>::max()))
+    if (value > static_cast<uint64_t>(std::numeric_limits<T>::max()))
     {
         vis.set_invalid();
         return false;
@@ -210,7 +210,7 @@ template <typename T>
              !std::is_same_v<T, unsigned char>)
 inline void reflect(const JsonWriter& vis, const T v)
 {
-    vis.m->Uint64(static_cast<std::uint64_t>(v));
+    vis.m->Uint64(static_cast<uint64_t>(v));
 }
 inline void reflect(const JsonWriter& vis, const double v) { vis.m->Double(v); }
 inline void reflect(const JsonWriter& vis, const std::string& v) { vis.string(v.c_str(), v.size()); }

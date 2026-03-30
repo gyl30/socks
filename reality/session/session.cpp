@@ -17,13 +17,13 @@ namespace reality
 namespace
 {
 
-enum class perspective : std::uint8_t
+enum class perspective : uint8_t
 {
     kClient,
     kServer,
 };
 
-traffic_key_material make_traffic_key_material(std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> material)
+traffic_key_material make_traffic_key_material(std::pair<std::vector<uint8_t>, std::vector<uint8_t>> material)
 {
     return {
         .key = std::move(material.first),
@@ -55,7 +55,7 @@ reality_record_context build_reality_record_context_from_parts(const negotiated_
         return {};
     }
 
-    const auto suite = ::tls::select_tls13_suite(negotiated.cipher_suite);
+    const auto suite = tls::select_tls13_suite(negotiated.cipher_suite);
     if (!suite.has_value())
     {
         ec = boost::asio::error::no_protocol_option;
@@ -63,12 +63,12 @@ reality_record_context build_reality_record_context_from_parts(const negotiated_
     }
     const auto key_len = suite->key_len;
 
-    auto client_keys = ::tls::key_schedule::derive_traffic_keys(secrets.c_app_secret, ec, key_len, constants::crypto::kIvLen, negotiated.md);
+    auto client_keys = tls::key_schedule::derive_traffic_keys(secrets.c_app_secret, ec, key_len, constants::crypto::kIvLen, negotiated.md);
     if (ec)
     {
         return {};
     }
-    auto server_keys = ::tls::key_schedule::derive_traffic_keys(secrets.s_app_secret, ec, key_len, constants::crypto::kIvLen, negotiated.md);
+    auto server_keys = tls::key_schedule::derive_traffic_keys(secrets.s_app_secret, ec, key_len, constants::crypto::kIvLen, negotiated.md);
     if (ec)
     {
         return {};

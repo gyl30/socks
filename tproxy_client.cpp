@@ -17,6 +17,7 @@
 
 #include "log.h"
 #include "config.h"
+#include "constants.h"
 #include "router.h"
 #include "net_utils.h"
 #include "context_pool.h"
@@ -34,9 +35,7 @@ namespace mux
 
 namespace
 {
-constexpr std::size_t kMaxUdpSessions = 1024;
-
-void open_tcp_listener(boost::asio::ip::tcp::acceptor& acceptor, const std::string& host, std::uint16_t port, boost::system::error_code& ec)
+void open_tcp_listener(boost::asio::ip::tcp::acceptor& acceptor, const std::string& host, uint16_t port, boost::system::error_code& ec)
 {
     auto listen_addr = boost::asio::ip::make_address(host, ec);
     if (ec)
@@ -83,7 +82,7 @@ void open_tcp_listener(boost::asio::ip::tcp::acceptor& acceptor, const std::stri
     }
 }
 
-void open_udp_listener(boost::asio::ip::udp::socket& socket, const std::string& host, std::uint16_t port, boost::system::error_code& ec)
+void open_udp_listener(boost::asio::ip::udp::socket& socket, const std::string& host, uint16_t port, boost::system::error_code& ec)
 {
     auto listen_addr = boost::asio::ip::make_address(host, ec);
     if (ec)
@@ -278,7 +277,7 @@ void tproxy_client::on_tcp_socket(boost::asio::ip::tcp::socket&& socket)
         LOG_WARN("tproxy tcp set no delay failed code {}", ec.value());
     }
 
-    const std::uint32_t sid = next_session_id_.fetch_add(1, std::memory_order_relaxed);
+    const uint32_t sid = next_session_id_.fetch_add(1, std::memory_order_relaxed);
     const auto session = std::make_shared<tproxy_tcp_session>(std::move(socket), tunnel_pool_, router_, sid, cfg_);
     owner_worker_.group.spawn([session]() -> boost::asio::awaitable<void> { co_await session->start(); });
 }
@@ -286,7 +285,7 @@ void tproxy_client::on_tcp_socket(boost::asio::ip::tcp::socket&& socket)
 boost::asio::awaitable<void> tproxy_client::accept_udp_loop()
 {
     boost::system::error_code ec;
-    std::vector<std::uint8_t> payload(65535);
+    std::vector<uint8_t> payload(65535);
     std::array<char, CMSG_SPACE(sizeof(sockaddr_in6))> control{};
 
     while (true)
@@ -343,7 +342,7 @@ boost::asio::awaitable<void> tproxy_client::accept_udp_loop()
             continue;
         }
 
-        std::vector<std::uint8_t> packet(payload.begin(), payload.begin() + static_cast<std::ptrdiff_t>(bytes_recv));
+        std::vector<uint8_t> packet(payload.begin(), payload.begin() + static_cast<std::ptrdiff_t>(bytes_recv));
         co_await on_udp_packet(client_endpoint, target_endpoint, std::move(packet));
     }
 
@@ -352,7 +351,7 @@ boost::asio::awaitable<void> tproxy_client::accept_udp_loop()
 
 boost::asio::awaitable<void> tproxy_client::on_udp_packet(boost::asio::ip::udp::endpoint client_endpoint,
                                                           boost::asio::ip::udp::endpoint target_endpoint,
-                                                          std::vector<std::uint8_t> payload)
+                                                          std::vector<uint8_t> payload)
 {
     client_endpoint = net::normalize_endpoint(client_endpoint);
     target_endpoint = net::normalize_endpoint(target_endpoint);
@@ -460,7 +459,7 @@ std::shared_ptr<tproxy_udp_session> tproxy_client::find_udp_session(const std::s
 
 boost::asio::awaitable<void> tproxy_client::enqueue_udp_session(const std::string& key,
                                                                 const std::shared_ptr<tproxy_udp_session>& session,
-                                                                std::vector<std::uint8_t> payload)
+                                                                std::vector<uint8_t> payload)
 {
     const auto enqueue_result = co_await session->enqueue_packet(std::move(payload));
     if (enqueue_result == udp_enqueue_result::kEnqueued)
@@ -501,7 +500,7 @@ std::shared_ptr<tproxy_udp_session> tproxy_client::make_udp_session(const std::s
 bool tproxy_client::register_udp_session(const std::string& key, const std::shared_ptr<tproxy_udp_session>& session)
 {
     evict_udp_sessions_if_needed();
-    if (udp_sessions_.size() >= kMaxUdpSessions)
+    if (udp_sessions_.size() >= constants::udp::kMaxSessions)
     {
         LOG_WARN("tproxy udp session limit reached drop packet");
         return false;
@@ -530,7 +529,7 @@ void tproxy_client::touch_udp_session(const std::string& key)
 
 void tproxy_client::evict_udp_sessions_if_needed()
 {
-    while (udp_sessions_.size() >= kMaxUdpSessions)
+    while (udp_sessions_.size() >= constants::udp::kMaxSessions)
     {
         if (udp_session_lru_.empty())
         {

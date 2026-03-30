@@ -8,7 +8,7 @@
 namespace reality
 {
 
-enum class extension_type : std::uint8_t
+enum class extension_type : uint8_t
 {
     kGrease,
     kSni,
@@ -79,24 +79,24 @@ class supported_groups_blueprint : public extension_blueprint
 {
    public:
     [[nodiscard]] std::shared_ptr<extension_blueprint> clone() const override { return std::make_shared<supported_groups_blueprint>(*this); }
-    std::vector<std::uint16_t>& groups() { return groups_; }
-    [[nodiscard]] const std::vector<std::uint16_t>& groups() const { return groups_; }
+    std::vector<uint16_t>& groups() { return groups_; }
+    [[nodiscard]] const std::vector<uint16_t>& groups() const { return groups_; }
     [[nodiscard]] extension_type type() const override { return extension_type::kSupportedGroups; }
 
    private:
-    std::vector<std::uint16_t> groups_;
+    std::vector<uint16_t> groups_;
 };
 
 class ec_point_formats_blueprint : public extension_blueprint
 {
    public:
     [[nodiscard]] std::shared_ptr<extension_blueprint> clone() const override { return std::make_shared<ec_point_formats_blueprint>(*this); }
-    std::vector<std::uint8_t>& formats() { return formats_; }
-    [[nodiscard]] const std::vector<std::uint8_t>& formats() const { return formats_; }
+    std::vector<uint8_t>& formats() { return formats_; }
+    [[nodiscard]] const std::vector<uint8_t>& formats() const { return formats_; }
     [[nodiscard]] extension_type type() const override { return extension_type::kECPointFormats; }
 
    private:
-    std::vector<std::uint8_t> formats_;
+    std::vector<uint8_t> formats_;
 };
 
 class session_ticket_blueprint : public extension_blueprint
@@ -129,12 +129,12 @@ class signature_algorithms_blueprint : public extension_blueprint
 {
    public:
     [[nodiscard]] std::shared_ptr<extension_blueprint> clone() const override { return std::make_shared<signature_algorithms_blueprint>(*this); }
-    std::vector<std::uint16_t>& algorithms() { return algorithms_; }
-    [[nodiscard]] const std::vector<std::uint16_t>& algorithms() const { return algorithms_; }
+    std::vector<uint16_t>& algorithms() { return algorithms_; }
+    [[nodiscard]] const std::vector<uint16_t>& algorithms() const { return algorithms_; }
     [[nodiscard]] extension_type type() const override { return extension_type::kSignatureAlgorithms; }
 
    private:
-    std::vector<std::uint16_t> algorithms_;
+    std::vector<uint16_t> algorithms_;
 };
 
 class sct_blueprint : public extension_blueprint
@@ -149,8 +149,8 @@ class key_share_blueprint : public extension_blueprint
    public:
     struct key_share_entry
     {
-        std::uint16_t group;
-        std::vector<std::uint8_t> data;
+        uint16_t group;
+        std::vector<uint8_t> data;
     };
 
     [[nodiscard]] std::shared_ptr<extension_blueprint> clone() const override { return std::make_shared<key_share_blueprint>(*this); }
@@ -166,36 +166,36 @@ class psk_key_exchange_modes_blueprint : public extension_blueprint
 {
    public:
     [[nodiscard]] std::shared_ptr<extension_blueprint> clone() const override { return std::make_shared<psk_key_exchange_modes_blueprint>(*this); }
-    std::vector<std::uint8_t>& modes() { return modes_; }
-    [[nodiscard]] const std::vector<std::uint8_t>& modes() const { return modes_; }
+    std::vector<uint8_t>& modes() { return modes_; }
+    [[nodiscard]] const std::vector<uint8_t>& modes() const { return modes_; }
     [[nodiscard]] extension_type type() const override { return extension_type::kPSKKeyExchangeModes; }
 
    private:
-    std::vector<std::uint8_t> modes_;
+    std::vector<uint8_t> modes_;
 };
 
 class supported_versions_blueprint : public extension_blueprint
 {
    public:
     [[nodiscard]] std::shared_ptr<extension_blueprint> clone() const override { return std::make_shared<supported_versions_blueprint>(*this); }
-    std::vector<std::uint16_t>& versions() { return versions_; }
-    [[nodiscard]] const std::vector<std::uint16_t>& versions() const { return versions_; }
+    std::vector<uint16_t>& versions() { return versions_; }
+    [[nodiscard]] const std::vector<uint16_t>& versions() const { return versions_; }
     [[nodiscard]] extension_type type() const override { return extension_type::kSupportedVersions; }
 
    private:
-    std::vector<std::uint16_t> versions_;
+    std::vector<uint16_t> versions_;
 };
 
 class compress_cert_blueprint : public extension_blueprint
 {
    public:
     [[nodiscard]] std::shared_ptr<extension_blueprint> clone() const override { return std::make_shared<compress_cert_blueprint>(*this); }
-    std::vector<std::uint16_t>& algorithms() { return algorithms_; }
-    [[nodiscard]] const std::vector<std::uint16_t>& algorithms() const { return algorithms_; }
+    std::vector<uint16_t>& algorithms() { return algorithms_; }
+    [[nodiscard]] const std::vector<uint16_t>& algorithms() const { return algorithms_; }
     [[nodiscard]] extension_type type() const override { return extension_type::kCompressCertificate; }
 
    private:
-    std::vector<std::uint16_t> algorithms_;
+    std::vector<uint16_t> algorithms_;
 };
 
 class application_settings_blueprint : public extension_blueprint
@@ -268,24 +268,24 @@ class delegated_credentials_blueprint : public extension_blueprint
 {
    public:
     [[nodiscard]] std::shared_ptr<extension_blueprint> clone() const override { return std::make_shared<delegated_credentials_blueprint>(*this); }
-    std::vector<std::uint16_t>& algorithms() { return algorithms_; }
-    [[nodiscard]] const std::vector<std::uint16_t>& algorithms() const { return algorithms_; }
+    std::vector<uint16_t>& algorithms() { return algorithms_; }
+    [[nodiscard]] const std::vector<uint16_t>& algorithms() const { return algorithms_; }
     [[nodiscard]] extension_type type() const override { return extension_type::kDelegatedCredentials; }
 
    private:
-    std::vector<std::uint16_t> algorithms_;
+    std::vector<uint16_t> algorithms_;
 };
 
 class record_size_limit_blueprint : public extension_blueprint
 {
    public:
     [[nodiscard]] std::shared_ptr<extension_blueprint> clone() const override { return std::make_shared<record_size_limit_blueprint>(*this); }
-    std::uint16_t& limit() { return limit_; }
-    [[nodiscard]] std::uint16_t limit() const { return limit_; }
+    uint16_t& limit() { return limit_; }
+    [[nodiscard]] uint16_t limit() const { return limit_; }
     [[nodiscard]] extension_type type() const override { return extension_type::kRecordSizeLimit; }
 
    private:
-    std::uint16_t limit_ = 0;
+    uint16_t limit_ = 0;
 };
 
 }    // namespace reality

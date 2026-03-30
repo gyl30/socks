@@ -37,15 +37,15 @@ std::string build_minimal_http_request(const std::string& host)
     return request;
 }
 
-bool contains_http_header_terminator(const std::vector<std::uint8_t>& data)
+bool contains_http_header_terminator(const std::vector<uint8_t>& data)
 {
-    static constexpr std::array<std::uint8_t, 4> kHttpHeaderTerminator = {'\r', '\n', '\r', '\n'};
+    static constexpr std::array<uint8_t, 4> kHttpHeaderTerminator = {'\r', '\n', '\r', '\n'};
     return std::search(data.begin(), data.end(), kHttpHeaderTerminator.begin(), kHttpHeaderTerminator.end()) != data.end();
 }
 
-std::string extract_http_status_line(const std::vector<std::uint8_t>& data)
+std::string extract_http_status_line(const std::vector<uint8_t>& data)
 {
-    static constexpr std::array<std::uint8_t, 2> kHttpCrlf = {'\r', '\n'};
+    static constexpr std::array<uint8_t, 2> kHttpCrlf = {'\r', '\n'};
     const auto status_end = std::search(data.begin(), data.end(), kHttpCrlf.begin(), kHttpCrlf.end());
     if (status_end == data.end())
     {
@@ -67,7 +67,7 @@ boost::asio::awaitable<lightweight_http_visit_result> run_lightweight_http_visit
     mux::reality_engine engine(std::move(record_context));
 
     const auto request_text = build_minimal_http_request(options.host);
-    const std::vector<std::uint8_t> request_bytes(request_text.begin(), request_text.end());
+    const std::vector<uint8_t> request_bytes(request_text.begin(), request_text.end());
     const auto ciphertext = engine.encrypt_record(request_bytes, ec);
     if (ec)
     {
@@ -90,10 +90,10 @@ boost::asio::awaitable<lightweight_http_visit_result> run_lightweight_http_visit
 
     std::size_t captured_bytes = 0;
     bool response_complete = false;
-    std::vector<std::uint8_t> response_capture;
+    std::vector<uint8_t> response_capture;
     response_capture.reserve(std::min<std::size_t>(options.response_capture_limit, 2048));
 
-    for (std::uint32_t attempt = 0; attempt < options.max_read_iterations && !response_complete; ++attempt)
+    for (uint32_t attempt = 0; attempt < options.max_read_iterations && !response_complete; ++attempt)
     {
         const auto buf = engine.read_buffer(4096, ec);
         if (ec)
@@ -131,7 +131,7 @@ boost::asio::awaitable<lightweight_http_visit_result> run_lightweight_http_visit
                 break;
             }
 
-            if (record->content_type == ::tls::kContentTypeApplicationData)
+            if (record->content_type == tls::kContentTypeApplicationData)
             {
                 result.saw_application_data = true;
                 result.rx_plain_bytes += record->payload.size();
@@ -156,7 +156,7 @@ boost::asio::awaitable<lightweight_http_visit_result> run_lightweight_http_visit
                 continue;
             }
 
-            if (record->content_type == ::tls::kContentTypeAlert)
+            if (record->content_type == tls::kContentTypeAlert)
             {
                 result.saw_alert = true;
                 break;

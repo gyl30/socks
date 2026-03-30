@@ -27,7 +27,7 @@ namespace detail
 {
 
 template <typename OpFactory, typename SuccessHandler, typename TimeoutHandler>
-inline boost::asio::awaitable<void> await_with_timeout(const std::uint32_t timeout_sec,
+inline boost::asio::awaitable<void> await_with_timeout(const uint32_t timeout_sec,
                                                        OpFactory&& op_factory,
                                                        SuccessHandler&& on_success,
                                                        TimeoutHandler&& on_timeout)
@@ -58,13 +58,13 @@ inline boost::asio::awaitable<void> await_with_timeout(const std::uint32_t timeo
 
 }    // namespace detail
 
-inline std::uint64_t timeout_seconds_to_milliseconds(const std::uint32_t timeout_sec) { return static_cast<std::uint64_t>(timeout_sec) * 1000ULL; }
-inline std::uint64_t now_ms()
+inline uint64_t timeout_seconds_to_milliseconds(const uint32_t timeout_sec) { return static_cast<uint64_t>(timeout_sec) * 1000ULL; }
+inline uint64_t now_ms()
 {
-    return static_cast<std::uint64_t>(
+    return static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
 }
-inline std::uint32_t remaining_timeout_seconds(const std::uint64_t start_ms, const std::uint32_t timeout_sec, boost::system::error_code& ec)
+inline uint32_t remaining_timeout_seconds(const uint64_t start_ms, const uint32_t timeout_sec, boost::system::error_code& ec)
 {
     ec.clear();
     if (timeout_sec == 0)
@@ -81,11 +81,11 @@ inline std::uint32_t remaining_timeout_seconds(const std::uint64_t start_ms, con
     }
 
     const auto remaining_ms = timeout_ms - elapsed_ms;
-    return static_cast<std::uint32_t>((remaining_ms + 999ULL) / 1000ULL);
+    return static_cast<uint32_t>((remaining_ms + 999ULL) / 1000ULL);
 }
-inline std::uint64_t now_second()
+inline uint64_t now_second()
 {
-    return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
 }
 
 template <typename Rep, typename Period>
@@ -100,7 +100,7 @@ inline boost::asio::awaitable<boost::system::error_code> wait_for(boost::asio::i
 
 inline boost::asio::awaitable<void> wait_connect_with_timeout(boost::asio::ip::tcp::socket& socket,
                                                               const boost::asio::ip::tcp::endpoint& endpoint,
-                                                              const std::uint32_t timeout_sec,
+                                                              const uint32_t timeout_sec,
                                                               boost::system::error_code& ec)
 {
     co_await detail::await_with_timeout(
@@ -121,7 +121,7 @@ inline boost::asio::awaitable<void> wait_connect_with_timeout(boost::asio::ip::t
 template <typename MultipleBufferSequence>
 inline boost::asio::awaitable<std::size_t> wait_read_with_timeout(boost::asio::ip::tcp::socket& socket,
                                                                   const MultipleBufferSequence& buffer,
-                                                                  const std::uint32_t timeout_sec,
+                                                                  const uint32_t timeout_sec,
                                                                   boost::system::error_code& ec)
 {
     std::size_t read_size = 0;
@@ -146,7 +146,7 @@ inline boost::asio::awaitable<std::size_t> wait_read_with_timeout(boost::asio::i
 template <typename ConstBufferSequence>
 inline boost::asio::awaitable<std::size_t> wait_write_with_timeout(boost::asio::ip::tcp::socket& socket,
                                                                    const ConstBufferSequence& buffers,
-                                                                   const std::uint32_t timeout_sec,
+                                                                   const uint32_t timeout_sec,
                                                                    boost::system::error_code& ec)
 {
     std::size_t write_size = 0;
@@ -171,7 +171,7 @@ inline boost::asio::awaitable<std::size_t> wait_write_with_timeout(boost::asio::
 template <typename MutableBufferSequence>
 inline boost::asio::awaitable<std::size_t> wait_read_some_with_timeout(boost::asio::ip::tcp::socket& socket,
                                                                        const MutableBufferSequence& buffers,
-                                                                       const std::uint32_t timeout_sec,
+                                                                       const uint32_t timeout_sec,
                                                                        boost::system::error_code& ec)
 {
     std::size_t read_size = 0;
@@ -196,7 +196,7 @@ inline boost::asio::awaitable<std::size_t> wait_read_some_with_timeout(boost::as
 template <typename ConstBufferSequence>
 inline boost::asio::awaitable<std::size_t> wait_write_some_with_timeout(boost::asio::ip::tcp::socket& socket,
                                                                         const ConstBufferSequence& buffers,
-                                                                        const std::uint32_t timeout_sec,
+                                                                        const uint32_t timeout_sec,
                                                                         boost::system::error_code& ec)
 {
     std::size_t write_size = 0;
@@ -223,7 +223,7 @@ inline boost::asio::awaitable<typename boost::asio::ip::basic_resolver<InternetP
     boost::asio::ip::basic_resolver<InternetProtocol>& resolver,
     std::string host,
     std::string service,
-    const std::uint32_t timeout_sec,
+    const uint32_t timeout_sec,
     boost::system::error_code& ec)
 {
     using results_type = boost::asio::ip::basic_resolver<InternetProtocol>::results_type;
@@ -251,7 +251,7 @@ inline boost::asio::awaitable<typename boost::asio::ip::basic_resolver<InternetP
 template <typename ValueType>
 inline boost::asio::awaitable<ValueType> wait_receive_with_timeout(
     boost::asio::experimental::concurrent_channel<void(boost::system::error_code, ValueType)>& chan,
-    std::uint32_t timeout_sec,
+    uint32_t timeout_sec,
     boost::system::error_code& ec)
 {
     ValueType data{};
@@ -277,7 +277,7 @@ template <typename ValueType>
 inline boost::asio::awaitable<void> wait_send_with_timeout(
     boost::asio::experimental::concurrent_channel<void(boost::system::error_code, ValueType)>& chan,
     ValueType data,
-    std::uint32_t timeout_sec,
+    uint32_t timeout_sec,
     boost::system::error_code& ec)
 {
     co_await detail::await_with_timeout(

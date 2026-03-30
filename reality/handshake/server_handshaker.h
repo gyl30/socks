@@ -36,13 +36,13 @@ class server_handshaker
     struct dependencies
     {
         const mux::config& cfg;
-        const std::vector<std::uint8_t>& private_key;
-        const std::vector<std::uint8_t>& short_id_bytes;
+        const std::vector<uint8_t>& private_key;
+        const std::vector<uint8_t>& short_id_bytes;
         mux::replay_cache& replay_cache;
         const site_material* site_material_ptr = nullptr;
-        const std::array<std::uint8_t, 32>& reality_cert_private_key;
-        const std::vector<std::uint8_t>& reality_cert_public_key;
-        const std::vector<std::uint8_t>& reality_cert_template;
+        const std::array<uint8_t, 32>& reality_cert_private_key;
+        const std::vector<uint8_t>& reality_cert_public_key;
+        const std::vector<uint8_t>& reality_cert_template;
     };
 
     explicit server_handshaker(const dependencies& deps);
@@ -51,13 +51,13 @@ class server_handshaker
 
    private:
     const mux::config& cfg_;
-    const std::vector<std::uint8_t>& private_key_;
-    const std::vector<std::uint8_t>& short_id_bytes_;
+    const std::vector<uint8_t>& private_key_;
+    const std::vector<uint8_t>& short_id_bytes_;
     mux::replay_cache& replay_cache_;
     const site_material* site_material_ = nullptr;
-    const std::array<std::uint8_t, 32>& reality_cert_private_key_;
-    const std::vector<std::uint8_t>& reality_cert_public_key_;
-    const std::vector<std::uint8_t>& reality_cert_template_;
+    const std::array<uint8_t, 32>& reality_cert_private_key_;
+    const std::vector<uint8_t>& reality_cert_public_key_;
+    const std::vector<uint8_t>& reality_cert_template_;
 };
 
 }    // namespace reality

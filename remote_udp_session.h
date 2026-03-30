@@ -22,7 +22,7 @@ class remote_udp_session : public std::enable_shared_from_this<remote_udp_sessio
    public:
     remote_udp_session(boost::asio::io_context& io_context,
                        const std::shared_ptr<mux_connection>& connection,
-                       std::uint32_t id,
+                       uint32_t id,
                        const connection_context& ctx,
                        const config& cfg);
 
@@ -37,24 +37,24 @@ class remote_udp_session : public std::enable_shared_from_this<remote_udp_sessio
     boost::asio::awaitable<void> udp_to_mux();
     boost::asio::awaitable<void> idle_watchdog();
     [[nodiscard]] boost::asio::awaitable<boost::asio::ip::udp::endpoint> resolve_target_endpoint(const std::string& host,
-                                                                                                 std::uint16_t port,
+                                                                                                 uint16_t port,
                                                                                                  boost::system::error_code& ec);
 
    private:
     struct endpoint_cache_entry
     {
         boost::asio::ip::udp::endpoint endpoint;
-        std::uint64_t expires_at = 0;
+        uint64_t expires_at = 0;
         boost::system::error_code last_error;
         bool negative = false;
     };
 
     struct peer_cache_entry
     {
-        std::uint64_t expires_at = 0;
+        uint64_t expires_at = 0;
     };
 
-    std::uint32_t id_;
+    uint32_t id_;
     const config& cfg_;
     connection_context ctx_;
     boost::asio::steady_timer idle_timer_;
@@ -62,10 +62,10 @@ class remote_udp_session : public std::enable_shared_from_this<remote_udp_sessio
     boost::asio::ip::udp::resolver udp_resolver_;
     std::shared_ptr<mux_stream> stream_;
     std::weak_ptr<mux_connection> connection_;
-    std::uint64_t last_activity_time_ms_{0};
+    uint64_t last_activity_time_ms_{0};
     lru_cache<std::string, endpoint_cache_entry> resolved_targets_;
     lru_cache<boost::asio::ip::udp::endpoint, peer_cache_entry, net::udp_endpoint_hash, net::udp_endpoint_equal> allowed_reply_peers_;
-    std::atomic<std::uint8_t> stream_close_command_{0};
+    std::atomic<uint8_t> stream_close_command_{0};
 };
 
 }    // namespace mux

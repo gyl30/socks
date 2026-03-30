@@ -11,8 +11,6 @@
 namespace
 {
 
-constexpr std::uint8_t kSocks5AuthVer = 0x01;
-
 [[nodiscard]] bool has_remaining(const std::size_t len, const std::size_t pos, const std::size_t need)
 {
     if (pos > len)
@@ -22,12 +20,12 @@ constexpr std::uint8_t kSocks5AuthVer = 0x01;
     return len - pos >= need;
 }    // namespace
 
-[[nodiscard]] bool is_valid_domain_char(const std::uint8_t c)
+[[nodiscard]] bool is_valid_domain_char(const uint8_t c)
 {
     return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '-' || c == '.' || c == '_';
 }
 
-[[nodiscard]] bool is_valid_domain(const std::uint8_t* begin, const std::uint8_t* end)
+[[nodiscard]] bool is_valid_domain(const uint8_t* begin, const uint8_t* end)
 {
     for (auto* it = begin; it != end; ++it)
     {
@@ -39,7 +37,7 @@ constexpr std::uint8_t kSocks5AuthVer = 0x01;
     return true;
 }
 
-bool parse_ipv4_address(const std::uint8_t* data, const std::size_t len, std::size_t& pos, std::string& addr)
+bool parse_ipv4_address(const uint8_t* data, const std::size_t len, std::size_t& pos, std::string& addr)
 {
     if (!has_remaining(len, pos, 4))
     {
@@ -52,13 +50,13 @@ bool parse_ipv4_address(const std::uint8_t* data, const std::size_t len, std::si
     return true;
 }    // namespace
 
-bool parse_domain_address(const std::uint8_t* data, const std::size_t len, std::size_t& pos, std::string& addr)
+bool parse_domain_address(const uint8_t* data, const std::size_t len, std::size_t& pos, std::string& addr)
 {
     if (!has_remaining(len, pos, 1))
     {
         return false;
     }
-    const std::uint8_t domain_len = data[pos];
+    const uint8_t domain_len = data[pos];
     ++pos;
     if (domain_len == 0)
     {
@@ -70,7 +68,7 @@ bool parse_domain_address(const std::uint8_t* data, const std::size_t len, std::
     }
     const auto* domain_begin = data + pos;
     const auto* domain_end = domain_begin + domain_len;
-    if (std::find(domain_begin, domain_end, static_cast<std::uint8_t>(0x00)) != domain_end)
+    if (std::find(domain_begin, domain_end, static_cast<uint8_t>(0x00)) != domain_end)
     {
         return false;
     }
@@ -83,7 +81,7 @@ bool parse_domain_address(const std::uint8_t* data, const std::size_t len, std::
     return true;
 }    // namespace
 
-bool parse_ipv6_address(const std::uint8_t* data, const std::size_t len, std::size_t& pos, std::string& addr)
+bool parse_ipv6_address(const uint8_t* data, const std::size_t len, std::size_t& pos, std::string& addr)
 {
     if (!has_remaining(len, pos, 16))
     {
@@ -96,23 +94,23 @@ bool parse_ipv6_address(const std::uint8_t* data, const std::size_t len, std::si
     return true;
 }
 
-bool parse_port(const std::uint8_t* data, const std::size_t len, std::size_t& pos, std::uint16_t& port)
+bool parse_port(const uint8_t* data, const std::size_t len, std::size_t& pos, uint16_t& port)
 {
     if (!has_remaining(len, pos, 2))
     {
         return false;
     }
-    port = static_cast<std::uint16_t>((data[pos] << 8) | data[pos + 1]);
+    port = static_cast<uint16_t>((data[pos] << 8) | data[pos + 1]);
     pos += 2;
     return true;
 }
 
-bool parse_address_and_port(const std::uint8_t* data,
+bool parse_address_and_port(const uint8_t* data,
                             const std::size_t len,
-                            const std::uint8_t atyp,
+                            const uint8_t atyp,
                             const std::size_t start_pos,
                             std::string& addr,
-                            std::uint16_t& port,
+                            uint16_t& port,
                             std::size_t& next_pos)
 {
     std::size_t pos = start_pos;
@@ -142,35 +140,34 @@ bool parse_address_and_port(const std::uint8_t* data,
     return true;
 }
 
-void append_udp_ipv4_address(std::vector<std::uint8_t>& buf, const boost::asio::ip::address_v4& address)
+void append_udp_ipv4_address(std::vector<uint8_t>& buf, const boost::asio::ip::address_v4& address)
 {
     buf.push_back(socks::kAtypIpv4);
     const auto bytes = address.to_bytes();
     buf.insert(buf.end(), bytes.begin(), bytes.end());
 }
 
-void append_udp_ipv6_address(std::vector<std::uint8_t>& buf, const boost::asio::ip::address_v6& address)
+void append_udp_ipv6_address(std::vector<uint8_t>& buf, const boost::asio::ip::address_v6& address)
 {
     buf.push_back(socks::kAtypIpv6);
     const auto bytes = address.to_bytes();
     buf.insert(buf.end(), bytes.begin(), bytes.end());
 }
 
-bool append_udp_domain_address(std::vector<std::uint8_t>& buf, const std::string& host)
+bool append_udp_domain_address(std::vector<uint8_t>& buf, const std::string& host)
 {
-    constexpr std::size_t kMaxDomainLen = 255;
-    if (host.empty() || host.size() > kMaxDomainLen)
+    if (host.empty() || host.size() > socks::kMaxDomainLen)
     {
         return false;
     }
     const auto domain_len = host.size();
     buf.push_back(socks::kAtypDomain);
-    buf.push_back(static_cast<std::uint8_t>(domain_len));
+    buf.push_back(static_cast<uint8_t>(domain_len));
     buf.insert(buf.end(), host.begin(), host.begin() + static_cast<std::ptrdiff_t>(domain_len));
     return true;
 }
 
-bool append_udp_target_address(std::vector<std::uint8_t>& buf, const std::string& host)
+bool append_udp_target_address(std::vector<uint8_t>& buf, const std::string& host)
 {
     boost::system::error_code ec;
     auto address = boost::asio::ip::make_address(host, ec);
@@ -212,9 +209,9 @@ boost::asio::ip::address socks_codec::normalize_ip_address(const boost::asio::ip
     return addr;
 }
 
-std::vector<std::uint8_t> socks_codec::encode_udp_header(const socks_udp_header& h)
+std::vector<uint8_t> socks_codec::encode_udp_header(const socks_udp_header& h)
 {
-    std::vector<std::uint8_t> buf;
+    std::vector<uint8_t> buf;
     buf.reserve(24);
     buf.push_back(0x00);
     buf.push_back(0x00);
@@ -224,12 +221,12 @@ std::vector<std::uint8_t> socks_codec::encode_udp_header(const socks_udp_header&
         return {};
     }
 
-    buf.push_back(static_cast<std::uint8_t>((h.port >> 8) & 0xFF));
-    buf.push_back(static_cast<std::uint8_t>(h.port & 0xFF));
+    buf.push_back(static_cast<uint8_t>((h.port >> 8) & 0xFF));
+    buf.push_back(static_cast<uint8_t>(h.port & 0xFF));
     return buf;
 }
 
-bool socks_codec::decode_udp_header(const std::uint8_t* data, std::size_t len, socks_udp_header& out)
+bool socks_codec::decode_udp_header(const uint8_t* data, std::size_t len, socks_udp_header& out)
 {
     if (len < 4)
     {
@@ -241,11 +238,11 @@ bool socks_codec::decode_udp_header(const std::uint8_t* data, std::size_t len, s
     }
 
     out.frag = data[2];
-    const std::uint8_t atyp = data[3];
+    const uint8_t atyp = data[3];
     return parse_address_and_port(data, len, atyp, 4, out.addr, out.port, out.header_len);
 }
 
-bool socks_codec::decode_socks5_request(const std::uint8_t* data, std::size_t len, socks5_request& out)
+bool socks_codec::decode_socks5_request(const uint8_t* data, std::size_t len, socks5_request& out)
 {
     if (len < 4)
     {
@@ -267,7 +264,7 @@ bool socks_codec::decode_socks5_request(const std::uint8_t* data, std::size_t le
     return out.header_len == len;
 }
 
-bool socks_codec::decode_socks5_auth_request(const std::uint8_t* data, std::size_t len, socks5_auth_request& out)
+bool socks_codec::decode_socks5_auth_request(const uint8_t* data, std::size_t len, socks5_auth_request& out)
 {
     std::size_t pos = 0;
     if (len < pos + 2)
@@ -276,11 +273,11 @@ bool socks_codec::decode_socks5_auth_request(const std::uint8_t* data, std::size
     }
 
     out.ver = data[pos++];
-    if (out.ver != kSocks5AuthVer)
+    if (out.ver != socks::kAuthVer)
     {
         return false;
     }
-    const std::uint8_t ulen = data[pos++];
+    const uint8_t ulen = data[pos++];
     if (ulen == 0)
     {
         return false;
@@ -294,7 +291,7 @@ bool socks_codec::decode_socks5_auth_request(const std::uint8_t* data, std::size
     out.username = std::string(reinterpret_cast<const char*>(data) + pos, ulen);
     pos += ulen;
 
-    const std::uint8_t plen = data[pos++];
+    const uint8_t plen = data[pos++];
     if (plen == 0)
     {
         return false;

@@ -39,28 +39,28 @@ class connection_context
     [[nodiscard]] std::string trace_id() const { return trace_id_; }
     void trace_id(const std::string& val) { trace_id_ = val; }
 
-    [[nodiscard]] std::uint32_t conn_id() const { return conn_id_; }
-    void conn_id(const std::uint32_t val) { conn_id_ = val; }
+    [[nodiscard]] uint32_t conn_id() const { return conn_id_; }
+    void conn_id(const uint32_t val) { conn_id_ = val; }
 
-    [[nodiscard]] std::uint32_t stream_id() const { return stream_id_; }
-    void stream_id(const std::uint32_t val) { stream_id_ = val; }
+    [[nodiscard]] uint32_t stream_id() const { return stream_id_; }
+    void stream_id(const uint32_t val) { stream_id_ = val; }
 
     [[nodiscard]] std::string local_addr() const { return local_.addr; }
 
-    [[nodiscard]] std::uint16_t local_port() const { return local_.port; }
+    [[nodiscard]] uint16_t local_port() const { return local_.port; }
 
     [[nodiscard]] std::string remote_addr() const { return remote_.addr; }
 
-    [[nodiscard]] std::uint16_t remote_port() const { return remote_.port; }
+    [[nodiscard]] uint16_t remote_port() const { return remote_.port; }
 
     [[nodiscard]] std::string sni() const { return target_.sni; }
     void sni(const std::string& val) { target_.sni = val; }
 
-    [[nodiscard]] std::uint64_t tx_bytes() const { return stats_.tx_bytes; }
-    void add_tx_bytes(const std::uint64_t val) { stats_.tx_bytes += val; }
+    [[nodiscard]] uint64_t tx_bytes() const { return stats_.tx_bytes; }
+    void add_tx_bytes(const uint64_t val) { stats_.tx_bytes += val; }
 
-    [[nodiscard]] std::uint64_t rx_bytes() const { return stats_.rx_bytes; }
-    void add_rx_bytes(const std::uint64_t val) { stats_.rx_bytes += val; }
+    [[nodiscard]] uint64_t rx_bytes() const { return stats_.rx_bytes; }
+    void add_rx_bytes(const uint64_t val) { stats_.rx_bytes += val; }
 
     [[nodiscard]] std::string prefix() const;
 
@@ -70,13 +70,13 @@ class connection_context
 
     [[nodiscard]] std::string stats_summary() const;
 
-    [[nodiscard]] connection_context with_stream(std::uint32_t sid) const;
+    [[nodiscard]] connection_context with_stream(uint32_t sid) const;
 
-    void set_local_endpoint(std::string addr, std::uint16_t port);
+    void set_local_endpoint(std::string addr, uint16_t port);
 
-    void set_remote_endpoint(std::string addr, std::uint16_t port);
+    void set_remote_endpoint(std::string addr, uint16_t port);
 
-    void set_target(const std::string& host, std::uint16_t port);
+    void set_target(const std::string& host, uint16_t port);
 
     void new_trace_id();
 
@@ -84,26 +84,26 @@ class connection_context
     struct endpoint_info
     {
         std::string addr;
-        std::uint16_t port = 0;
+        uint16_t port = 0;
     };
 
     struct target_info
     {
         std::string host;
-        std::uint16_t port = 0;
+        uint16_t port = 0;
         std::string sni;
     };
 
     struct traffic_stats
     {
-        std::uint64_t tx_bytes = 0;
-        std::uint64_t rx_bytes = 0;
+        uint64_t tx_bytes = 0;
+        uint64_t rx_bytes = 0;
         std::chrono::steady_clock::time_point start_time = std::chrono::steady_clock::now();
     };
 
     std::string trace_id_;
-    std::uint32_t conn_id_ = 0;
-    std::uint32_t stream_id_ = 0;
+    uint32_t conn_id_ = 0;
+    uint32_t stream_id_ = 0;
     endpoint_info local_;
     endpoint_info remote_;
     target_info target_;

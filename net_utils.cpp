@@ -43,6 +43,7 @@
 #include <boost/system/detail/system_category.hpp>
 #include <boost/endian/conversion.hpp>
 
+#include "constants.h"
 #include "net_utils.h"
 #include "log.h"
 
@@ -52,23 +53,20 @@ namespace mux::net
 namespace
 {
 
-constexpr std::uint64_t kFnvOffsetBasis64 = 14695981039346656037ULL;
-constexpr std::uint64_t kFnvPrime64 = 1099511628211ULL;
-
-std::uint64_t fnv1a_update(std::uint64_t hash, const unsigned char* data, const std::size_t len)
+uint64_t fnv1a_update(uint64_t hash, const unsigned char* data, const std::size_t len)
 {
     for (std::size_t i = 0; i < len; ++i)
     {
-        hash ^= static_cast<std::uint64_t>(data[i]);
-        hash *= kFnvPrime64;
+        hash ^= static_cast<uint64_t>(data[i]);
+        hash *= constants::net::kFnvPrime64;
     }
     return hash;
 }
 
 #ifdef __linux__
-std::uint64_t monotonic_ms()
+uint64_t monotonic_ms()
 {
-    return static_cast<std::uint64_t>(
+    return static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
 }
 
@@ -87,13 +85,12 @@ cmsghdr* next_cmsg_header(const msghdr& msg, cmsghdr* current)
 
 void log_original_dst_getsockopt_failure(const int level, const int option, const boost::system::error_code& ec)
 {
-    constexpr std::uint64_t kLogIntervalMs = 10'000;
-    static std::atomic<std::uint64_t> last_log_ms{0};
-    static std::atomic<std::uint32_t> suppressed{0};
+    static std::atomic<uint64_t> last_log_ms{0};
+    static std::atomic<uint32_t> suppressed{0};
 
     const auto now = monotonic_ms();
     auto last = last_log_ms.load(std::memory_order_relaxed);
-    if (now - last < kLogIntervalMs)
+    if (now - last < constants::net::kOriginalDstLogIntervalMs)
     {
         suppressed.fetch_add(1, std::memory_order_relaxed);
         return;
@@ -150,14 +147,14 @@ bool try_get_original_dst_from_local_endpoint(boost::asio::ip::tcp::socket& sock
 }
 #endif
 
-boost::asio::ip::udp::endpoint make_v4_endpoint(const in_addr& addr, const std::uint16_t port)
+boost::asio::ip::udp::endpoint make_v4_endpoint(const in_addr& addr, const uint16_t port)
 {
     boost::asio::ip::address_v4::bytes_type bytes{};
     std::memcpy(bytes.data(), &addr, bytes.size());
     return {boost::asio::ip::address_v4(bytes), boost::endian::big_to_native(port)};
 }
 
-boost::asio::ip::udp::endpoint make_v6_endpoint(const in6_addr& addr, const std::uint16_t port, const std::uint32_t scope_id)
+boost::asio::ip::udp::endpoint make_v6_endpoint(const in6_addr& addr, const uint16_t port, const uint32_t scope_id)
 {
     boost::asio::ip::address_v6::bytes_type bytes{};
     const auto normalized_scope_id = static_cast<boost::asio::ip::scope_id_type>(scope_id);
@@ -226,7 +223,7 @@ boost::asio::ip::udp::endpoint endpoint_from_sockaddr_v6(const sockaddr_storage&
 
 }    // namespace
 
-void set_socket_mark(const socket_handle_t fd, const std::uint32_t mark, boost::system::error_code& ec)
+void set_socket_mark(const socket_handle_t fd, const uint32_t mark, boost::system::error_code& ec)
 {
     ec.clear();
 #ifdef __linux__
@@ -397,16 +394,16 @@ boost::asio::ip::udp::endpoint normalize_endpoint(const boost::asio::ip::udp::en
     return {addr, ep.port()};
 }
 
-std::uint64_t fnv1a_64(const std::string_view data)
+uint64_t fnv1a_64(const std::string_view data)
 {
-    return fnv1a_update(kFnvOffsetBasis64, reinterpret_cast<const unsigned char*>(data.data()), data.size());
+    return fnv1a_update(constants::net::kFnvOffsetBasis64, reinterpret_cast<const unsigned char*>(data.data()), data.size());
 }
 
-std::uint64_t endpoint_hash(const boost::asio::ip::udp::endpoint& endpoint)
+uint64_t endpoint_hash(const boost::asio::ip::udp::endpoint& endpoint)
 {
     const auto normalized = normalize_endpoint(endpoint);
-    std::uint64_t hash = kFnvOffsetBasis64;
-    const std::uint8_t family = normalized.address().is_v4() ? 4U : 6U;
+    uint64_t hash = constants::net::kFnvOffsetBasis64;
+    const uint8_t family = normalized.address().is_v4() ? 4U : 6U;
     hash = fnv1a_update(hash, &family, sizeof(family));
     if (normalized.address().is_v4())
     {

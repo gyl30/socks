@@ -110,7 +110,7 @@ fallback_gate::budget_ticket fallback_gate::try_acquire(const mux::connection_co
 
     if (it == fallback_attempts_by_remote_.end())
     {
-        it = fallback_attempts_by_remote_.emplace(remote_addr, std::deque<std::uint64_t>{}).first;
+        it = fallback_attempts_by_remote_.emplace(remote_addr, std::deque<uint64_t>{}).first;
     }
     auto& attempts = it->second;
     while (!attempts.empty() && attempts.front() + options_.rate_limit_window_sec <= now_sec)
@@ -146,6 +146,6 @@ void fallback_gate::release_budget()
     --active_fallbacks_;
 }
 
-std::uint64_t fallback_gate::now_seconds() const { return now_seconds_fn_(); }
+uint64_t fallback_gate::now_seconds() const { return now_seconds_fn_(); }
 
 }    // namespace reality

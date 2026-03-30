@@ -19,8 +19,8 @@ class fallback_gate
    public:
     struct options
     {
-        std::uint32_t max_concurrent = 32;
-        std::uint32_t rate_limit_window_sec = 10;
+        uint32_t max_concurrent = 32;
+        uint32_t rate_limit_window_sec = 10;
         std::size_t max_attempts_per_window_per_source = 8;
         std::size_t max_tracker_entries = 4096;
     };
@@ -28,7 +28,7 @@ class fallback_gate
     struct dependencies
     {
         options opts{};
-        std::function<std::uint64_t()> now_seconds;
+        std::function<uint64_t()> now_seconds;
     };
 
     class budget_ticket
@@ -63,13 +63,13 @@ class fallback_gate
 
    private:
     void release_budget();
-    [[nodiscard]] std::uint64_t now_seconds() const;
+    [[nodiscard]] uint64_t now_seconds() const;
 
     options options_{};
-    std::function<std::uint64_t()> now_seconds_fn_;
+    std::function<uint64_t()> now_seconds_fn_;
     std::mutex budget_mu_;
-    std::uint32_t active_fallbacks_ = 0;
-    std::unordered_map<std::string, std::deque<std::uint64_t>> fallback_attempts_by_remote_;
+    uint32_t active_fallbacks_ = 0;
+    std::unordered_map<std::string, std::deque<uint64_t>> fallback_attempts_by_remote_;
 };
 
 }    // namespace reality

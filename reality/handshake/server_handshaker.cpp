@@ -49,12 +49,6 @@ namespace reality
 namespace
 {
 
-constexpr std::size_t kTlsRecordHeaderSize = 5;
-constexpr std::uint16_t kMaxTlsPlaintextRecordLen = static_cast<std::uint16_t>(tls::kMaxTlsPlaintextLen);
-constexpr std::uint16_t kMaxTlsCiphertextRecordLen = static_cast<std::uint16_t>(tls::kMaxTlsPlaintextLen + 256);
-constexpr std::uint32_t kMaxTlsCompatCcsRecords = 8;
-constexpr std::size_t kMaxUnauthenticatedClientHelloLen = 64L * 1024;
-
 bool equal_server_name_ascii(const std::string& lhs, const std::string& rhs)
 {
     if (lhs.size() != rhs.size())
@@ -93,18 +87,18 @@ bool verify_client_hello_sni(const tls::client_hello_info& client_hello, const m
 
 struct server_handshake_state
 {
-    std::vector<std::uint8_t> client_hello_record;
-    std::vector<std::uint8_t> client_hello_handshake;
+    std::vector<uint8_t> client_hello_record;
+    std::vector<uint8_t> client_hello_handshake;
     tls::client_hello_info client_hello;
-    std::uint16_t key_share_group = 0;
-    std::vector<std::uint8_t> mlkem768_peer_pub;
-    std::vector<std::uint8_t> x25519_peer_pub;
+    uint16_t key_share_group = 0;
+    std::vector<uint8_t> mlkem768_peer_pub;
+    std::vector<uint8_t> x25519_peer_pub;
     tls::transcript transcript;
-    std::vector<std::uint8_t> server_random;
-    std::vector<std::uint8_t> server_key_share_data;
-    std::vector<std::uint8_t> server_shared_secret;
-    std::vector<std::uint8_t> auth_key;
-    std::vector<std::uint8_t> cert_msg;
+    std::vector<uint8_t> server_random;
+    std::vector<uint8_t> server_key_share_data;
+    std::vector<uint8_t> server_shared_secret;
+    std::vector<uint8_t> auth_key;
+    std::vector<uint8_t> cert_msg;
 };
 
 server_accept_result make_decision_result(const accept_mode mode, std::string reason, const server_handshake_state& state)
@@ -120,14 +114,14 @@ server_accept_result make_decision_result(const accept_mode mode, std::string re
 }
 
 boost::asio::awaitable<void> read_tls_record_header(boost::asio::ip::tcp::socket& socket,
-                                                    std::vector<std::uint8_t>& buf,
-                                                    const std::uint64_t start_ms,
-                                                    const std::uint32_t timeout,
+                                                    std::vector<uint8_t>& buf,
+                                                    const uint64_t start_ms,
+                                                    const uint32_t timeout,
                                                     boost::system::error_code& ec)
 {
-    while (buf.size() < kTlsRecordHeaderSize)
+    while (buf.size() < tls::kTlsRecordHeaderSize)
     {
-        std::vector<std::uint8_t> header_remaining(kTlsRecordHeaderSize - buf.size());
+        std::vector<uint8_t> header_remaining(tls::kTlsRecordHeaderSize - buf.size());
         const auto read_timeout = mux::timeout_io::remaining_timeout_seconds(start_ms, timeout, ec);
         if (ec)
         {
@@ -145,15 +139,15 @@ boost::asio::awaitable<void> read_tls_record_header(boost::asio::ip::tcp::socket
 }
 
 boost::asio::awaitable<void> read_tls_record_body(boost::asio::ip::tcp::socket& socket,
-                                                  std::vector<std::uint8_t>& buf,
-                                                  const std::uint32_t payload_len,
-                                                  const std::uint64_t start_ms,
-                                                  const std::uint32_t timeout,
+                                                  std::vector<uint8_t>& buf,
+                                                  const uint32_t payload_len,
+                                                  const uint64_t start_ms,
+                                                  const uint32_t timeout,
                                                   boost::system::error_code& ec)
 {
-    while (buf.size() < kTlsRecordHeaderSize + payload_len)
+    while (buf.size() < tls::kTlsRecordHeaderSize + payload_len)
     {
-        std::vector<std::uint8_t> extra(kTlsRecordHeaderSize + payload_len - buf.size());
+        std::vector<uint8_t> extra(tls::kTlsRecordHeaderSize + payload_len - buf.size());
         const auto read_timeout = mux::timeout_io::remaining_timeout_seconds(start_ms, timeout, ec);
         if (ec)
         {
@@ -171,10 +165,10 @@ boost::asio::awaitable<void> read_tls_record_body(boost::asio::ip::tcp::socket& 
 }
 
 boost::asio::awaitable<const char*> read_client_hello_handshake(boost::asio::ip::tcp::socket& socket,
-                                                                std::vector<std::uint8_t>& wire_buf,
-                                                                std::vector<std::uint8_t>& handshake_buf,
+                                                                std::vector<uint8_t>& wire_buf,
+                                                                std::vector<uint8_t>& handshake_buf,
                                                                 const mux::connection_context& ctx,
-                                                                const std::uint32_t timeout,
+                                                                const uint32_t timeout,
                                                                 const std::size_t max_handshake_len,
                                                                 boost::system::error_code& ec)
 {
@@ -183,13 +177,14 @@ boost::asio::awaitable<const char*> read_client_hello_handshake(boost::asio::ip:
     handshake_buf.clear();
     const auto handshake_start_ms = mux::timeout_io::now_ms();
     std::size_t record_count = 0;
-    const auto max_records = std::max<std::size_t>(1, (max_handshake_len + kMaxTlsPlaintextRecordLen - 1) / kMaxTlsPlaintextRecordLen);
-    const auto max_wire_len = max_handshake_len + (max_records * kTlsRecordHeaderSize);
-    std::uint32_t ccs_count = 0;
+    const auto max_records =
+        std::max<std::size_t>(1, (max_handshake_len + tls::kMaxTlsPlaintextLen - 1) / static_cast<std::size_t>(tls::kMaxTlsPlaintextLen));
+    const auto max_wire_len = max_handshake_len + (max_records * tls::kTlsRecordHeaderSize);
+    uint32_t ccs_count = 0;
 
     while (true)
     {
-        std::vector<std::uint8_t> record_buf;
+        std::vector<uint8_t> record_buf;
         co_await read_tls_record_header(socket, record_buf, handshake_start_ms, timeout, ec);
         if (ec)
         {
@@ -203,10 +198,10 @@ boost::asio::awaitable<const char*> read_client_hello_handshake(boost::asio::ip:
             co_return "invalid_tls_record_version";
         }
 
-        const auto record_len = static_cast<std::uint16_t>((record_buf[3] << 8) | record_buf[4]);
+        const auto record_len = static_cast<uint16_t>((record_buf[3] << 8) | record_buf[4]);
         if (record_buf[0] == 0x14)
         {
-            if (ccs_count >= kMaxTlsCompatCcsRecords)
+            if (ccs_count >= constants::tls_limits::kMaxCompatCcsRecords)
             {
                 LOG_CTX_ERROR(ctx, "{} too many ccs records {}", mux::log_event::kHandshake, ccs_count);
                 ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
@@ -226,8 +221,8 @@ boost::asio::awaitable<const char*> read_client_hello_handshake(boost::asio::ip:
                 co_return "read_tls_record_body_failed";
             }
 
-            const std::array<std::uint8_t, 5> header = {record_buf[0], record_buf[1], record_buf[2], record_buf[3], record_buf[4]};
-            const auto ccs_body = record_buf[kTlsRecordHeaderSize];
+            const std::array<uint8_t, 5> header = {record_buf[0], record_buf[1], record_buf[2], record_buf[3], record_buf[4]};
+            const auto ccs_body = record_buf[tls::kTlsRecordHeaderSize];
             if (!tls::is_valid_tls13_compat_ccs(header, ccs_body))
             {
                 LOG_CTX_ERROR(ctx, "{} invalid ccs body {}", mux::log_event::kHandshake, ccs_body);
@@ -243,7 +238,7 @@ boost::asio::awaitable<const char*> read_client_hello_handshake(boost::asio::ip:
             ec = boost::asio::error::invalid_argument;
             co_return "unexpected_tls_record_type";
         }
-        if (record_len > kMaxTlsPlaintextRecordLen)
+        if (record_len > tls::kMaxTlsPlaintextLen)
         {
             LOG_CTX_ERROR(ctx, "{} client hello record too large {}", mux::log_event::kHandshake, record_len);
             ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
@@ -277,7 +272,7 @@ boost::asio::awaitable<const char*> read_client_hello_handshake(boost::asio::ip:
             co_return "client_hello_wire_too_large";
         }
         wire_buf.insert(wire_buf.end(), record_buf.begin(), record_buf.end());
-        handshake_buf.insert(handshake_buf.end(), record_buf.begin() + static_cast<std::ptrdiff_t>(kTlsRecordHeaderSize), record_buf.end());
+        handshake_buf.insert(handshake_buf.end(), record_buf.begin() + static_cast<std::ptrdiff_t>(tls::kTlsRecordHeaderSize), record_buf.end());
         if (handshake_buf.size() < 4)
         {
             continue;
@@ -289,8 +284,8 @@ boost::asio::awaitable<const char*> read_client_hello_handshake(boost::asio::ip:
             co_return "unexpected_client_hello_type";
         }
 
-        const auto hello_msg_len = (static_cast<std::uint32_t>(handshake_buf[1]) << 16) | (static_cast<std::uint32_t>(handshake_buf[2]) << 8) |
-                                   static_cast<std::uint32_t>(handshake_buf[3]);
+        const auto hello_msg_len = (static_cast<uint32_t>(handshake_buf[1]) << 16) | (static_cast<uint32_t>(handshake_buf[2]) << 8) |
+                                   static_cast<uint32_t>(handshake_buf[3]);
         const auto total_len = static_cast<std::size_t>(hello_msg_len) + 4;
         if (total_len > max_handshake_len)
         {
@@ -314,14 +309,14 @@ boost::asio::awaitable<const char*> read_client_hello_handshake(boost::asio::ip:
 
 struct auth_inputs
 {
-    std::vector<std::uint8_t> auth_key;
-    std::vector<std::uint8_t> nonce;
-    std::vector<std::uint8_t> aad;
+    std::vector<uint8_t> auth_key;
+    std::vector<uint8_t> nonce;
+    std::vector<uint8_t> aad;
 };
 
 auth_inputs build_auth_decrypt_inputs(const server_handshake_context& handshake_ctx,
                                       const server_handshake_state& state,
-                                      const std::vector<std::uint8_t>& server_private_key,
+                                      const std::vector<uint8_t>& server_private_key,
                                       boost::system::error_code& ec)
 {
     ec.clear();
@@ -340,7 +335,7 @@ auth_inputs build_auth_decrypt_inputs(const server_handshake_context& handshake_
         return {};
     }
 
-    const auto salt = std::vector<std::uint8_t>(state.client_hello.random.begin(), state.client_hello.random.begin() + 20);
+    const auto salt = std::vector<uint8_t>(state.client_hello.random.begin(), state.client_hello.random.begin() + 20);
     const auto reality_label_info = tls::crypto_util::hex_to_bytes("5245414c495459");
     auto pseudo_random_key = tls::crypto_util::hkdf_extract(salt, shared, EVP_sha256(), ec);
     if (ec)
@@ -366,7 +361,7 @@ auth_inputs build_auth_decrypt_inputs(const server_handshake_context& handshake_
     }
 
     out.aad = state.client_hello_handshake;
-    const std::uint32_t aad_sid_offset = state.client_hello.sid_offset;
+    const uint32_t aad_sid_offset = state.client_hello.sid_offset;
     if (aad_sid_offset + constants::auth::kSessionIdLen > out.aad.size())
     {
         LOG_CTX_ERROR(handshake_ctx.ctx, "{} auth fail aad size mismatch", mux::log_event::kAuth);
@@ -379,7 +374,7 @@ auth_inputs build_auth_decrypt_inputs(const server_handshake_context& handshake_
 
 reality::auth_payload decrypt_auth_payload(const server_handshake_context& handshake_ctx,
                                            server_handshake_state& state,
-                                           const std::vector<std::uint8_t>& private_key,
+                                           const std::vector<uint8_t>& private_key,
                                            boost::system::error_code& ec)
 {
     const auto inputs = build_auth_decrypt_inputs(handshake_ctx, state, private_key, ec);
@@ -408,7 +403,7 @@ reality::auth_payload decrypt_auth_payload(const server_handshake_context& hands
 }
 
 bool verify_auth_payload_fields(const auth_payload& auth,
-                                const std::vector<std::uint8_t>& short_id_bytes,
+                                const std::vector<uint8_t>& short_id_bytes,
                                 const server_handshake_context& handshake_ctx,
                                 const server_handshake_state& state)
 {
@@ -431,7 +426,7 @@ bool verify_auth_payload_fields(const auth_payload& auth,
         return false;
     }
 
-    std::array<std::uint8_t, kShortIdMaxLen> expected_short_id = {};
+    std::array<uint8_t, kShortIdMaxLen> expected_short_id = {};
     std::ranges::copy(short_id_bytes, expected_short_id.begin());
     if (CRYPTO_memcmp(auth.short_id.data(), expected_short_id.data(), expected_short_id.size()) != 0)
     {
@@ -441,7 +436,7 @@ bool verify_auth_payload_fields(const auth_payload& auth,
     return true;
 }
 
-bool verify_auth_timestamp(const std::uint32_t timestamp, const server_handshake_context& handshake_ctx, const server_handshake_state& state)
+bool verify_auth_timestamp(const uint32_t timestamp, const server_handshake_context& handshake_ctx, const server_handshake_state& state)
 {
     (void)state;
     const auto now_tp = std::chrono::system_clock::now();
@@ -470,15 +465,15 @@ bool verify_replay_guard(mux::replay_cache& replay_cache, const server_handshake
 struct handshake_crypto_result
 {
     tls::handshake_keys hs_keys;
-    std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> s_hs_keys;
-    std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> c_hs_keys;
+    std::pair<std::vector<uint8_t>, std::vector<uint8_t>> s_hs_keys;
+    std::pair<std::vector<uint8_t>, std::vector<uint8_t>> c_hs_keys;
     const EVP_CIPHER* cipher = nullptr;
     const EVP_MD* md = nullptr;
-    std::vector<std::uint8_t> sh_msg;
-    std::vector<std::uint8_t> flight2_plain;
+    std::vector<uint8_t> sh_msg;
+    std::vector<uint8_t> flight2_plain;
 };
 
-std::uint16_t normalize_cipher_suite(std::uint16_t cipher_suite)
+uint16_t normalize_cipher_suite(uint16_t cipher_suite)
 {
     if (cipher_suite != 0x1301 && cipher_suite != 0x1302 && cipher_suite != 0x1303)
     {
@@ -489,13 +484,13 @@ std::uint16_t normalize_cipher_suite(std::uint16_t cipher_suite)
 
 handshake_crypto_result build_handshake_crypto(const server_handshake_context& handshake_ctx,
                                                server_handshake_state& state,
-                                               std::uint16_t cipher_suite,
+                                               uint16_t cipher_suite,
                                                const std::string& alpn,
-                                               std::span<const std::uint16_t> server_hello_extension_order,
-                                               std::span<const std::uint16_t> encrypted_extension_order,
+                                               std::span<const uint16_t> server_hello_extension_order,
+                                               std::span<const uint16_t> encrypted_extension_order,
                                                const bool include_encrypted_extensions_padding,
-                                               const std::optional<std::uint16_t> encrypted_extensions_padding_len,
-                                               const std::vector<std::uint8_t>& sign_key_bytes,
+                                               const std::optional<uint16_t> encrypted_extensions_padding_len,
+                                               const std::vector<uint8_t>& sign_key_bytes,
                                                boost::system::error_code& ec)
 {
     ec.clear();
@@ -523,14 +518,15 @@ handshake_crypto_result build_handshake_crypto(const server_handshake_context& h
         return {};
     }
 
-    constexpr std::size_t kIvLen = constants::crypto::kIvLen;
     const auto key_len = suite->key_len;
-    out.c_hs_keys = tls::key_schedule::derive_traffic_keys(out.hs_keys.client_handshake_traffic_secret, ec, key_len, kIvLen, out.md);
+    out.c_hs_keys = tls::key_schedule::derive_traffic_keys(
+        out.hs_keys.client_handshake_traffic_secret, ec, key_len, constants::crypto::kIvLen, out.md);
     if (ec)
     {
         return {};
     }
-    out.s_hs_keys = tls::key_schedule::derive_traffic_keys(out.hs_keys.server_handshake_traffic_secret, ec, key_len, kIvLen, out.md);
+    out.s_hs_keys = tls::key_schedule::derive_traffic_keys(
+        out.hs_keys.server_handshake_traffic_secret, ec, key_len, constants::crypto::kIvLen, out.md);
     if (ec)
     {
         return {};
@@ -583,10 +579,10 @@ handshake_crypto_result build_handshake_crypto(const server_handshake_context& h
     return out;
 }
 
-std::vector<std::uint8_t> generate_server_random(boost::system::error_code& ec)
+std::vector<uint8_t> generate_server_random(boost::system::error_code& ec)
 {
     ec.clear();
-    std::vector<std::uint8_t> server_random(32, 0);
+    std::vector<uint8_t> server_random(32, 0);
     if (RAND_bytes(server_random.data(), 32) != 1)
     {
         ec = boost::system::errc::make_error_code(boost::system::errc::operation_canceled);
@@ -595,9 +591,9 @@ std::vector<std::uint8_t> generate_server_random(boost::system::error_code& ec)
     return server_random;
 }
 
-std::vector<std::uint8_t> build_reality_bound_certificate(const std::vector<std::uint8_t>& cert_template,
-                                                          const std::vector<std::uint8_t>& auth_key,
-                                                          const std::vector<std::uint8_t>& cert_public_key,
+std::vector<uint8_t> build_reality_bound_certificate(const std::vector<uint8_t>& cert_template,
+                                                          const std::vector<uint8_t>& auth_key,
+                                                          const std::vector<uint8_t>& cert_public_key,
                                                           boost::system::error_code& ec)
 {
     ec.clear();
@@ -629,12 +625,12 @@ std::vector<std::uint8_t> build_reality_bound_certificate(const std::vector<std:
         return {};
     }
 
-    std::vector<std::uint8_t> cert_der = cert_template;
+    std::vector<uint8_t> cert_der = cert_template;
     std::ranges::copy(reality_signature, cert_der.begin() + static_cast<std::ptrdiff_t>(signature_offset));
     return cert_der;
 }
 
-bool client_offers_cipher_suite(const tls::client_hello_info& hello, std::uint16_t cipher_suite)
+bool client_offers_cipher_suite(const tls::client_hello_info& hello, uint16_t cipher_suite)
 {
     return std::ranges::find(hello.cipher_suites, cipher_suite) != hello.cipher_suites.end();
 }
@@ -644,15 +640,15 @@ bool client_offers_alpn(const tls::client_hello_info& hello, const std::string& 
     return std::ranges::find(hello.alpn_protocols, alpn) != hello.alpn_protocols.end();
 }
 
-bool client_offers_signature_scheme(const tls::client_hello_info& hello, std::uint16_t scheme)
+bool client_offers_signature_scheme(const tls::client_hello_info& hello, uint16_t scheme)
 {
     return std::ranges::find(hello.signature_algorithms, scheme) != hello.signature_algorithms.end();
 }
 
-std::vector<std::vector<std::uint8_t>> build_reality_certificate_chain(const std::vector<std::uint8_t>& leaf_cert_der,
+std::vector<std::vector<uint8_t>> build_reality_certificate_chain(const std::vector<uint8_t>& leaf_cert_der,
                                                                        const site_material* site_material)
 {
-    std::vector<std::vector<std::uint8_t>> cert_chain;
+    std::vector<std::vector<uint8_t>> cert_chain;
     cert_chain.push_back(leaf_cert_der);
     if (site_material == nullptr)
     {
@@ -665,7 +661,7 @@ std::vector<std::vector<std::uint8_t>> build_reality_certificate_chain(const std
     return cert_chain;
 }
 
-std::optional<std::uint16_t> select_reality_cipher_suite(const tls::client_hello_info& hello, const site_material* site_material)
+std::optional<uint16_t> select_reality_cipher_suite(const tls::client_hello_info& hello, const site_material* site_material)
 {
     if (site_material != nullptr)
     {
@@ -676,9 +672,7 @@ std::optional<std::uint16_t> select_reality_cipher_suite(const tls::client_hello
         }
     }
 
-    constexpr std::array<std::uint16_t, 3> kFallbackCipherSuites = {
-        tls::consts::cipher::kTlsAes128GcmSha256, tls::consts::cipher::kTlsAes256GcmSha384, tls::consts::cipher::kTlsChacha20Poly1305Sha256};
-    for (const auto cipher_suite : kFallbackCipherSuites)
+    for (const auto cipher_suite : constants::tls_limits::kFallbackCipherSuites)
     {
         if (client_offers_cipher_suite(hello, cipher_suite))
         {
@@ -706,13 +700,13 @@ std::string select_reality_alpn(const tls::client_hello_info& hello, const site_
     return cached_alpn;
 }
 
-std::vector<std::uint16_t> select_server_hello_extension_order(const site_material* site_material)
+std::vector<uint16_t> select_server_hello_extension_order(const site_material* site_material)
 {
     if (site_material == nullptr)
     {
         return {};
     }
-    std::vector<std::uint16_t> out;
+    std::vector<uint16_t> out;
     for (const auto ext_type : site_material->server_hello_extension_types)
     {
         if (ext_type == tls::consts::ext::kSupportedVersions || ext_type == tls::consts::ext::kKeyShare)
@@ -723,13 +717,13 @@ std::vector<std::uint16_t> select_server_hello_extension_order(const site_materi
     return out;
 }
 
-std::vector<std::uint16_t> select_encrypted_extensions_order(const site_material* site_material)
+std::vector<uint16_t> select_encrypted_extensions_order(const site_material* site_material)
 {
     if (site_material == nullptr)
     {
         return {};
     }
-    std::vector<std::uint16_t> out;
+    std::vector<uint16_t> out;
     for (const auto ext_type : site_material->encrypted_extension_types)
     {
         if (ext_type == tls::consts::ext::kAlpn || ext_type == tls::consts::ext::kPadding)
@@ -749,7 +743,7 @@ bool should_include_encrypted_extensions_padding(const site_material* site_mater
     return std::ranges::find(site_material->encrypted_extension_types, tls::consts::ext::kPadding) != site_material->encrypted_extension_types.end();
 }
 
-std::optional<std::uint16_t> select_encrypted_extensions_padding_len(const site_material* site_material)
+std::optional<uint16_t> select_encrypted_extensions_padding_len(const site_material* site_material)
 {
     if (site_material == nullptr)
     {
@@ -767,7 +761,7 @@ bool should_send_change_cipher_spec(const site_material* site_material)
     return site_material->sends_change_cipher_spec;
 }
 
-std::vector<std::uint16_t> select_encrypted_handshake_record_sizes(const site_material* site_material)
+std::vector<uint16_t> select_encrypted_handshake_record_sizes(const site_material* site_material)
 {
     if (site_material == nullptr)
     {
@@ -786,12 +780,12 @@ std::size_t select_reality_certificate_chain_size(const site_material* site_mate
 }
 
 boost::asio::awaitable<void> consume_tls13_compat_ccs(boost::asio::ip::tcp::socket& socket,
-                                                      const std::array<std::uint8_t, 5>& header,
+                                                      const std::array<uint8_t, 5>& header,
                                                       const mux::connection_context& ctx,
-                                                      const std::uint32_t timeout_sec,
+                                                      const uint32_t timeout_sec,
                                                       boost::system::error_code& ec)
 {
-    std::array<std::uint8_t, 1> ccs_body = {0};
+    std::array<uint8_t, 1> ccs_body = {0};
     co_await mux::timeout_io::wait_read_with_timeout(socket, boost::asio::buffer(ccs_body), timeout_sec, ec);
     if (ec)
     {
@@ -807,9 +801,9 @@ boost::asio::awaitable<void> consume_tls13_compat_ccs(boost::asio::ip::tcp::sock
 }
 
 boost::asio::awaitable<void> read_tls_record_header_allow_ccs(boost::asio::ip::tcp::socket& socket,
-                                                              std::array<std::uint8_t, 5>& header,
+                                                              std::array<uint8_t, 5>& header,
                                                               const mux::connection_context& ctx,
-                                                              const std::uint32_t timeout_sec,
+                                                              const uint32_t timeout_sec,
                                                               boost::system::error_code& ec)
 {
     co_await mux::timeout_io::wait_read_with_timeout(socket, boost::asio::buffer(header), timeout_sec, ec);
@@ -824,10 +818,10 @@ boost::asio::awaitable<void> read_tls_record_header_allow_ccs(boost::asio::ip::t
         co_return;
     }
 
-    std::uint32_t ccs_count = 0;
+    uint32_t ccs_count = 0;
     while (header[0] == 0x14)
     {
-        if (ccs_count >= kMaxTlsCompatCcsRecords)
+        if (ccs_count >= constants::tls_limits::kMaxCompatCcsRecords)
         {
             LOG_CTX_ERROR(ctx, "{} too many ccs records {}", mux::log_event::kHandshake, ccs_count);
             ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
@@ -835,7 +829,7 @@ boost::asio::awaitable<void> read_tls_record_header_allow_ccs(boost::asio::ip::t
         }
         ccs_count++;
 
-        const auto ccs_len = static_cast<std::uint16_t>((header[3] << 8) | header[4]);
+        const auto ccs_len = static_cast<uint16_t>((header[3] << 8) | header[4]);
         if (ccs_len != 1)
         {
             LOG_CTX_ERROR(ctx, "{} invalid ccs length {}", mux::log_event::kHandshake, ccs_len);
@@ -864,17 +858,17 @@ boost::asio::awaitable<void> read_tls_record_header_allow_ccs(boost::asio::ip::t
     co_return;
 }
 
-std::vector<std::uint8_t> compose_tls_record(const std::array<std::uint8_t, 5>& header, const std::vector<std::uint8_t>& body)
+std::vector<uint8_t> compose_tls_record(const std::array<uint8_t, 5>& header, const std::vector<uint8_t>& body)
 {
-    std::vector<std::uint8_t> out(header.size() + body.size());
+    std::vector<uint8_t> out(header.size() + body.size());
     std::memcpy(out.data(), header.data(), header.size());
     std::memcpy(out.data() + header.size(), body.data(), body.size());
     return out;
 }
 
-bool verify_client_finished_plaintext(const std::vector<std::uint8_t>& plaintext,
-                                      const std::uint8_t content_type,
-                                      const std::vector<std::uint8_t>& expected_verify,
+bool verify_client_finished_plaintext(const std::vector<uint8_t>& plaintext,
+                                      const uint8_t content_type,
+                                      const std::vector<uint8_t>& expected_verify,
                                       const mux::connection_context& ctx)
 {
     if (content_type != tls::kContentTypeHandshake || plaintext.size() < 4 || plaintext[0] != 0x14)
@@ -883,8 +877,8 @@ bool verify_client_finished_plaintext(const std::vector<std::uint8_t>& plaintext
         return false;
     }
 
-    const std::uint32_t msg_len =
-        (static_cast<std::uint32_t>(plaintext[1]) << 16) | (static_cast<std::uint32_t>(plaintext[2]) << 8) | static_cast<std::uint32_t>(plaintext[3]);
+    const uint32_t msg_len =
+        (static_cast<uint32_t>(plaintext[1]) << 16) | (static_cast<uint32_t>(plaintext[2]) << 8) | static_cast<uint32_t>(plaintext[3]);
     if (msg_len != expected_verify.size() || plaintext.size() != 4 + msg_len)
     {
         LOG_CTX_ERROR(ctx, "{} client finished length invalid {}", mux::log_event::kHandshake, plaintext.size());
@@ -898,17 +892,17 @@ bool verify_client_finished_plaintext(const std::vector<std::uint8_t>& plaintext
     return true;
 }
 
-std::vector<std::uint8_t> compose_server_hello_flight(const std::vector<std::uint8_t>& sh_msg,
-                                                      const std::vector<std::uint8_t>& flight2_plain,
+std::vector<uint8_t> compose_server_hello_flight(const std::vector<uint8_t>& sh_msg,
+                                                      const std::vector<uint8_t>& flight2_plain,
                                                       const bool send_change_cipher_spec,
-                                                      std::span<const std::uint16_t> encrypted_handshake_record_sizes,
+                                                      std::span<const uint16_t> encrypted_handshake_record_sizes,
                                                       const EVP_CIPHER* cipher,
-                                                      const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& s_hs_keys,
+                                                      const std::pair<std::vector<uint8_t>, std::vector<uint8_t>>& s_hs_keys,
                                                       boost::system::error_code& ec)
 {
     ec.clear();
-    std::vector<std::uint8_t> out_sh;
-    const auto sh_rec = tls::write_record_header(tls::kContentTypeHandshake, static_cast<std::uint16_t>(sh_msg.size()));
+    std::vector<uint8_t> out_sh;
+    const auto sh_rec = tls::write_record_header(tls::kContentTypeHandshake, static_cast<uint16_t>(sh_msg.size()));
     out_sh.insert(out_sh.end(), sh_rec.begin(), sh_rec.end());
     out_sh.insert(out_sh.end(), sh_msg.begin(), sh_msg.end());
     if (send_change_cipher_spec)
@@ -917,7 +911,7 @@ std::vector<std::uint8_t> compose_server_hello_flight(const std::vector<std::uin
     }
 
     std::size_t offset = 0;
-    std::uint64_t seq = 0;
+    uint64_t seq = 0;
     const tls::cipher_context record_ctx;
     const traffic_key_material key_material{
         .key = s_hs_keys.first,
@@ -938,7 +932,7 @@ std::vector<std::uint8_t> compose_server_hello_flight(const std::vector<std::uin
         }
 
         const auto end = offset + len;
-        const std::vector<std::uint8_t> chunk(flight2_plain.begin() + static_cast<std::ptrdiff_t>(offset),
+        const std::vector<uint8_t> chunk(flight2_plain.begin() + static_cast<std::ptrdiff_t>(offset),
                                               flight2_plain.begin() + static_cast<std::ptrdiff_t>(end));
         tls::record_layer::encrypt_tls_record(record_ctx, cipher, key_material, seq++, chunk, tls::kContentTypeHandshake, out_sh, ec);
         if (ec)
@@ -970,12 +964,12 @@ std::vector<std::uint8_t> compose_server_hello_flight(const std::vector<std::uin
 struct authenticated_handshake_plan
 {
     handshake_crypto_result crypto;
-    std::uint16_t cipher_suite = 0;
+    uint16_t cipher_suite = 0;
     std::string selected_alpn;
     bool has_cached_material = false;
     std::size_t cert_chain_size = 1;
     bool send_change_cipher_spec = true;
-    std::vector<std::uint16_t> encrypted_handshake_record_sizes;
+    std::vector<uint16_t> encrypted_handshake_record_sizes;
 };
 
 boost::asio::awaitable<bool> read_client_hello_or_decide(const server_handshake_context& handshake_ctx,
@@ -992,7 +986,13 @@ boost::asio::awaitable<bool> read_client_hello_or_decide(const server_handshake_
 
     const auto& ctx = handshake_ctx.ctx;
     const auto* read_failure_reason = co_await read_client_hello_handshake(
-        *handshake_ctx.socket, state.client_hello_record, state.client_hello_handshake, ctx, cfg.timeout.read, kMaxUnauthenticatedClientHelloLen, ec);
+        *handshake_ctx.socket,
+        state.client_hello_record,
+        state.client_hello_handshake,
+        ctx,
+        cfg.timeout.read,
+        constants::tls_limits::kMaxUnauthenticatedClientHelloLen,
+        ec);
     if (read_failure_reason != nullptr)
     {
         ec.clear();
@@ -1012,8 +1012,8 @@ boost::asio::awaitable<bool> read_client_hello_or_decide(const server_handshake_
 std::optional<server_accept_result> validate_client_hello_and_authenticate(server_handshake_context& handshake_ctx,
                                                                            server_handshake_state& state,
                                                                            const mux::config& cfg,
-                                                                           const std::vector<std::uint8_t>& private_key,
-                                                                           const std::vector<std::uint8_t>& short_id_bytes,
+                                                                           const std::vector<uint8_t>& private_key,
+                                                                           const std::vector<uint8_t>& short_id_bytes,
                                                                            mux::replay_cache& replay_cache,
                                                                            boost::system::error_code& ec)
 {
@@ -1161,20 +1161,20 @@ std::optional<server_accept_result> validate_client_hello_and_authenticate(serve
 authenticated_handshake_plan prepare_authenticated_handshake(const server_handshake_context& handshake_ctx,
                                                              server_handshake_state& state,
                                                              const site_material* site_material,
-                                                             const std::array<std::uint8_t, 32>& reality_cert_private_key,
-                                                             const std::vector<std::uint8_t>& reality_cert_public_key,
-                                                             const std::vector<std::uint8_t>& reality_cert_template,
+                                                             const std::array<uint8_t, 32>& reality_cert_private_key,
+                                                             const std::vector<uint8_t>& reality_cert_public_key,
+                                                             const std::vector<uint8_t>& reality_cert_template,
                                                              boost::system::error_code& ec)
 {
     ec.clear();
     authenticated_handshake_plan plan;
     const auto& ctx = handshake_ctx.ctx;
 
-    std::array<std::uint8_t, 32> ephemeral_public_key = {};
-    std::array<std::uint8_t, 32> ephemeral_private_key = {};
+    std::array<uint8_t, 32> ephemeral_public_key = {};
+    std::array<uint8_t, 32> ephemeral_private_key = {};
     const struct private_key_cleaner
     {
-        std::array<std::uint8_t, 32>& key;
+        std::array<uint8_t, 32>& key;
 
         ~private_key_cleaner() { OPENSSL_cleanse(key.data(), key.size()); }
     } cleaner{ephemeral_private_key};
@@ -1195,10 +1195,10 @@ authenticated_handshake_plan prepare_authenticated_handshake(const server_handsh
     LOG_CTX_TRACE(ctx,
                   "{} generated ephemeral key {}",
                   mux::log_event::kHandshake,
-                  tls::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(ephemeral_public_key.begin(), ephemeral_public_key.end())));
+                  tls::crypto_util::bytes_to_hex(std::vector<uint8_t>(ephemeral_public_key.begin(), ephemeral_public_key.end())));
 
     auto x25519_shared = tls::crypto_util::x25519_derive(
-        std::vector<std::uint8_t>(ephemeral_private_key.begin(), ephemeral_private_key.end()), state.x25519_peer_pub, ec);
+        std::vector<uint8_t>(ephemeral_private_key.begin(), ephemeral_private_key.end()), state.x25519_peer_pub, ec);
     if (ec)
     {
         LOG_CTX_ERROR(ctx, "{} x25519 derive failed", mux::log_event::kHandshake);
@@ -1207,7 +1207,7 @@ authenticated_handshake_plan prepare_authenticated_handshake(const server_handsh
 
     if (state.key_share_group == tls::consts::group::kX25519MLKEM768)
     {
-        std::vector<std::uint8_t> mlkem768_shared;
+        std::vector<uint8_t> mlkem768_shared;
         auto ciphertext = tls::crypto_util::mlkem768_encapsulate(state.mlkem768_peer_pub, mlkem768_shared, ec);
         if (ec)
         {
@@ -1286,7 +1286,7 @@ authenticated_handshake_plan prepare_authenticated_handshake(const server_handsh
                                          encrypted_extension_order,
                                          include_ee_padding,
                                          encrypted_extensions_padding_len,
-                                         std::vector<std::uint8_t>(reality_cert_private_key.begin(), reality_cert_private_key.end()),
+                                         std::vector<uint8_t>(reality_cert_private_key.begin(), reality_cert_private_key.end()),
                                          ec);
     return plan;
 }
@@ -1321,22 +1321,22 @@ boost::asio::awaitable<bool> complete_authenticated_handshake(const server_hands
         co_return false;
     }
 
-    std::array<std::uint8_t, 5> header = {0};
+    std::array<uint8_t, 5> header = {0};
     co_await read_tls_record_header_allow_ccs(*handshake_ctx.socket, header, ctx, cfg.timeout.read, ec);
     if (ec)
     {
         co_return false;
     }
 
-    const auto body_len = static_cast<std::uint16_t>((header[3] << 8) | header[4]);
-    if (body_len > kMaxTlsCiphertextRecordLen)
+    const auto body_len = static_cast<uint16_t>((header[3] << 8) | header[4]);
+    if (body_len > constants::tls_limits::kMaxCiphertextRecordLen)
     {
         LOG_CTX_ERROR(ctx, "{} client finished record too large {}", mux::log_event::kHandshake, body_len);
         ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
         co_return false;
     }
 
-    std::vector<std::uint8_t> body(body_len);
+    std::vector<uint8_t> body(body_len);
     co_await mux::timeout_io::wait_read_with_timeout(*handshake_ctx.socket, boost::asio::buffer(body), cfg.timeout.read, ec);
     if (ec)
     {
@@ -1344,7 +1344,7 @@ boost::asio::awaitable<bool> complete_authenticated_handshake(const server_hands
     }
 
     const auto record = compose_tls_record(header, body);
-    std::uint8_t content_type = 0;
+    uint8_t content_type = 0;
     auto plaintext =
         tls::record_layer::decrypt_record(plan.crypto.cipher, plan.crypto.c_hs_keys.first, plan.crypto.c_hs_keys.second, 0, record, content_type, ec);
     if (ec)

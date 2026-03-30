@@ -1,7 +1,5 @@
 #include <atomic>
-#include <cctype>
 #include <chrono>
-#include <iterator>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -15,13 +13,11 @@
 
 #include <boost/asio.hpp>
 #include <boost/algorithm/hex.hpp>
-#include <boost/asio/as_tuple.hpp>
 #include <boost/asio/awaitable.hpp>
-#include <boost/asio/steady_timer.hpp>
-#include <boost/asio/use_awaitable.hpp>
 
 #include "log.h"
 #include "config.h"
+#include "constants.h"
 #include "net_utils.h"
 #include "timeout_io.h"
 #include "context_pool.h"
@@ -41,31 +37,18 @@ namespace mux
 namespace
 {
 
-constexpr std::chrono::seconds kReconnectRetryInterval{2};
-constexpr std::uint16_t kFallbackTlsPort = 443;
-constexpr std::uint32_t kFallbackIoTimeoutSec = 2;
-
 struct connect_options
 {
     std::string sni;
     std::string remote_host;
     std::string remote_port;
-    std::vector<std::uint8_t> server_pub_key;
-    std::vector<std::uint8_t> short_id_bytes;
+    std::vector<uint8_t> server_pub_key;
+    std::vector<uint8_t> short_id_bytes;
     std::optional<reality::fingerprint_type> fingerprint_type;
-    std::uint32_t max_handshake_records = 256;
-    std::uint32_t tunnel_connections = 1;
-    std::uint32_t connect_mark = 0;
+    uint32_t max_handshake_records = constants::reality_limits::kMaxHandshakeRecords;
+    uint32_t tunnel_connections = 1;
+    uint32_t connect_mark = 0;
 };
-
-std::uint32_t clamp_fallback_timeout(const std::uint32_t configured_timeout_sec)
-{
-    if (configured_timeout_sec == 0)
-    {
-        return kFallbackIoTimeoutSec;
-    }
-    return std::min(configured_timeout_sec, kFallbackIoTimeoutSec);
-}
 
 std::string normalize_fingerprint_name(const std::string& name)
 {
@@ -123,7 +106,7 @@ std::optional<reality::fingerprint_type> parse_fingerprint_type(const std::strin
 
 void prepare_socket_for_connect(boost::asio::ip::tcp::socket& socket,
                                 const boost::asio::ip::tcp::endpoint& endpoint,
-                                const std::uint32_t mark,
+                                const uint32_t mark,
                                 boost::system::error_code& ec)
 {
     if (socket.is_open())
@@ -151,7 +134,7 @@ void prepare_socket_for_connect(boost::asio::ip::tcp::socket& socket,
 
 }    // namespace
 
-connect_options build_connect_options(const config& cfg)
+static connect_options build_connect_options(const config& cfg)
 {
     connect_options options;
     options.sni = cfg.reality.sni;
@@ -166,16 +149,13 @@ connect_options build_connect_options(const config& cfg)
     return options;
 }
 
-client_tunnel_pool::client_tunnel_pool(io_context_pool& pool, const config& cfg)
-    : cfg_(cfg), pool_(pool), tunnel_pool_(cfg.limits.max_connections)
-{
-}
+client_tunnel_pool::client_tunnel_pool(io_context_pool& pool, const config& cfg) : cfg_(cfg), pool_(pool), tunnel_pool_(cfg.limits.max_connections) {}
 
 void client_tunnel_pool::start()
 {
     LOG_INFO("client pool starting target {} port {} with {} connections", cfg_.outbound.host, cfg_.outbound.port, cfg_.limits.max_connections);
     auto self = shared_from_this();
-    for (std::uint32_t i = 0; i < cfg_.limits.max_connections; ++i)
+    for (uint32_t i = 0; i < cfg_.limits.max_connections; ++i)
     {
         auto& worker = pool_.get_io_worker();
         worker.group.spawn([self, i, worker = &worker]() -> boost::asio::awaitable<void> { co_await self->connect_remote_loop(i, *worker); });
@@ -240,7 +220,7 @@ static boost::asio::awaitable<void> run_real_certificate_fallback(const config& 
 {
     connection_context fallback_ctx = ctx;
     fallback_ctx.sni(options.sni);
-    fallback_ctx.set_target(options.sni, kFallbackTlsPort);
+    fallback_ctx.set_target(options.sni, constants::reality_limits::kDefaultTlsPort);
 
     if (!handshake_ret.negotiated.negotiated_alpn.empty() && handshake_ret.negotiated.negotiated_alpn != "http/1.1")
     {
@@ -262,8 +242,8 @@ static boost::asio::awaitable<void> run_real_certificate_fallback(const config& 
 
     reality::lightweight_http_visit_options visit_options;
     visit_options.host = options.sni;
-    visit_options.write_timeout_sec = clamp_fallback_timeout(cfg.timeout.write);
-    visit_options.read_timeout_sec = clamp_fallback_timeout(cfg.timeout.read);
+    visit_options.write_timeout_sec = cfg.timeout.write;
+    visit_options.read_timeout_sec = cfg.timeout.read;
 
     const auto visit_result = co_await reality::run_lightweight_http_visit(socket, std::move(record_context), visit_options, ec);
     if (ec)
@@ -297,11 +277,8 @@ static boost::asio::awaitable<void> run_real_certificate_fallback(const config& 
     co_return;
 }
 
-static boost::asio::awaitable<reality::client_handshake_result> perform_reality_handshake_with_timeout(const config& cfg,
-                                                                                                       const auto& options,
-                                                                                                       boost::asio::ip::tcp::socket& socket,
-                                                                                                       const connection_context& ctx,
-                                                                                                       boost::system::error_code& ec)
+static boost::asio::awaitable<reality::client_handshake_result> perform_reality_handshake_with_timeout(
+    const config& cfg, const auto& options, boost::asio::ip::tcp::socket& socket, const connection_context& ctx, boost::system::error_code& ec)
 {
     const reality::client_handshaker handshaker(
         cfg, options.sni, options.server_pub_key, options.short_id_bytes, options.fingerprint_type, options.max_handshake_records);
@@ -313,7 +290,7 @@ static boost::asio::awaitable<reality::client_handshake_result> perform_reality_
     co_return handshake_res;
 }
 
-static boost::asio::awaitable<void> wait_retry(const std::uint32_t index, io_worker& worker, const std::chrono::steady_clock::duration delay)
+static boost::asio::awaitable<void> wait_retry(const uint32_t index, io_worker& worker, const std::chrono::steady_clock::duration delay)
 {
     const auto wait_ec = co_await timeout_io::wait_for(worker.io_context, delay);
     if (wait_ec == boost::asio::error::operation_aborted)
@@ -326,11 +303,8 @@ static boost::asio::awaitable<void> wait_retry(const std::uint32_t index, io_wor
     }
 }
 
-static boost::asio::awaitable<void> tcp_connect_remote(const config& cfg,
-                                                       const auto& options,
-                                                       boost::asio::ip::tcp::socket& socket,
-                                                       const connection_context& ctx,
-                                                       boost::system::error_code& ec)
+static boost::asio::awaitable<void> tcp_connect_remote(
+    const config& cfg, const auto& options, boost::asio::ip::tcp::socket& socket, const connection_context& ctx, boost::system::error_code& ec)
 {
     const auto timeout_sec = cfg.timeout.connect;
     boost::asio::ip::tcp::resolver resolver(socket.get_executor());
@@ -368,9 +342,9 @@ static boost::asio::awaitable<void> tcp_connect_remote(const config& cfg,
 
 static boost::asio::awaitable<std::shared_ptr<mux_connection>> connect_remote_once(const config& cfg,
                                                                                    const auto& options,
-                                                                                   const std::uint32_t index,
+                                                                                   const uint32_t index,
                                                                                    io_worker& worker,
-                                                                                   const std::uint32_t cid,
+                                                                                   const uint32_t cid,
                                                                                    connection_context& ctx,
                                                                                    boost::system::error_code& ec)
 {
@@ -419,13 +393,13 @@ static boost::asio::awaitable<std::shared_ptr<mux_connection>> connect_remote_on
     co_return std::make_shared<mux_connection>(std::move(socket), worker, std::move(record_context), cfg, cid, ctx.trace_id());
 }
 
-boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::uint32_t index, io_worker& worker)
+boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const uint32_t index, io_worker& worker)
 {
     const connect_options options = build_connect_options(cfg_);
     boost::system::error_code ec;
     while (!stop_)
     {
-        const std::uint32_t cid = next_conn_id_.fetch_add(1, std::memory_order_relaxed);
+        const uint32_t cid = next_conn_id_.fetch_add(1, std::memory_order_relaxed);
         connection_context ctx;
         ctx.new_trace_id();
         ctx.conn_id(cid);
@@ -440,7 +414,7 @@ boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::
         }
         if (tunnel == nullptr)
         {
-            co_await wait_retry(index, worker, kReconnectRetryInterval);
+            co_await wait_retry(index, worker, std::chrono::seconds(constants::mux::kReconnectRetryIntervalSec));
             continue;
         }
 
@@ -464,7 +438,7 @@ boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::
             break;
         }
 
-        co_await wait_retry(index, worker, kReconnectRetryInterval);
+        co_await wait_retry(index, worker, std::chrono::seconds(constants::mux::kReconnectRetryIntervalSec));
     }
 
     LOG_INFO("{} connect remote loop {} exited", log_event::kConnClose, index);

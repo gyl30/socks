@@ -25,7 +25,7 @@ namespace mux
 namespace
 {
 
-void setup_acceptor(boost::asio::ip::tcp::acceptor& acceptor, const std::string& host, const std::uint16_t port, boost::system::error_code& ec)
+void setup_acceptor(boost::asio::ip::tcp::acceptor& acceptor, const std::string& host, const uint16_t port, boost::system::error_code& ec)
 {
     const auto listen_addr = boost::asio::ip::make_address(host, ec);
     if (ec)
@@ -139,7 +139,7 @@ boost::asio::awaitable<void> socks_client::accept_loop()
         {
             LOG_WARN("failed to set no delay on local socket {}", ec.message());
         }
-        const std::uint32_t sid = next_session_id_.fetch_add(1, std::memory_order_relaxed);
+        const uint32_t sid = next_session_id_.fetch_add(1, std::memory_order_relaxed);
         std::make_shared<socks_session>(std::move(socket), socket_worker, tunnel_pool_, router_, sid, cfg_)->start();
     }
     LOG_INFO("local socks5 acceptor stopped");

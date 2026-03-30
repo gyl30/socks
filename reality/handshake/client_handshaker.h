@@ -23,17 +23,17 @@ class connection_context;
 namespace reality
 {
 
-enum class fingerprint_type : std::uint8_t;
+enum class fingerprint_type : uint8_t;
 
 class client_handshaker
 {
    public:
     client_handshaker(const mux::config& cfg,
                       std::string_view sni,
-                      const std::vector<std::uint8_t>& server_public_key,
-                      const std::vector<std::uint8_t>& short_id_bytes,
+                      const std::vector<uint8_t>& server_public_key,
+                      const std::vector<uint8_t>& short_id_bytes,
                       std::optional<fingerprint_type> fingerprint_type,
-                      std::uint32_t max_handshake_records);
+                      uint32_t max_handshake_records);
 
     [[nodiscard]] boost::asio::awaitable<client_handshake_result> run(boost::asio::ip::tcp::socket& socket,
                                                                       const mux::connection_context& ctx,
@@ -42,10 +42,10 @@ class client_handshaker
    private:
     const mux::config& cfg_;
     std::string sni_;
-    std::vector<std::uint8_t> server_public_key_;
-    std::vector<std::uint8_t> short_id_bytes_;
+    std::vector<uint8_t> server_public_key_;
+    std::vector<uint8_t> short_id_bytes_;
     std::optional<fingerprint_type> fingerprint_type_;
-    std::uint32_t max_handshake_records_ = 0;
+    uint32_t max_handshake_records_ = 0;
 };
 
 }    // namespace reality

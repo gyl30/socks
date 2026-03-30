@@ -22,7 +22,7 @@ namespace mux
 
 namespace detail
 {
-std::vector<std::uint8_t> build_udp_associate_reply(const boost::asio::ip::address& local_addr, std::uint16_t udp_bind_port);
+std::vector<uint8_t> build_udp_associate_reply(const boost::asio::ip::address& local_addr, uint16_t udp_bind_port);
 }
 
 class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
@@ -32,31 +32,31 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
                       io_worker& worker,
                       std::shared_ptr<client_tunnel_pool> tunnel_pool,
                       std::shared_ptr<router> router,
-                      std::uint32_t sid,
+                      uint32_t sid,
                       const config& cfg,
                       std::shared_ptr<void> active_connection_guard = nullptr);
 
-    void start(const std::string& host, std::uint16_t port);
+    void start(const std::string& host, uint16_t port);
 
    private:
-    boost::asio::awaitable<void> run(const std::string& host, std::uint16_t port);
+    boost::asio::awaitable<void> run(const std::string& host, uint16_t port);
 
    private:
-    void apply_request_peer_constraint(const std::string& host, std::uint16_t port) const;
+    void apply_request_peer_constraint(const std::string& host, uint16_t port) const;
     [[nodiscard]] boost::asio::awaitable<route_type> decide_udp_route(const socks_udp_header& header) const;
     [[nodiscard]] boost::asio::awaitable<bool> ensure_proxy_stream(boost::system::error_code& ec);
     [[nodiscard]] boost::asio::awaitable<boost::asio::ip::udp::endpoint> resolve_target_endpoint(const std::string& host,
-                                                                                                 std::uint16_t port,
+                                                                                                 uint16_t port,
                                                                                                  boost::system::error_code& ec);
     boost::asio::awaitable<void> udp_socket_loop();
     boost::asio::awaitable<void> direct_udp_socket_loop(boost::asio::ip::udp::socket& direct_socket);
     void start_direct_udp_socket_loops();
     boost::asio::awaitable<void> forward_direct_packet(const socks_udp_header& header,
-                                                       const std::uint8_t* payload,
+                                                       const uint8_t* payload,
                                                        std::size_t payload_len,
                                                        boost::system::error_code& ec);
     boost::asio::awaitable<void> forward_direct_reply_to_client(const boost::asio::ip::udp::endpoint& sender,
-                                                                const std::uint8_t* payload,
+                                                                const uint8_t* payload,
                                                                 std::size_t payload_len,
                                                                 boost::system::error_code& ec);
     void open_direct_udp_socket(boost::asio::ip::udp::socket& direct_socket,
@@ -75,14 +75,14 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
     struct endpoint_cache_entry
     {
         boost::asio::ip::udp::endpoint endpoint;
-        std::uint64_t expires_at = 0;
+        uint64_t expires_at = 0;
         boost::system::error_code last_error;
         bool negative = false;
     };
 
     struct peer_cache_entry
     {
-        std::uint64_t expires_at = 0;
+        uint64_t expires_at = 0;
     };
 
     using proxy_stream_channel_type = boost::asio::experimental::concurrent_channel<void(boost::system::error_code, std::shared_ptr<mux_stream>)>;
@@ -100,8 +100,8 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
     std::shared_ptr<client_tunnel_pool> tunnel_pool_;
     std::shared_ptr<mux_connection> tunnel_;
     std::shared_ptr<mux_stream> stream_;
-    std::atomic<std::uint8_t> stream_close_command_{0};
-    std::uint64_t last_activity_time_ms_{0};
+    std::atomic<uint8_t> stream_close_command_{0};
+    uint64_t last_activity_time_ms_{0};
     bool stopped_ = false;
     bool proxy_stream_started_ = false;
     bool has_client_ip_ = false;

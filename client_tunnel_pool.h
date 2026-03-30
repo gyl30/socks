@@ -30,13 +30,13 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
     [[nodiscard]] std::shared_ptr<mux_connection> select_tunnel();
 
    private:
-    boost::asio::awaitable<void> connect_remote_loop(std::uint32_t index, io_worker& worker);
+    boost::asio::awaitable<void> connect_remote_loop(uint32_t index, io_worker& worker);
 
    private:
     const config& cfg_;
     io_context_pool& pool_;
-    std::atomic<std::uint32_t> next_tunnel_index_{0};
-    std::atomic<std::uint32_t> next_conn_id_{1};
+    std::atomic<uint32_t> next_tunnel_index_{0};
+    std::atomic<uint32_t> next_conn_id_{1};
     std::mutex tunnel_mutex_;
     std::vector<std::shared_ptr<mux_connection>> tunnel_pool_;
     std::atomic<bool> stop_ = false;

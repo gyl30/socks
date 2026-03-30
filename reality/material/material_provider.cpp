@@ -4,19 +4,13 @@
 
 #include "log.h"
 #include "config.h"
+#include "constants.h"
 #include "cert_fetcher.h"
 #include "site_material.h"
 #include "reality/material/material_provider.h"
 
 namespace reality
 {
-
-namespace
-{
-
-constexpr std::uint16_t kMaterialPort = 443;
-
-}    // namespace
 
 site_material load_site_material(const mux::config& cfg, boost::system::error_code& ec)
 {
@@ -28,10 +22,11 @@ site_material load_site_material(const mux::config& cfg, boost::system::error_co
         return {};
     }
 
-    site_material material = fetch_site_material(target_host, kMaterialPort, target_host, ec, "site-material:" + target_host);
+    site_material material =
+        fetch_site_material(target_host, constants::reality_limits::kDefaultTlsPort, target_host, ec, "site-material:" + target_host);
     if (ec)
     {
-        LOG_ERROR("reality site material load failed target {}:{} error {}", target_host, kMaterialPort, ec.message());
+        LOG_ERROR("reality site material load failed target {}:{} error {}", target_host, constants::reality_limits::kDefaultTlsPort, ec.message());
         return {};
     }
 

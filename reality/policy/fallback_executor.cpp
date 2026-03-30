@@ -8,6 +8,7 @@
 
 #include "log.h"
 #include "config.h"
+#include "constants.h"
 #include "timeout_io.h"
 #include "scoped_exit.h"
 #include "connection_context.h"
@@ -18,9 +19,6 @@ namespace reality
 
 namespace
 {
-
-constexpr std::size_t kRelayBufferSize = 16L * 1024;
-
 void close_tcp_socket(boost::asio::ip::tcp::socket& socket)
 {
     boost::system::error_code ec;
@@ -42,7 +40,7 @@ void close_tcp_socket(boost::asio::ip::tcp::socket& socket)
 fallback_executor::fallback_executor(boost::asio::io_context& io_context, const mux::config& cfg) : io_context_(io_context), cfg_(cfg) {}
 
 boost::asio::awaitable<void> fallback_executor::run(
-    fallback_request& request, const std::string& host, const std::uint16_t port, const char* reason, boost::system::error_code& ec) const
+    fallback_request& request, const std::string& host, const uint16_t port, const char* reason, boost::system::error_code& ec) const
 {
     ec.clear();
     const char* log_reason = normalize_reason(reason);
@@ -80,7 +78,7 @@ boost::asio::awaitable<void> fallback_executor::run(
 boost::asio::awaitable<void> fallback_executor::connect_target(boost::asio::ip::tcp::socket& upstream_socket,
                                                                const mux::connection_context& ctx,
                                                                const std::string& host,
-                                                               const std::uint16_t port,
+                                                               const uint16_t port,
                                                                boost::system::error_code& ec) const
 {
     ec.clear();
@@ -140,8 +138,8 @@ boost::asio::awaitable<void> fallback_executor::connect_target(boost::asio::ip::
 boost::asio::awaitable<void> fallback_executor::write_initial_client_hello(boost::asio::ip::tcp::socket& upstream_socket,
                                                                            const mux::connection_context& ctx,
                                                                            const std::string& host,
-                                                                           const std::uint16_t port,
-                                                                           const std::vector<std::uint8_t>& client_hello_record,
+                                                                           const uint16_t port,
+                                                                           const std::vector<uint8_t>& client_hello_record,
                                                                            boost::system::error_code& ec) const
 {
     ec.clear();
@@ -166,7 +164,7 @@ boost::asio::awaitable<void> fallback_executor::relay_data(boost::asio::ip::tcp:
 {
     const auto fallback_timeout = cfg_.timeout.idle;
     boost::system::error_code ec;
-    std::vector<std::uint8_t> buf(kRelayBufferSize);
+    std::vector<uint8_t> buf(constants::fallback::kRelayBufferSize);
     for (;;)
     {
         const auto n = co_await mux::timeout_io::wait_read_some_with_timeout(src, boost::asio::buffer(buf), fallback_timeout, ec);

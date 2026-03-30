@@ -12,7 +12,7 @@ namespace mux
 std::string generate_trace_id()
 {
     static thread_local std::mt19937_64 gen(std::random_device{}());
-    std::uniform_int_distribution<std::uint64_t> dist;
+    std::uniform_int_distribution<uint64_t> dist;
     return fmt::format("{:016x}", dist(gen));
 }
 
@@ -47,7 +47,7 @@ std::string connection_context::stats_summary() const
     return fmt::format("tx {} rx {} duration {:.2f}s", stats_.tx_bytes, stats_.rx_bytes, duration_seconds());
 }
 
-connection_context connection_context::with_stream(const std::uint32_t sid) const
+connection_context connection_context::with_stream(const uint32_t sid) const
 {
     connection_context ctx = *this;
     ctx.stream_id_ = sid;
@@ -55,19 +55,19 @@ connection_context connection_context::with_stream(const std::uint32_t sid) cons
     return ctx;
 }
 
-void connection_context::set_local_endpoint(std::string addr, const std::uint16_t port)
+void connection_context::set_local_endpoint(std::string addr, const uint16_t port)
 {
     local_.addr = std::move(addr);
     local_.port = port;
 }
 
-void connection_context::set_remote_endpoint(std::string addr, const std::uint16_t port)
+void connection_context::set_remote_endpoint(std::string addr, const uint16_t port)
 {
     remote_.addr = std::move(addr);
     remote_.port = port;
 }
 
-void connection_context::set_target(const std::string& host, const std::uint16_t port)
+void connection_context::set_target(const std::string& host, const uint16_t port)
 {
     target_.host = host;
     target_.port = port;

@@ -4,22 +4,15 @@
 
 #include <boost/system/error_code.hpp>
 
+#include "constants.h"
 #include "tls/handshake_reassembler.h"
 
 namespace tls
 {
 
-namespace
-{
+handshake_reassembler::handshake_reassembler() : buffer_(constants::tls_limits::kMaxHandshakeReassembleBuffer) {}
 
-constexpr std::size_t kMaxHandshakeMessageSize = 64L * 1024;
-constexpr std::size_t kMaxHandshakeReassembleBuffer = kMaxHandshakeMessageSize + 4;
-
-}    // namespace
-
-handshake_reassembler::handshake_reassembler() : buffer_(kMaxHandshakeReassembleBuffer) {}
-
-void handshake_reassembler::append(std::span<const std::uint8_t> data)
+void handshake_reassembler::append(std::span<const uint8_t> data)
 {
     if (data.empty())
     {
@@ -34,7 +27,7 @@ void handshake_reassembler::append(std::span<const std::uint8_t> data)
     buffer_.insert(buffer_.end(), data.begin(), data.end());
 }
 
-bool handshake_reassembler::next(std::vector<std::uint8_t>& out, boost::system::error_code& ec)
+bool handshake_reassembler::next(std::vector<uint8_t>& out, boost::system::error_code& ec)
 {
     ec.clear();
     if (overflowed_)
@@ -48,17 +41,17 @@ bool handshake_reassembler::next(std::vector<std::uint8_t>& out, boost::system::
         return false;
     }
 
-    const std::uint32_t msg_len =
-        (static_cast<std::uint32_t>(buffer_[1]) << 16) | (static_cast<std::uint32_t>(buffer_[2]) << 8) | static_cast<std::uint32_t>(buffer_[3]);
+    const uint32_t msg_len =
+        (static_cast<uint32_t>(buffer_[1]) << 16) | (static_cast<uint32_t>(buffer_[2]) << 8) | static_cast<uint32_t>(buffer_[3]);
 
-    if (msg_len > kMaxHandshakeMessageSize)
+    if (msg_len > constants::tls_limits::kMaxHandshakeMessageSize)
     {
         buffer_.clear();
         ec = std::make_error_code(std::errc::message_size);
         return false;
     }
 
-    const std::uint32_t full_len = 4 + msg_len;
+    const uint32_t full_len = 4 + msg_len;
     if (buffer_.size() < full_len)
     {
         return false;

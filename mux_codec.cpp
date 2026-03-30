@@ -21,11 +21,11 @@ namespace mux
 namespace
 {
 
-std::atomic<std::uint64_t> g_decode_warn_total{0};
+std::atomic<uint64_t> g_decode_warn_total{0};
 
-[[nodiscard]] std::uint64_t next_decode_warn_total() { return g_decode_warn_total.fetch_add(1, std::memory_order_relaxed) + 1; }
+[[nodiscard]] uint64_t next_decode_warn_total() { return g_decode_warn_total.fetch_add(1, std::memory_order_relaxed) + 1; }
 
-[[nodiscard]] bool should_log_decode_warn(const std::uint64_t total)
+[[nodiscard]] bool should_log_decode_warn(const uint64_t total)
 {
     if (total <= 4)
     {
@@ -50,29 +50,29 @@ std::atomic<std::uint64_t> g_decode_warn_total{0};
 
 }    // namespace
 
-void mux_codec::encode_header(const frame_header& h, std::vector<std::uint8_t>& buf)
+void mux_codec::encode_header(const frame_header& h, std::vector<uint8_t>& buf)
 {
-    buf.push_back(static_cast<std::uint8_t>((h.stream_id >> 24) & 0xFF));
-    buf.push_back(static_cast<std::uint8_t>((h.stream_id >> 16) & 0xFF));
-    buf.push_back(static_cast<std::uint8_t>((h.stream_id >> 8) & 0xFF));
-    buf.push_back(static_cast<std::uint8_t>(h.stream_id & 0xFF));
+    buf.push_back(static_cast<uint8_t>((h.stream_id >> 24) & 0xFF));
+    buf.push_back(static_cast<uint8_t>((h.stream_id >> 16) & 0xFF));
+    buf.push_back(static_cast<uint8_t>((h.stream_id >> 8) & 0xFF));
+    buf.push_back(static_cast<uint8_t>(h.stream_id & 0xFF));
 
-    buf.push_back(static_cast<std::uint8_t>((h.length >> 8) & 0xFF));
-    buf.push_back(static_cast<std::uint8_t>(h.length & 0xFF));
+    buf.push_back(static_cast<uint8_t>((h.length >> 8) & 0xFF));
+    buf.push_back(static_cast<uint8_t>(h.length & 0xFF));
 
     buf.push_back(h.command);
 }
 
-void mux_codec::decode_header(const std::uint8_t* buf, frame_header& out)
+void mux_codec::decode_header(const uint8_t* buf, frame_header& out)
 {
-    out.stream_id = (static_cast<std::uint32_t>(buf[0]) << 24) | (static_cast<std::uint32_t>(buf[1]) << 16) |
-                    (static_cast<std::uint32_t>(buf[2]) << 8) | (static_cast<std::uint32_t>(buf[3]));
+    out.stream_id = (static_cast<uint32_t>(buf[0]) << 24) | (static_cast<uint32_t>(buf[1]) << 16) |
+                    (static_cast<uint32_t>(buf[2]) << 8) | (static_cast<uint32_t>(buf[3]));
 
-    out.length = static_cast<std::uint16_t>((static_cast<std::uint16_t>(buf[4]) << 8) | static_cast<std::uint16_t>(buf[5]));
+    out.length = static_cast<uint16_t>((static_cast<uint16_t>(buf[4]) << 8) | static_cast<uint16_t>(buf[5]));
     out.command = buf[6];
 }
 
-std::vector<std::uint8_t> mux_codec::encode_frame(const frame_header& h, std::span<const std::uint8_t> payload)
+std::vector<uint8_t> mux_codec::encode_frame(const frame_header& h, std::span<const uint8_t> payload)
 {
     if (payload.size() > mux::kMaxPayload)
     {
@@ -80,11 +80,11 @@ std::vector<std::uint8_t> mux_codec::encode_frame(const frame_header& h, std::sp
         return {};
     }
 
-    std::vector<std::uint8_t> frame;
+    std::vector<uint8_t> frame;
     frame.reserve(mux::kHeaderSize + payload.size());
 
     frame_header header = h;
-    header.length = static_cast<std::uint16_t>(payload.size());
+    header.length = static_cast<uint16_t>(payload.size());
     encode_header(header, frame);
 
     if (!payload.empty())
@@ -94,8 +94,8 @@ std::vector<std::uint8_t> mux_codec::encode_frame(const frame_header& h, std::sp
     return frame;
 }
 
-void mux_codec::decode_frames(std::vector<std::uint8_t>& pending,
-                              const std::span<const std::uint8_t> data,
+void mux_codec::decode_frames(std::vector<uint8_t>& pending,
+                              const std::span<const uint8_t> data,
                               const std::size_t max_buffer,
                               std::vector<mux_frame>& frames,
                               boost::system::error_code& ec)
@@ -157,7 +157,7 @@ void mux_codec::decode_frames(std::vector<std::uint8_t>& pending,
     pending.erase(pending.begin(), pending.begin() + static_cast<std::ptrdiff_t>(offset));
 }
 
-bool mux_codec::encode_syn(const syn_payload& p, std::vector<std::uint8_t>& buf)
+bool mux_codec::encode_syn(const syn_payload& p, std::vector<uint8_t>& buf)
 {
     if (!is_printable_ascii_text(p.addr) || !is_printable_ascii_text(p.trace_id))
     {
@@ -170,14 +170,14 @@ bool mux_codec::encode_syn(const syn_payload& p, std::vector<std::uint8_t>& buf)
     }
     buf.push_back(p.socks_cmd);
 
-    const auto addr_len = static_cast<std::uint8_t>(p.addr.size());
+    const auto addr_len = static_cast<uint8_t>(p.addr.size());
     buf.push_back(addr_len);
     buf.insert(buf.end(), p.addr.begin(), p.addr.begin() + addr_len);
 
-    buf.push_back(static_cast<std::uint8_t>((p.port >> 8) & 0xFF));
-    buf.push_back(static_cast<std::uint8_t>(p.port & 0xFF));
+    buf.push_back(static_cast<uint8_t>((p.port >> 8) & 0xFF));
+    buf.push_back(static_cast<uint8_t>(p.port & 0xFF));
 
-    const auto trace_id_len = static_cast<std::uint8_t>(p.trace_id.size());
+    const auto trace_id_len = static_cast<uint8_t>(p.trace_id.size());
     buf.push_back(trace_id_len);
     if (trace_id_len > 0)
     {
@@ -186,7 +186,7 @@ bool mux_codec::encode_syn(const syn_payload& p, std::vector<std::uint8_t>& buf)
     return true;
 }
 
-bool mux_codec::decode_syn(const std::uint8_t* data, const std::size_t len, syn_payload& out)
+bool mux_codec::decode_syn(const uint8_t* data, const std::size_t len, syn_payload& out)
 {
     if (len < 4)
     {
@@ -199,7 +199,7 @@ bool mux_codec::decode_syn(const std::uint8_t* data, const std::size_t len, syn_
     }
     out.socks_cmd = data[0];
     out.trace_id.clear();
-    const std::uint8_t addr_len = data[1];
+    const uint8_t addr_len = data[1];
     if (len < 2 + static_cast<std::size_t>(addr_len) + 2)
     {
         const auto warn_total = next_decode_warn_total();
@@ -219,8 +219,8 @@ bool mux_codec::decode_syn(const std::uint8_t* data, const std::size_t len, syn_
         }
         return false;
     }
-    const std::uint8_t* port_ptr = &data[2 + addr_len];
-    out.port = static_cast<std::uint16_t>((static_cast<std::uint16_t>(port_ptr[0]) << 8) | static_cast<std::uint16_t>(port_ptr[1]));
+    const uint8_t* port_ptr = &data[2 + addr_len];
+    out.port = static_cast<uint16_t>((static_cast<uint16_t>(port_ptr[0]) << 8) | static_cast<uint16_t>(port_ptr[1]));
 
     std::size_t current_pos = 2 + addr_len + 2;
     if (len == current_pos)
@@ -228,7 +228,7 @@ bool mux_codec::decode_syn(const std::uint8_t* data, const std::size_t len, syn_
         return true;
     }
 
-    const std::uint8_t trace_id_len = data[current_pos];
+    const uint8_t trace_id_len = data[current_pos];
     current_pos++;
     const std::size_t expected_len = current_pos + trace_id_len;
     if (len != expected_len)
@@ -253,7 +253,7 @@ bool mux_codec::decode_syn(const std::uint8_t* data, const std::size_t len, syn_
     return true;
 }
 
-bool mux_codec::encode_ack(const ack_payload& p, std::vector<std::uint8_t>& buf)
+bool mux_codec::encode_ack(const ack_payload& p, std::vector<uint8_t>& buf)
 {
     if (!is_printable_ascii_text(p.bnd_addr))
     {
@@ -266,16 +266,16 @@ bool mux_codec::encode_ack(const ack_payload& p, std::vector<std::uint8_t>& buf)
     }
     buf.push_back(p.socks_rep);
 
-    const auto addr_len = static_cast<std::uint8_t>(p.bnd_addr.size());
+    const auto addr_len = static_cast<uint8_t>(p.bnd_addr.size());
     buf.push_back(addr_len);
     buf.insert(buf.end(), p.bnd_addr.begin(), p.bnd_addr.begin() + addr_len);
 
-    buf.push_back(static_cast<std::uint8_t>((p.bnd_port >> 8) & 0xFF));
-    buf.push_back(static_cast<std::uint8_t>(p.bnd_port & 0xFF));
+    buf.push_back(static_cast<uint8_t>((p.bnd_port >> 8) & 0xFF));
+    buf.push_back(static_cast<uint8_t>(p.bnd_port & 0xFF));
     return true;
 }
 
-bool mux_codec::decode_ack(const std::uint8_t* data, const std::size_t len, ack_payload& out)
+bool mux_codec::decode_ack(const uint8_t* data, const std::size_t len, ack_payload& out)
 {
     if (len < 4)
     {
@@ -287,7 +287,7 @@ bool mux_codec::decode_ack(const std::uint8_t* data, const std::size_t len, ack_
         return false;
     }
     out.socks_rep = data[0];
-    const std::uint8_t addr_len = data[1];
+    const uint8_t addr_len = data[1];
     const std::size_t expected_len = 2 + static_cast<std::size_t>(addr_len) + 2;
     if (len != expected_len)
     {
@@ -308,8 +308,8 @@ bool mux_codec::decode_ack(const std::uint8_t* data, const std::size_t len, ack_
         }
         return false;
     }
-    const std::uint8_t* port_ptr = &data[2 + addr_len];
-    out.bnd_port = static_cast<std::uint16_t>((static_cast<std::uint16_t>(port_ptr[0]) << 8) | static_cast<std::uint16_t>(port_ptr[1]));
+    const uint8_t* port_ptr = &data[2 + addr_len];
+    out.bnd_port = static_cast<uint16_t>((static_cast<uint16_t>(port_ptr[0]) << 8) | static_cast<uint16_t>(port_ptr[1]));
     return true;
 }
 
