@@ -42,9 +42,7 @@ namespace
     return ec == boost::asio::error::operation_aborted || ec == boost::asio::error::bad_descriptor;
 }
 
-boost::asio::awaitable<void> send_udp_stream_reset(const std::shared_ptr<mux_stream>& stream,
-                                                   const connection_context& ctx,
-                                                   const char* stage)
+boost::asio::awaitable<void> send_udp_stream_reset(const std::shared_ptr<mux_stream>& stream, const connection_context& ctx, const char* stage)
 {
     if (stream == nullptr)
     {
@@ -232,11 +230,8 @@ boost::asio::awaitable<udp_enqueue_result> tproxy_udp_session::enqueue_packet(st
 
     if (payload.size() > constants::udp::kMaxPacketSize)
     {
-        LOG_CTX_WARN(ctx_,
-                     "{} drop udp packet because payload too large size {} max {}",
-                     log_event::kMux,
-                     payload.size(),
-                     constants::udp::kMaxPacketSize);
+        LOG_CTX_WARN(
+            ctx_, "{} drop udp packet because payload too large size {} max {}", log_event::kMux, payload.size(), constants::udp::kMaxPacketSize);
         co_return udp_enqueue_result::kDroppedOverflow;
     }
 
@@ -442,8 +437,7 @@ boost::asio::awaitable<std::shared_ptr<mux_connection>> tproxy_udp_session::wait
             co_return nullptr;
         }
 
-        const auto wait_ec =
-            co_await timeout_io::wait_for(worker_.io_context, std::chrono::milliseconds(constants::udp::kTunnelPollIntervalMs));
+        const auto wait_ec = co_await timeout_io::wait_for(worker_.io_context, std::chrono::milliseconds(constants::udp::kTunnelPollIntervalMs));
         if (wait_ec)
         {
             ec = wait_ec;

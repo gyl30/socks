@@ -54,8 +54,7 @@ struct certificate_verify_info
 
 [[nodiscard]] bool parse_encrypted_extensions_layout(std::span<const uint8_t> encrypted_extensions, handshake_extension_layout& layout);
 
-[[nodiscard]] bool parse_certificate_chain(std::span<const uint8_t> certificate_message,
-                                           std::vector<std::vector<uint8_t>>& certificate_chain);
+[[nodiscard]] bool parse_certificate_chain(std::span<const uint8_t> certificate_message, std::vector<std::vector<uint8_t>>& certificate_chain);
 
 [[nodiscard]] bool extract_first_certificate(std::span<const uint8_t> certificate_message, std::vector<uint8_t>& certificate);
 

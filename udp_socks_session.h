@@ -1,8 +1,6 @@
 #ifndef UDP_SOCKS_SESSION_H
 #define UDP_SOCKS_SESSION_H
 
-
-
 #include <atomic>
 #include <memory>
 #include <string>

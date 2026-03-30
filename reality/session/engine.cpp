@@ -20,11 +20,7 @@ extern "C"
 namespace mux
 {
 
-reality_engine::reality_engine(reality::reality_record_context context)
-    : context_(std::move(context))
-{
-    tx_buf_.reserve(kMaxBufSize);
-}
+reality_engine::reality_engine(reality::reality_record_context context) : context_(std::move(context)) { tx_buf_.reserve(kMaxBufSize); }
 
 boost::asio::mutable_buffer reality_engine::read_buffer(std::size_t size_hint, boost::system::error_code& ec)
 {
@@ -46,10 +42,7 @@ boost::asio::mutable_buffer reality_engine::read_buffer(std::size_t size_hint, b
     return boost::asio::buffer(rx_buf_.data() + static_cast<std::ptrdiff_t>(rx_buf_offset_ + rx_buf_size_), size_hint);
 }
 
-void reality_engine::commit_read(const std::size_t n)
-{
-    rx_buf_size_ += n;
-}
+void reality_engine::commit_read(const std::size_t n) { rx_buf_size_ += n; }
 
 std::span<const uint8_t> reality_engine::encrypt_record(const std::vector<uint8_t>& plaintext, boost::system::error_code& ec)
 {
@@ -66,15 +59,14 @@ std::span<const uint8_t> reality_engine::encrypt_record(const std::vector<uint8_
         const auto chunk_len = std::min(plaintext.size() - offset, tls::kMaxTlsApplicationDataPayloadLen);
         plaintext_chunk.assign(plaintext.begin() + static_cast<std::ptrdiff_t>(offset),
                                plaintext.begin() + static_cast<std::ptrdiff_t>(offset + chunk_len));
-        tls::record_layer::encrypt_tls_record(
-            encrypt_ctx_,
-            context_.negotiated.cipher,
-            context_.write_keys,
-            write_seq_,
-            plaintext_chunk,
-            tls::kContentTypeApplicationData,
-            tx_buf_,
-            ec);
+        tls::record_layer::encrypt_tls_record(encrypt_ctx_,
+                                              context_.negotiated.cipher,
+                                              context_.write_keys,
+                                              write_seq_,
+                                              plaintext_chunk,
+                                              tls::kContentTypeApplicationData,
+                                              tx_buf_,
+                                              ec);
         if (ec)
         {
             return std::span<const uint8_t>{};
@@ -129,16 +121,15 @@ void reality_engine::decrypt_tls_record(uint8_t& content_type, std::size_t& payl
 
     const std::span<const uint8_t> record_data(record_header, frame_size);
 
-    payload_len = tls::record_layer::decrypt_tls_record(
-        decrypt_ctx_,
-        context_.negotiated.cipher,
-        context_.read_keys.key,
-        context_.read_keys.iv,
-        read_seq_,
-        record_data,
-        std::span<uint8_t>(scratch_buf_),
-        content_type,
-        ec);
+    payload_len = tls::record_layer::decrypt_tls_record(decrypt_ctx_,
+                                                        context_.negotiated.cipher,
+                                                        context_.read_keys.key,
+                                                        context_.read_keys.iv,
+                                                        read_seq_,
+                                                        record_data,
+                                                        std::span<uint8_t>(scratch_buf_),
+                                                        content_type,
+                                                        ec);
     if (ec)
     {
         return;

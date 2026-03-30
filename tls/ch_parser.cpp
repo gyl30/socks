@@ -115,10 +115,7 @@ bool client_hello_parser::handle_sni_item(reader& r, const uint8_t type, const u
     return false;
 }
 
-bool client_hello_parser::read_key_share_item_header(reader& r, uint16_t& group, uint16_t& len)
-{
-    return r.read_u16(group) && r.read_u16(len);
-}
+bool client_hello_parser::read_key_share_item_header(reader& r, uint16_t& group, uint16_t& len) { return r.read_u16(group) && r.read_u16(len); }
 
 void client_hello_parser::handle_key_share_item(const reader& r, const uint16_t group, const uint16_t len, client_hello_info& info)
 {

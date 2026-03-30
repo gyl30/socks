@@ -28,8 +28,7 @@ bool read_u24_field(const std::vector<uint8_t>& data, std::size_t pos, uint32_t&
     {
         return false;
     }
-    value =
-        (static_cast<uint32_t>(data[pos]) << 16) | (static_cast<uint32_t>(data[pos + 1]) << 8) | static_cast<uint32_t>(data[pos + 2]);
+    value = (static_cast<uint32_t>(data[pos]) << 16) | (static_cast<uint32_t>(data[pos + 1]) << 8) | static_cast<uint32_t>(data[pos + 2]);
     return true;
 }
 

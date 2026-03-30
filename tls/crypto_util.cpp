@@ -224,9 +224,7 @@ void set_optional_hkdf_salt(const openssl_ptrs::evp_pkey_ctx_ptr& ctx, const std
     }
 }
 
-void validate_x25519_keys(const std::vector<uint8_t>& private_key,
-                          const std::vector<uint8_t>& peer_public_key,
-                          boost::system::error_code& ec)
+void validate_x25519_keys(const std::vector<uint8_t>& private_key, const std::vector<uint8_t>& peer_public_key, boost::system::error_code& ec)
 {
     if (private_key.size() != 32 || peer_public_key.size() != 32)
     {
@@ -250,8 +248,8 @@ std::pair<openssl_ptrs::evp_pkey_ptr, openssl_ptrs::evp_pkey_ptr> create_x25519_
 }
 
 std::vector<uint8_t> derive_x25519_shared_secret(const openssl_ptrs::evp_pkey_ptr& pkey,
-                                                      const openssl_ptrs::evp_pkey_ptr& pub,
-                                                      boost::system::error_code& ec)
+                                                 const openssl_ptrs::evp_pkey_ptr& pub,
+                                                 boost::system::error_code& ec)
 {
     const openssl_ptrs::evp_pkey_ctx_ptr ctx(EVP_PKEY_CTX_new(pkey.get(), nullptr));
     if (ctx == nullptr)
@@ -332,10 +330,7 @@ openssl_ptrs::evp_pkey_ptr create_mlkem768_public_key_object(const std::vector<u
     return pkey;
 }
 
-bool export_mlkem768_keypair(const EVP_PKEY* pkey,
-                             std::vector<uint8_t>& public_key,
-                             std::vector<uint8_t>& private_key,
-                             boost::system::error_code& ec)
+bool export_mlkem768_keypair(const EVP_PKEY* pkey, std::vector<uint8_t>& public_key, std::vector<uint8_t>& private_key, boost::system::error_code& ec)
 {
     std::size_t public_key_len = 0;
     std::size_t private_key_len = 0;
@@ -753,8 +748,8 @@ std::vector<uint8_t> extract_ed25519_public_key(const std::vector<uint8_t>& priv
 }
 
 std::vector<uint8_t> x25519_derive(const std::vector<uint8_t>& private_key,
-                                                     const std::vector<uint8_t>& peer_public_key,
-                                                     boost::system::error_code& ec)
+                                   const std::vector<uint8_t>& peer_public_key,
+                                   boost::system::error_code& ec)
 {
     ensure_openssl_initialized();
 
@@ -771,9 +766,7 @@ std::vector<uint8_t> x25519_derive(const std::vector<uint8_t>& private_key,
     return derive_x25519_shared_secret(keys.first, keys.second, ec);
 }
 
-bool generate_mlkem768_keypair(std::vector<uint8_t>& public_key,
-                                            std::vector<uint8_t>& private_key,
-                                            boost::system::error_code& ec)
+bool generate_mlkem768_keypair(std::vector<uint8_t>& public_key, std::vector<uint8_t>& private_key, boost::system::error_code& ec)
 {
     ensure_openssl_initialized();
 
@@ -786,9 +779,7 @@ bool generate_mlkem768_keypair(std::vector<uint8_t>& public_key,
     return export_mlkem768_keypair(pkey.get(), public_key, private_key, ec);
 }
 
-std::vector<uint8_t> mlkem768_encapsulate(const std::vector<uint8_t>& public_key,
-                                                            std::vector<uint8_t>& shared_secret,
-                                                            boost::system::error_code& ec)
+std::vector<uint8_t> mlkem768_encapsulate(const std::vector<uint8_t>& public_key, std::vector<uint8_t>& shared_secret, boost::system::error_code& ec)
 {
     ensure_openssl_initialized();
     shared_secret.clear();
@@ -838,8 +829,8 @@ std::vector<uint8_t> mlkem768_encapsulate(const std::vector<uint8_t>& public_key
 }
 
 std::vector<uint8_t> mlkem768_decapsulate(const std::vector<uint8_t>& private_key,
-                                                            const std::vector<uint8_t>& ciphertext,
-                                                            boost::system::error_code& ec)
+                                          const std::vector<uint8_t>& ciphertext,
+                                          boost::system::error_code& ec)
 {
     ensure_openssl_initialized();
     if (!validate_mlkem768_ciphertext(ciphertext, ec))
@@ -884,10 +875,7 @@ std::vector<uint8_t> mlkem768_decapsulate(const std::vector<uint8_t>& private_ke
     return shared_secret;
 }
 
-std::vector<uint8_t> hkdf_extract(const std::vector<uint8_t>& salt,
-                                                    const std::vector<uint8_t>& ikm,
-                                                    const EVP_MD* md,
-                                                    boost::system::error_code& ec)
+std::vector<uint8_t> hkdf_extract(const std::vector<uint8_t>& salt, const std::vector<uint8_t>& ikm, const EVP_MD* md, boost::system::error_code& ec)
 {
     ensure_openssl_initialized();
 
@@ -926,11 +914,8 @@ std::vector<uint8_t> hkdf_extract(const std::vector<uint8_t>& salt,
     return prk;
 }
 
-std::vector<uint8_t> hkdf_expand(const std::vector<uint8_t>& prk,
-                                                   const std::vector<uint8_t>& info,
-                                                   const std::size_t len,
-                                                   const EVP_MD* md,
-                                                   boost::system::error_code& ec)
+std::vector<uint8_t> hkdf_expand(
+    const std::vector<uint8_t>& prk, const std::vector<uint8_t>& info, const std::size_t len, const EVP_MD* md, boost::system::error_code& ec)
 {
     ensure_openssl_initialized();
 
@@ -969,11 +954,11 @@ std::vector<uint8_t> hkdf_expand(const std::vector<uint8_t>& prk,
 }
 
 std::vector<uint8_t> hkdf_expand_label(const std::vector<uint8_t>& secret,
-                                                         const std::string& label,
-                                                         const std::vector<uint8_t>& context,
-                                                         std::size_t length,
-                                                         const EVP_MD* md,
-                                                         boost::system::error_code& ec)
+                                       const std::string& label,
+                                       const std::vector<uint8_t>& context,
+                                       std::size_t length,
+                                       const EVP_MD* md,
+                                       boost::system::error_code& ec)
 {
     std::string full_label = "tls13 " + label;
     if (length > std::numeric_limits<uint16_t>::max() || full_label.size() > std::numeric_limits<uint8_t>::max() ||
@@ -995,13 +980,13 @@ std::vector<uint8_t> hkdf_expand_label(const std::vector<uint8_t>& secret,
 }
 
 std::size_t aead_decrypt(const cipher_context& ctx,
-                                      const EVP_CIPHER* cipher,
-                                      const std::vector<uint8_t>& key,
-                                      const std::span<const uint8_t> nonce,
-                                      const std::span<const uint8_t> ciphertext,
-                                      const std::span<const uint8_t> aad,
-                                      const std::span<uint8_t> output_buffer,
-                                      boost::system::error_code& ec)
+                         const EVP_CIPHER* cipher,
+                         const std::vector<uint8_t>& key,
+                         const std::span<const uint8_t> nonce,
+                         const std::span<const uint8_t> ciphertext,
+                         const std::span<const uint8_t> aad,
+                         const std::span<uint8_t> output_buffer,
+                         boost::system::error_code& ec)
 {
     ensure_openssl_initialized();
 
@@ -1028,11 +1013,11 @@ std::size_t aead_decrypt(const cipher_context& ctx,
 }
 
 std::vector<uint8_t> aead_decrypt(const EVP_CIPHER* cipher,
-                                                    const std::vector<uint8_t>& key,
-                                                    const std::vector<uint8_t>& nonce,
-                                                    const std::vector<uint8_t>& ciphertext,
-                                                    const std::vector<uint8_t>& aad,
-                                                    boost::system::error_code& ec)
+                                  const std::vector<uint8_t>& key,
+                                  const std::vector<uint8_t>& nonce,
+                                  const std::vector<uint8_t>& ciphertext,
+                                  const std::vector<uint8_t>& aad,
+                                  boost::system::error_code& ec)
 {
     const cipher_context ctx;
     if (ciphertext.size() < kAeadTagSize)
@@ -1051,13 +1036,13 @@ std::vector<uint8_t> aead_decrypt(const EVP_CIPHER* cipher,
 }
 
 void aead_encrypt_append(const cipher_context& ctx,
-                                      const EVP_CIPHER* cipher,
-                                      const std::vector<uint8_t>& key,
-                                      const std::vector<uint8_t>& nonce,
-                                      const std::vector<uint8_t>& plaintext,
-                                      std::span<const uint8_t> aad,
-                                      std::vector<uint8_t>& output_buffer,
-                                      boost::system::error_code& ec)
+                         const EVP_CIPHER* cipher,
+                         const std::vector<uint8_t>& key,
+                         const std::vector<uint8_t>& nonce,
+                         const std::vector<uint8_t>& plaintext,
+                         std::span<const uint8_t> aad,
+                         std::vector<uint8_t>& output_buffer,
+                         boost::system::error_code& ec)
 {
     ensure_openssl_initialized();
 
@@ -1137,11 +1122,11 @@ void aead_encrypt_append(const cipher_context& ctx,
 }
 
 std::vector<uint8_t> aead_encrypt(const EVP_CIPHER* cipher,
-                                                    const std::vector<uint8_t>& key,
-                                                    const std::vector<uint8_t>& nonce,
-                                                    const std::vector<uint8_t>& plaintext,
-                                                    const std::vector<uint8_t>& aad,
-                                                    boost::system::error_code& ec)
+                                  const std::vector<uint8_t>& key,
+                                  const std::vector<uint8_t>& nonce,
+                                  const std::vector<uint8_t>& plaintext,
+                                  const std::vector<uint8_t>& aad,
+                                  boost::system::error_code& ec)
 {
     const cipher_context ctx;
     std::vector<uint8_t> out;
@@ -1222,8 +1207,7 @@ std::vector<uint8_t> extract_certificate_signature(const std::vector<uint8_t>& c
     return ret;
 }
 
-std::vector<uint8_t> create_self_signed_ed25519_certificate(const std::vector<uint8_t>& private_key,
-                                                                              boost::system::error_code& ec)
+std::vector<uint8_t> create_self_signed_ed25519_certificate(const std::vector<uint8_t>& private_key, boost::system::error_code& ec)
 {
     ensure_openssl_initialized();
 
@@ -1313,9 +1297,7 @@ std::vector<uint8_t> create_self_signed_ed25519_certificate(const std::vector<ui
     return cert_der;
 }
 
-std::vector<uint8_t> hmac_sha512(const std::vector<uint8_t>& key,
-                                                   const std::vector<uint8_t>& data,
-                                                   boost::system::error_code& ec)
+std::vector<uint8_t> hmac_sha512(const std::vector<uint8_t>& key, const std::vector<uint8_t>& data, boost::system::error_code& ec)
 {
     ensure_openssl_initialized();
 
@@ -1331,10 +1313,10 @@ std::vector<uint8_t> hmac_sha512(const std::vector<uint8_t>& key,
 }
 
 void verify_tls13_signature(EVP_PKEY* pub_key,
-                                         const uint16_t signature_scheme,
-                                         const std::vector<uint8_t>& transcript_hash,
-                                         const std::vector<uint8_t>& signature,
-                                         boost::system::error_code& ec)
+                            const uint16_t signature_scheme,
+                            const std::vector<uint8_t>& transcript_hash,
+                            const std::vector<uint8_t>& signature,
+                            boost::system::error_code& ec)
 {
     ensure_openssl_initialized();
     if (pub_key == nullptr || signature.empty())

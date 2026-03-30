@@ -48,12 +48,12 @@ void encrypt_tls_record(const cipher_context& ctx,
                                              boost::system::error_code& ec);
 
 [[nodiscard]] std::vector<uint8_t> decrypt_record(const EVP_CIPHER* cipher,
-                                                       const std::vector<uint8_t>& key,
-                                                       const std::vector<uint8_t>& iv,
-                                                       uint64_t seq,
-                                                       const std::vector<uint8_t>& ciphertext_with_header,
-                                                       uint8_t& out_content_type,
-                                                       boost::system::error_code& ec);
+                                                  const std::vector<uint8_t>& key,
+                                                  const std::vector<uint8_t>& iv,
+                                                  uint64_t seq,
+                                                  const std::vector<uint8_t>& ciphertext_with_header,
+                                                  uint8_t& out_content_type,
+                                                  boost::system::error_code& ec);
 
 }    // namespace record_layer
 

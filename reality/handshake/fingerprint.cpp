@@ -30,10 +30,7 @@ void set_fingerprint_client_version(fingerprint_template& spec, uint16_t client_
     fingerprint_template_mutation::set_client_version(spec, client_version);
 }
 
-std::vector<uint16_t>& mutable_fingerprint_cipher_suites(fingerprint_template& spec)
-{
-    return fingerprint_template_mutation::cipher_suites(spec);
-}
+std::vector<uint16_t>& mutable_fingerprint_cipher_suites(fingerprint_template& spec) { return fingerprint_template_mutation::cipher_suites(spec); }
 
 std::vector<std::shared_ptr<extension_blueprint>>& mutable_fingerprint_extensions(fingerprint_template& spec)
 {
@@ -180,12 +177,8 @@ fingerprint_template build_firefox120_template()
     mutable_fingerprint_extensions(spec).push_back(std::make_shared<renegotiation_blueprint>());
 
     auto groups = std::make_shared<supported_groups_blueprint>();
-    groups->groups() = {tls::consts::group::kX25519,
-                        tls::consts::group::kSecp256r1,
-                        tls::consts::group::kSecp384r1,
-                        tls::consts::group::kSecp521r1,
-                        256,
-                        257};
+    groups->groups() = {
+        tls::consts::group::kX25519, tls::consts::group::kSecp256r1, tls::consts::group::kSecp384r1, tls::consts::group::kSecp521r1, 256, 257};
     mutable_fingerprint_extensions(spec).push_back(groups);
     auto points = std::make_shared<ec_point_formats_blueprint>();
     points->formats() = {0x00};
@@ -213,18 +206,20 @@ fingerprint_template build_firefox120_template()
     mutable_fingerprint_extensions(spec).push_back(versions);
 
     auto sig = std::make_shared<signature_algorithms_blueprint>();
-    sig->algorithms() = {tls::consts::sig_alg::kEcdsaSecp256r1Sha256,
-                         tls::consts::sig_alg::kEd25519,
-                         tls::consts::sig_alg::kEcdsaSecp384r1Sha384,
-                         tls::consts::sig_alg::kEcdsaSecp521r1Sha512,
-                         tls::consts::sig_alg::kRsaPssRsaeSha256,
-                         tls::consts::sig_alg::kRsaPssRsaeSha384,
-                         tls::consts::sig_alg::kRsaPssRsaeSha512,
-                         tls::consts::sig_alg::kRsaPkcs1Sha256,
-                         tls::consts::sig_alg::kRsaPkcs1Sha384,
-                         tls::consts::sig_alg::kRsaPkcs1Sha512,
-                         tls::consts::sig_alg::kEcdsaSha1,
-                         tls::consts::sig_alg::kRsaPkcs1Sha1};
+    sig->algorithms() = {
+        tls::consts::sig_alg::kEcdsaSecp256r1Sha256,
+        tls::consts::sig_alg::kEd25519,
+        tls::consts::sig_alg::kEcdsaSecp384r1Sha384,
+        tls::consts::sig_alg::kEcdsaSecp521r1Sha512,
+        tls::consts::sig_alg::kRsaPssRsaeSha256,
+        tls::consts::sig_alg::kRsaPssRsaeSha384,
+        tls::consts::sig_alg::kRsaPssRsaeSha512,
+        tls::consts::sig_alg::kRsaPkcs1Sha256,
+        tls::consts::sig_alg::kRsaPkcs1Sha384,
+        tls::consts::sig_alg::kRsaPkcs1Sha512,
+        tls::consts::sig_alg::kEcdsaSha1,
+        tls::consts::sig_alg::kRsaPkcs1Sha1,
+    };
     mutable_fingerprint_extensions(spec).push_back(sig);
 
     auto psk_mode = std::make_shared<psk_key_exchange_modes_blueprint>();
@@ -296,18 +291,20 @@ fingerprint_template build_ios14_template()
     mutable_fingerprint_extensions(spec).push_back(std::make_shared<status_request_blueprint>());
 
     auto sig = std::make_shared<signature_algorithms_blueprint>();
-    sig->algorithms() = {tls::consts::sig_alg::kEcdsaSecp256r1Sha256,
-                         tls::consts::sig_alg::kEd25519,
-                         tls::consts::sig_alg::kRsaPssRsaeSha256,
-                         tls::consts::sig_alg::kRsaPkcs1Sha256,
-                         tls::consts::sig_alg::kEcdsaSecp384r1Sha384,
-                         tls::consts::sig_alg::kEcdsaSha1,
-                         tls::consts::sig_alg::kRsaPssRsaeSha384,
-                         tls::consts::sig_alg::kRsaPssRsaeSha384,
-                         tls::consts::sig_alg::kRsaPkcs1Sha384,
-                         tls::consts::sig_alg::kRsaPssRsaeSha512,
-                         tls::consts::sig_alg::kRsaPkcs1Sha512,
-                         tls::consts::sig_alg::kRsaPkcs1Sha1};
+    sig->algorithms() = {
+        tls::consts::sig_alg::kEcdsaSecp256r1Sha256,
+        tls::consts::sig_alg::kEd25519,
+        tls::consts::sig_alg::kRsaPssRsaeSha256,
+        tls::consts::sig_alg::kRsaPkcs1Sha256,
+        tls::consts::sig_alg::kEcdsaSecp384r1Sha384,
+        tls::consts::sig_alg::kEcdsaSha1,
+        tls::consts::sig_alg::kRsaPssRsaeSha384,
+        tls::consts::sig_alg::kRsaPssRsaeSha384,
+        tls::consts::sig_alg::kRsaPkcs1Sha384,
+        tls::consts::sig_alg::kRsaPssRsaeSha512,
+        tls::consts::sig_alg::kRsaPkcs1Sha512,
+        tls::consts::sig_alg::kRsaPkcs1Sha1,
+    };
     mutable_fingerprint_extensions(spec).push_back(sig);
     mutable_fingerprint_extensions(spec).push_back(std::make_shared<sct_blueprint>());
 
@@ -364,16 +361,18 @@ fingerprint_template build_android11_template()
     mutable_fingerprint_extensions(spec).push_back(std::make_shared<status_request_blueprint>());
 
     auto sig = std::make_shared<signature_algorithms_blueprint>();
-    sig->algorithms() = {tls::consts::sig_alg::kEcdsaSecp256r1Sha256,
-                         tls::consts::sig_alg::kEd25519,
-                         tls::consts::sig_alg::kRsaPssRsaeSha256,
-                         tls::consts::sig_alg::kRsaPkcs1Sha256,
-                         tls::consts::sig_alg::kEcdsaSecp384r1Sha384,
-                         tls::consts::sig_alg::kRsaPssRsaeSha384,
-                         tls::consts::sig_alg::kRsaPkcs1Sha384,
-                         tls::consts::sig_alg::kRsaPssRsaeSha512,
-                         tls::consts::sig_alg::kRsaPkcs1Sha512,
-                         tls::consts::sig_alg::kRsaPkcs1Sha1};
+    sig->algorithms() = {
+        tls::consts::sig_alg::kEcdsaSecp256r1Sha256,
+        tls::consts::sig_alg::kEd25519,
+        tls::consts::sig_alg::kRsaPssRsaeSha256,
+        tls::consts::sig_alg::kRsaPkcs1Sha256,
+        tls::consts::sig_alg::kEcdsaSecp384r1Sha384,
+        tls::consts::sig_alg::kRsaPssRsaeSha384,
+        tls::consts::sig_alg::kRsaPkcs1Sha384,
+        tls::consts::sig_alg::kRsaPssRsaeSha512,
+        tls::consts::sig_alg::kRsaPkcs1Sha512,
+        tls::consts::sig_alg::kRsaPkcs1Sha1,
+    };
     mutable_fingerprint_extensions(spec).push_back(sig);
 
     auto ks = std::make_shared<key_share_blueprint>();
@@ -430,15 +429,17 @@ fingerprint_template build_chrome120_template()
     mutable_fingerprint_extensions(spec).push_back(std::make_shared<status_request_blueprint>());
 
     auto sigs = std::make_shared<signature_algorithms_blueprint>();
-    sigs->algorithms() = {tls::consts::sig_alg::kEcdsaSecp256r1Sha256,
-                          tls::consts::sig_alg::kEd25519,
-                          tls::consts::sig_alg::kRsaPssRsaeSha256,
-                          tls::consts::sig_alg::kRsaPkcs1Sha256,
-                          tls::consts::sig_alg::kEcdsaSecp384r1Sha384,
-                          tls::consts::sig_alg::kRsaPssRsaeSha384,
-                          tls::consts::sig_alg::kRsaPkcs1Sha384,
-                          tls::consts::sig_alg::kRsaPssRsaeSha512,
-                          tls::consts::sig_alg::kRsaPkcs1Sha512};
+    sigs->algorithms() = {
+        tls::consts::sig_alg::kEcdsaSecp256r1Sha256,
+        tls::consts::sig_alg::kEd25519,
+        tls::consts::sig_alg::kRsaPssRsaeSha256,
+        tls::consts::sig_alg::kRsaPkcs1Sha256,
+        tls::consts::sig_alg::kEcdsaSecp384r1Sha384,
+        tls::consts::sig_alg::kRsaPssRsaeSha384,
+        tls::consts::sig_alg::kRsaPkcs1Sha384,
+        tls::consts::sig_alg::kRsaPssRsaeSha512,
+        tls::consts::sig_alg::kRsaPkcs1Sha512,
+    };
     mutable_fingerprint_extensions(spec).push_back(sigs);
     mutable_fingerprint_extensions(spec).push_back(std::make_shared<sct_blueprint>());
 

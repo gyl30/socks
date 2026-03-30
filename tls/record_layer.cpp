@@ -61,9 +61,7 @@ std::vector<uint8_t> make_record_nonce(const std::span<const uint8_t> iv, const 
     return nonce;
 }
 
-std::size_t trim_padding_and_read_content_type(const std::span<uint8_t> output_buffer,
-                                               uint8_t& out_content_type,
-                                               boost::system::error_code& ec)
+std::size_t trim_padding_and_read_content_type(const std::span<uint8_t> output_buffer, uint8_t& out_content_type, boost::system::error_code& ec)
 {
     ec.clear();
     std::size_t written = output_buffer.size();
@@ -206,12 +204,12 @@ std::size_t decrypt_tls_record(const cipher_context& ctx,
 }
 
 std::vector<uint8_t> decrypt_record(const EVP_CIPHER* cipher,
-                                         const std::vector<uint8_t>& key,
-                                         const std::vector<uint8_t>& iv,
-                                         const uint64_t seq,
-                                         const std::vector<uint8_t>& ciphertext_with_header,
-                                         uint8_t& out_content_type,
-                                         boost::system::error_code& ec)
+                                    const std::vector<uint8_t>& key,
+                                    const std::vector<uint8_t>& iv,
+                                    const uint64_t seq,
+                                    const std::vector<uint8_t>& ciphertext_with_header,
+                                    uint8_t& out_content_type,
+                                    boost::system::error_code& ec)
 {
     ec.clear();
     const cipher_context ctx;

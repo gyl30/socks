@@ -53,10 +53,10 @@ namespace
     return deps;
 }
 
-void close_tcp_socket(boost::asio::ip::tcp::socket& socket)    // NOLINT(misc-const-correctness)
+void close_tcp_socket(boost::asio::ip::tcp::socket& socket)
 {
     boost::system::error_code ec;
-    ec = socket.close(ec);
+    socket.close(ec);
     (void)ec;
 }
 

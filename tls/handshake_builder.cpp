@@ -63,11 +63,11 @@ std::vector<uint8_t> write_record_header(const uint8_t record_type, const uint16
 }
 
 std::vector<uint8_t> construct_server_hello(const std::vector<uint8_t>& server_random,
-                                                 const std::vector<uint8_t>& session_id,
-                                                 const uint16_t cipher_suite,
-                                                 const uint16_t key_share_group,
-                                                 const std::vector<uint8_t>& key_share_data,
-                                                 const std::span<const uint16_t> extension_order)
+                                            const std::vector<uint8_t>& session_id,
+                                            const uint16_t cipher_suite,
+                                            const uint16_t key_share_group,
+                                            const std::vector<uint8_t>& key_share_data,
+                                            const std::span<const uint16_t> extension_order)
 {
     constexpr std::size_t kMaxSessionIdLen = 255;
     constexpr std::size_t kMaxExtensionsLen = 65535;
@@ -137,9 +137,9 @@ std::vector<uint8_t> construct_server_hello(const std::vector<uint8_t>& server_r
 }
 
 std::vector<uint8_t> construct_encrypted_extensions(const std::string& alpn,
-                                                         const std::span<const uint16_t> extension_order,
-                                                         const bool include_padding,
-                                                         const std::optional<uint16_t> padding_len)
+                                                    const std::span<const uint16_t> extension_order,
+                                                    const bool include_padding,
+                                                    const std::optional<uint16_t> padding_len)
 {
     std::vector<uint8_t> msg;
     msg.push_back(0x08);

@@ -218,9 +218,7 @@ bool build_status_request_ext(std::vector<uint8_t>& ext_buffer, uint16_t& ext_ty
     return true;
 }
 
-bool build_signature_algorithms_ext(const std::shared_ptr<extension_blueprint>& ext_ptr,
-                                    std::vector<uint8_t>& ext_buffer,
-                                    uint16_t& ext_type)
+bool build_signature_algorithms_ext(const std::shared_ptr<extension_blueprint>& ext_ptr, std::vector<uint8_t>& ext_buffer, uint16_t& ext_type)
 {
     ext_type = tls::consts::ext::kSignatureAlg;
     auto bp = std::static_pointer_cast<signature_algorithms_blueprint>(ext_ptr);
@@ -285,9 +283,7 @@ bool build_key_share_ext(const std::shared_ptr<extension_blueprint>& ext_ptr,
     return true;
 }
 
-bool build_psk_key_exchange_modes_ext(const std::shared_ptr<extension_blueprint>& ext_ptr,
-                                      std::vector<uint8_t>& ext_buffer,
-                                      uint16_t& ext_type)
+bool build_psk_key_exchange_modes_ext(const std::shared_ptr<extension_blueprint>& ext_ptr, std::vector<uint8_t>& ext_buffer, uint16_t& ext_type)
 {
     ext_type = tls::consts::ext::kPskKeyExchangeModes;
     auto bp = std::static_pointer_cast<psk_key_exchange_modes_blueprint>(ext_ptr);
@@ -315,9 +311,7 @@ bool build_supported_versions_ext(const std::shared_ptr<extension_blueprint>& ex
     return true;
 }
 
-bool build_compress_certificate_ext(const std::shared_ptr<extension_blueprint>& ext_ptr,
-                                    std::vector<uint8_t>& ext_buffer,
-                                    uint16_t& ext_type)
+bool build_compress_certificate_ext(const std::shared_ptr<extension_blueprint>& ext_ptr, std::vector<uint8_t>& ext_buffer, uint16_t& ext_type)
 {
     ext_type = tls::consts::ext::kCompressCert;
     auto bp = std::static_pointer_cast<compress_cert_blueprint>(ext_ptr);
@@ -330,9 +324,7 @@ bool build_compress_certificate_ext(const std::shared_ptr<extension_blueprint>& 
     return true;
 }
 
-bool build_application_settings_ext(const std::shared_ptr<extension_blueprint>& ext_ptr,
-                                    std::vector<uint8_t>& ext_buffer,
-                                    uint16_t& ext_type)
+bool build_application_settings_ext(const std::shared_ptr<extension_blueprint>& ext_ptr, std::vector<uint8_t>& ext_buffer, uint16_t& ext_type)
 {
     ext_type = tls::consts::ext::kApplicationSettings;
     auto bp = std::static_pointer_cast<application_settings_blueprint>(ext_ptr);
@@ -345,9 +337,7 @@ bool build_application_settings_ext(const std::shared_ptr<extension_blueprint>& 
     return true;
 }
 
-bool build_application_settings_new_ext(const std::shared_ptr<extension_blueprint>& ext_ptr,
-                                        std::vector<uint8_t>& ext_buffer,
-                                        uint16_t& ext_type)
+bool build_application_settings_new_ext(const std::shared_ptr<extension_blueprint>& ext_ptr, std::vector<uint8_t>& ext_buffer, uint16_t& ext_type)
 {
     ext_type = tls::consts::ext::kApplicationSettingsNew;
     auto bp = std::static_pointer_cast<application_settings_new_blueprint>(ext_ptr);
@@ -398,9 +388,7 @@ bool build_channel_id_ext(const std::shared_ptr<extension_blueprint>& ext_ptr, u
     return true;
 }
 
-bool build_delegated_credentials_ext(const std::shared_ptr<extension_blueprint>& ext_ptr,
-                                     std::vector<uint8_t>& ext_buffer,
-                                     uint16_t& ext_type)
+bool build_delegated_credentials_ext(const std::shared_ptr<extension_blueprint>& ext_ptr, std::vector<uint8_t>& ext_buffer, uint16_t& ext_type)
 {
     ext_type = tls::consts::ext::kDelegatedCredentials;
     auto bp = std::static_pointer_cast<delegated_credentials_blueprint>(ext_ptr);
@@ -634,9 +622,7 @@ bool build_extension_from_blueprint_group_b(const extension_type type,
     }
 }
 
-bool build_extension_from_blueprint(const std::shared_ptr<extension_blueprint>& ext_ptr,
-                                    std::vector<uint8_t>& ext_buffer,
-                                    uint16_t& ext_type)
+bool build_extension_from_blueprint(const std::shared_ptr<extension_blueprint>& ext_ptr, std::vector<uint8_t>& ext_buffer, uint16_t& ext_type)
 {
     const auto type = ext_ptr->type();
     if (build_extension_from_blueprint_group_a(type, ext_ptr, ext_buffer, ext_type))
@@ -692,10 +678,7 @@ void message_builder::push_u32(std::vector<uint8_t>& buf, uint32_t val)
     buf.push_back(static_cast<uint8_t>(val & 0xFF));
 }
 
-void message_builder::push_bytes(std::vector<uint8_t>& buf, const std::vector<uint8_t>& data)
-{
-    buf.insert(buf.end(), data.begin(), data.end());
-}
+void message_builder::push_bytes(std::vector<uint8_t>& buf, const std::vector<uint8_t>& data) { buf.insert(buf.end(), data.begin(), data.end()); }
 
 void message_builder::push_vector_u8(std::vector<uint8_t>& buf, const std::vector<uint8_t>& data)
 {
@@ -714,11 +697,11 @@ void message_builder::push_vector_u16(std::vector<uint8_t>& buf, const std::vect
 }
 
 std::vector<uint8_t> client_hello_builder::build(const fingerprint_template& spec,
-                                                      const std::vector<uint8_t>& session_id,
-                                                      const std::vector<uint8_t>& random,
-                                                      const std::vector<uint8_t>& x25519_pubkey,
-                                                      const std::vector<uint8_t>& x25519_mlkem768_key_share,
-                                                      const std::string& hostname)
+                                                 const std::vector<uint8_t>& session_id,
+                                                 const std::vector<uint8_t>& random,
+                                                 const std::vector<uint8_t>& x25519_pubkey,
+                                                 const std::vector<uint8_t>& x25519_mlkem768_key_share,
+                                                 const std::string& hostname)
 {
     const bool has_hostname = !hostname.empty();
     if (has_hostname && !tls::valid_sni_hostname(hostname))
