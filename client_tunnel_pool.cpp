@@ -46,7 +46,6 @@ struct connect_options
     std::vector<uint8_t> short_id_bytes;
     std::optional<reality::fingerprint_type> fingerprint_type;
     uint32_t max_handshake_records = constants::reality_limits::kMaxHandshakeRecords;
-    uint32_t tunnel_connections = 1;
     uint32_t connect_mark = 0;
 };
 
@@ -141,7 +140,6 @@ static connect_options build_connect_options(const config& cfg)
     options.remote_host = cfg.outbound.host;
     options.remote_port = std::to_string(cfg.outbound.port);
     options.max_handshake_records = cfg.limits.max_handshake_records;
-    options.tunnel_connections = cfg.limits.max_connections;
     options.connect_mark = cfg.tproxy.enabled ? cfg.tproxy.mark : 0U;
     boost::algorithm::unhex(cfg.reality.public_key, std::back_inserter(options.server_pub_key));
     boost::algorithm::unhex(cfg.reality.short_id, std::back_inserter(options.short_id_bytes));
@@ -349,7 +347,7 @@ static boost::asio::awaitable<std::shared_ptr<mux_connection>> connect_remote_on
                                                                                    boost::system::error_code& ec)
 {
     LOG_CTX_INFO(
-        ctx, "{} init conn {}/{} to {} {}", log_event::kConnInit, index + 1, options.tunnel_connections, options.remote_host, options.remote_port);
+        ctx, "{} init conn {}/{} to {} {}", log_event::kConnInit, index + 1, cfg.limits.max_connections, options.remote_host, options.remote_port);
 
     boost::asio::ip::tcp::socket socket(worker.io_context);
     co_await tcp_connect_remote(cfg, options, socket, ctx, ec);
