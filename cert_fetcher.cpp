@@ -192,7 +192,7 @@ boost::system::error_code send_client_hello_record(fetch_context& ctx, const std
     return boost::system::error_code{};
 }
 
-bool validate_server_hello_body(const fetch_context& ctx, const std::vector<uint8_t>& server_hello_body)
+bool validate_server_hello_body(const std::vector<uint8_t>& server_hello_body)
 {
     if (!server_hello_body.empty())
     {
@@ -361,7 +361,7 @@ boost::system::error_code perform_handshake_start(fetch_context& ctx)
     {
         return read_result.first;
     }
-    if (!validate_server_hello_body(ctx, read_result.second))
+    if (!validate_server_hello_body(read_result.second))
     {
         return boost::asio::error::fault;
     }
@@ -622,11 +622,7 @@ bool collect_site_material(fetch_context& ctx)
     return false;
 }
 
-site_material fetch_once(std::string host,
-                         uint16_t port,
-                         std::string sni,
-                         const fingerprint_type fingerprint,
-                         boost::system::error_code& ec)
+site_material fetch_once(std::string host, uint16_t port, std::string sni, const fingerprint_type fingerprint, boost::system::error_code& ec)
 {
     fetch_context ctx;
     ctx.host = std::move(host);
@@ -661,8 +657,7 @@ site_material fetch_once(std::string host,
 
 }    // namespace
 
-site_material fetch_site_material(
-    const std::string& host, uint16_t port, const std::string& sni, boost::system::error_code& ec)
+site_material fetch_site_material(const std::string& host, uint16_t port, const std::string& sni, boost::system::error_code& ec)
 {
     ec.clear();
     boost::system::error_code last_ec = boost::asio::error::fault;

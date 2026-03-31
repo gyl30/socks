@@ -204,11 +204,8 @@ const char* validate_client_hello_ccs_record(const std::vector<uint8_t>& record_
     return nullptr;
 }
 
-const char* validate_client_hello_handshake_record(const std::vector<uint8_t>& record_buf,
-                                                   uint16_t record_len,
-                                                   std::size_t record_count,
-                                                   std::size_t max_records,
-                                                   boost::system::error_code& ec)
+const char* validate_client_hello_handshake_record(
+    const std::vector<uint8_t>& record_buf, uint16_t record_len, std::size_t record_count, std::size_t max_records, boost::system::error_code& ec)
 {
     if (record_buf[0] != 0x16)
     {
@@ -373,8 +370,7 @@ struct auth_inputs
     std::vector<uint8_t> aad;
 };
 
-auth_inputs build_auth_decrypt_inputs(const server_handshake_context& handshake_ctx,
-                                      const server_handshake_state& state,
+auth_inputs build_auth_decrypt_inputs(const server_handshake_state& state,
                                       const std::vector<uint8_t>& server_private_key,
                                       boost::system::error_code& ec)
 {
@@ -431,12 +427,9 @@ auth_inputs build_auth_decrypt_inputs(const server_handshake_context& handshake_
     return out;
 }
 
-reality::auth_payload decrypt_auth_payload(const server_handshake_context& handshake_ctx,
-                                           server_handshake_state& state,
-                                           const std::vector<uint8_t>& private_key,
-                                           boost::system::error_code& ec)
+reality::auth_payload decrypt_auth_payload(server_handshake_state& state, const std::vector<uint8_t>& private_key, boost::system::error_code& ec)
 {
-    const auto inputs = build_auth_decrypt_inputs(handshake_ctx, state, private_key, ec);
+    const auto inputs = build_auth_decrypt_inputs(state, private_key, ec);
     if (ec)
     {
         return {};
@@ -461,10 +454,7 @@ reality::auth_payload decrypt_auth_payload(const server_handshake_context& hands
     return *payload;
 }
 
-bool verify_auth_payload_fields(const auth_payload& auth,
-                                const std::vector<uint8_t>& short_id_bytes,
-                                const server_handshake_context& handshake_ctx,
-                                const server_handshake_state& state)
+bool verify_auth_payload_fields(const auth_payload& auth, const std::vector<uint8_t>& short_id_bytes, const server_handshake_state& state)
 {
     (void)state;
     if (auth.version_x != 1 || auth.version_y != 0 || auth.version_z != 0)
@@ -494,7 +484,7 @@ bool verify_auth_payload_fields(const auth_payload& auth,
     return true;
 }
 
-bool verify_auth_timestamp(uint32_t timestamp, const server_handshake_context& handshake_ctx, const server_handshake_state& state)
+bool verify_auth_timestamp(uint32_t timestamp, const server_handshake_state& state)
 {
     (void)state;
     const auto now_tp = std::chrono::system_clock::now();
@@ -510,7 +500,7 @@ bool verify_auth_timestamp(uint32_t timestamp, const server_handshake_context& h
     return true;
 }
 
-bool verify_replay_guard(mux::replay_cache& replay_cache, const server_handshake_context& handshake_ctx, const server_handshake_state& state)
+bool verify_replay_guard(mux::replay_cache& replay_cache, const server_handshake_state& state)
 {
     if (!replay_cache.check_and_insert(state.client_hello.session_id))
     {
@@ -540,8 +530,7 @@ uint16_t normalize_cipher_suite(uint16_t cipher_suite)
     return cipher_suite;
 }
 
-handshake_crypto_result build_handshake_crypto(const server_handshake_context& handshake_ctx,
-                                               server_handshake_state& state,
+handshake_crypto_result build_handshake_crypto(server_handshake_state& state,
                                                uint16_t cipher_suite,
                                                const std::string& alpn,
                                                std::span<const uint16_t> server_hello_extension_order,
@@ -921,9 +910,7 @@ std::vector<uint8_t> compose_tls_record(const std::array<uint8_t, 5>& header, co
     return out;
 }
 
-bool verify_client_finished_plaintext(const std::vector<uint8_t>& plaintext,
-                                      uint8_t content_type,
-                                      const std::vector<uint8_t>& expected_verify)
+bool verify_client_finished_plaintext(const std::vector<uint8_t>& plaintext, uint8_t content_type, const std::vector<uint8_t>& expected_verify)
 {
     if (content_type != tls::kContentTypeHandshake || plaintext.size() < 4 || plaintext[0] != 0x14)
     {
@@ -1052,9 +1039,9 @@ boost::asio::awaitable<bool> read_client_hello_or_decide(const server_handshake_
     }
 
     LOG_DEBUG("{} received client hello wire size {} handshake size {}",
-                  mux::log_event::kHandshake,
-                  state.client_hello_record.size(),
-                  state.client_hello_handshake.size());
+              mux::log_event::kHandshake,
+              state.client_hello_record.size(),
+              state.client_hello_handshake.size());
     state.client_hello = tls::client_hello_parser::parse(state.client_hello_handshake);
     co_return true;
 }
@@ -1095,10 +1082,10 @@ std::optional<server_accept_result> validate_client_hello_sni_and_extensions(ser
         state.client_hello.malformed_renegotiation_info)
     {
         LOG_ERROR("{} auth fail malformed tls13 extensions supported groups {} supported versions {} renegotiation info {}",
-                      mux::log_event::kAuth,
-                      state.client_hello.malformed_supported_groups,
-                      state.client_hello.malformed_supported_versions,
-                      state.client_hello.malformed_renegotiation_info);
+                  mux::log_event::kAuth,
+                  state.client_hello.malformed_supported_groups,
+                  state.client_hello.malformed_supported_versions,
+                  state.client_hello.malformed_renegotiation_info);
         return make_decision_result(accept_mode::kFallbackToTarget, "malformed_tls13_extensions", state);
     }
     if (state.client_hello.malformed_signature_algorithms)
@@ -1110,7 +1097,7 @@ std::optional<server_accept_result> validate_client_hello_sni_and_extensions(ser
     return std::nullopt;
 }
 
-std::optional<server_accept_result> validate_client_hello_tls13_requirements(server_handshake_context& handshake_ctx, server_handshake_state& state)
+std::optional<server_accept_result> validate_client_hello_tls13_requirements(server_handshake_state& state)
 {
     if (state.client_hello.signature_algorithms.empty())
     {
@@ -1156,7 +1143,7 @@ std::optional<server_accept_result> validate_client_hello_tls13_requirements(ser
     return std::nullopt;
 }
 
-std::optional<server_accept_result> extract_client_key_share(server_handshake_context& handshake_ctx, server_handshake_state& state)
+std::optional<server_accept_result> extract_client_key_share(server_handshake_state& state)
 {
     if (state.client_hello.key_share_group == tls::consts::group::kX25519MLKEM768 &&
         state.client_hello.x25519_mlkem768_share.size() == tls::kMlkem768PublicKeySize + 32)
@@ -1181,23 +1168,22 @@ std::optional<server_accept_result> extract_client_key_share(server_handshake_co
     return std::nullopt;
 }
 
-std::optional<server_accept_result> authenticate_client_hello(server_handshake_context& handshake_ctx,
-                                                              server_handshake_state& state,
+std::optional<server_accept_result> authenticate_client_hello(server_handshake_state& state,
                                                               const std::vector<uint8_t>& private_key,
                                                               const std::vector<uint8_t>& short_id_bytes,
                                                               boost::system::error_code& ec)
 {
-    auto auth = decrypt_auth_payload(handshake_ctx, state, private_key, ec);
+    auto auth = decrypt_auth_payload(state, private_key, ec);
     if (ec)
     {
         ec.clear();
         return make_decision_result(accept_mode::kFallbackToTarget, "decrypt_auth_payload_failed", state);
     }
-    if (!verify_auth_payload_fields(auth, short_id_bytes, handshake_ctx, state))
+    if (!verify_auth_payload_fields(auth, short_id_bytes, state))
     {
         return make_decision_result(accept_mode::kFallbackToTarget, "verify_auth_payload_failed", state);
     }
-    if (!verify_auth_timestamp(auth.timestamp, handshake_ctx, state))
+    if (!verify_auth_timestamp(auth.timestamp, state))
     {
         return make_decision_result(accept_mode::kFallbackToTarget, "verify_auth_timestamp_failed", state);
     }
@@ -1205,22 +1191,20 @@ std::optional<server_accept_result> authenticate_client_hello(server_handshake_c
     return std::nullopt;
 }
 
-std::optional<server_accept_result> finalize_client_hello_authentication(server_handshake_context& handshake_ctx,
-                                                                         server_handshake_state& state,
-                                                                         mux::replay_cache& replay_cache)
+std::optional<server_accept_result> finalize_client_hello_authentication(server_handshake_state& state, mux::replay_cache& replay_cache)
 {
     LOG_INFO("{} client hello selected key share group 0x{:04x} {} client hybrid {} client x25519 {}",
-                 mux::log_event::kHandshake,
-                 state.key_share_group,
-                 tls::named_group_name(state.key_share_group),
-                 state.client_hello.has_x25519_mlkem768_share,
-                 state.client_hello.has_x25519_share);
+             mux::log_event::kHandshake,
+             state.key_share_group,
+             tls::named_group_name(state.key_share_group),
+             state.client_hello.has_x25519_mlkem768_share,
+             state.client_hello.has_x25519_share);
     if (state.client_hello_handshake.size() < 4)
     {
         LOG_ERROR("{} buffer too short", mux::log_event::kHandshake);
         return make_decision_result(accept_mode::kFallbackToTarget, "client_hello_message_too_short", state);
     }
-    if (!verify_replay_guard(replay_cache, handshake_ctx, state))
+    if (!verify_replay_guard(replay_cache, state))
     {
         return make_decision_result(accept_mode::kReject, "replay_attack", state);
     }
@@ -1241,24 +1225,23 @@ std::optional<server_accept_result> validate_client_hello_and_authenticate(serve
     {
         return result;
     }
-    if (auto result = validate_client_hello_tls13_requirements(handshake_ctx, state); result.has_value())
+    if (auto result = validate_client_hello_tls13_requirements(state); result.has_value())
     {
         return result;
     }
-    if (auto result = extract_client_key_share(handshake_ctx, state); result.has_value())
+    if (auto result = extract_client_key_share(state); result.has_value())
     {
         return result;
     }
-    if (auto result = authenticate_client_hello(handshake_ctx, state, private_key, short_id_bytes, ec); result.has_value())
+    if (auto result = authenticate_client_hello(state, private_key, short_id_bytes, ec); result.has_value())
     {
         return result;
     }
 
-    return finalize_client_hello_authentication(handshake_ctx, state, replay_cache);
+    return finalize_client_hello_authentication(state, replay_cache);
 }
 
-authenticated_handshake_plan prepare_authenticated_handshake(const server_handshake_context& handshake_ctx,
-                                                             server_handshake_state& state,
+authenticated_handshake_plan prepare_authenticated_handshake(server_handshake_state& state,
                                                              const site_material* site_material,
                                                              const std::array<uint8_t, 32>& reality_cert_private_key,
                                                              const std::vector<uint8_t>& reality_cert_public_key,
@@ -1290,8 +1273,8 @@ authenticated_handshake_plan prepare_authenticated_handshake(const server_handsh
     }
 
     LOG_TRACE("{} generated ephemeral key {}",
-                  mux::log_event::kHandshake,
-                  tls::crypto_util::bytes_to_hex(std::vector<uint8_t>(ephemeral_public_key.begin(), ephemeral_public_key.end())));
+              mux::log_event::kHandshake,
+              tls::crypto_util::bytes_to_hex(std::vector<uint8_t>(ephemeral_public_key.begin(), ephemeral_public_key.end())));
 
     auto x25519_shared =
         tls::crypto_util::x25519_derive(std::vector<uint8_t>(ephemeral_private_key.begin(), ephemeral_private_key.end()), state.x25519_peer_pub, ec);
@@ -1356,25 +1339,25 @@ authenticated_handshake_plan prepare_authenticated_handshake(const server_handsh
     plan.encrypted_handshake_record_sizes = select_encrypted_handshake_record_sizes(site_material);
     plan.cert_chain_size = select_reality_certificate_chain_size(site_material);
 
-    LOG_INFO("{} success path material cache {} certs {} group 0x{:04x} {} key share len {} cipher 0x{:04x} alpn '{}' sh exts {} ee exts {} "
-                 "ee padding {} ee padding len {} ccs {} hs records {}",
-                 mux::log_event::kHandshake,
-                 plan.has_cached_material,
-                 plan.cert_chain_size,
-                 state.key_share_group,
-                 tls::named_group_name(state.key_share_group),
-                 state.server_key_share_data.size(),
-                 plan.cipher_suite,
-                 plan.selected_alpn,
-                 server_hello_extension_order.size(),
-                 encrypted_extension_order.size(),
-                 include_ee_padding,
-                 encrypted_extensions_padding_len.value_or(0),
-                 plan.send_change_cipher_spec,
-                 plan.encrypted_handshake_record_sizes.size());
+    LOG_INFO(
+        "{} success path material cache {} certs {} group 0x{:04x} {} key share len {} cipher 0x{:04x} alpn '{}' sh exts {} ee exts {} "
+        "ee padding {} ee padding len {} ccs {} hs records {}",
+        mux::log_event::kHandshake,
+        plan.has_cached_material,
+        plan.cert_chain_size,
+        state.key_share_group,
+        tls::named_group_name(state.key_share_group),
+        state.server_key_share_data.size(),
+        plan.cipher_suite,
+        plan.selected_alpn,
+        server_hello_extension_order.size(),
+        encrypted_extension_order.size(),
+        include_ee_padding,
+        encrypted_extensions_padding_len.value_or(0),
+        plan.send_change_cipher_spec,
+        plan.encrypted_handshake_record_sizes.size());
 
-    plan.crypto = build_handshake_crypto(handshake_ctx,
-                                         state,
+    plan.crypto = build_handshake_crypto(state,
                                          plan.cipher_suite,
                                          plan.selected_alpn,
                                          server_hello_extension_order,
@@ -1512,8 +1495,8 @@ boost::asio::awaitable<server_accept_result> server_handshaker::accept(server_ha
         co_return *decision;
     }
 
-    const auto plan = prepare_authenticated_handshake(
-        handshake_ctx, state, site_material_, reality_cert_private_key_, reality_cert_public_key_, reality_cert_template_, ec);
+    const auto plan =
+        prepare_authenticated_handshake(state, site_material_, reality_cert_private_key_, reality_cert_public_key_, reality_cert_template_, ec);
     if (ec)
     {
         co_return result;
