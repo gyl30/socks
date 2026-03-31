@@ -243,6 +243,7 @@ jobs:
               set -eu
               apk add --no-cache \
                 bash \
+                binutils \
                 ca-certificates \
                 bzip2 \
                 tar \
@@ -256,7 +257,8 @@ jobs:
                 clang \
                 lld \
                 linux-headers \
-                brotli-dev
+                brotli-dev \
+                brotli-static
 
               mkdir -p /workspace/.cache/boost
               if [ ! -d "/workspace/.cache/boost/${BOOST_SRC_DIR}" ]; then
@@ -289,7 +291,7 @@ jobs:
               export CCACHE_COMPRESS=1
               ccache -M "${CCACHE_MAXSIZE}"
               ccache -z
-              if ! grep -q "OPENSSL_VERSION_STR \"${OPENSSL_VERSION}\"" "${OPENSSL_ROOT}/include/openssl/opensslv.h" 2>/dev/null; then
+              if ! grep -q "OPENSSL_VERSION_STR \"${OPENSSL_VERSION}\"" "${OPENSSL_ROOT}/include/openssl/opensslv.h" 2>/dev/null || [ ! -f "${OPENSSL_ROOT}/lib/libssl.a" ] || [ ! -f "${OPENSSL_ROOT}/lib/libcrypto.a" ]; then
                 if [ ! -f "${OPENSSL_ARCHIVE_PATH}" ]; then
                   wget -O "${OPENSSL_ARCHIVE_PATH}" "https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/${OPENSSL_ARCHIVE}"
                 fi
@@ -301,7 +303,8 @@ jobs:
                 perl ./Configure \
                   --prefix="${OPENSSL_ROOT}" \
                   --openssldir="${OPENSSL_ROOT}/ssl" \
-                  shared
+                  no-shared \
+                  no-module
                 make -j"${JOBS}"
                 make install_sw
                 grep -q "OPENSSL_VERSION_STR \"${OPENSSL_VERSION}\"" "${OPENSSL_ROOT}/include/openssl/opensslv.h"
@@ -320,6 +323,7 @@ jobs:
                 -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
                 -DENABLE_TSAN=OFF \
                 -DENABLE_ASAN=OFF \
+                -DENABLE_STATIC_LINK=ON \
                 -DBoost_NO_BOOST_CMAKE=ON \
                 -DBoost_NO_SYSTEM_PATHS=ON \
                 -DBOOST_ROOT="${BOOST_ROOT}" \
@@ -330,6 +334,14 @@ jobs:
               cmake --build build --target socks --parallel
               ccache -s
               grep -q "SOCKS_HAS_TPROXY=1" build/compile_commands.json
+              if readelf -l build/socks | grep -q "INTERP"; then
+                echo "musl build produced a dynamically linked binary" >&2
+                exit 1
+              fi
+              if readelf -d build/socks 2>/dev/null | grep -q "(NEEDED)"; then
+                echo "musl build still has shared library dependencies" >&2
+                exit 1
+              fi
             '
 
       - name: Save Linux ccache
