@@ -10,7 +10,7 @@
 #include <boost/asio/awaitable.hpp>
 
 #include "tls/core.h"
-#include "timeout_io.h"
+#include "net_utils.h"
 #include "reality/session/engine.h"
 #include "reality/session/session.h"
 #include "reality/session/lightweight_client.h"
@@ -70,7 +70,7 @@ boost::asio::awaitable<bool> write_lightweight_http_request(boost::asio::ip::tcp
         co_return false;
     }
 
-    const auto written = co_await mux::timeout_io::wait_write_with_timeout(
+    const auto written = co_await mux::net::wait_write_with_timeout(
         socket, boost::asio::buffer(ciphertext.data(), ciphertext.size()), options.write_timeout_sec, ec);
     if (ec || written != ciphertext.size())
     {
@@ -171,7 +171,7 @@ boost::asio::awaitable<lightweight_http_visit_result> run_lightweight_http_visit
             result.error_stage = "read_response";
             co_return result;
         }
-        const auto n = co_await mux::timeout_io::wait_read_some_with_timeout(socket, buf, options.read_timeout_sec, ec);
+        const auto n = co_await mux::net::wait_read_some_with_timeout(socket, buf, options.read_timeout_sec, ec);
         if (ec)
         {
             if ((ec == boost::asio::error::timed_out || ec == boost::asio::error::eof) && result.saw_application_data)

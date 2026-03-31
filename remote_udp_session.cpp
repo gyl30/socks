@@ -20,7 +20,6 @@
 #include "protocol.h"
 #include "mux_codec.h"
 #include "net_utils.h"
-#include "timeout_io.h"
 #include "mux_stream.h"
 #include "scoped_exit.h"
 #include "mux_protocol.h"
@@ -86,7 +85,7 @@ remote_udp_session::remote_udp_session(boost::asio::io_context& io_context,
 
 {
     stream_close_command_.store(mux::kCmdFin, std::memory_order_relaxed);
-    last_activity_time_ms_ = timeout_io::now_ms();
+    last_activity_time_ms_ = net::now_ms();
 }
 
 bool remote_udp_session::has_stream() const { return stream_ != nullptr; }
@@ -358,10 +357,10 @@ boost::asio::awaitable<void> remote_udp_session::on_frame(const mux_frame& frame
                  ec.message());
         co_return;
     }
-    last_activity_time_ms_ = timeout_io::now_ms();
+    last_activity_time_ms_ = net::now_ms();
     tx_bytes_ += payload_len;
     const auto normalized_target = net::normalize_endpoint(target_ep);
-    const auto now_ms = timeout_io::now_ms();
+    const auto now_ms = net::now_ms();
     const auto expires_at = now_ms + constants::udp::kCacheTtlMs;
     evict_expired(allowed_reply_peers_, now_ms);
     allowed_reply_peers_.put(normalized_target, peer_cache_entry{expires_at});
@@ -396,7 +395,7 @@ boost::asio::awaitable<void> remote_udp_session::udp_to_mux()
                   ep.address().to_string(),
                   ep.port());
         const auto normalized_ep = net::normalize_endpoint(ep);
-        const auto now_ms = timeout_io::now_ms();
+        const auto now_ms = net::now_ms();
         evict_expired(allowed_reply_peers_, now_ms);
         auto* peer = allowed_reply_peers_.get(normalized_ep);
         if (peer == nullptr || peer->expires_at <= now_ms)
@@ -444,7 +443,7 @@ boost::asio::awaitable<void> remote_udp_session::udp_to_mux()
             LOG_WARN("event {} conn_id {} stream_id {} send udp packet to mux failed {}", log_event::kMux, conn_id_, id_, ec.message());
             break;
         }
-        const auto refresh_now_ms = timeout_io::now_ms();
+        const auto refresh_now_ms = net::now_ms();
         if (auto* refreshed_peer = allowed_reply_peers_.get(normalized_ep); refreshed_peer != nullptr)
         {
             refreshed_peer->expires_at = refresh_now_ms + constants::udp::kCacheTtlMs;
@@ -461,7 +460,7 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> remote_udp_session::resol
 {
     ec.clear();
     const auto key = udp_target_key(host, port);
-    const auto now_ms = timeout_io::now_ms();
+    const auto now_ms = net::now_ms();
     resolved_targets_.evict_if([&](const auto&, const auto& entry) { return entry.expires_at <= now_ms; });
     auto* cached = resolved_targets_.get(key);
     if (cached != nullptr)
@@ -482,7 +481,7 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> remote_udp_session::resol
         }
     }
 
-    auto res = co_await timeout_io::wait_resolve_with_timeout(udp_resolver_, host, std::to_string(port), cfg_.timeout.connect, ec);
+    auto res = co_await net::wait_resolve_with_timeout(udp_resolver_, host, std::to_string(port), cfg_.timeout.connect, ec);
     if (ec)
     {
         LOG_WARN("event {} conn_id {} stream_id {} stage resolve target {}:{} error {}",
@@ -571,7 +570,7 @@ boost::asio::awaitable<void> remote_udp_session::idle_watchdog()
         {
             break;
         }
-        const auto current_ms = timeout_io::now_ms();
+        const auto current_ms = net::now_ms();
         const auto elapsed_ms = current_ms - last_activity_time_ms_;
         if (elapsed_ms > idle_timeout_ms)
         {

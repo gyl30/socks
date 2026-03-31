@@ -17,7 +17,7 @@
 #include "config.h"
 #include "protocol.h"
 #include "mux_codec.h"
-#include "timeout_io.h"
+#include "net_utils.h"
 #include "scoped_exit.h"
 #include "mux_protocol.h"
 #include "mux_connection.h"
@@ -98,7 +98,7 @@ remote_tcp_session::remote_tcp_session(boost::asio::io_context& io_context,
       stream_(connection != nullptr ? connection->create_incoming_stream(id) : nullptr),
       connection_(connection)
 {
-    last_activity_time_ms_ = timeout_io::now_ms();
+    last_activity_time_ms_ = net::now_ms();
 }
 
 bool remote_tcp_session::has_stream() const { return stream_ != nullptr; }
@@ -158,7 +158,7 @@ boost::asio::awaitable<void> remote_tcp_session::run(const syn_payload& syn)
         co_await stream_->async_write(ack_frame, ack_ec);
     };
     boost::asio::ip::tcp::resolver resolver(socket_.get_executor());
-    auto resolve_res = co_await timeout_io::wait_resolve_with_timeout(resolver, syn.addr, std::to_string(syn.port), cfg_.timeout.connect, ec);
+    auto resolve_res = co_await net::wait_resolve_with_timeout(resolver, syn.addr, std::to_string(syn.port), cfg_.timeout.connect, ec);
     if (ec)
     {
         const auto rep = map_connect_error_to_socks_rep(ec);
@@ -199,7 +199,7 @@ boost::asio::awaitable<void> remote_tcp_session::run(const syn_payload& syn)
         {
             continue;
         }
-        co_await timeout_io::wait_connect_with_timeout(socket_, entry.endpoint(), cfg_.timeout.connect, connect_ec);
+        co_await net::wait_connect_with_timeout(socket_, entry.endpoint(), cfg_.timeout.connect, connect_ec);
         if (!connect_ec)
         {
             break;
@@ -339,7 +339,7 @@ boost::asio::awaitable<void> remote_tcp_session::upstream()
             close_from_reset();
             break;
         }
-        co_await timeout_io::wait_write_with_timeout(socket_, boost::asio::buffer(frame.payload), cfg_.timeout.write, ec);
+        co_await net::wait_write_with_timeout(socket_, boost::asio::buffer(frame.payload), cfg_.timeout.write, ec);
         if (ec)
         {
             LOG_WARN("event {} conn_id {} stream_id {} upstream write to target failed {}", log_event::kMux, conn_id_, id_, ec.message());
@@ -354,7 +354,7 @@ boost::asio::awaitable<void> remote_tcp_session::upstream()
             break;
         }
         tx_bytes_ += frame.payload.size();
-        last_activity_time_ms_ = timeout_io::now_ms();
+        last_activity_time_ms_ = net::now_ms();
     }
     LOG_INFO("event {} conn_id {} stream_id {} mux to target finished tx_bytes {}", log_event::kDataSend, conn_id_, id_, tx_bytes_);
 }
@@ -391,7 +391,7 @@ boost::asio::awaitable<void> remote_tcp_session::downstream()
             }
             break;
         }
-        last_activity_time_ms_ = timeout_io::now_ms();
+        last_activity_time_ms_ = net::now_ms();
         mux_frame data_frame;
         data_frame.h.stream_id = stream_->id();
         data_frame.h.command = mux::kCmdDat;
@@ -405,7 +405,7 @@ boost::asio::awaitable<void> remote_tcp_session::downstream()
             break;
         }
         rx_bytes_ += n;
-        last_activity_time_ms_ = timeout_io::now_ms();
+        last_activity_time_ms_ = net::now_ms();
     }
     LOG_INFO("event {} conn_id {} stream_id {} target to mux finished rx_bytes {}", log_event::kDataRecv, conn_id_, id_, rx_bytes_);
 }
@@ -426,7 +426,7 @@ boost::asio::awaitable<void> remote_tcp_session::idle_watchdog()
         {
             break;
         }
-        const auto elapsed_ms = timeout_io::now_ms() - last_activity_time_ms_;
+        const auto elapsed_ms = net::now_ms() - last_activity_time_ms_;
         if (elapsed_ms > idle_timeout_ms)
         {
             LOG_WARN("event {} conn_id {} stream_id {} idle timeout {}s", log_event::kTimeout, conn_id_, id_, cfg_.timeout.idle);
