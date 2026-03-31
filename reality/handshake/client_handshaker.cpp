@@ -39,7 +39,6 @@ extern "C"
 #include "tls/cipher_suite.h"
 #include "tls/key_schedule.h"
 #include "tls/record_layer.h"
-#include "connection_context.h"
 #include "tls/handshake_builder.h"
 #include "tls/handshake_message.h"
 #include "tls/record_validation.h"
@@ -58,7 +57,7 @@ namespace
 
 std::optional<std::vector<uint8_t>> extract_first_cert_der(const std::vector<uint8_t>& cert_msg);
 
-bool read_handshake_message_header(const std::vector<uint8_t>& handshake_buffer, const std::size_t offset, uint8_t& msg_type, uint32_t& msg_len)
+bool read_handshake_message_header(const std::vector<uint8_t>& handshake_buffer, std::size_t offset, uint8_t& msg_type, uint32_t& msg_len)
 {
     if (offset > handshake_buffer.size() || handshake_buffer.size() - offset < 4)
     {
@@ -146,7 +145,7 @@ bool client_offers_alpn(const tls::client_hello_info& client_hello, const std::s
     return std::find(client_hello.alpn_protocols.begin(), client_hello.alpn_protocols.end(), alpn) != client_hello.alpn_protocols.end();
 }
 
-bool client_offers_signature_scheme(const tls::client_hello_info& client_hello, const uint16_t scheme)
+bool client_offers_signature_scheme(const tls::client_hello_info& client_hello, uint16_t scheme)
 {
     return std::find(client_hello.signature_algorithms.begin(), client_hello.signature_algorithms.end(), scheme) !=
            client_hello.signature_algorithms.end();
@@ -491,8 +490,8 @@ struct encrypted_record
 };
 
 boost::asio::awaitable<encrypted_record> read_encrypted_record(boost::asio::ip::tcp::socket& socket,
-                                                               const uint64_t handshake_start_ms,
-                                                               const uint32_t timeout_sec,
+                                                               uint64_t handshake_start_ms,
+                                                               uint32_t timeout_sec,
                                                                boost::system::error_code& ec)
 {
     std::array<uint8_t, 5> record_header{};
@@ -565,7 +564,7 @@ boost::asio::awaitable<encrypted_record> read_encrypted_record(boost::asio::ip::
     co_return encrypted_record{.content_type = record_header[0], .ciphertext = std::move(ciphertext)};
 }
 
-void handle_handshake_message(const uint8_t msg_type,
+void handle_handshake_message(uint8_t msg_type,
                               const std::vector<uint8_t>& msg_data,
                               const std::vector<uint8_t>& auth_key,
                               handshake_validation_state& validation_state,
@@ -791,8 +790,8 @@ void validate_server_handshake_chain(const handshake_validation_state& validatio
 }
 
 boost::asio::awaitable<bool> read_handshake_bytes(boost::asio::ip::tcp::socket& socket,
-                                                  const uint64_t handshake_start_ms,
-                                                  const uint32_t timeout_sec,
+                                                  uint64_t handshake_start_ms,
+                                                  uint32_t timeout_sec,
                                                   const boost::asio::mutable_buffer& buffer,
                                                   boost::system::error_code& ec)
 {
@@ -846,8 +845,8 @@ bool validate_handshake_record_header(const std::array<uint8_t, 5>& header, cons
 
 boost::asio::awaitable<bool> read_handshake_record(boost::asio::ip::tcp::socket& socket,
                                                    const char* step,
-                                                   const uint64_t handshake_start_ms,
-                                                   const uint32_t timeout_sec,
+                                                   uint64_t handshake_start_ms,
+                                                   uint32_t timeout_sec,
                                                    std::array<uint8_t, 5>& header,
                                                    std::vector<uint8_t>& body,
                                                    boost::system::error_code& ec)
@@ -962,7 +961,7 @@ bool try_complete_handshake_message(const std::array<uint8_t, 5>& header,
 
 boost::asio::awaitable<std::vector<uint8_t>> read_handshake_record_body(boost::asio::ip::tcp::socket& socket,
                                                                         const char* step,
-                                                                        const uint32_t timeout_sec,
+                                                                        uint32_t timeout_sec,
                                                                         uint32_t& tls13_compat_ccs_count,
                                                                         std::vector<uint8_t>& extra_handshake_data,
                                                                         boost::system::error_code& ec)
@@ -1225,21 +1224,25 @@ class sensitive_client_key_guard
     client_ephemeral_keys& keys_;
 };
 
-void log_selected_client_key_share(const mux::connection_context& ctx, const client_ephemeral_keys& keys)
+void log_selected_client_key_share(uint32_t conn_id, const std::string_view sni, const client_ephemeral_keys& keys)
 {
     if (keys.use_hybrid)
     {
-        LOG_CTX_INFO(ctx,
-                     "{} client hello keep fingerprint hybrid key share group 0x{:04x} {} hybrid share len {} mlkem768 pub len {}",
-                     mux::log_event::kHandshake,
-                     tls::consts::group::kX25519MLKEM768,
-                     tls::named_group_name(tls::consts::group::kX25519MLKEM768),
-                     keys.hybrid_key_share.size(),
-                     keys.mlkem768_public_key.size());
+        LOG_INFO("event {} conn_id {} sni {} client hello keep fingerprint hybrid key share group 0x{:04x} {} hybrid share len {} mlkem768 pub len {}",
+                 mux::log_event::kHandshake,
+                 conn_id,
+                 sni,
+                 tls::consts::group::kX25519MLKEM768,
+                 tls::named_group_name(tls::consts::group::kX25519MLKEM768),
+                 keys.hybrid_key_share.size(),
+                 keys.mlkem768_public_key.size());
         return;
     }
 
-    LOG_CTX_INFO(ctx, "{} client hello preserve fingerprint without forced hybrid key share", mux::log_event::kHandshake);
+    LOG_INFO("event {} conn_id {} sni {} client hello preserve fingerprint without forced hybrid key share",
+             mux::log_event::kHandshake,
+             conn_id,
+             sni);
 }
 
 struct handshake_traffic_keys
@@ -1249,7 +1252,7 @@ struct handshake_traffic_keys
 };
 
 handshake_traffic_keys derive_handshake_traffic_keys(const tls::handshake_keys& hs_keys,
-                                                     const uint16_t cipher_suite,
+                                                     uint16_t cipher_suite,
                                                      const EVP_MD* negotiated_md,
                                                      boost::system::error_code& ec)
 {
@@ -1364,7 +1367,7 @@ void prepare_server_hello_crypto(const std::vector<uint8_t>& sh_data,
 
 std::vector<uint8_t> derive_server_hello_shared_secret(const uint8_t* private_key,
                                                        const std::vector<uint8_t>& mlkem768_private_key,
-                                                       const uint16_t key_share_group,
+                                                       uint16_t key_share_group,
                                                        const std::vector<uint8_t>& key_share_data,
                                                        boost::system::error_code& ec)
 {
@@ -1437,8 +1440,8 @@ boost::asio::awaitable<void> process_handshake_record(boost::asio::ip::tcp::sock
                                                       const EVP_MD* md,
                                                       uint64_t& seq,
                                                       uint32_t& tls13_compat_ccs_count,
-                                                      const uint64_t handshake_start_ms,
-                                                      const uint32_t timeout_sec,
+                                                      uint64_t handshake_start_ms,
+                                                      uint32_t timeout_sec,
                                                       boost::system::error_code& ec)
 {
     const auto record = co_await read_encrypted_record(socket, handshake_start_ms, timeout_sec, ec);
@@ -1502,7 +1505,7 @@ boost::asio::awaitable<void> generate_and_send_client_hello(boost::asio::ip::tcp
                                                             tls::transcript& trans,
                                                             std::vector<uint8_t>& auth_key,
                                                             tls::client_hello_info& client_hello,
-                                                            const uint32_t write_timeout_sec,
+                                                            uint32_t write_timeout_sec,
                                                             boost::system::error_code& ec)
 {
     constexpr std::array<uint8_t, 3> client_ver_{1, 0, 0};
@@ -1547,7 +1550,7 @@ boost::asio::awaitable<server_hello_res> process_server_hello(boost::asio::ip::t
                                                               const tls::client_hello_info& client_hello,
                                                               tls::transcript& trans,
                                                               std::vector<uint8_t>& extra_handshake_data,
-                                                              const uint32_t read_timeout_sec,
+                                                              uint32_t read_timeout_sec,
                                                               boost::system::error_code& ec)
 {
     uint32_t tls13_compat_ccs_count = 0;
@@ -1602,8 +1605,8 @@ boost::asio::awaitable<client_handshake_read_result> handshake_read_loop(boost::
                                                                          std::vector<uint8_t> initial_handshake_data,
                                                                          const EVP_CIPHER* cipher,
                                                                          const EVP_MD* md,
-                                                                         const uint32_t max_handshake_records,
-                                                                         const uint32_t read_timeout_sec,
+                                                                         uint32_t max_handshake_records,
+                                                                         uint32_t read_timeout_sec,
                                                                          boost::system::error_code& ec)
 {
     const auto handshake_start_ms = mux::timeout_io::now_ms();
@@ -1688,7 +1691,7 @@ boost::asio::awaitable<void> send_client_finished(boost::asio::ip::tcp::socket& 
                                                   const tls::transcript& trans,
                                                   const EVP_CIPHER* cipher,
                                                   const EVP_MD* md,
-                                                  const uint32_t write_timeout_sec,
+                                                  uint32_t write_timeout_sec,
                                                   boost::system::error_code& ec)
 {
     auto fin_verify = tls::key_schedule::compute_finished_verify_data(c_hs_secret, trans.finish(), md, ec);
@@ -1739,14 +1742,14 @@ client_handshake_result build_client_handshake_result(const server_hello_res& se
 }
 
 boost::asio::awaitable<client_handshake_result> execute_client_handshake(boost::asio::ip::tcp::socket& socket,
-                                                                         const mux::connection_context& ctx,
+                                                                         uint32_t conn_id,
                                                                          const client_ephemeral_keys& keys,
                                                                          const std::vector<uint8_t>& server_public_key,
                                                                          const std::vector<uint8_t>& short_id_bytes,
                                                                          const std::string& sni,
-                                                                         const uint32_t max_handshake_records,
-                                                                         const uint32_t read_timeout_sec,
-                                                                         const uint32_t write_timeout_sec,
+                                                                         uint32_t max_handshake_records,
+                                                                         uint32_t read_timeout_sec,
+                                                                         uint32_t write_timeout_sec,
                                                                          boost::system::error_code& ec)
 {
     tls::transcript trans;
@@ -1777,11 +1780,12 @@ boost::asio::awaitable<client_handshake_result> execute_client_handshake(boost::
     {
         co_return client_handshake_result{};
     }
-    LOG_CTX_INFO(ctx,
-                 "{} server hello key share group 0x{:04x} {}",
-                 mux::log_event::kHandshake,
-                 server_hello_result.key_share_group,
-                 tls::named_group_name(server_hello_result.key_share_group));
+    LOG_INFO("event {} conn_id {} sni {} server hello key share group 0x{:04x} {}",
+             mux::log_event::kHandshake,
+             conn_id,
+             sni,
+             server_hello_result.key_share_group,
+             tls::named_group_name(server_hello_result.key_share_group));
 
     const auto hs_keys =
         derive_handshake_traffic_keys(server_hello_result.hs_keys, server_hello_result.cipher_suite, server_hello_result.negotiated_md, ec);
@@ -1842,7 +1846,7 @@ client_handshaker::client_handshaker(const mux::config& cfg,
 }
 
 boost::asio::awaitable<client_handshake_result> client_handshaker::run(boost::asio::ip::tcp::socket& socket,
-                                                                       const mux::connection_context& ctx,
+                                                                       uint32_t conn_id,
                                                                        boost::system::error_code& ec) const
 {
     auto keys = prepare_client_ephemeral_keys(fingerprint_type_, ec);
@@ -1851,10 +1855,10 @@ boost::asio::awaitable<client_handshake_result> client_handshaker::run(boost::as
         co_return client_handshake_result{};
     }
     const sensitive_client_key_guard sensitive_keys(keys);
-    log_selected_client_key_share(ctx, keys);
+    log_selected_client_key_share(conn_id, sni_, keys);
 
     auto result = co_await execute_client_handshake(
-        socket, ctx, keys, server_public_key_, short_id_bytes_, sni_, max_handshake_records_, cfg_.timeout.read, cfg_.timeout.write, ec);
+        socket, conn_id, keys, server_public_key_, short_id_bytes_, sni_, max_handshake_records_, cfg_.timeout.read, cfg_.timeout.write, ec);
     co_return result;
 }
 

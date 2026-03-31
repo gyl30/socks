@@ -9,10 +9,10 @@
 #include <functional>
 #include <unordered_map>
 
-#include "connection_context.h"
-
 namespace reality
 {
+
+struct fallback_request;
 
 class fallback_gate
 {
@@ -59,7 +59,7 @@ class fallback_gate
 
     explicit fallback_gate(dependencies deps);
 
-    [[nodiscard]] budget_ticket try_acquire(const mux::connection_context& ctx, const char* reason);
+    [[nodiscard]] budget_ticket try_acquire(const fallback_request& request, const char* reason);
 
    private:
     void release_budget();

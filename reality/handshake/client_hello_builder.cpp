@@ -95,7 +95,7 @@ uint16_t select_grease_ech_payload_len()
     return kPayloadLens[random_idx % kPayloadLens.size()];
 }
 
-std::size_t boring_padding_len(const std::size_t unpadded_len)
+std::size_t boring_padding_len(std::size_t unpadded_len)
 {
     if (unpadded_len <= 0xff || unpadded_len >= 0x200)
     {

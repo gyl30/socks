@@ -11,7 +11,7 @@
 namespace
 {
 
-[[nodiscard]] bool has_remaining(const std::size_t len, const std::size_t pos, const std::size_t need)
+[[nodiscard]] bool has_remaining(std::size_t len, std::size_t pos, std::size_t need)
 {
     if (pos > len)
     {
@@ -20,7 +20,7 @@ namespace
     return len - pos >= need;
 }    // namespace
 
-[[nodiscard]] bool is_valid_domain_char(const uint8_t c)
+[[nodiscard]] bool is_valid_domain_char(uint8_t c)
 {
     return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '-' || c == '.' || c == '_';
 }
@@ -37,7 +37,7 @@ namespace
     return true;
 }
 
-bool parse_ipv4_address(const uint8_t* data, const std::size_t len, std::size_t& pos, std::string& addr)
+bool parse_ipv4_address(const uint8_t* data, std::size_t len, std::size_t& pos, std::string& addr)
 {
     if (!has_remaining(len, pos, 4))
     {
@@ -50,7 +50,7 @@ bool parse_ipv4_address(const uint8_t* data, const std::size_t len, std::size_t&
     return true;
 }    // namespace
 
-bool parse_domain_address(const uint8_t* data, const std::size_t len, std::size_t& pos, std::string& addr)
+bool parse_domain_address(const uint8_t* data, std::size_t len, std::size_t& pos, std::string& addr)
 {
     if (!has_remaining(len, pos, 1))
     {
@@ -81,7 +81,7 @@ bool parse_domain_address(const uint8_t* data, const std::size_t len, std::size_
     return true;
 }    // namespace
 
-bool parse_ipv6_address(const uint8_t* data, const std::size_t len, std::size_t& pos, std::string& addr)
+bool parse_ipv6_address(const uint8_t* data, std::size_t len, std::size_t& pos, std::string& addr)
 {
     if (!has_remaining(len, pos, 16))
     {
@@ -94,7 +94,7 @@ bool parse_ipv6_address(const uint8_t* data, const std::size_t len, std::size_t&
     return true;
 }
 
-bool parse_port(const uint8_t* data, const std::size_t len, std::size_t& pos, uint16_t& port)
+bool parse_port(const uint8_t* data, std::size_t len, std::size_t& pos, uint16_t& port)
 {
     if (!has_remaining(len, pos, 2))
     {
@@ -106,9 +106,9 @@ bool parse_port(const uint8_t* data, const std::size_t len, std::size_t& pos, ui
 }
 
 bool parse_address_and_port(const uint8_t* data,
-                            const std::size_t len,
-                            const uint8_t atyp,
-                            const std::size_t start_pos,
+                            std::size_t len,
+                            uint8_t atyp,
+                            std::size_t start_pos,
                             std::string& addr,
                             uint16_t& port,
                             std::size_t& next_pos)

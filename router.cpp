@@ -8,11 +8,11 @@
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/ip/address.hpp>
 
+#include "constants.h"
 #include "log.h"
 #include "router.h"
 #include "ip_matcher.h"
 #include "domain_matcher.h"
-#include "connection_context.h"
 
 namespace mux
 {
@@ -115,48 +115,48 @@ bool router::load()
     return load_ok;
 }
 
-boost::asio::awaitable<route_type> router::decide_ip(const connection_context& ctx, const boost::asio::ip::address& addr) const
+boost::asio::awaitable<route_type> router::decide_ip(const boost::asio::ip::address& addr) const
 {
     if (block_ip_matcher_ == nullptr || direct_ip_matcher_ == nullptr)
     {
-        LOG_CTX_WARN(ctx, "{} ip matcher unavailable fallback default proxy", log_event::kRoute);
+        LOG_WARN("{} ip matcher unavailable fallback default proxy", log_event::kRoute);
     }
     if (block_ip_matcher_ != nullptr && block_ip_matcher_->match(addr))
     {
-        LOG_CTX_DEBUG(ctx, "{} matched ip rule block", log_event::kRoute);
+        LOG_DEBUG("{} matched ip rule block", log_event::kRoute);
         co_return route_type::kBlock;
     }
     if (direct_ip_matcher_ != nullptr && direct_ip_matcher_->match(addr))
     {
-        LOG_CTX_DEBUG(ctx, "{} matched ip rule direct", log_event::kRoute);
+        LOG_DEBUG("{} matched ip rule direct", log_event::kRoute);
         co_return route_type::kDirect;
     }
-    LOG_CTX_DEBUG(ctx, "{} ip rule not found default proxy", log_event::kRoute);
+    LOG_DEBUG("{} ip rule not found default proxy", log_event::kRoute);
     co_return route_type::kProxy;
 }
 
-boost::asio::awaitable<route_type> router::decide_domain(const connection_context& ctx, const std::string& host) const
+boost::asio::awaitable<route_type> router::decide_domain(const std::string& host) const
 {
     if (block_domain_matcher_ == nullptr || direct_domain_matcher_ == nullptr || proxy_domain_matcher_ == nullptr)
     {
-        LOG_CTX_WARN(ctx, "{} domain matcher unavailable fallback default direct", log_event::kRoute);
+        LOG_WARN("{} domain matcher unavailable fallback default direct", log_event::kRoute);
     }
     if (block_domain_matcher_ != nullptr && block_domain_matcher_->match(host))
     {
-        LOG_CTX_DEBUG(ctx, "{} matched domain rule block", log_event::kRoute);
+        LOG_DEBUG("{} matched domain rule block", log_event::kRoute);
         co_return route_type::kBlock;
     }
     if (direct_domain_matcher_ != nullptr && direct_domain_matcher_->match(host))
     {
-        LOG_CTX_DEBUG(ctx, "{} matched domain rule direct", log_event::kRoute);
+        LOG_DEBUG("{} matched domain rule direct", log_event::kRoute);
         co_return route_type::kDirect;
     }
     if (proxy_domain_matcher_ != nullptr && proxy_domain_matcher_->match(host))
     {
-        LOG_CTX_DEBUG(ctx, "{} matched domain rule proxy", log_event::kRoute);
+        LOG_DEBUG("{} matched domain rule proxy", log_event::kRoute);
         co_return route_type::kProxy;
     }
-    LOG_CTX_DEBUG(ctx, "{} domain rule not found default direct", log_event::kRoute);
+    LOG_DEBUG("{} domain rule not found default direct", log_event::kRoute);
     co_return route_type::kDirect;
 }
 

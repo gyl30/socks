@@ -61,7 +61,7 @@ void dump_x25519()
     std::cout << "private key: " << private_key_hex << '\n' << "public key:  " << public_key_hex << '\n';
 }
 
-int register_signal(boost::asio::signal_set& signals, const int signal, const char* signal_name)
+int register_signal(boost::asio::signal_set& signals, int signal, const char* signal_name)
 {
     boost::system::error_code ec;
     ec = signals.add(signal, ec);

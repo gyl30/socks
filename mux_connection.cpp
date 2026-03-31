@@ -33,7 +33,6 @@ extern "C"
 #include "timeout_io.h"
 #include "mux_protocol.h"
 #include "mux_connection.h"
-#include "connection_context.h"
 #include "reality/session/engine.h"
 #include "reality/session/session.h"
 
@@ -43,7 +42,7 @@ namespace mux
 namespace
 {
 
-void handle_post_handshake_record(const uint32_t cid, const std::span<const uint8_t> plaintext, boost::system::error_code& ec)
+void handle_post_handshake_record(uint32_t cid, const std::span<const uint8_t> plaintext, boost::system::error_code& ec)
 {
     if (plaintext.empty())
     {
@@ -75,8 +74,7 @@ mux_connection::mux_connection(boost::asio::ip::tcp::socket socket,
                                io_worker& worker,
                                reality::reality_record_context record_context,
                                const config& cfg,
-                               const uint32_t conn_id,
-                               const std::string& trace_id)
+                               uint32_t conn_id)
     : cfg_(cfg),
       cid_(conn_id),
       worker_(worker),
@@ -85,28 +83,33 @@ mux_connection::mux_connection(boost::asio::ip::tcp::socket socket,
       write_channel_(std::make_unique<channel_type>(worker.io_context, constants::mux::kWriteChannelCapacity)),
       stop_channel_(std::make_unique<stop_channel_type>(worker.io_context, constants::mux::kStopChannelCapacity))
 {
-    ctx_.trace_id(trace_id);
-    ctx_.conn_id(conn_id);
-
     boost::system::error_code local_ep_ec;
     const auto local_ep = socket_.local_endpoint(local_ep_ec);
     if (!local_ep_ec)
     {
-        ctx_.set_local_endpoint(local_ep.address().to_string(), local_ep.port());
+        local_addr_ = local_ep.address().to_string();
+        local_port_ = local_ep.port();
     }
 
     boost::system::error_code remote_ep_ec;
     const auto remote_ep = socket_.remote_endpoint(remote_ep_ec);
     if (!remote_ep_ec)
     {
-        ctx_.set_remote_endpoint(remote_ep.address().to_string(), remote_ep.port());
+        remote_addr_ = remote_ep.address().to_string();
+        remote_port_ = remote_ep.port();
     }
-    LOG_CTX_INFO(ctx_, "{} mux initialized {}", log_event::kConnInit, ctx_.connection_info());
+    LOG_INFO("event {} conn_id {} local {}:{} remote {}:{} mux initialized",
+             log_event::kConnInit,
+             cid_,
+             local_addr_.empty() ? "unknown" : local_addr_,
+             local_port_,
+             remote_addr_.empty() ? "unknown" : remote_addr_,
+             remote_port_);
 }
 
 mux_connection::~mux_connection() = default;
 
-std::shared_ptr<mux_stream> mux_connection::find_stream(const uint32_t stream_id)
+std::shared_ptr<mux_stream> mux_connection::find_stream(uint32_t stream_id)
 {
     const std::scoped_lock<std::mutex> lock(mutex_);
     const auto it = streams_.find(stream_id);
@@ -289,7 +292,7 @@ void mux_connection::stop_on_executor()
     ec = socket_.close(ec);
     if (ec)
     {
-        LOG_CTX_WARN(ctx_, "close failed {}", ec.message());
+        LOG_WARN("event {} conn_id {} close failed {}", log_event::kConnClose, cid_, ec.message());
     }
     if (stop_channel_ != nullptr)
     {
@@ -379,7 +382,7 @@ boost::asio::awaitable<void> mux_connection::read_loop()
     LOG_DEBUG("mux {} read loop finished", cid_);
 }
 
-boost::asio::awaitable<void> mux_connection::on_tls_record(const uint8_t type,
+boost::asio::awaitable<void> mux_connection::on_tls_record(uint8_t type,
                                                            const std::span<const uint8_t> plaintext,
                                                            boost::system::error_code& ec)
 {
@@ -389,7 +392,7 @@ boost::asio::awaitable<void> mux_connection::on_tls_record(const uint8_t type,
         mux_codec::decode_frames(pending_plaintext_, plaintext, cfg_.limits.max_buffer, frames, ec);
         if (ec)
         {
-            LOG_CTX_ERROR(ctx_, "{} mux decode failed {}", log_event::kMux, ec.message());
+            LOG_ERROR("event {} conn_id {} mux decode failed {}", log_event::kMux, cid_, ec.message());
             co_return;
         }
         for (auto& [h, payload] : frames)
@@ -566,7 +569,7 @@ std::shared_ptr<mux_stream> mux_connection::create_stream()
     return stream;
 }
 
-std::shared_ptr<mux_stream> mux_connection::create_incoming_stream(const uint32_t stream_id)
+std::shared_ptr<mux_stream> mux_connection::create_incoming_stream(uint32_t stream_id)
 {
     if (stream_id == mux::kStreamIdHeartbeat)
     {
@@ -603,7 +606,7 @@ boost::asio::awaitable<void> mux_connection::send_async(mux_frame msg, boost::sy
     co_return co_await send_async_with_timeout(std::move(msg), 0, ec);
 }
 
-boost::asio::awaitable<void> mux_connection::send_async_with_timeout(mux_frame msg, const uint32_t timeout_sec, boost::system::error_code& ec)
+boost::asio::awaitable<void> mux_connection::send_async_with_timeout(mux_frame msg, uint32_t timeout_sec, boost::system::error_code& ec)
 {
     if (msg.payload.size() > mux::kMaxPayload)
     {

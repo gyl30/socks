@@ -2,6 +2,7 @@
 #define TCP_SOCKS_SESSION_H
 
 #include <atomic>
+#include <chrono>
 #include <memory>
 #include <string>
 #include <cstdint>
@@ -9,8 +10,8 @@
 #include <boost/asio.hpp>
 #include <boost/asio/awaitable.hpp>
 
+#include "constants.h"
 #include "upstream.h"
-#include "connection_context.h"
 
 namespace mux
 {
@@ -47,7 +48,10 @@ class tcp_socks_session : public std::enable_shared_from_this<tcp_socks_session>
     void close_client_socket();
 
    private:
-    connection_context ctx_;
+    uint32_t conn_id_ = 0;
+    uint64_t tx_bytes_ = 0;
+    uint64_t rx_bytes_ = 0;
+    std::chrono::steady_clock::time_point start_time_ = std::chrono::steady_clock::now();
     const config& cfg_;
     boost::asio::ip::tcp::socket socket_;
     boost::asio::steady_timer idle_timer_;

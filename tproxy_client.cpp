@@ -24,7 +24,6 @@
 #include "timeout_io.h"
 #include "tproxy_client.h"
 #include "client_tunnel_pool.h"
-#include "connection_context.h"
 #include "tproxy_tcp_session.h"
 #include "tproxy_udp_session.h"
 
@@ -369,8 +368,8 @@ boost::asio::awaitable<void> tproxy_client::on_udp_packet(boost::asio::ip::udp::
         co_return;
     }
 
-    auto ctx = make_udp_connection_context(client_endpoint, target_endpoint);
-    const auto route = co_await decide_udp_route(ctx, target_endpoint);
+    const uint32_t conn_id = next_session_id_.fetch_add(1, std::memory_order_relaxed);
+    const auto route = co_await decide_udp_route(conn_id, target_endpoint);
     if (route == route_type::kBlock)
     {
         co_return;
@@ -382,7 +381,7 @@ boost::asio::awaitable<void> tproxy_client::on_udp_packet(boost::asio::ip::udp::
         co_return;
     }
 
-    auto session = make_udp_session(key, client_endpoint, target_endpoint, route, std::move(ctx));
+    auto session = make_udp_session(key, client_endpoint, target_endpoint, route, conn_id);
     const auto enqueue_result = co_await session->enqueue_packet(std::move(payload));
     if (enqueue_result != udp_enqueue_result::kEnqueued)
     {
@@ -411,36 +410,28 @@ bool tproxy_client::is_udp_routing_loop(const boost::asio::ip::udp::endpoint& ta
     return target_endpoint.port() == cfg_.tproxy.udp_port && net::normalize_address(target_endpoint.address()) == net::normalize_address(local_addr);
 }
 
-connection_context tproxy_client::make_udp_connection_context(const boost::asio::ip::udp::endpoint& client_endpoint,
-                                                              const boost::asio::ip::udp::endpoint& target_endpoint)
-{
-    connection_context ctx;
-    ctx.new_trace_id();
-    ctx.conn_id(next_session_id_.fetch_add(1, std::memory_order_relaxed));
-    ctx.set_remote_endpoint(client_endpoint.address().to_string(), client_endpoint.port());
-    ctx.set_target(target_endpoint.address().to_string(), target_endpoint.port());
-    ctx.set_local_endpoint(target_endpoint.address().to_string(), target_endpoint.port());
-    return ctx;
-}
-
-boost::asio::awaitable<route_type> tproxy_client::decide_udp_route(const connection_context& ctx,
+boost::asio::awaitable<route_type> tproxy_client::decide_udp_route(uint32_t conn_id,
                                                                    const boost::asio::ip::udp::endpoint& target_endpoint) const
 {
     route_type route = route_type::kProxy;
     if (router_ != nullptr)
     {
-        route = co_await router_->decide_ip(ctx, target_endpoint.address());
+        route = co_await router_->decide_ip(target_endpoint.address());
     }
 
-    LOG_CTX_INFO(ctx,
-                 "{} udp route decision target {}:{} route {}",
-                 log_event::kRoute,
-                 target_endpoint.address().to_string(),
-                 target_endpoint.port(),
-                 mux::to_string(route));
+    LOG_INFO("event {} conn_id {} target {}:{} route {}",
+             log_event::kRoute,
+             conn_id,
+             target_endpoint.address().to_string(),
+             target_endpoint.port(),
+             mux::to_string(route));
     if (route == route_type::kBlock)
     {
-        LOG_CTX_INFO(ctx, "{} udp blocked {}:{}", log_event::kRoute, target_endpoint.address().to_string(), target_endpoint.port());
+        LOG_INFO("event {} conn_id {} target {}:{} blocked",
+                 log_event::kRoute,
+                 conn_id,
+                 target_endpoint.address().to_string(),
+                 target_endpoint.port());
     }
 
     co_return route;
@@ -478,7 +469,7 @@ std::shared_ptr<tproxy_udp_session> tproxy_client::make_udp_session(const std::s
                                                                     const boost::asio::ip::udp::endpoint& client_endpoint,
                                                                     const boost::asio::ip::udp::endpoint& target_endpoint,
                                                                     route_type route,
-                                                                    connection_context ctx)
+                                                                    uint32_t conn_id)
 {
     const auto weak_self = weak_from_this();
     return std::make_shared<tproxy_udp_session>(owner_worker_,
@@ -486,7 +477,7 @@ std::shared_ptr<tproxy_udp_session> tproxy_client::make_udp_session(const std::s
                                                 client_endpoint,
                                                 target_endpoint,
                                                 route,
-                                                std::move(ctx),
+                                                conn_id,
                                                 cfg_,
                                                 [weak_self, key]()
                                                 {

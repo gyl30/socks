@@ -50,7 +50,7 @@ void validate_nonce_iv_size(const std::span<const uint8_t> iv, boost::system::er
     ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
 }
 
-std::vector<uint8_t> make_record_nonce(const std::span<const uint8_t> iv, const uint64_t seq)
+std::vector<uint8_t> make_record_nonce(const std::span<const uint8_t> iv, uint64_t seq)
 {
     std::vector<uint8_t> nonce(iv.begin(), iv.end());
     for (std::size_t i = 0; i < kNonceSeqXorBytes; ++i)
@@ -78,7 +78,7 @@ std::size_t trim_padding_and_read_content_type(const std::span<uint8_t> output_b
     return written - 1;
 }
 
-void validate_inner_plaintext_len(const std::size_t plaintext_len, boost::system::error_code& ec)
+void validate_inner_plaintext_len(std::size_t plaintext_len, boost::system::error_code& ec)
 {
     ec.clear();
     if (plaintext_len <= kMaxTlsInnerPlaintextLen)
@@ -93,9 +93,9 @@ void validate_inner_plaintext_len(const std::size_t plaintext_len, boost::system
 void encrypt_tls_record(const cipher_context& ctx,
                         const EVP_CIPHER* cipher,
                         const reality::traffic_key_material& key_material,
-                        const uint64_t seq,
+                        uint64_t seq,
                         const std::vector<uint8_t>& plaintext,
-                        const uint8_t content_type,
+                        uint8_t content_type,
                         std::vector<uint8_t>& output_buffer,
                         boost::system::error_code& ec)
 {
@@ -167,7 +167,7 @@ std::size_t decrypt_tls_record(const cipher_context& ctx,
                                const EVP_CIPHER* cipher,
                                const std::vector<uint8_t>& key,
                                const std::vector<uint8_t>& iv,
-                               const uint64_t seq,
+                               uint64_t seq,
                                const std::span<const uint8_t> record_data,
                                const std::span<uint8_t> output_buffer,
                                uint8_t& out_content_type,
@@ -206,7 +206,7 @@ std::size_t decrypt_tls_record(const cipher_context& ctx,
 std::vector<uint8_t> decrypt_record(const EVP_CIPHER* cipher,
                                     const std::vector<uint8_t>& key,
                                     const std::vector<uint8_t>& iv,
-                                    const uint64_t seq,
+                                    uint64_t seq,
                                     const std::vector<uint8_t>& ciphertext_with_header,
                                     uint8_t& out_content_type,
                                     boost::system::error_code& ec)

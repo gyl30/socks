@@ -22,8 +22,7 @@ site_material load_site_material(const mux::config& cfg, boost::system::error_co
         return {};
     }
 
-    site_material material =
-        fetch_site_material(target_host, constants::reality_limits::kDefaultTlsPort, target_host, ec, "site-material:" + target_host);
+    site_material material = fetch_site_material(target_host, constants::reality_limits::kDefaultTlsPort, target_host, ec);
     if (ec)
     {
         LOG_ERROR("reality site material load failed target {}:{} error {}", target_host, constants::reality_limits::kDefaultTlsPort, ec.message());

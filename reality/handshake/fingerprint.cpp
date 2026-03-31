@@ -508,7 +508,7 @@ fingerprint_template build_chrome120_mlkem768_template()
 
 }    // namespace
 
-bool fingerprint_has_key_share_group(const fingerprint_template& spec, const uint16_t group)
+bool fingerprint_has_key_share_group(const fingerprint_template& spec, uint16_t group)
 {
     const auto* key_share = find_key_share_blueprint(spec);
     if (key_share == nullptr)
@@ -520,7 +520,7 @@ bool fingerprint_has_key_share_group(const fingerprint_template& spec, const uin
     return std::ranges::any_of(values, [group](const key_share_blueprint::key_share_entry& entry) { return entry.group == group; });
 }
 
-bool fingerprint_has_key_share_group(const fingerprint_instance& spec, const uint16_t group)
+bool fingerprint_has_key_share_group(const fingerprint_instance& spec, uint16_t group)
 {
     const auto* key_share = find_key_share_blueprint(spec);
     if (key_share == nullptr)
@@ -532,7 +532,7 @@ bool fingerprint_has_key_share_group(const fingerprint_instance& spec, const uin
     return std::ranges::any_of(values, [group](const key_share_blueprint::key_share_entry& entry) { return entry.group == group; });
 }
 
-void fingerprint_append_key_share_group(fingerprint_template& spec, const uint16_t group)
+void fingerprint_append_key_share_group(fingerprint_template& spec, uint16_t group)
 {
     auto* key_share = find_key_share_blueprint(spec);
     if (key_share == nullptr || fingerprint_has_key_share_group(spec, group))
@@ -543,12 +543,12 @@ void fingerprint_append_key_share_group(fingerprint_template& spec, const uint16
     key_share->key_shares().push_back({.group = group, .data = {}});
 }
 
-bool fingerprint_has_cipher_suite(const fingerprint_template& spec, const uint16_t cipher_suite)
+bool fingerprint_has_cipher_suite(const fingerprint_template& spec, uint16_t cipher_suite)
 {
     return std::ranges::find(fingerprint_cipher_suites(spec), cipher_suite) != fingerprint_cipher_suites(spec).end();
 }
 
-void fingerprint_append_cipher_suite(fingerprint_template& spec, const uint16_t cipher_suite)
+void fingerprint_append_cipher_suite(fingerprint_template& spec, uint16_t cipher_suite)
 {
     if (fingerprint_has_cipher_suite(spec, cipher_suite))
     {

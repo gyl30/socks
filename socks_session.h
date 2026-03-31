@@ -14,7 +14,7 @@
 #include <boost/asio/awaitable.hpp>
 
 #include "router.h"
-#include "connection_context.h"
+#include "constants.h"
 
 namespace mux
 {
@@ -98,11 +98,11 @@ class socks_session : public std::enable_shared_from_this<socks_session>
 
    private:
     uint32_t sid_;
+    uint32_t conn_id_ = 0;
     std::string username_;
     std::string password_;
     bool auth_enabled_ = false;
     const config& cfg_;
-    connection_context ctx_;
     io_worker& worker_;
     boost::asio::ip::tcp::socket socket_;
     std::shared_ptr<router> router_;

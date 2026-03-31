@@ -2,6 +2,7 @@
 #define TPROXY_UDP_SESSION_H
 
 #include <atomic>
+#include <chrono>
 #include <memory>
 #include <string>
 #include <vector>
@@ -12,7 +13,6 @@
 #include <boost/asio/experimental/concurrent_channel.hpp>
 
 #include "lru_cache.h"
-#include "connection_context.h"
 #include "client_tunnel_pool.h"
 
 namespace mux
@@ -33,7 +33,7 @@ class tproxy_udp_session : public std::enable_shared_from_this<tproxy_udp_sessio
                        const boost::asio::ip::udp::endpoint& client_endpoint,
                        const boost::asio::ip::udp::endpoint& target_endpoint,
                        route_type route,
-                       connection_context ctx,
+                       uint32_t conn_id,
                        const config& cfg,
                        std::function<void()> on_close);
 
@@ -65,7 +65,7 @@ class tproxy_udp_session : public std::enable_shared_from_this<tproxy_udp_sessio
     void close_impl();
 
    private:
-    connection_context ctx_;
+    uint32_t conn_id_ = 0;
     const config& cfg_;
     io_worker& worker_;
     std::shared_ptr<void> active_guard_;
@@ -78,6 +78,9 @@ class tproxy_udp_session : public std::enable_shared_from_this<tproxy_udp_sessio
     std::shared_ptr<mux_connection> tunnel_;
     std::shared_ptr<mux_stream> stream_;
     std::atomic<uint8_t> stream_close_command_{0};
+    uint64_t tx_bytes_ = 0;
+    uint64_t rx_bytes_ = 0;
+    std::chrono::steady_clock::time_point start_time_ = std::chrono::steady_clock::now();
     boost::asio::ip::udp::endpoint client_endpoint_;
     boost::asio::ip::udp::endpoint target_endpoint_;
     std::function<void()> on_close_;

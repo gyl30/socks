@@ -10,7 +10,6 @@
 namespace mux
 {
 
-class connection_context;
 class ip_matcher;
 class domain_matcher;
 
@@ -32,8 +31,8 @@ class router
    public:
     virtual bool load();
 
-    [[nodiscard]] boost::asio::awaitable<route_type> decide_ip(const connection_context& ctx, const boost::asio::ip::address& addr) const;
-    [[nodiscard]] boost::asio::awaitable<route_type> decide_domain(const connection_context& ctx, const std::string& host) const;
+    [[nodiscard]] boost::asio::awaitable<route_type> decide_ip(const boost::asio::ip::address& addr) const;
+    [[nodiscard]] boost::asio::awaitable<route_type> decide_domain(const std::string& host) const;
 
    protected:
     std::shared_ptr<ip_matcher>& block_ip_matcher() { return block_ip_matcher_; }

@@ -2,8 +2,10 @@
 #define TPROXY_TCP_SESSION_H
 
 #include <atomic>
-#include <memory>
+#include <chrono>
 #include <cstdint>
+#include <memory>
+#include <string>
 #include <utility>
 
 #include <boost/asio/awaitable.hpp>
@@ -11,7 +13,6 @@
 
 #include "router.h"
 #include "upstream.h"
-#include "connection_context.h"
 
 namespace mux
 {
@@ -36,7 +37,16 @@ class tproxy_tcp_session : public std::enable_shared_from_this<tproxy_tcp_sessio
     [[nodiscard]] boost::asio::awaitable<void> idle_watchdog();
 
    private:
-    connection_context ctx_;
+    uint32_t conn_id_ = 0;
+    std::string client_addr_;
+    uint16_t client_port_ = 0;
+    std::string local_addr_;
+    uint16_t local_port_ = 0;
+    std::string target_addr_;
+    uint16_t target_port_ = 0;
+    uint64_t tx_bytes_ = 0;
+    uint64_t rx_bytes_ = 0;
+    std::chrono::steady_clock::time_point start_time_ = std::chrono::steady_clock::now();
     boost::asio::ip::tcp::socket socket_;
     boost::asio::steady_timer idle_timer_;
     std::shared_ptr<client_tunnel_pool> tunnel_pool_;

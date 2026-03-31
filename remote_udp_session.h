@@ -2,6 +2,7 @@
 #define REMOTE_UDP_SESSION_H
 
 #include <atomic>
+#include <chrono>
 #include <memory>
 #include <string>
 
@@ -12,7 +13,6 @@
 #include "lru_cache.h"
 #include "net_utils.h"
 #include "mux_protocol.h"
-#include "connection_context.h"
 
 namespace mux
 {
@@ -23,7 +23,7 @@ class remote_udp_session : public std::enable_shared_from_this<remote_udp_sessio
     remote_udp_session(boost::asio::io_context& io_context,
                        const std::shared_ptr<mux_connection>& connection,
                        uint32_t id,
-                       const connection_context& ctx,
+                       uint32_t conn_id,
                        const config& cfg);
 
     [[nodiscard]] bool has_stream() const;
@@ -55,8 +55,11 @@ class remote_udp_session : public std::enable_shared_from_this<remote_udp_sessio
     };
 
     uint32_t id_;
+    uint32_t conn_id_ = 0;
     const config& cfg_;
-    connection_context ctx_;
+    uint64_t tx_bytes_ = 0;
+    uint64_t rx_bytes_ = 0;
+    std::chrono::steady_clock::time_point start_time_ = std::chrono::steady_clock::now();
     boost::asio::steady_timer idle_timer_;
     boost::asio::ip::udp::socket udp_socket_;
     boost::asio::ip::udp::resolver udp_resolver_;
