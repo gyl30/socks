@@ -10,6 +10,10 @@ import shutil
 import subprocess
 import sys
 
+EXCLUDED_FILES = {
+    "reflect.h",
+}
+
 
 def build_safe_git_env(repo_root):
     env = os.environ.copy()
@@ -102,6 +106,8 @@ def list_changed_files(repo_root, base_sha, head_sha):
         if not line:
             continue
         if line.startswith("third/") or line.startswith("build/") or line.startswith("fuzz/"):
+            continue
+        if line in EXCLUDED_FILES:
             continue
         files.append(line)
     return files
