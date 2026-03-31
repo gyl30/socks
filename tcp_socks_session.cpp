@@ -16,22 +16,12 @@
 #include "router.h"
 #include "protocol.h"
 #include "upstream.h"
-#include "timeout_io.h"
+#include "net_utils.h"
 #include "scoped_exit.h"
 #include "tcp_socks_session.h"
 
 namespace mux
 {
-
-namespace
-{
-
-[[nodiscard]] uint64_t now_ms()
-{
-    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
-}
-
-}    // namespace
 
 tcp_socks_session::tcp_socks_session(boost::asio::ip::tcp::socket socket,
                                      std::shared_ptr<client_tunnel_pool> tunnel_pool,
@@ -47,7 +37,7 @@ tcp_socks_session::tcp_socks_session(boost::asio::ip::tcp::socket socket,
       tunnel_pool_(std::move(tunnel_pool)),
       active_connection_guard_(std::move(active_connection_guard))
 {
-    last_activity_time_ms_ = now_ms();
+    last_activity_time_ms_ = net::now_ms();
 }
 
 boost::asio::awaitable<void> tcp_socks_session::start(const std::string& host, uint16_t port) { co_await run(host, port); }
@@ -171,7 +161,7 @@ boost::asio::awaitable<void> tcp_socks_session::reply_error(uint8_t code)
 {
     uint8_t err[] = {socks::kVer, code, 0, socks::kAtypIpv4, 0, 0, 0, 0, 0, 0};
     boost::system::error_code ec;
-    co_await timeout_io::wait_write_with_timeout(socket_, boost::asio::buffer(err), cfg_.timeout.write, ec);
+    co_await net::wait_write_with_timeout(socket_, boost::asio::buffer(err), cfg_.timeout.write, ec);
     if (!ec)
     {
         co_return;
@@ -213,7 +203,7 @@ boost::asio::awaitable<bool> tcp_socks_session::reply_success(const upstream_con
     }
 
     boost::system::error_code ec;
-    co_await timeout_io::wait_write_with_timeout(socket_, boost::asio::buffer(rep), cfg_.timeout.write, ec);
+    co_await net::wait_write_with_timeout(socket_, boost::asio::buffer(rep), cfg_.timeout.write, ec);
     if (!ec)
     {
         co_return true;
@@ -279,7 +269,7 @@ boost::asio::awaitable<void> tcp_socks_session::client_to_upstream(std::shared_p
             break;
         }
         tx_bytes_ += n;
-        last_activity_time_ms_ = now_ms();
+        last_activity_time_ms_ = net::now_ms();
     }
     LOG_INFO("event {} conn_id {} stage client_to_upstream finished tx_bytes {}", log_event::kDataSend, conn_id_, tx_bytes_);
 }
@@ -312,7 +302,7 @@ boost::asio::awaitable<void> tcp_socks_session::upstream_to_client(std::shared_p
             }
             break;
         }
-        auto write_size = co_await timeout_io::wait_write_with_timeout(socket_, boost::asio::buffer(buf.data(), n), cfg_.timeout.write, ec);
+        auto write_size = co_await net::wait_write_with_timeout(socket_, boost::asio::buffer(buf.data(), n), cfg_.timeout.write, ec);
         if (ec)
         {
             LOG_WARN("event {} conn_id {} stage upstream_to_client write failed {}", log_event::kSocks, conn_id_, ec.message());
@@ -320,7 +310,7 @@ boost::asio::awaitable<void> tcp_socks_session::upstream_to_client(std::shared_p
             break;
         }
         rx_bytes_ += write_size;
-        last_activity_time_ms_ = now_ms();
+        last_activity_time_ms_ = net::now_ms();
     }
     LOG_INFO("event {} conn_id {} stage upstream_to_client finished rx_bytes {}", log_event::kDataRecv, conn_id_, rx_bytes_);
 }
@@ -337,7 +327,7 @@ boost::asio::awaitable<void> tcp_socks_session::idle_watchdog(std::shared_ptr<up
         {
             break;
         }
-        const auto elapsed_ms = now_ms() - last_activity_time_ms_;
+        const auto elapsed_ms = net::now_ms() - last_activity_time_ms_;
         if (elapsed_ms > idle_timeout_ms)
         {
             LOG_WARN("event {} conn_id {} idle_timeout_sec {} tcp session idle closing",

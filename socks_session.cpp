@@ -19,7 +19,7 @@
 #include "config.h"
 #include "constants.h"
 #include "protocol.h"
-#include "timeout_io.h"
+#include "net_utils.h"
 #include "context_pool.h"
 #include "socks_session.h"
 #include "connection_tracker.h"
@@ -185,7 +185,7 @@ boost::asio::awaitable<bool> socks_session::read_socks_greeting(uint8_t& method_
 {
     boost::system::error_code ec;
     uint8_t ver_nmethods[2] = {0};
-    co_await timeout_io::wait_read_with_timeout(socket_, boost::asio::buffer(ver_nmethods, 2), cfg_.timeout.read, ec);
+    co_await net::wait_read_with_timeout(socket_, boost::asio::buffer(ver_nmethods, 2), cfg_.timeout.read, ec);
     if (ec)
     {
         LOG_ERROR("event {} conn_id {} read greeting failed {}", log_event::kSocks, conn_id_, ec.message());
@@ -204,7 +204,7 @@ boost::asio::awaitable<bool> socks_session::read_auth_methods(uint8_t method_cou
 {
     methods.assign(method_count, 0);
     boost::system::error_code ec;
-    co_await timeout_io::wait_read_with_timeout(socket_, boost::asio::buffer(methods), cfg_.timeout.read, ec);
+    co_await net::wait_read_with_timeout(socket_, boost::asio::buffer(methods), cfg_.timeout.read, ec);
     if (ec)
     {
         LOG_ERROR("event {} conn_id {} read methods failed {}", log_event::kSocks, conn_id_, ec.message());
@@ -236,7 +236,7 @@ boost::asio::awaitable<bool> socks_session::write_selected_method(uint8_t method
 {
     uint8_t resp[] = {socks::kVer, method};
     boost::system::error_code ec;
-    co_await timeout_io::wait_write_with_timeout(socket_, boost::asio::buffer(resp), cfg_.timeout.write, ec);
+    co_await net::wait_write_with_timeout(socket_, boost::asio::buffer(resp), cfg_.timeout.write, ec);
     if (ec)
     {
         LOG_ERROR("event {} conn_id {} write selected method failed {}", log_event::kSocks, conn_id_, ec.message());
@@ -276,7 +276,7 @@ boost::asio::awaitable<bool> socks_session::do_password_auth()
     if (!success)
     {
         LOG_WARN("event {} conn_id {} auth failed", log_event::kAuth, conn_id_);
-        const auto delay_ec = co_await timeout_io::wait_for(worker_.io_context, std::chrono::milliseconds(constants::socks::kAuthFailDelayMs));
+        const auto delay_ec = co_await net::wait_for(worker_.io_context, std::chrono::milliseconds(constants::socks::kAuthFailDelayMs));
         (void)delay_ec;
     }
     else
@@ -291,7 +291,7 @@ boost::asio::awaitable<bool> socks_session::read_auth_version()
 {
     uint8_t ver = 0;
     boost::system::error_code ec;
-    co_await timeout_io::wait_read_with_timeout(socket_, boost::asio::buffer(&ver, 1), cfg_.timeout.read, ec);
+    co_await net::wait_read_with_timeout(socket_, boost::asio::buffer(&ver, 1), cfg_.timeout.read, ec);
     if (ec)
     {
         LOG_ERROR("socks session {} read auth version failed {}", sid_, ec.message());
@@ -310,7 +310,7 @@ boost::asio::awaitable<bool> socks_session::read_auth_field(std::string& out, co
 {
     uint8_t field_len = 0;
     boost::system::error_code ec;
-    co_await timeout_io::wait_read_with_timeout(socket_, boost::asio::buffer(&field_len, 1), cfg_.timeout.read, ec);
+    co_await net::wait_read_with_timeout(socket_, boost::asio::buffer(&field_len, 1), cfg_.timeout.read, ec);
     if (ec)
     {
         LOG_ERROR("socks session {} read {} len failed {}", sid_, field_name, ec.message());
@@ -323,7 +323,7 @@ boost::asio::awaitable<bool> socks_session::read_auth_field(std::string& out, co
     }
 
     out.assign(field_len, '\0');
-    co_await timeout_io::wait_read_with_timeout(socket_, boost::asio::buffer(out), cfg_.timeout.read, ec);
+    co_await net::wait_read_with_timeout(socket_, boost::asio::buffer(out), cfg_.timeout.read, ec);
     if (ec)
     {
         LOG_ERROR("socks session {} read {} failed {}", sid_, field_name, ec.message());
@@ -343,7 +343,7 @@ boost::asio::awaitable<bool> socks_session::write_auth_result(bool success)
 {
     uint8_t result[] = {0x01, success ? static_cast<uint8_t>(0x00) : static_cast<uint8_t>(0x01)};
     boost::system::error_code ec;
-    co_await timeout_io::wait_write_with_timeout(socket_, boost::asio::buffer(result), cfg_.timeout.write, ec);
+    co_await net::wait_write_with_timeout(socket_, boost::asio::buffer(result), cfg_.timeout.write, ec);
     if (ec)
     {
         LOG_ERROR("socks session {} write auth result failed {}", sid_, ec.message());
@@ -356,7 +356,7 @@ boost::asio::awaitable<void> socks_session::delay_invalid_request() const
 {
     static thread_local std::mt19937 delay_gen(std::random_device{}());
     std::uniform_int_distribution<uint32_t> delay_dist(10, 50);
-    const auto delay_ec = co_await timeout_io::wait_for(worker_.io_context, std::chrono::milliseconds(delay_dist(delay_gen)));
+    const auto delay_ec = co_await net::wait_for(worker_.io_context, std::chrono::milliseconds(delay_dist(delay_gen)));
     (void)delay_ec;
 }
 
@@ -375,7 +375,7 @@ boost::asio::awaitable<bool> socks_session::read_request_ipv4(std::string& host)
 {
     boost::system::error_code ec;
     boost::asio::ip::address_v4::bytes_type bytes_v4;
-    co_await timeout_io::wait_read_with_timeout(socket_, boost::asio::buffer(bytes_v4), cfg_.timeout.read, ec);
+    co_await net::wait_read_with_timeout(socket_, boost::asio::buffer(bytes_v4), cfg_.timeout.read, ec);
     if (ec)
     {
         LOG_ERROR("socks session {} request read ipv4 failed {}", sid_, ec.message());
@@ -390,7 +390,7 @@ boost::asio::awaitable<bool> socks_session::read_request_domain(std::string& hos
 {
     uint8_t domain_len = 0;
     boost::system::error_code ec;
-    co_await timeout_io::wait_read_with_timeout(socket_, boost::asio::buffer(&domain_len, 1), cfg_.timeout.read, ec);
+    co_await net::wait_read_with_timeout(socket_, boost::asio::buffer(&domain_len, 1), cfg_.timeout.read, ec);
     if (ec)
     {
         LOG_ERROR("socks session {} request read domain len failed {}", sid_, ec.message());
@@ -404,7 +404,7 @@ boost::asio::awaitable<bool> socks_session::read_request_domain(std::string& hos
         co_return false;
     }
     host.resize(domain_len);
-    co_await timeout_io::wait_read_with_timeout(socket_, boost::asio::buffer(host), cfg_.timeout.read, ec);
+    co_await net::wait_read_with_timeout(socket_, boost::asio::buffer(host), cfg_.timeout.read, ec);
     if (ec)
     {
         LOG_ERROR("socks session {} request read domain failed {}", sid_, ec.message());
@@ -430,7 +430,7 @@ boost::asio::awaitable<bool> socks_session::read_request_ipv6(std::string& host)
 {
     boost::system::error_code ec;
     boost::asio::ip::address_v6::bytes_type bytes_v6;
-    co_await timeout_io::wait_read_with_timeout(socket_, boost::asio::buffer(bytes_v6), cfg_.timeout.read, ec);
+    co_await net::wait_read_with_timeout(socket_, boost::asio::buffer(bytes_v6), cfg_.timeout.read, ec);
     if (ec)
     {
         LOG_ERROR("socks session {} request read ipv6 failed {}", sid_, ec.message());
@@ -475,7 +475,7 @@ boost::asio::awaitable<socks_session::request_info> socks_session::reject_reques
 boost::asio::awaitable<bool> socks_session::read_request_header(std::array<uint8_t, 4>& head)
 {
     boost::system::error_code ec;
-    co_await timeout_io::wait_read_with_timeout(socket_, boost::asio::buffer(head), cfg_.timeout.read, ec);
+    co_await net::wait_read_with_timeout(socket_, boost::asio::buffer(head), cfg_.timeout.read, ec);
     if (ec)
     {
         LOG_ERROR("socks session {} request read failed {}", sid_, ec.message());
@@ -489,7 +489,7 @@ boost::asio::awaitable<bool> socks_session::read_request_port(uint16_t& port)
 {
     uint16_t port_n = 0;
     boost::system::error_code ec;
-    co_await timeout_io::wait_read_with_timeout(socket_, boost::asio::buffer(&port_n, 2), cfg_.timeout.read, ec);
+    co_await net::wait_read_with_timeout(socket_, boost::asio::buffer(&port_n, 2), cfg_.timeout.read, ec);
     if (ec)
     {
         LOG_ERROR("socks session {} request read port failed {}", sid_, ec.message());
@@ -574,7 +574,7 @@ boost::asio::awaitable<void> socks_session::reply_error(uint8_t code)
     uint8_t err[] = {socks::kVer, code, 0, socks::kAtypIpv4, 0, 0, 0, 0, 0, 0};
 
     boost::system::error_code ec;
-    co_await timeout_io::wait_write_with_timeout(socket_, boost::asio::buffer(err), cfg_.timeout.write, ec);
+    co_await net::wait_write_with_timeout(socket_, boost::asio::buffer(err), cfg_.timeout.write, ec);
     if (ec)
     {
         LOG_ERROR("socks session {} write error response failed {}", sid_, ec.message());

@@ -19,7 +19,6 @@
 #include "mux_codec.h"
 #include "net_utils.h"
 #include "mux_stream.h"
-#include "timeout_io.h"
 #include "mux_protocol.h"
 #include "mux_connection.h"
 #include "client_tunnel_pool.h"
@@ -188,7 +187,7 @@ boost::asio::awaitable<upstream_connect_result> direct_upstream::connect(const s
     upstream_connect_result result;
     result.socks_rep = socks::kRepSuccess;
     boost::system::error_code ec;
-    auto endpoints = co_await timeout_io::wait_resolve_with_timeout(resolver_, host, std::to_string(port), cfg_.timeout.connect, ec);
+    auto endpoints = co_await net::wait_resolve_with_timeout(resolver_, host, std::to_string(port), cfg_.timeout.connect, ec);
     if (ec)
     {
         LOG_WARN("event {} conn_id {} stage resolve target {}:{} error {}", log_event::kRoute, conn_id_, host, port, ec.message());
@@ -223,7 +222,7 @@ boost::asio::awaitable<upstream_connect_result> direct_upstream::connect(const s
             }
         }
 
-        co_await timeout_io::wait_connect_with_timeout(socket_, entry.endpoint(), cfg_.timeout.connect, op_ec);
+        co_await net::wait_connect_with_timeout(socket_, entry.endpoint(), cfg_.timeout.connect, op_ec);
         if (op_ec)
         {
             last_ec = op_ec;
@@ -260,7 +259,7 @@ boost::asio::awaitable<std::size_t> direct_upstream::read(std::vector<uint8_t>& 
 
 boost::asio::awaitable<void> direct_upstream::write(const std::vector<uint8_t>& data, boost::system::error_code& ec)
 {
-    co_await timeout_io::wait_write_with_timeout(socket_, boost::asio::buffer(data), cfg_.timeout.write, ec);
+    co_await net::wait_write_with_timeout(socket_, boost::asio::buffer(data), cfg_.timeout.write, ec);
 }
 
 boost::asio::awaitable<void> direct_upstream::close()

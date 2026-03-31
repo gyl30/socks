@@ -9,7 +9,7 @@
 #include "config.h"
 #include "constants.h"
 #include "mux_stream.h"
-#include "timeout_io.h"
+#include "net_utils.h"
 #include "mux_protocol.h"
 #include "mux_connection.h"
 
@@ -29,7 +29,7 @@ void mux_stream::close() { recv_channel_.close(); }
 
 boost::asio::awaitable<void> mux_stream::on_frame(mux_frame frame, boost::system::error_code& ec)
 {
-    co_await timeout_io::wait_send_with_timeout<mux_frame>(recv_channel_, std::move(frame), cfg_.timeout.write, ec);
+    co_await net::wait_send_with_timeout<mux_frame>(recv_channel_, std::move(frame), cfg_.timeout.write, ec);
 }
 boost::asio::awaitable<mux_frame> mux_stream::async_read(boost::system::error_code& ec)
 {
@@ -39,7 +39,7 @@ boost::asio::awaitable<mux_frame> mux_stream::async_read(boost::system::error_co
 
 boost::asio::awaitable<mux_frame> mux_stream::async_read(uint32_t timeout_sec, boost::system::error_code& ec)
 {
-    auto data = co_await timeout_io::wait_receive_with_timeout<mux_frame>(recv_channel_, timeout_sec, ec);
+    auto data = co_await net::wait_receive_with_timeout<mux_frame>(recv_channel_, timeout_sec, ec);
     co_return data;
 }
 

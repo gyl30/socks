@@ -9,7 +9,7 @@
 #include "log.h"
 #include "config.h"
 #include "constants.h"
-#include "timeout_io.h"
+#include "net_utils.h"
 #include "scoped_exit.h"
 #include "reality/policy/fallback_executor.h"
 
@@ -101,7 +101,7 @@ boost::asio::awaitable<void> fallback_executor::connect_target(boost::asio::ip::
     ec.clear();
 
     boost::asio::ip::tcp::resolver resolver(io_context_);
-    const auto endpoints = co_await mux::timeout_io::wait_resolve_with_timeout(resolver, host, std::to_string(port), cfg_.timeout.connect, ec);
+    const auto endpoints = co_await mux::net::wait_resolve_with_timeout(resolver, host, std::to_string(port), cfg_.timeout.connect, ec);
     if (ec)
     {
         LOG_WARN("event {} conn_id {} remote {} stage resolve target {}:{} error {}",
@@ -149,7 +149,7 @@ boost::asio::awaitable<void> fallback_executor::connect_target(boost::asio::ip::
             continue;
         }
 
-        co_await mux::timeout_io::wait_connect_with_timeout(upstream_socket, entry.endpoint(), cfg_.timeout.connect, op_ec);
+        co_await mux::net::wait_connect_with_timeout(upstream_socket, entry.endpoint(), cfg_.timeout.connect, op_ec);
         if (!op_ec)
         {
             ec.clear();
@@ -185,7 +185,7 @@ boost::asio::awaitable<void> fallback_executor::write_initial_client_hello(boost
     ec.clear();
 
     const auto initial_write =
-        co_await mux::timeout_io::wait_write_with_timeout(upstream_socket, boost::asio::buffer(client_hello_record), cfg_.timeout.write, ec);
+        co_await mux::net::wait_write_with_timeout(upstream_socket, boost::asio::buffer(client_hello_record), cfg_.timeout.write, ec);
     if (ec || initial_write != client_hello_record.size())
     {
         if (!ec)
@@ -213,7 +213,7 @@ boost::asio::awaitable<void> fallback_executor::relay_data(boost::asio::ip::tcp:
     std::vector<uint8_t> buf(constants::fallback::kRelayBufferSize);
     for (;;)
     {
-        const auto n = co_await mux::timeout_io::wait_read_some_with_timeout(src, boost::asio::buffer(buf), fallback_timeout, ec);
+        const auto n = co_await mux::net::wait_read_some_with_timeout(src, boost::asio::buffer(buf), fallback_timeout, ec);
         if (ec)
         {
             if (ec == boost::asio::error::eof)
@@ -248,7 +248,7 @@ boost::asio::awaitable<void> fallback_executor::relay_data(boost::asio::ip::tcp:
             co_return;
         }
 
-        const auto written = co_await mux::timeout_io::wait_write_with_timeout(dst, boost::asio::buffer(buf.data(), n), fallback_timeout, ec);
+        const auto written = co_await mux::net::wait_write_with_timeout(dst, boost::asio::buffer(buf.data(), n), fallback_timeout, ec);
         if (ec)
         {
             LOG_WARN("event {} conn_id {} remote {} stage {} write error {}",

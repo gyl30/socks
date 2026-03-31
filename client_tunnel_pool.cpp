@@ -19,7 +19,6 @@
 #include "config.h"
 #include "constants.h"
 #include "net_utils.h"
-#include "timeout_io.h"
 #include "context_pool.h"
 #include "reality/types.h"
 #include "mux_connection.h"
@@ -298,7 +297,7 @@ static boost::asio::awaitable<reality::client_handshake_result> perform_reality_
 
 static boost::asio::awaitable<void> wait_retry(uint32_t index, io_worker& worker, const std::chrono::steady_clock::duration delay)
 {
-    const auto wait_ec = co_await timeout_io::wait_for(worker.io_context, delay);
+    const auto wait_ec = co_await net::wait_for(worker.io_context, delay);
     if (wait_ec == boost::asio::error::operation_aborted)
     {
         co_return;
@@ -315,7 +314,7 @@ static boost::asio::awaitable<void> tcp_connect_remote(
     const auto timeout_sec = cfg.timeout.connect;
     boost::asio::ip::tcp::resolver resolver(socket.get_executor());
     const auto resolve_endpoints =
-        co_await timeout_io::wait_resolve_with_timeout(resolver, options.remote_host, options.remote_port, timeout_sec, ec);
+        co_await net::wait_resolve_with_timeout(resolver, options.remote_host, options.remote_port, timeout_sec, ec);
     if (ec)
     {
         co_return;
@@ -329,7 +328,7 @@ static boost::asio::awaitable<void> tcp_connect_remote(
         {
             continue;
         }
-        co_await timeout_io::wait_connect_with_timeout(socket, endpoint, timeout_sec, ec);
+        co_await net::wait_connect_with_timeout(socket, endpoint, timeout_sec, ec);
         if (!ec)
         {
             co_return;

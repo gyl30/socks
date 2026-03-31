@@ -30,7 +30,7 @@ extern "C"
 #include "context_pool.h"
 #include "mux_codec.h"
 #include "mux_stream.h"
-#include "timeout_io.h"
+#include "net_utils.h"
 #include "mux_protocol.h"
 #include "mux_connection.h"
 #include "reality/session/engine.h"
@@ -231,7 +231,7 @@ void mux_connection::close_and_remove_stream(const std::shared_ptr<mux_stream>& 
 
 void mux_connection::start()
 {
-    const auto now_ms = timeout_io::now_ms();
+    const auto now_ms = net::now_ms();
     last_read_time_ms_ = now_ms;
     last_write_time_ms_ = now_ms;
     last_non_heartbeat_read_time_ms_ = now_ms;
@@ -346,7 +346,7 @@ boost::asio::awaitable<void> mux_connection::read_loop()
         }
 
         read_bytes_ += n;
-        last_read_time_ms_ = timeout_io::now_ms();
+        last_read_time_ms_ = net::now_ms();
         reality_engine_.commit_read(n);
 
         while (true)
@@ -437,7 +437,7 @@ boost::asio::awaitable<void> mux_connection::write_loop()
             break;
         }
 
-        const auto n = co_await timeout_io::wait_write_with_timeout(socket_, boost::asio::buffer(ct.data(), ct.size()), cfg_.timeout.write, ec);
+        const auto n = co_await net::wait_write_with_timeout(socket_, boost::asio::buffer(ct.data(), ct.size()), cfg_.timeout.write, ec);
 
         if (ec)
         {
@@ -449,7 +449,7 @@ boost::asio::awaitable<void> mux_connection::write_loop()
             LOG_ERROR("mux {} write error {}:{}", cid_, n, ct.size());
         }
         write_bytes_ += n;
-        last_write_time_ms_ = timeout_io::now_ms();
+        last_write_time_ms_ = net::now_ms();
         if (msg.h.stream_id != mux::kStreamIdHeartbeat)
         {
             last_non_heartbeat_write_time_ms_ = last_write_time_ms_;
@@ -469,12 +469,12 @@ boost::asio::awaitable<void> mux_connection::timeout_loop()
     boost::system::error_code ec;
     while (true)
     {
-        ec = co_await timeout_io::wait_for(worker_.io_context, std::chrono::seconds(1));
+        ec = co_await net::wait_for(worker_.io_context, std::chrono::seconds(1));
         if (ec)
         {
             break;
         }
-        const auto now_ms = timeout_io::now_ms();
+        const auto now_ms = net::now_ms();
         const auto read_diff = now_ms - last_non_heartbeat_read_time_ms_;
         const auto write_diff = now_ms - last_non_heartbeat_write_time_ms_;
         if (read_diff > idle_timeout_ms && write_diff > idle_timeout_ms)
@@ -495,7 +495,7 @@ boost::asio::awaitable<void> mux_connection::heartbeat_loop()
     {
         std::uniform_int_distribution<uint32_t> interval_dist(cfg_.heartbeat.min_interval, cfg_.heartbeat.max_interval);
         const auto interval = interval_dist(rng);
-        auto ec = co_await timeout_io::wait_for(worker_.io_context, std::chrono::seconds(interval));
+        auto ec = co_await net::wait_for(worker_.io_context, std::chrono::seconds(interval));
         if (ec)
         {
             break;
@@ -532,7 +532,7 @@ boost::asio::awaitable<void> mux_connection::on_mux_frame(const mux::frame_heade
         LOG_DEBUG("mux {} heartbeat received size {}", cid_, payload.size());
         co_return;
     }
-    last_non_heartbeat_read_time_ms_ = timeout_io::now_ms();
+    last_non_heartbeat_read_time_ms_ = net::now_ms();
 
     co_return co_await handle_stream_frame(header, std::move(payload));
 }
@@ -620,7 +620,7 @@ boost::asio::awaitable<void> mux_connection::send_async_with_timeout(mux_frame m
         LOG_TRACE("mux {} send frame stream {} cmd {} size {}", cid_, msg.h.stream_id, msg.h.command, msg.payload.size());
     }
 
-    co_await timeout_io::wait_send_with_timeout<mux_frame>(*write_channel_, std::move(msg), timeout_sec, ec);
+    co_await net::wait_send_with_timeout<mux_frame>(*write_channel_, std::move(msg), timeout_sec, ec);
     if (ec)
     {
         LOG_ERROR("mux {} send failed error {}", cid_, ec.message());

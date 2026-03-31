@@ -25,7 +25,7 @@ extern "C"
 #include "config.h"
 #include "tls/core.h"
 #include "constants.h"
-#include "timeout_io.h"
+#include "net_utils.h"
 #include "replay_cache.h"
 #include "site_material.h"
 #include "tls/ch_parser.h"
@@ -118,12 +118,12 @@ boost::asio::awaitable<void> read_tls_record_header(
     while (buf.size() < tls::kTlsRecordHeaderSize)
     {
         std::vector<uint8_t> header_remaining(tls::kTlsRecordHeaderSize - buf.size());
-        const auto read_timeout = mux::timeout_io::remaining_timeout_seconds(start_ms, timeout, ec);
+        const auto read_timeout = mux::net::remaining_timeout_seconds(start_ms, timeout, ec);
         if (ec)
         {
             co_return;
         }
-        auto read_size = co_await mux::timeout_io::wait_read_with_timeout(socket, boost::asio::buffer(header_remaining), read_timeout, ec);
+        auto read_size = co_await mux::net::wait_read_with_timeout(socket, boost::asio::buffer(header_remaining), read_timeout, ec);
         if (ec)
         {
             co_return;
@@ -144,12 +144,12 @@ boost::asio::awaitable<void> read_tls_record_body(boost::asio::ip::tcp::socket& 
     while (buf.size() < tls::kTlsRecordHeaderSize + payload_len)
     {
         std::vector<uint8_t> extra(tls::kTlsRecordHeaderSize + payload_len - buf.size());
-        const auto read_timeout = mux::timeout_io::remaining_timeout_seconds(start_ms, timeout, ec);
+        const auto read_timeout = mux::net::remaining_timeout_seconds(start_ms, timeout, ec);
         if (ec)
         {
             co_return;
         }
-        const auto read_size = co_await mux::timeout_io::wait_read_with_timeout(socket, boost::asio::buffer(extra), read_timeout, ec);
+        const auto read_size = co_await mux::net::wait_read_with_timeout(socket, boost::asio::buffer(extra), read_timeout, ec);
         if (ec)
         {
             co_return;
@@ -298,7 +298,7 @@ boost::asio::awaitable<const char*> read_client_hello_handshake(boost::asio::ip:
     ec.clear();
     wire_buf.clear();
     handshake_buf.clear();
-    const auto handshake_start_ms = mux::timeout_io::now_ms();
+    const auto handshake_start_ms = mux::net::now_ms();
     std::size_t record_count = 0;
     const auto max_records =
         std::max<std::size_t>(1, (max_handshake_len + tls::kMaxTlsPlaintextLen - 1) / static_cast<std::size_t>(tls::kMaxTlsPlaintextLen));
@@ -831,7 +831,7 @@ boost::asio::awaitable<void> consume_tls13_compat_ccs(boost::asio::ip::tcp::sock
                                                       boost::system::error_code& ec)
 {
     std::array<uint8_t, 1> ccs_body = {0};
-    co_await mux::timeout_io::wait_read_with_timeout(socket, boost::asio::buffer(ccs_body), timeout_sec, ec);
+    co_await mux::net::wait_read_with_timeout(socket, boost::asio::buffer(ccs_body), timeout_sec, ec);
     if (ec)
     {
         co_return;
@@ -850,7 +850,7 @@ boost::asio::awaitable<void> read_tls_record_header_allow_ccs(boost::asio::ip::t
                                                               uint32_t timeout_sec,
                                                               boost::system::error_code& ec)
 {
-    co_await mux::timeout_io::wait_read_with_timeout(socket, boost::asio::buffer(header), timeout_sec, ec);
+    co_await mux::net::wait_read_with_timeout(socket, boost::asio::buffer(header), timeout_sec, ec);
     if (ec)
     {
         co_return;
@@ -886,7 +886,7 @@ boost::asio::awaitable<void> read_tls_record_header_allow_ccs(boost::asio::ip::t
             co_return;
         }
 
-        co_await mux::timeout_io::wait_read_with_timeout(socket, boost::asio::buffer(header), timeout_sec, ec);
+        co_await mux::net::wait_read_with_timeout(socket, boost::asio::buffer(header), timeout_sec, ec);
         if (ec)
         {
             co_return;
@@ -1391,7 +1391,7 @@ boost::asio::awaitable<bool> complete_authenticated_handshake(const server_hands
     }
 
     LOG_DEBUG("{} sending server hello flight size {}", mux::log_event::kHandshake, out_sh.size());
-    co_await mux::timeout_io::wait_write_with_timeout(*handshake_ctx.socket, boost::asio::buffer(out_sh), cfg.timeout.write, ec);
+    co_await mux::net::wait_write_with_timeout(*handshake_ctx.socket, boost::asio::buffer(out_sh), cfg.timeout.write, ec);
     if (ec)
     {
         LOG_ERROR("{} write server hello failed {}", mux::log_event::kHandshake, ec.message());
@@ -1414,7 +1414,7 @@ boost::asio::awaitable<bool> complete_authenticated_handshake(const server_hands
     }
 
     std::vector<uint8_t> body(body_len);
-    co_await mux::timeout_io::wait_read_with_timeout(*handshake_ctx.socket, boost::asio::buffer(body), cfg.timeout.read, ec);
+    co_await mux::net::wait_read_with_timeout(*handshake_ctx.socket, boost::asio::buffer(body), cfg.timeout.read, ec);
     if (ec)
     {
         co_return false;

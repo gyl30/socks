@@ -14,7 +14,7 @@
 #include "config.h"
 #include "router.h"
 #include "context_pool.h"
-#include "timeout_io.h"
+#include "net_utils.h"
 #include "socks_client.h"
 #include "socks_session.h"
 #include "client_tunnel_pool.h"
@@ -125,7 +125,7 @@ boost::asio::awaitable<void> socks_client::accept_loop()
         if (ec)
         {
             LOG_ERROR("socks5 accept failed {} retry", ec.message());
-            ec = co_await timeout_io::wait_for(owner_worker_.io_context, std::chrono::seconds(3));
+            ec = co_await net::wait_for(owner_worker_.io_context, std::chrono::seconds(3));
             if (ec)
             {
                 LOG_ERROR("accept retry timer error {}", ec.message());

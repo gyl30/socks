@@ -22,7 +22,6 @@
 #include "mux_codec.h"
 #include "net_utils.h"
 #include "mux_stream.h"
-#include "timeout_io.h"
 #include "mux_protocol.h"
 #include "context_pool.h"
 #include "mux_connection.h"
@@ -207,7 +206,7 @@ tproxy_udp_session::tproxy_udp_session(io_worker& worker,
       cfg_(cfg),
       worker_(worker),
       route_(route),
-      last_activity_time_ms_(timeout_io::now_ms()),
+      last_activity_time_ms_(net::now_ms()),
       idle_timer_(worker.io_context),
       upstream_socket_(worker.io_context),
       tunnel_pool_(std::move(tunnel_pool)),
@@ -269,7 +268,7 @@ boost::asio::awaitable<udp_enqueue_result> tproxy_udp_session::enqueue_packet(st
                  target_endpoint_.port());
         co_return udp_enqueue_result::kClosed;
     }
-    last_activity_time_ms_ = timeout_io::now_ms();
+    last_activity_time_ms_ = net::now_ms();
     co_return udp_enqueue_result::kEnqueued;
 }
 
@@ -445,8 +444,8 @@ boost::asio::awaitable<bool> tproxy_udp_session::open_proxy_stream()
 boost::asio::awaitable<std::shared_ptr<mux_connection>> tproxy_udp_session::wait_for_proxy_tunnel(boost::system::error_code& ec) const
 {
     ec.clear();
-    const auto start_ms = timeout_io::now_ms();
-    const auto connect_timeout_ms = timeout_io::timeout_seconds_to_milliseconds(cfg_.timeout.connect);
+    const auto start_ms = net::now_ms();
+    const auto connect_timeout_ms = net::timeout_seconds_to_milliseconds(cfg_.timeout.connect);
 
     for (;;)
     {
@@ -462,13 +461,13 @@ boost::asio::awaitable<std::shared_ptr<mux_connection>> tproxy_udp_session::wait
             co_return tunnel;
         }
 
-        if (connect_timeout_ms != 0 && timeout_io::now_ms() - start_ms >= connect_timeout_ms)
+        if (connect_timeout_ms != 0 && net::now_ms() - start_ms >= connect_timeout_ms)
         {
             ec = boost::asio::error::timed_out;
             co_return nullptr;
         }
 
-        const auto wait_ec = co_await timeout_io::wait_for(worker_.io_context, std::chrono::milliseconds(constants::udp::kTunnelPollIntervalMs));
+        const auto wait_ec = co_await net::wait_for(worker_.io_context, std::chrono::milliseconds(constants::udp::kTunnelPollIntervalMs));
         if (wait_ec)
         {
             ec = wait_ec;
@@ -497,7 +496,7 @@ boost::asio::awaitable<void> tproxy_udp_session::packets_to_direct()
             break;
         }
         tx_bytes_ += payload.size();
-        last_activity_time_ms_ = timeout_io::now_ms();
+        last_activity_time_ms_ = net::now_ms();
     }
 }
 
@@ -519,7 +518,7 @@ boost::asio::awaitable<void> tproxy_udp_session::direct_to_client()
         {
             break;
         }
-        last_activity_time_ms_ = timeout_io::now_ms();
+        last_activity_time_ms_ = net::now_ms();
     }
 }
 
@@ -568,7 +567,7 @@ boost::asio::awaitable<void> tproxy_udp_session::packets_to_proxy()
             break;
         }
         tx_bytes_ += payload.size();
-        last_activity_time_ms_ = timeout_io::now_ms();
+        last_activity_time_ms_ = net::now_ms();
     }
 }
 
@@ -659,13 +658,13 @@ boost::asio::awaitable<void> tproxy_udp_session::proxy_to_client()
             update_stream_close_command(stream_close_command_, mux::kCmdRst);
             break;
         }
-        last_activity_time_ms_ = timeout_io::now_ms();
+        last_activity_time_ms_ = net::now_ms();
     }
 }
 
 boost::asio::awaitable<void> tproxy_udp_session::idle_watchdog()
 {
-    const auto idle_timeout_ms = timeout_io::timeout_seconds_to_milliseconds(cfg_.timeout.idle);
+    const auto idle_timeout_ms = net::timeout_seconds_to_milliseconds(cfg_.timeout.idle);
     while (!stopped_.load(std::memory_order_relaxed))
     {
         idle_timer_.expires_after(std::chrono::seconds(1));
@@ -674,7 +673,7 @@ boost::asio::awaitable<void> tproxy_udp_session::idle_watchdog()
         {
             break;
         }
-        if (timeout_io::now_ms() - last_activity_time_ms_ > idle_timeout_ms)
+        if (net::now_ms() - last_activity_time_ms_ > idle_timeout_ms)
         {
             LOG_INFO("event {} conn_id {} udp session idle timeout client {}:{} target {}:{}",
                      log_event::kTimeout,

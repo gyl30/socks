@@ -5,7 +5,7 @@
 
 #include "log.h"
 #include "constants.h"
-#include "timeout_io.h"
+#include "net_utils.h"
 #include "reality/policy/fallback_executor.h"
 #include "reality/policy/fallback_gate.h"
 
@@ -58,7 +58,7 @@ fallback_gate::fallback_gate(dependencies deps) : options_(deps.opts), now_secon
 {
     if (!now_seconds_fn_)
     {
-        now_seconds_fn_ = []() { return mux::timeout_io::now_second(); };
+        now_seconds_fn_ = []() { return mux::net::now_second(); };
     }
 }
 
