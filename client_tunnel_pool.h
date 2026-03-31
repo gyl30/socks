@@ -15,7 +15,6 @@ namespace mux
 struct config;
 struct io_worker;
 class io_context_pool;
-class connection_context;
 class mux_connection;
 
 class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_pool>

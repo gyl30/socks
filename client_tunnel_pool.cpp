@@ -24,7 +24,6 @@
 #include "reality/types.h"
 #include "mux_connection.h"
 #include "client_tunnel_pool.h"
-#include "connection_context.h"
 #include "tls/handshake_message.h"
 #include "reality/session/session.h"
 #include "reality/handshake/fingerprint.h"
@@ -105,7 +104,7 @@ std::optional<reality::fingerprint_type> parse_fingerprint_type(const std::strin
 
 void prepare_socket_for_connect(boost::asio::ip::tcp::socket& socket,
                                 const boost::asio::ip::tcp::endpoint& endpoint,
-                                const uint32_t mark,
+                                uint32_t mark,
                                 boost::system::error_code& ec)
 {
     if (socket.is_open())
@@ -214,19 +213,15 @@ static boost::asio::awaitable<void> run_real_certificate_fallback(const config& 
                                                                   const auto& options,
                                                                   boost::asio::ip::tcp::socket& socket,
                                                                   const reality::client_handshake_result& handshake_ret,
-                                                                  const connection_context& ctx)
+                                                                  uint32_t conn_id)
 {
-    connection_context fallback_ctx = ctx;
-    fallback_ctx.sni(options.sni);
-    fallback_ctx.set_target(options.sni, constants::reality_limits::kDefaultTlsPort);
-
     if (!handshake_ret.negotiated.negotiated_alpn.empty() && handshake_ret.negotiated.negotiated_alpn != "http/1.1")
     {
-        LOG_CTX_INFO(fallback_ctx,
-                     "{} stage skip_request host {} negotiated_alpn {}",
-                     log_event::kFallback,
-                     options.sni,
-                     handshake_ret.negotiated.negotiated_alpn);
+        LOG_INFO("event {} conn_id {} sni {} stage skip_request negotiated_alpn {}",
+                 log_event::kFallback,
+                 conn_id,
+                 options.sni,
+                 handshake_ret.negotiated.negotiated_alpn);
         co_return;
     }
 
@@ -234,7 +229,7 @@ static boost::asio::awaitable<void> run_real_certificate_fallback(const config& 
     auto record_context = reality::build_reality_record_context(handshake_ret, ec);
     if (ec)
     {
-        LOG_CTX_WARN(fallback_ctx, "{} stage build_session error {}", log_event::kFallback, ec.message());
+        LOG_WARN("event {} conn_id {} sni {} stage build_session error {}", log_event::kFallback, conn_id, options.sni, ec.message());
         co_return;
     }
 
@@ -246,49 +241,62 @@ static boost::asio::awaitable<void> run_real_certificate_fallback(const config& 
     const auto visit_result = co_await reality::run_lightweight_http_visit(socket, std::move(record_context), visit_options, ec);
     if (ec)
     {
-        LOG_CTX_WARN(fallback_ctx, "{} stage {} error {}", log_event::kFallback, visit_result.error_stage, ec.message());
+        LOG_WARN("event {} conn_id {} sni {} stage {} error {}",
+                 log_event::kFallback,
+                 conn_id,
+                 options.sni,
+                 visit_result.error_stage,
+                 ec.message());
         co_return;
     }
 
-    fallback_ctx.add_tx_bytes(visit_result.tx_plain_bytes);
-    fallback_ctx.add_rx_bytes(visit_result.rx_plain_bytes);
+    const auto tx_bytes = visit_result.tx_plain_bytes;
+    const auto rx_bytes = visit_result.rx_plain_bytes;
 
     if (visit_result.saw_application_data)
     {
-        LOG_CTX_INFO(fallback_ctx,
-                     "{} stage lightweight_visit_complete status \"{}\" tx_plain {}B rx_plain {}B header_complete {} alert {}",
-                     log_event::kFallback,
-                     visit_result.status_line.empty() ? "unknown" : visit_result.status_line,
-                     fallback_ctx.tx_bytes(),
-                     fallback_ctx.rx_bytes(),
-                     visit_result.header_complete,
-                     visit_result.saw_alert);
+        LOG_INFO("event {} conn_id {} sni {} stage lightweight_visit_complete status \"{}\" tx_plain {}B rx_plain {}B header_complete {} alert {}",
+                 log_event::kFallback,
+                 conn_id,
+                 options.sni,
+                 visit_result.status_line.empty() ? "unknown" : visit_result.status_line,
+                 tx_bytes,
+                 rx_bytes,
+                 visit_result.header_complete,
+                 visit_result.saw_alert);
     }
     else
     {
-        LOG_CTX_WARN(fallback_ctx,
-                     "{} stage lightweight_visit_no_response tx_plain {}B alert {}",
-                     log_event::kFallback,
-                     fallback_ctx.tx_bytes(),
-                     visit_result.saw_alert);
+        LOG_WARN("event {} conn_id {} sni {} stage lightweight_visit_no_response tx_plain {}B alert {}",
+                 log_event::kFallback,
+                 conn_id,
+                 options.sni,
+                 tx_bytes,
+                 visit_result.saw_alert);
     }
     co_return;
 }
 
 static boost::asio::awaitable<reality::client_handshake_result> perform_reality_handshake_with_timeout(
-    const config& cfg, const auto& options, boost::asio::ip::tcp::socket& socket, const connection_context& ctx, boost::system::error_code& ec)
+    const config& cfg, const auto& options, boost::asio::ip::tcp::socket& socket, uint32_t conn_id, boost::system::error_code& ec)
 {
     const reality::client_handshaker handshaker(
         cfg, options.sni, options.server_pub_key, options.short_id_bytes, options.fingerprint_type, options.max_handshake_records);
-    auto handshake_res = co_await handshaker.run(socket, ctx, ec);
+    auto handshake_res = co_await handshaker.run(socket, conn_id, ec);
     if (ec)
     {
-        LOG_CTX_ERROR(ctx, "{} stage handshake target {}:{} error {}", log_event::kHandshake, options.remote_host, options.remote_port, ec.message());
+        LOG_ERROR("event {} conn_id {} sni {} stage handshake target {}:{} error {}",
+                  log_event::kHandshake,
+                  conn_id,
+                  options.sni,
+                  options.remote_host,
+                  options.remote_port,
+                  ec.message());
     }
     co_return handshake_res;
 }
 
-static boost::asio::awaitable<void> wait_retry(const uint32_t index, io_worker& worker, const std::chrono::steady_clock::duration delay)
+static boost::asio::awaitable<void> wait_retry(uint32_t index, io_worker& worker, const std::chrono::steady_clock::duration delay)
 {
     const auto wait_ec = co_await timeout_io::wait_for(worker.io_context, delay);
     if (wait_ec == boost::asio::error::operation_aborted)
@@ -302,7 +310,7 @@ static boost::asio::awaitable<void> wait_retry(const uint32_t index, io_worker& 
 }
 
 static boost::asio::awaitable<void> tcp_connect_remote(
-    const config& cfg, const auto& options, boost::asio::ip::tcp::socket& socket, const connection_context& ctx, boost::system::error_code& ec)
+    const config& cfg, const auto& options, boost::asio::ip::tcp::socket& socket, uint32_t conn_id, boost::system::error_code& ec)
 {
     const auto timeout_sec = cfg.timeout.connect;
     boost::asio::ip::tcp::resolver resolver(socket.get_executor());
@@ -330,53 +338,68 @@ static boost::asio::awaitable<void> tcp_connect_remote(
 
     if (ec == boost::asio::error::timed_out)
     {
-        LOG_CTX_ERROR(ctx, "{} stage connect target {}:{} timeout {}s", log_event::kConnInit, options.remote_host, options.remote_port, timeout_sec);
+        LOG_ERROR("event {} conn_id {} stage connect target {}:{} timeout {}s",
+                  log_event::kConnInit,
+                  conn_id,
+                  options.remote_host,
+                  options.remote_port,
+                  timeout_sec);
     }
     else
     {
-        LOG_CTX_ERROR(ctx, "{} stage connect target {}:{} error {}", log_event::kConnInit, options.remote_host, options.remote_port, ec.message());
+        LOG_ERROR("event {} conn_id {} stage connect target {}:{} error {}",
+                  log_event::kConnInit,
+                  conn_id,
+                  options.remote_host,
+                  options.remote_port,
+                  ec.message());
     }
 }
 
 static boost::asio::awaitable<std::shared_ptr<mux_connection>> connect_remote_once(const config& cfg,
                                                                                    const auto& options,
-                                                                                   const uint32_t index,
+                                                                                   uint32_t index,
                                                                                    io_worker& worker,
-                                                                                   const uint32_t cid,
-                                                                                   connection_context& ctx,
+                                                                                   uint32_t cid,
                                                                                    boost::system::error_code& ec)
 {
-    LOG_CTX_INFO(
-        ctx, "{} init conn {}/{} to {} {}", log_event::kConnInit, index + 1, cfg.limits.max_connections, options.remote_host, options.remote_port);
+    LOG_INFO("event {} conn_id {} init conn {}/{} to {} {}",
+             log_event::kConnInit,
+             cid,
+             index + 1,
+             cfg.limits.max_connections,
+             options.remote_host,
+             options.remote_port);
 
     boost::asio::ip::tcp::socket socket(worker.io_context);
-    co_await tcp_connect_remote(cfg, options, socket, ctx, ec);
+    co_await tcp_connect_remote(cfg, options, socket, cid, ec);
     if (ec)
     {
         co_return nullptr;
     }
 
-    auto handshake_ret = co_await perform_reality_handshake_with_timeout(cfg, options, socket, ctx, ec);
+    auto handshake_ret = co_await perform_reality_handshake_with_timeout(cfg, options, socket, cid, ec);
     if (ec)
     {
         co_return nullptr;
     }
 
-    LOG_CTX_INFO(ctx,
-                 "{} handshake success cipher 0x{:04x} key share group 0x{:04x} {}",
-                 log_event::kHandshake,
-                 handshake_ret.negotiated.cipher_suite,
-                 handshake_ret.negotiated.key_share_group,
-                 tls::named_group_name(handshake_ret.negotiated.key_share_group));
+    LOG_INFO("event {} conn_id {} sni {} handshake success cipher 0x{:04x} key share group 0x{:04x} {}",
+             log_event::kHandshake,
+             cid,
+             options.sni,
+             handshake_ret.negotiated.cipher_suite,
+             handshake_ret.negotiated.key_share_group,
+             tls::named_group_name(handshake_ret.negotiated.key_share_group));
     if (handshake_ret.auth_mode == reality::client_auth_mode::kRealCertificateFallback)
     {
-        LOG_CTX_WARN(ctx, "{} received real certificate fallback run lightweight visit", log_event::kHandshake);
-        co_await run_real_certificate_fallback(cfg, options, socket, handshake_ret, ctx);
+        LOG_WARN("event {} conn_id {} received real certificate fallback run lightweight visit", log_event::kHandshake, cid);
+        co_await run_real_certificate_fallback(cfg, options, socket, handshake_ret, cid);
         boost::system::error_code close_ec;
         close_ec = socket.close(close_ec);
         if (close_ec)
         {
-            LOG_CTX_WARN(ctx, "close failed {}", close_ec.message());
+            LOG_WARN("event {} conn_id {} close failed {}", log_event::kConnClose, cid, close_ec.message());
         }
         co_return nullptr;
     }
@@ -388,20 +411,17 @@ static boost::asio::awaitable<std::shared_ptr<mux_connection>> connect_remote_on
         co_return nullptr;
     }
 
-    co_return std::make_shared<mux_connection>(std::move(socket), worker, std::move(record_context), cfg, cid, ctx.trace_id());
+    co_return std::make_shared<mux_connection>(std::move(socket), worker, std::move(record_context), cfg, cid);
 }
 
-boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const uint32_t index, io_worker& worker)
+boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(uint32_t index, io_worker& worker)
 {
     const connect_options options = build_connect_options(cfg_);
     boost::system::error_code ec;
     while (!stop_)
     {
         const uint32_t cid = next_conn_id_.fetch_add(1, std::memory_order_relaxed);
-        connection_context ctx;
-        ctx.new_trace_id();
-        ctx.conn_id(cid);
-        auto tunnel = co_await connect_remote_once(cfg_, options, index, worker, cid, ctx, ec);
+        auto tunnel = co_await connect_remote_once(cfg_, options, index, worker, cid, ec);
         if (ec == boost::asio::error::operation_aborted)
         {
             break;

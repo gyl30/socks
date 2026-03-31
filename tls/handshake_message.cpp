@@ -55,7 +55,7 @@ bool read_handshake_message_len(const std::span<const uint8_t> data, std::size_t
     return full_len <= data.size();
 }
 
-bool parse_extension_types(const std::span<const uint8_t> ext_block, handshake_extension_layout& layout, const bool capture_padding_len)
+bool parse_extension_types(const std::span<const uint8_t> ext_block, handshake_extension_layout& layout, bool capture_padding_len)
 {
     layout.types.clear();
     layout.padding_len.reset();
@@ -84,7 +84,7 @@ bool parse_extension_types(const std::span<const uint8_t> ext_block, handshake_e
     return true;
 }
 
-bool is_exact_handshake_message(const std::span<const uint8_t> message, const uint8_t expected_type)
+bool is_exact_handshake_message(const std::span<const uint8_t> message, uint8_t expected_type)
 {
     std::size_t full_len = 0;
     if (!read_handshake_message_len(message, full_len))
@@ -112,7 +112,7 @@ constexpr std::array<uint8_t, 32> kHelloRetryRequestRandom = {
     0xc2, 0xa2, 0x11, 0x16, 0x7a, 0xbb, 0x8c, 0x5e, 0x07, 0x9e, 0x09, 0xe2, 0xc8, 0xa8, 0x33, 0x9c,
 };
 
-bool is_hello_retry_request_random(const std::span<const uint8_t> server_hello, const std::size_t random_pos)
+bool is_hello_retry_request_random(const std::span<const uint8_t> server_hello, std::size_t random_pos)
 {
     if (random_pos + kHelloRetryRequestRandom.size() > server_hello.size())
     {
@@ -153,7 +153,7 @@ bool locate_server_hello_body(const std::span<const uint8_t> server_hello, std::
     return end >= pos && end == server_hello.size();
 }
 
-bool parse_extension_header(const std::span<const uint8_t> server_hello, const std::size_t end, std::size_t& pos, uint16_t& type, uint16_t& ext_len)
+bool parse_extension_header(const std::span<const uint8_t> server_hello, std::size_t end, std::size_t& pos, uint16_t& type, uint16_t& ext_len)
 {
     if (pos + 4 > end)
     {
@@ -165,7 +165,7 @@ bool parse_extension_header(const std::span<const uint8_t> server_hello, const s
     return true;
 }
 
-bool advance_extension_payload(std::size_t& pos, const std::size_t end, const uint16_t ext_len)
+bool advance_extension_payload(std::size_t& pos, std::size_t end, uint16_t ext_len)
 {
     if (pos + ext_len > end)
     {
@@ -175,7 +175,7 @@ bool advance_extension_payload(std::size_t& pos, const std::size_t end, const ui
     return true;
 }
 
-bool is_forbidden_tls13_server_hello_extension(const uint16_t ext_type)
+bool is_forbidden_tls13_server_hello_extension(uint16_t ext_type)
 {
     switch (ext_type)
     {
@@ -192,8 +192,8 @@ bool is_forbidden_tls13_server_hello_extension(const uint16_t ext_type)
 }
 
 bool parse_supported_version_extension(const std::span<const uint8_t> server_hello,
-                                       const std::size_t pos,
-                                       const std::size_t ext_end,
+                                       std::size_t pos,
+                                       std::size_t ext_end,
                                        server_hello_info& info)
 {
     if (pos + 2 != ext_end)
@@ -206,8 +206,8 @@ bool parse_supported_version_extension(const std::span<const uint8_t> server_hel
 }
 
 bool parse_hrr_key_share_extension(const std::span<const uint8_t> server_hello,
-                                   const std::size_t pos,
-                                   const std::size_t ext_end,
+                                   std::size_t pos,
+                                   std::size_t ext_end,
                                    server_hello_info& info)
 {
     if (pos + 2 != ext_end)
@@ -222,8 +222,8 @@ bool parse_hrr_key_share_extension(const std::span<const uint8_t> server_hello,
 }
 
 std::optional<server_key_share_info> parse_server_key_share_entry(const std::span<const uint8_t> server_hello,
-                                                                  const std::size_t pos,
-                                                                  const std::size_t ext_end)
+                                                                  std::size_t pos,
+                                                                  std::size_t ext_end)
 {
     if (pos + 4 > ext_end)
     {
@@ -244,10 +244,10 @@ std::optional<server_key_share_info> parse_server_key_share_entry(const std::spa
 }
 
 bool parse_server_hello_key_share_extension(const std::span<const uint8_t> server_hello,
-                                            const std::size_t pos,
-                                            const std::size_t ext_end,
+                                            std::size_t pos,
+                                            std::size_t ext_end,
                                             server_hello_info& info,
-                                            const bool is_hello_retry_request)
+                                            bool is_hello_retry_request)
 {
     if (info.has_key_share)
     {
@@ -269,11 +269,11 @@ bool parse_server_hello_key_share_extension(const std::span<const uint8_t> serve
 }
 
 bool parse_server_hello_extension_by_type(const std::span<const uint8_t> server_hello,
-                                          const uint16_t type,
-                                          const std::size_t pos,
-                                          const std::size_t ext_end,
+                                          uint16_t type,
+                                          std::size_t pos,
+                                          std::size_t ext_end,
                                           server_hello_info& info,
-                                          const bool is_hello_retry_request)
+                                          bool is_hello_retry_request)
 {
     if (type == tls::consts::ext::kSupportedVersions)
     {
@@ -292,7 +292,7 @@ bool parse_server_hello_extension_by_type(const std::span<const uint8_t> server_
 }
 
 bool parse_server_hello_extensions(
-    const std::span<const uint8_t> server_hello, std::size_t pos, const std::size_t end, server_hello_info& info, const bool is_hello_retry_request)
+    const std::span<const uint8_t> server_hello, std::size_t pos, std::size_t end, server_hello_info& info, bool is_hello_retry_request)
 {
     while (pos + 4 <= end)
     {
@@ -349,7 +349,7 @@ std::optional<encrypted_extensions_range> parse_encrypted_extensions_range(const
     return encrypted_extensions_range{.pos = ext_start, .end = ext_end};
 }
 
-bool read_extension_header(const std::span<const uint8_t> msg, std::size_t& pos, const std::size_t end, uint16_t& type, uint16_t& len)
+bool read_extension_header(const std::span<const uint8_t> msg, std::size_t& pos, std::size_t end, uint16_t& type, uint16_t& len)
 {
     if (pos + 4 > end)
     {
@@ -361,7 +361,7 @@ bool read_extension_header(const std::span<const uint8_t> msg, std::size_t& pos,
     return pos + len <= end;
 }
 
-std::optional<std::string> parse_alpn_extension_body(const std::span<const uint8_t> encrypted_extensions, const std::size_t pos, const uint16_t len)
+std::optional<std::string> parse_alpn_extension_body(const std::span<const uint8_t> encrypted_extensions, std::size_t pos, uint16_t len)
 {
     if (len < 3)
     {
@@ -587,7 +587,7 @@ std::optional<certificate_verify_info> parse_certificate_verify(const std::span<
     return info;
 }
 
-bool is_supported_certificate_verify_scheme(const uint16_t scheme)
+bool is_supported_certificate_verify_scheme(uint16_t scheme)
 {
     using tls::consts::sig_alg::kEcdsaSecp256r1Sha256;
     using tls::consts::sig_alg::kEcdsaSecp384r1Sha384;
@@ -615,7 +615,7 @@ bool is_supported_certificate_verify_scheme(const uint16_t scheme)
     return std::find(kSupportedSchemes.begin(), kSupportedSchemes.end(), scheme) != kSupportedSchemes.end();
 }
 
-const char* named_group_name(const uint16_t group)
+const char* named_group_name(uint16_t group)
 {
     switch (group)
     {

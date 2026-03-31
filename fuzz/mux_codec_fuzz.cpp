@@ -12,7 +12,7 @@ namespace
 
 constexpr std::array<uint8_t, 5> kCommands = {mux::kCmdSyn, mux::kCmdAck, mux::kCmdDat, mux::kCmdFin, mux::kCmdRst};
 
-std::vector<uint8_t> make_buffer(const uint8_t* data, const std::size_t size)
+std::vector<uint8_t> make_buffer(const uint8_t* data, std::size_t size)
 {
     std::vector<uint8_t> out;
     if (data != nullptr && size != 0)
@@ -22,7 +22,7 @@ std::vector<uint8_t> make_buffer(const uint8_t* data, const std::size_t size)
     return out;
 }
 
-uint16_t read_u16(const uint8_t* data, const std::size_t size, const std::size_t offset)
+uint16_t read_u16(const uint8_t* data, std::size_t size, std::size_t offset)
 {
     if (data == nullptr || size == 0)
     {
@@ -33,7 +33,7 @@ uint16_t read_u16(const uint8_t* data, const std::size_t size, const std::size_t
     return static_cast<uint16_t>((hi << 8) | lo);
 }
 
-uint32_t read_u32(const uint8_t* data, const std::size_t size, const std::size_t offset)
+uint32_t read_u32(const uint8_t* data, std::size_t size, std::size_t offset)
 {
     if (data == nullptr || size == 0)
     {
@@ -47,7 +47,7 @@ uint32_t read_u32(const uint8_t* data, const std::size_t size, const std::size_t
 }
 
 std::string make_printable_text(
-    const uint8_t* data, const std::size_t size, const std::size_t offset, const std::size_t max_len, const char* fallback)
+    const uint8_t* data, std::size_t size, std::size_t offset, std::size_t max_len, const char* fallback)
 {
     static constexpr char kAlphabet[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-_:/";
     if (data == nullptr || size == 0)
@@ -104,7 +104,6 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, std::size_t size)
     synthetic_syn.socks_cmd = raw.empty() ? mux::kCmdSyn : kCommands[static_cast<std::size_t>(data[0]) % kCommands.size()];
     synthetic_syn.addr = make_printable_text(data, size, 1, 64, "example.com");
     synthetic_syn.port = read_u16(data, size, 2);
-    synthetic_syn.trace_id = make_printable_text(data, size, 4, 32, "trace");
 
     std::vector<uint8_t> syn_buf;
     if (mux::mux_codec::encode_syn(synthetic_syn, syn_buf))

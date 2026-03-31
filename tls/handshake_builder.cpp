@@ -22,13 +22,13 @@ namespace tls
 namespace
 {
 
-void push_u16(std::vector<uint8_t>& buf, const uint16_t val)
+void push_u16(std::vector<uint8_t>& buf, uint16_t val)
 {
     buf.push_back(static_cast<uint8_t>((val >> 8) & 0xff));
     buf.push_back(static_cast<uint8_t>(val & 0xff));
 }
 
-void push_u24(std::vector<uint8_t>& buf, const uint32_t val)
+void push_u24(std::vector<uint8_t>& buf, uint32_t val)
 {
     buf.push_back(static_cast<uint8_t>((val >> 16) & 0xff));
     buf.push_back(static_cast<uint8_t>((val >> 8) & 0xff));
@@ -51,7 +51,7 @@ void push_vector_u16(std::vector<uint8_t>& buf, const std::vector<uint8_t>& data
 
 }    // namespace
 
-std::vector<uint8_t> write_record_header(const uint8_t record_type, const uint16_t length)
+std::vector<uint8_t> write_record_header(uint8_t record_type, uint16_t length)
 {
     std::vector<uint8_t> header;
     header.reserve(5);
@@ -64,8 +64,8 @@ std::vector<uint8_t> write_record_header(const uint8_t record_type, const uint16
 
 std::vector<uint8_t> construct_server_hello(const std::vector<uint8_t>& server_random,
                                             const std::vector<uint8_t>& session_id,
-                                            const uint16_t cipher_suite,
-                                            const uint16_t key_share_group,
+                                            uint16_t cipher_suite,
+                                            uint16_t key_share_group,
                                             const std::vector<uint8_t>& key_share_data,
                                             const std::span<const uint16_t> extension_order)
 {
@@ -105,7 +105,7 @@ std::vector<uint8_t> construct_server_hello(const std::vector<uint8_t>& server_r
     std::vector<uint8_t> extensions;
     bool emitted_supported_versions = false;
     bool emitted_key_share = false;
-    const auto append_extension = [&](const uint16_t ext_type)
+    const auto append_extension = [&](uint16_t ext_type)
     {
         if (ext_type == tls::consts::ext::kSupportedVersions && !emitted_supported_versions)
         {
@@ -138,7 +138,7 @@ std::vector<uint8_t> construct_server_hello(const std::vector<uint8_t>& server_r
 
 std::vector<uint8_t> construct_encrypted_extensions(const std::string& alpn,
                                                     const std::span<const uint16_t> extension_order,
-                                                    const bool include_padding,
+                                                    bool include_padding,
                                                     const std::optional<uint16_t> padding_len)
 {
     std::vector<uint8_t> msg;
@@ -195,7 +195,7 @@ std::vector<uint8_t> construct_encrypted_extensions(const std::string& alpn,
 
     bool emitted_alpn = false;
     bool emitted_padding = false;
-    const auto append_extension = [&](const uint16_t ext_type)
+    const auto append_extension = [&](uint16_t ext_type)
     {
         if (ext_type == tls::consts::ext::kAlpn && !emitted_alpn && !alpn_ext.empty())
         {

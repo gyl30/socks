@@ -9,8 +9,6 @@
 #include <boost/asio/awaitable.hpp>
 #include <boost/system/error_code.hpp>
 
-#include "connection_context.h"
-
 namespace mux
 {
 
@@ -24,7 +22,12 @@ namespace reality
 struct fallback_request
 {
     boost::asio::ip::tcp::socket* client_socket = nullptr;
-    mux::connection_context ctx;
+    uint32_t conn_id = 0;
+    std::string local_addr;
+    uint16_t local_port = 0;
+    std::string remote_addr;
+    uint16_t remote_port = 0;
+    std::string sni;
     std::vector<uint8_t> client_hello_record;
 };
 
@@ -38,13 +41,13 @@ class fallback_executor
 
    private:
     [[nodiscard]] boost::asio::awaitable<void> connect_target(boost::asio::ip::tcp::socket& upstream_socket,
-                                                              const mux::connection_context& ctx,
+                                                              const fallback_request& request,
                                                               const std::string& host,
                                                               uint16_t port,
                                                               boost::system::error_code& ec) const;
 
     [[nodiscard]] boost::asio::awaitable<void> write_initial_client_hello(boost::asio::ip::tcp::socket& upstream_socket,
-                                                                          const mux::connection_context& ctx,
+                                                                          const fallback_request& request,
                                                                           const std::string& host,
                                                                           uint16_t port,
                                                                           const std::vector<uint8_t>& client_hello_record,
@@ -52,12 +55,12 @@ class fallback_executor
 
     [[nodiscard]] boost::asio::awaitable<void> relay_data(boost::asio::ip::tcp::socket& src,
                                                           boost::asio::ip::tcp::socket& dst,
-                                                          const mux::connection_context& ctx,
+                                                          const fallback_request& request,
                                                           const char* direction) const;
 
     [[nodiscard]] boost::asio::awaitable<void> relay_bidirectional(boost::asio::ip::tcp::socket& client_socket,
                                                                    boost::asio::ip::tcp::socket& upstream_socket,
-                                                                   const mux::connection_context& ctx) const;
+                                                                   const fallback_request& request) const;
 
     boost::asio::io_context& io_context_;
     const mux::config& cfg_;

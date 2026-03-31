@@ -33,7 +33,6 @@ extern "C"
 #include "mux_connection.h"
 #include "remote_session.h"
 #include "tls/crypto_util.h"
-#include "connection_context.h"
 #include "connection_tracker.h"
 #include "remote_udp_session.h"
 #include "reality/session/session.h"
@@ -60,36 +59,40 @@ void close_tcp_socket(boost::asio::ip::tcp::socket& socket)
     (void)ec;
 }
 
-connection_context build_connection_context(const std::shared_ptr<boost::asio::ip::tcp::socket>& s, uint32_t conn_id)
+reality::server_handshake_context build_handshake_context(const std::shared_ptr<boost::asio::ip::tcp::socket>& s, uint32_t conn_id)
 {
-    connection_context ctx;
-    ctx.new_trace_id();
-    ctx.conn_id(conn_id);
+    reality::server_handshake_context ctx;
+    ctx.socket = s.get();
+    ctx.conn_id = conn_id;
 
     boost::system::error_code local_ep_ec;
     const auto local_ep = s->local_endpoint(local_ep_ec);
     if (local_ep_ec)
     {
-        LOG_CTX_WARN(ctx, "{} query local endpoint failed {}", log_event::kConnInit, local_ep_ec.message());
-        ctx.set_local_endpoint("unknown", 0);
+        LOG_WARN("event {} conn_id {} query local endpoint failed {}", log_event::kConnInit, conn_id, local_ep_ec.message());
+        ctx.local_addr = "unknown";
+        ctx.local_port = 0;
     }
     else
     {
         const auto local_addr = socks_codec::normalize_ip_address(local_ep.address());
-        ctx.set_local_endpoint(local_addr.to_string(), local_ep.port());
+        ctx.local_addr = local_addr.to_string();
+        ctx.local_port = local_ep.port();
     }
 
     boost::system::error_code remote_ep_ec;
     const auto remote_ep = s->remote_endpoint(remote_ep_ec);
     if (remote_ep_ec)
     {
-        LOG_CTX_WARN(ctx, "{} query remote endpoint failed {}", log_event::kConnInit, remote_ep_ec.message());
-        ctx.set_remote_endpoint("unknown", 0);
+        LOG_WARN("event {} conn_id {} query remote endpoint failed {}", log_event::kConnInit, conn_id, remote_ep_ec.message());
+        ctx.remote_addr = "unknown";
+        ctx.remote_port = 0;
     }
     else
     {
         const auto remote_addr = socks_codec::normalize_ip_address(remote_ep.address());
-        ctx.set_remote_endpoint(remote_addr.to_string(), remote_ep.port());
+        ctx.remote_addr = remote_addr.to_string();
+        ctx.remote_port = remote_ep.port();
     }
     return ctx;
 }
@@ -114,15 +117,14 @@ std::optional<fallback_target> resolve_fallback_target(const config& cfg)
 
 boost::asio::awaitable<void> remote_server::fallback_to_target_site(reality::fallback_request&& request, const char* reason)
 {
-    auto& ctx = request.ctx;
     const auto target = resolve_fallback_target(cfg_);
     if (!target.has_value())
     {
-        LOG_CTX_WARN(ctx, "{} reason {} no fallback target", log_event::kFallback, reason);
+        LOG_WARN("event {} conn_id {} reason {} no fallback target", log_event::kFallback, request.conn_id, reason == nullptr ? "unknown" : reason);
         co_return;
     }
 
-    auto budget_ticket = fallback_gate_.try_acquire(ctx, reason);
+    auto budget_ticket = fallback_gate_.try_acquire(request, reason);
     if (!budget_ticket.acquired())
     {
         co_return;
@@ -315,11 +317,14 @@ boost::asio::awaitable<void> remote_server::accept_loop()
 
 boost::asio::awaitable<void> remote_server::handle(io_worker& worker, std::shared_ptr<boost::asio::ip::tcp::socket> s, uint32_t conn_id)
 {
-    reality::server_handshake_context reality_ctx;
-    reality_ctx.socket = s.get();
-    reality_ctx.ctx = build_connection_context(s, conn_id);
-    auto& ctx = reality_ctx.ctx;
-    LOG_CTX_INFO(ctx, "{} accepted {}", log_event::kConnInit, ctx.connection_info());
+    auto reality_ctx = build_handshake_context(s, conn_id);
+    LOG_INFO("event {} conn_id {} local {}:{} remote {}:{} accepted",
+             log_event::kConnInit,
+             reality_ctx.conn_id,
+             reality_ctx.local_addr,
+             reality_ctx.local_port,
+             reality_ctx.remote_addr,
+             reality_ctx.remote_port);
     boost::system::error_code ec;
     const reality::server_handshaker handshaker({
         .cfg = cfg_,
@@ -340,7 +345,12 @@ boost::asio::awaitable<void> remote_server::handle(io_worker& worker, std::share
     {
         reality::fallback_request request;
         request.client_socket = reality_ctx.socket;
-        request.ctx = std::move(reality_ctx.ctx);
+        request.conn_id = reality_ctx.conn_id;
+        request.local_addr = std::move(reality_ctx.local_addr);
+        request.local_port = reality_ctx.local_port;
+        request.remote_addr = std::move(reality_ctx.remote_addr);
+        request.remote_port = reality_ctx.remote_port;
+        request.sni = std::move(reality_ctx.sni);
         request.client_hello_record = std::move(accept_result.decision_context.client_hello_record);
         co_await fallback_to_target_site(std::move(request), accept_result.decision_reason.c_str());
         co_return;
@@ -355,18 +365,18 @@ boost::asio::awaitable<void> remote_server::handle(io_worker& worker, std::share
     }
     if (accept_result.mode != reality::accept_mode::kAuthenticated)
     {
-        LOG_CTX_ERROR(ctx, "{} unexpected accept mode {}", log_event::kHandshake, static_cast<int>(accept_result.mode));
+        LOG_ERROR("event {} conn_id {} unexpected accept mode {}", log_event::kHandshake, reality_ctx.conn_id, static_cast<int>(accept_result.mode));
         co_return;
     }
-    LOG_CTX_INFO(ctx, "{} authorized sni {}", log_event::kAuth, ctx.sni());
+    LOG_INFO("event {} conn_id {} authorized sni {}", log_event::kAuth, reality_ctx.conn_id, reality_ctx.sni);
 
     auto record_context = reality::build_reality_record_context(accept_result.authenticated, ec);
     if (ec)
     {
         co_return;
     }
-    LOG_CTX_INFO(ctx, "{} tunnel starting", log_event::kConnEstablished);
-    auto connection = std::make_shared<mux_connection>(std::move(*s), worker, std::move(record_context), cfg_, conn_id, ctx.trace_id());
+    LOG_INFO("event {} conn_id {} tunnel starting", log_event::kConnEstablished, reality_ctx.conn_id);
+    auto connection = std::make_shared<mux_connection>(std::move(*s), worker, std::move(record_context), cfg_, conn_id);
     connection->start_accepting_streams();
     connection->start();
     for (;;)
@@ -378,11 +388,11 @@ boost::asio::awaitable<void> remote_server::handle(io_worker& worker, std::share
             if (ec != boost::asio::error::operation_aborted && ec != boost::asio::experimental::error::channel_errors::channel_closed &&
                 ec != boost::asio::experimental::error::channel_errors::channel_cancelled)
             {
-                LOG_CTX_WARN(ctx, "{} accept incoming stream failed {}", log_event::kMux, ec.message());
+                LOG_WARN("event {} conn_id {} accept incoming stream failed {}", log_event::kMux, reality_ctx.conn_id, ec.message());
             }
             break;
         }
-        co_await process_stream_request(worker, connection, ctx, std::move(frame));
+        co_await process_stream_request(worker, connection, reality_ctx.conn_id, std::move(frame));
     }
     if (connection != nullptr)
     {
@@ -404,58 +414,53 @@ static boost::asio::awaitable<void> send_stream_reset(const std::shared_ptr<mux_
 
 boost::asio::awaitable<void> remote_server::process_stream_request(io_worker& worker,
                                                                    std::shared_ptr<mux_connection> connection,
-                                                                   const connection_context& ctx,
+                                                                   uint32_t conn_id,
                                                                    mux_frame frame) const
 {
     if (connection == nullptr)
     {
-        LOG_CTX_WARN(ctx, "{} stream {} dropped without connection", log_event::kMux, frame.h.stream_id);
+        LOG_WARN("event {} conn_id {} stream_id {} dropped without connection", log_event::kMux, conn_id, frame.h.stream_id);
         co_return;
     }
 
     syn_payload syn;
     if (!mux_codec::decode_syn(frame.payload.data(), frame.payload.size(), syn))
     {
-        LOG_CTX_WARN(ctx, "{} stream {} invalid syn", log_event::kMux, frame.h.stream_id);
+        LOG_WARN("event {} conn_id {} stream_id {} invalid syn", log_event::kMux, conn_id, frame.h.stream_id);
         co_await send_stream_reset(connection, std::move(frame));
         co_return;
     }
-
-    connection_context stream_ctx = ctx;
-    if (!syn.trace_id.empty())
-    {
-        stream_ctx.trace_id(syn.trace_id);
-    }
-    if (!syn.trace_id.empty())
-    {
-        LOG_CTX_DEBUG(stream_ctx, "{} linked client trace id {}", log_event::kMux, syn.trace_id);
-    }
     if (syn.addr.empty())
     {
-        LOG_CTX_WARN(stream_ctx, "{} stream {} invalid target empty", log_event::kMux, frame.h.stream_id);
+        LOG_WARN("event {} conn_id {} stream_id {} invalid target empty", log_event::kMux, conn_id, frame.h.stream_id);
         co_await send_stream_reset(connection, std::move(frame));
         co_return;
     }
     if (syn.socks_cmd == socks::kCmdConnect && syn.port == 0)
     {
-        LOG_CTX_WARN(stream_ctx, "{} stream {} invalid target {} {}", log_event::kMux, frame.h.stream_id, syn.addr, syn.port);
+        LOG_WARN("event {} conn_id {} stream_id {} invalid target {}:{}",
+                 log_event::kMux,
+                 conn_id,
+                 frame.h.stream_id,
+                 syn.addr,
+                 syn.port);
         co_await send_stream_reset(connection, std::move(frame));
         co_return;
     }
 
     if (syn.socks_cmd == socks::kCmdConnect)
     {
-        LOG_CTX_INFO(stream_ctx,
-                     "{} stream {} type tcp connect target {} {} payload size {}",
-                     log_event::kMux,
-                     frame.h.stream_id,
-                     syn.addr,
-                     syn.port,
-                     frame.payload.size());
-        const auto sess = std::make_shared<remote_tcp_session>(worker.io_context, connection, frame.h.stream_id, stream_ctx, cfg_);
+        LOG_INFO("event {} conn_id {} stream_id {} type tcp connect target {}:{} payload_size {}",
+                 log_event::kMux,
+                 conn_id,
+                 frame.h.stream_id,
+                 syn.addr,
+                 syn.port,
+                 frame.payload.size());
+        const auto sess = std::make_shared<remote_tcp_session>(worker.io_context, connection, frame.h.stream_id, conn_id, cfg_);
         if (!sess->has_stream())
         {
-            LOG_CTX_WARN(stream_ctx, "{} stream {} create incoming tcp stream failed", log_event::kMux, frame.h.stream_id);
+            LOG_WARN("event {} conn_id {} stream_id {} create incoming tcp stream failed", log_event::kMux, conn_id, frame.h.stream_id);
             co_await send_stream_reset(connection, std::move(frame));
             co_return;
         }
@@ -464,11 +469,11 @@ boost::asio::awaitable<void> remote_server::process_stream_request(io_worker& wo
     }
     if (syn.socks_cmd == socks::kCmdUdpAssociate)
     {
-        LOG_CTX_INFO(stream_ctx, "{} stream {} type udp associate associated via tcp", log_event::kMux, frame.h.stream_id);
-        const auto sess = std::make_shared<remote_udp_session>(worker.io_context, connection, frame.h.stream_id, stream_ctx, cfg_);
+        LOG_INFO("event {} conn_id {} stream_id {} type udp associate associated via tcp", log_event::kMux, conn_id, frame.h.stream_id);
+        const auto sess = std::make_shared<remote_udp_session>(worker.io_context, connection, frame.h.stream_id, conn_id, cfg_);
         if (!sess->has_stream())
         {
-            LOG_CTX_WARN(stream_ctx, "{} stream {} create incoming udp stream failed", log_event::kMux, frame.h.stream_id);
+            LOG_WARN("event {} conn_id {} stream_id {} create incoming udp stream failed", log_event::kMux, conn_id, frame.h.stream_id);
             co_await send_stream_reset(connection, std::move(frame));
             co_return;
         }
@@ -476,7 +481,7 @@ boost::asio::awaitable<void> remote_server::process_stream_request(io_worker& wo
         co_return;
     }
 
-    LOG_CTX_WARN(stream_ctx, "{} stream {} unknown cmd {}", log_event::kMux, frame.h.stream_id, syn.socks_cmd);
+    LOG_WARN("event {} conn_id {} stream_id {} unknown cmd {}", log_event::kMux, conn_id, frame.h.stream_id, syn.socks_cmd);
     co_await send_stream_reset(connection, std::move(frame));
 }
 

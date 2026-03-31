@@ -14,7 +14,7 @@ namespace
 
 constexpr std::array<const char*, 4> kHostnames = {"example.com", "www.example.com", "localhost", "a.example.net"};
 
-std::vector<uint8_t> take_bytes(const uint8_t* data, const std::size_t size, const std::size_t offset, const std::size_t len)
+std::vector<uint8_t> take_bytes(const uint8_t* data, std::size_t size, std::size_t offset, std::size_t len)
 {
     std::vector<uint8_t> out(len, 0x00);
     if (data == nullptr || size == 0 || len == 0)
@@ -29,7 +29,7 @@ std::vector<uint8_t> take_bytes(const uint8_t* data, const std::size_t size, con
     return out;
 }
 
-reality::fingerprint_type select_fingerprint_type(const uint8_t* data, const std::size_t size)
+reality::fingerprint_type select_fingerprint_type(const uint8_t* data, std::size_t size)
 {
     if (data == nullptr || size == 0)
     {
@@ -49,7 +49,7 @@ reality::fingerprint_type select_fingerprint_type(const uint8_t* data, const std
     }
 }
 
-std::string select_hostname(const uint8_t* data, const std::size_t size, const bool with_sni)
+std::string select_hostname(const uint8_t* data, std::size_t size, bool with_sni)
 {
     if (!with_sni)
     {
@@ -64,7 +64,7 @@ std::string select_hostname(const uint8_t* data, const std::size_t size, const b
     return kHostnames[idx];
 }
 
-std::vector<uint8_t> build_client_hello(const uint8_t* data, const std::size_t size, const bool with_sni)
+std::vector<uint8_t> build_client_hello(const uint8_t* data, std::size_t size, bool with_sni)
 {
     auto spec = reality::fingerprint_factory::get(select_fingerprint_type(data, size));
     const auto session_id_len = (data == nullptr || size == 0) ? std::size_t{0} : static_cast<std::size_t>(data[0] % 33);

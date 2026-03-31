@@ -129,7 +129,7 @@ bool ip_matcher::match_v6(const boost::asio::ip::address_v6& addr, const std::un
     return false;
 }
 
-bool ip_matcher::is_valid_prefix_length(const int prefix_len, const int max_prefix_len) { return prefix_len >= 0 && prefix_len <= max_prefix_len; }
+bool ip_matcher::is_valid_prefix_length(int prefix_len, int max_prefix_len) { return prefix_len >= 0 && prefix_len <= max_prefix_len; }
 
 ip_matcher::trie_node* ip_matcher::ensure_root(std::unique_ptr<trie_node>& root)
 {
@@ -140,7 +140,7 @@ ip_matcher::trie_node* ip_matcher::ensure_root(std::unique_ptr<trie_node>& root)
     return root.get();
 }
 
-ip_matcher::trie_node* ip_matcher::advance_or_create_child(trie_node* node, const bool bit)
+ip_matcher::trie_node* ip_matcher::advance_or_create_child(trie_node* node, bool bit)
 {
     const std::size_t idx = to_index(bit);
     if (node->children[idx] == nullptr)
@@ -167,7 +167,7 @@ bool ip_matcher::can_merge_match_children(const trie_node* node)
     return node->children[0] != nullptr && node->children[0]->is_match && node->children[1] != nullptr && node->children[1]->is_match;
 }
 
-void ip_matcher::add_rule_v4(const int prefix_len, const boost::asio::ip::address_v4& addr, std::unique_ptr<trie_node>& root)
+void ip_matcher::add_rule_v4(int prefix_len, const boost::asio::ip::address_v4& addr, std::unique_ptr<trie_node>& root)
 {
     if (!is_valid_prefix_length(prefix_len, 32))
     {
@@ -191,7 +191,7 @@ void ip_matcher::add_rule_v4(const int prefix_len, const boost::asio::ip::addres
     mark_node_match(curr);
 }
 
-void ip_matcher::add_rule_v6(const int prefix_len, const boost::asio::ip::address_v6& addr, std::unique_ptr<trie_node>& root)
+void ip_matcher::add_rule_v6(int prefix_len, const boost::asio::ip::address_v6& addr, std::unique_ptr<trie_node>& root)
 {
     if (!is_valid_prefix_length(prefix_len, 128))
     {
@@ -331,7 +331,7 @@ void ip_matcher::optimize() const
     }
 }
 
-void ip_matcher::process_optimize_stack_entry(trie_node* curr, const bool visited, std::vector<std::pair<trie_node*, bool>>& stack)
+void ip_matcher::process_optimize_stack_entry(trie_node* curr, bool visited, std::vector<std::pair<trie_node*, bool>>& stack)
 {
     if (curr == nullptr)
     {
