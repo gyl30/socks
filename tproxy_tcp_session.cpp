@@ -17,7 +17,6 @@
 #include "router.h"
 #include "upstream.h"
 #include "net_utils.h"
-#include "timeout_io.h"
 #include "client_tunnel_pool.h"
 #include "connection_tracker.h"
 #include "tproxy_tcp_session.h"
@@ -55,7 +54,7 @@ tproxy_tcp_session::tproxy_tcp_session(boost::asio::ip::tcp::socket socket,
       router_(std::move(router)),
       cfg_(cfg)
 {
-    last_activity_time_ms_ = timeout_io::now_ms();
+    last_activity_time_ms_ = net::now_ms();
     active_guard_ = acquire_active_connection_guard();
 }
 
@@ -266,7 +265,7 @@ boost::asio::awaitable<void> tproxy_tcp_session::client_to_upstream(std::shared_
             break;
         }
         tx_bytes_ += n;
-        last_activity_time_ms_ = timeout_io::now_ms();
+        last_activity_time_ms_ = net::now_ms();
     }
     LOG_INFO("event {} conn_id {} client_to_upstream finished", log_event::kSocks, conn_id_);
 }
@@ -308,7 +307,7 @@ boost::asio::awaitable<void> tproxy_tcp_session::upstream_to_client(std::shared_
             break;
         }
         boost::system::error_code write_ec;
-        auto write_size = co_await timeout_io::wait_write_with_timeout(socket_, boost::asio::buffer(buf.data(), n), cfg_.timeout.write, write_ec);
+        auto write_size = co_await net::wait_write_with_timeout(socket_, boost::asio::buffer(buf.data(), n), cfg_.timeout.write, write_ec);
         if (write_ec)
         {
             LOG_WARN("event {} conn_id {} failed to write to client bytes {} code {} error {}",
@@ -321,7 +320,7 @@ boost::asio::awaitable<void> tproxy_tcp_session::upstream_to_client(std::shared_
             break;
         }
         rx_bytes_ += write_size;
-        last_activity_time_ms_ = timeout_io::now_ms();
+        last_activity_time_ms_ = net::now_ms();
     }
     LOG_INFO("event {} conn_id {} upstream_to_client finished", log_event::kSocks, conn_id_);
 }
@@ -343,7 +342,7 @@ boost::asio::awaitable<void> tproxy_tcp_session::idle_watchdog()
         {
             break;
         }
-        const auto elapsed_ms = timeout_io::now_ms() - last_activity_time_ms_;
+        const auto elapsed_ms = net::now_ms() - last_activity_time_ms_;
         if (elapsed_ms > idle_timeout_ms)
         {
             break;

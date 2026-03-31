@@ -31,7 +31,7 @@ extern "C"
 #include "config.h"
 #include "tls/core.h"
 #include "constants.h"
-#include "timeout_io.h"
+#include "net_utils.h"
 #include "reality/types.h"
 #include "tls/ch_parser.h"
 #include "tls/transcript.h"
@@ -495,13 +495,13 @@ boost::asio::awaitable<encrypted_record> read_encrypted_record(boost::asio::ip::
                                                                boost::system::error_code& ec)
 {
     std::array<uint8_t, 5> record_header{};
-    const auto header_timeout = mux::timeout_io::remaining_timeout_seconds(handshake_start_ms, timeout_sec, ec);
+    const auto header_timeout = mux::net::remaining_timeout_seconds(handshake_start_ms, timeout_sec, ec);
     if (ec)
     {
         LOG_ERROR("handshake overall timeout {}", ec.message());
         co_return encrypted_record{};
     }
-    auto read_size = co_await mux::timeout_io::wait_read_with_timeout(socket, boost::asio::buffer(record_header), header_timeout, ec);
+    auto read_size = co_await mux::net::wait_read_with_timeout(socket, boost::asio::buffer(record_header), header_timeout, ec);
     if (ec)
     {
         LOG_ERROR("error reading record header {}", ec.message());
@@ -523,13 +523,13 @@ boost::asio::awaitable<encrypted_record> read_encrypted_record(boost::asio::ip::
         co_return encrypted_record{};
     }
     std::vector<uint8_t> record_body(record_body_size);
-    const auto body_timeout = mux::timeout_io::remaining_timeout_seconds(handshake_start_ms, timeout_sec, ec);
+    const auto body_timeout = mux::net::remaining_timeout_seconds(handshake_start_ms, timeout_sec, ec);
     if (ec)
     {
         LOG_ERROR("handshake overall timeout {}", ec.message());
         co_return encrypted_record{};
     }
-    read_size = co_await mux::timeout_io::wait_read_with_timeout(socket, boost::asio::buffer(record_body), body_timeout, ec);
+    read_size = co_await mux::net::wait_read_with_timeout(socket, boost::asio::buffer(record_body), body_timeout, ec);
     if (ec)
     {
         LOG_ERROR("error reading record payload {}", ec.message());
@@ -800,14 +800,14 @@ boost::asio::awaitable<bool> read_handshake_bytes(boost::asio::ip::tcp::socket& 
     std::size_t total_read = 0;
     while (total_read < size)
     {
-        const auto read_timeout = mux::timeout_io::remaining_timeout_seconds(handshake_start_ms, timeout_sec, ec);
+        const auto read_timeout = mux::net::remaining_timeout_seconds(handshake_start_ms, timeout_sec, ec);
         if (ec)
         {
             co_return false;
         }
 
         const auto read_size =
-            co_await mux::timeout_io::wait_read_with_timeout(socket, boost::asio::buffer(data + total_read, size - total_read), read_timeout, ec);
+            co_await mux::net::wait_read_with_timeout(socket, boost::asio::buffer(data + total_read, size - total_read), read_timeout, ec);
         if (ec)
         {
             co_return false;
@@ -967,7 +967,7 @@ boost::asio::awaitable<std::vector<uint8_t>> read_handshake_record_body(boost::a
                                                                         boost::system::error_code& ec)
 {
     extra_handshake_data.clear();
-    const auto handshake_start_ms = mux::timeout_io::now_ms();
+    const auto handshake_start_ms = mux::net::now_ms();
     std::vector<uint8_t> handshake_data;
     while (true)
     {
@@ -1526,7 +1526,7 @@ boost::asio::awaitable<void> generate_and_send_client_hello(boost::asio::ip::tcp
     auto client_hello_record = tls::write_record_header(tls::kContentTypeHandshake, static_cast<uint16_t>(hello_body.size()));
     client_hello_record.insert(client_hello_record.end(), hello_body.begin(), hello_body.end());
     const auto write_size =
-        co_await mux::timeout_io::wait_write_with_timeout(socket, boost::asio::buffer(client_hello_record), write_timeout_sec, ec);
+        co_await mux::net::wait_write_with_timeout(socket, boost::asio::buffer(client_hello_record), write_timeout_sec, ec);
     if (ec)
     {
         LOG_ERROR("error sending client hello {}", ec.message());
@@ -1609,7 +1609,7 @@ boost::asio::awaitable<client_handshake_read_result> handshake_read_loop(boost::
                                                                          uint32_t read_timeout_sec,
                                                                          boost::system::error_code& ec)
 {
-    const auto handshake_start_ms = mux::timeout_io::now_ms();
+    const auto handshake_start_ms = mux::net::now_ms();
     bool handshake_fin = false;
     handshake_validation_state validation_state;
     validation_state.client_hello = &client_hello;
@@ -1712,7 +1712,7 @@ boost::asio::awaitable<void> send_client_finished(boost::asio::ip::tcp::socket& 
         co_return;
     }
 
-    const auto write_res = co_await mux::timeout_io::wait_write_with_timeout(socket, boost::asio::buffer(out_flight), write_timeout_sec, ec);
+    const auto write_res = co_await mux::net::wait_write_with_timeout(socket, boost::asio::buffer(out_flight), write_timeout_sec, ec);
     if (ec)
     {
         LOG_ERROR("send client finished flight error {}", ec.message());

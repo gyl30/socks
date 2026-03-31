@@ -21,7 +21,6 @@
 #include "mux_codec.h"
 #include "net_utils.h"
 #include "mux_stream.h"
-#include "timeout_io.h"
 #include "scoped_exit.h"
 #include "mux_protocol.h"
 #include "context_pool.h"
@@ -38,11 +37,6 @@ namespace
 [[nodiscard]] bool is_normal_close_error(const boost::system::error_code& ec)
 {
     return ec == boost::asio::error::operation_aborted || ec == boost::asio::error::bad_descriptor;
-}
-
-[[nodiscard]] uint64_t now_ms()
-{
-    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
 }
 
 void update_stream_close_command(std::atomic<uint8_t>& stream_close_command, uint8_t next_command)
@@ -85,7 +79,7 @@ boost::asio::awaitable<void> write_socks_error_reply(boost::asio::ip::tcp::socke
 {
     uint8_t err[] = {socks::kVer, rep, 0, socks::kAtypIpv4, 0, 0, 0, 0, 0, 0};
     boost::system::error_code ec;
-    co_await timeout_io::wait_write_with_timeout(socket, boost::asio::buffer(err), timeout_sec, ec);
+    co_await net::wait_write_with_timeout(socket, boost::asio::buffer(err), timeout_sec, ec);
     if (ec)
     {
         LOG_WARN("event {} conn_id {} write error reply failed {}", log_event::kSocks, conn_id, ec.message());
@@ -354,7 +348,7 @@ udp_socks_session::udp_socks_session(boost::asio::ip::tcp::socket socket,
       proxy_stream_channel_(worker.io_context, 1)
 {
     stream_close_command_.store(mux::kCmdFin, std::memory_order_relaxed);
-    last_activity_time_ms_ = now_ms();
+    last_activity_time_ms_ = net::now_ms();
 }
 
 void udp_socks_session::start(const std::string& host, uint16_t port)
@@ -425,7 +419,7 @@ boost::asio::awaitable<void> udp_socks_session::run(const std::string& host, uin
              udp_port);
     // step 2 reply to tcp socket
     const auto final_rep = detail::build_udp_associate_reply(local_addr, udp_port);
-    co_await timeout_io::wait_write_with_timeout(socket_, boost::asio::buffer(final_rep), cfg_.timeout.write, ec);
+    co_await net::wait_write_with_timeout(socket_, boost::asio::buffer(final_rep), cfg_.timeout.write, ec);
     if (ec)
     {
         LOG_WARN("event {} conn_id {} write udp associate reply failed {}", log_event::kSocks, conn_id_, ec.message());
@@ -579,7 +573,7 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> udp_socks_session::resolv
                                                                                                   boost::system::error_code& ec)
 {
     const auto key = udp_target_key(host, port);
-    const auto now_ms_value = now_ms();
+    const auto now_ms_value = net::now_ms();
     resolved_targets_.evict_if([&](const auto&, const auto& entry) { return entry.expires_at <= now_ms_value; });
 
     auto* cached = resolved_targets_.get(key);
@@ -602,7 +596,7 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> udp_socks_session::resolv
     }
 
     boost::asio::ip::udp::resolver resolver(worker_.io_context);
-    auto endpoints = co_await timeout_io::wait_resolve_with_timeout(resolver, host, std::to_string(port), cfg_.timeout.connect, ec);
+    auto endpoints = co_await net::wait_resolve_with_timeout(resolver, host, std::to_string(port), cfg_.timeout.connect, ec);
     if (ec)
     {
         LOG_WARN("event {} conn_id {} udp direct resolve failed {}:{} error {}", log_event::kRoute, conn_id_, host, port, ec.message());
@@ -708,7 +702,7 @@ boost::asio::awaitable<void> udp_socks_session::forward_direct_packet(const sock
     }
 
     const auto normalized_target = net::normalize_endpoint(target);
-    const auto now_ms_value = now_ms();
+    const auto now_ms_value = net::now_ms();
     const auto expires_at = now_ms_value + constants::udp::kCacheTtlMs;
     evict_expired(direct_peers_, now_ms_value);
     direct_peers_.put(normalized_target, peer_cache_entry{expires_at});
@@ -735,7 +729,7 @@ boost::asio::awaitable<void> udp_socks_session::direct_udp_socket_loop(boost::as
             }
             break;
         }
-        const auto now_ms_value = now_ms();
+        const auto now_ms_value = net::now_ms();
         evict_expired(direct_peers_, now_ms_value);
         const auto normalized_sender = net::normalize_endpoint(sender);
         auto* peer = direct_peers_.get(normalized_sender);
@@ -763,7 +757,7 @@ boost::asio::awaitable<void> udp_socks_session::direct_udp_socket_loop(boost::as
             }
             break;
         }
-        last_activity_time_ms_ = now_ms();
+        last_activity_time_ms_ = net::now_ms();
     }
 }
 
@@ -983,7 +977,7 @@ boost::asio::awaitable<void> udp_socks_session::udp_socket_loop()
                 continue;
             }
             tx_bytes_ += n;
-            last_activity_time_ms_ = now_ms();
+            last_activity_time_ms_ = net::now_ms();
             continue;
         }
 
@@ -1082,7 +1076,7 @@ boost::asio::awaitable<void> udp_socks_session::stream_to_udp_sock(std::shared_p
             co_return;
         }
         rx_bytes_ += send_n;
-        last_activity_time_ms_ = now_ms();
+        last_activity_time_ms_ = net::now_ms();
     }
 }
 
@@ -1128,7 +1122,7 @@ boost::asio::awaitable<void> udp_socks_session::idle_watchdog()
         {
             break;
         }
-        const auto elapsed_ms = now_ms() - last_activity_time_ms_;
+        const auto elapsed_ms = net::now_ms() - last_activity_time_ms_;
         const auto idle_timeout_ms = static_cast<uint64_t>(cfg_.timeout.idle) * 1000ULL;
         if (elapsed_ms > idle_timeout_ms)
         {
