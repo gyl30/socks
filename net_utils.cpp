@@ -378,8 +378,6 @@ boost::asio::ip::address normalize_address(const boost::asio::ip::address& addr)
         return addr;
     }
     return boost::asio::ip::make_address_v4(boost::asio::ip::v4_mapped, v6);
-
-    return addr;
 }
 
 boost::asio::ip::udp::endpoint normalize_endpoint(const boost::asio::ip::udp::endpoint& ep)
