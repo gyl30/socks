@@ -61,7 +61,6 @@ struct config
     struct limits_t
     {
         uint32_t max_connections = 5;
-        uint32_t tunnel_connections = 0;
         uint64_t max_buffer = 10L * 1024 * 1024;
         uint32_t max_streams = 1024;
         uint32_t max_handshake_records = 256;

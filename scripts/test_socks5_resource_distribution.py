@@ -471,7 +471,6 @@ def build_client_config(tmp_dir, socks_port, server_port, public_key, short_id, 
         },
         "limits": {
             "max_connections": args.max_connections,
-            "tunnel_connections": args.tunnel_connections,
             "max_buffer": args.client_max_buffer,
             "max_streams": args.client_max_streams,
             "max_handshake_records": args.client_max_handshake_records,
@@ -527,7 +526,6 @@ def parse_args():
     parser.add_argument("--client-workers", type=int, default=env_int("CLIENT_WORKERS", 8))
     parser.add_argument("--server-workers", type=int, default=env_int("SERVER_WORKERS", 8))
     parser.add_argument("--max-connections", type=int, default=env_int("MAX_CONNECTIONS", 128))
-    parser.add_argument("--tunnel-connections", type=int, default=env_int("TUNNEL_CONNECTIONS", 0))
     parser.add_argument("--server-max-connections", type=int, default=env_int("SERVER_MAX_CONNECTIONS", 128))
     parser.add_argument("--read-timeout-sec", type=int, default=env_int("READ_TIMEOUT_SEC", 10))
     parser.add_argument("--write-timeout-sec", type=int, default=env_int("WRITE_TIMEOUT_SEC", 10))
