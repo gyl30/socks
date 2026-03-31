@@ -80,7 +80,9 @@ struct udp_endpoint_equal
 
 [[nodiscard]] uint64_t endpoint_hash(const boost::asio::ip::udp::endpoint& endpoint);
 
+#ifdef __linux__
 [[nodiscard]] std::optional<boost::asio::ip::udp::endpoint> parse_original_dst(const msghdr& msg);
+#endif
 
 [[nodiscard]] boost::asio::ip::udp::endpoint endpoint_from_sockaddr(const sockaddr_storage& addr, std::size_t len);
 

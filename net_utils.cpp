@@ -419,9 +419,9 @@ uint64_t endpoint_hash(const boost::asio::ip::udp::endpoint& endpoint)
     return hash;
 }
 
+#ifdef __linux__
 std::optional<boost::asio::ip::udp::endpoint> parse_original_dst(const msghdr& msg)
 {
-#ifdef __linux__
     for (auto* cm = CMSG_FIRSTHDR(&msg); cm != nullptr; cm = next_cmsg_header(msg, cm))
     {
         const auto ep = parse_original_dst_control_message(cm);
@@ -431,11 +431,8 @@ std::optional<boost::asio::ip::udp::endpoint> parse_original_dst(const msghdr& m
         }
     }
     return std::nullopt;
-#else
-    (void)msg;
-    return std::nullopt;
-#endif
 }
+#endif
 
 boost::asio::ip::udp::endpoint endpoint_from_sockaddr(const sockaddr_storage& addr, std::size_t len)
 {

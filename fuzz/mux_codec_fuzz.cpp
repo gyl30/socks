@@ -46,8 +46,7 @@ uint32_t read_u32(const uint8_t* data, std::size_t size, std::size_t offset)
     return (b0 << 24) | (b1 << 16) | (b2 << 8) | b3;
 }
 
-std::string make_printable_text(
-    const uint8_t* data, std::size_t size, std::size_t offset, std::size_t max_len, const char* fallback)
+std::string make_printable_text(const uint8_t* data, std::size_t size, std::size_t offset, std::size_t max_len, const char* fallback)
 {
     static constexpr char kAlphabet[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-_:/";
     if (data == nullptr || size == 0)
@@ -71,9 +70,12 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, std::size_t size)
 {
     const auto raw = make_buffer(data, size);
     const auto* raw_ptr = raw.empty() ? nullptr : raw.data();
-
+    if (size < mux::kHeaderSize)
+    {
+        return 0;
+    }
     mux::frame_header header{};
-    (void)mux::mux_codec::decode_header(raw_ptr, raw.size(), header);
+    (void)mux::mux_codec::decode_header(raw_ptr, header);
 
     if (!raw.empty())
     {
@@ -85,7 +87,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, std::size_t size)
         mux::mux_codec::encode_header(header, encoded_header);
 
         mux::frame_header decoded_header{};
-        (void)mux::mux_codec::decode_header(encoded_header.data(), encoded_header.size(), decoded_header);
+        (void)mux::mux_codec::decode_header(encoded_header.data(), decoded_header);
     }
 
     if (raw.size() >= mux::kHeaderSize)
