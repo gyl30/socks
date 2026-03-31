@@ -20,7 +20,6 @@ namespace mux
 {
 
 struct config;
-class connection_context;
 class mux_connection;
 
 class remote_server : public std::enable_shared_from_this<remote_server>
@@ -40,7 +39,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
 
     boost::asio::awaitable<void> process_stream_request(io_worker& worker,
                                                         std::shared_ptr<mux_connection> connection,
-                                                        const connection_context& ctx,
+                                                        uint32_t conn_id,
                                                         mux_frame frame) const;
 
    private:

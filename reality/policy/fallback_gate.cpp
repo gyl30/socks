@@ -4,8 +4,9 @@
 #include <utility>
 
 #include "log.h"
+#include "constants.h"
 #include "timeout_io.h"
-#include "connection_context.h"
+#include "reality/policy/fallback_executor.h"
 #include "reality/policy/fallback_gate.h"
 
 namespace reality
@@ -14,11 +15,11 @@ namespace reality
 namespace
 {
 
-std::string make_remote_addr_key(const mux::connection_context& ctx)
+std::string make_remote_addr_key(const fallback_request& request)
 {
-    if (!ctx.remote_addr().empty())
+    if (!request.remote_addr.empty())
     {
-        return ctx.remote_addr();
+        return request.remote_addr;
     }
     return "unknown";
 }
@@ -61,21 +62,22 @@ fallback_gate::fallback_gate(dependencies deps) : options_(deps.opts), now_secon
     }
 }
 
-fallback_gate::budget_ticket fallback_gate::try_acquire(const mux::connection_context& ctx, const char* reason)
+fallback_gate::budget_ticket fallback_gate::try_acquire(const fallback_request& request, const char* reason)
 {
     const auto now_sec = now_seconds();
-    const auto remote_addr = make_remote_addr_key(ctx);
+    const auto remote_addr = make_remote_addr_key(request);
     const char* log_reason = reason == nullptr ? "unknown" : reason;
     std::scoped_lock const lock(budget_mu_);
 
     if (active_fallbacks_ >= options_.max_concurrent)
     {
-        LOG_CTX_WARN(ctx,
-                     "{} reason {} stage rate_limit mode concurrency active {} limit {}",
-                     mux::log_event::kFallback,
-                     log_reason,
-                     active_fallbacks_,
-                     options_.max_concurrent);
+        LOG_WARN("event {} conn_id {} remote {} reason {} stage rate_limit mode concurrency active {} limit {}",
+                 mux::log_event::kFallback,
+                 request.conn_id,
+                 remote_addr,
+                 log_reason,
+                 active_fallbacks_,
+                 options_.max_concurrent);
         return {};
     }
 
@@ -98,12 +100,13 @@ fallback_gate::budget_ticket fallback_gate::try_acquire(const mux::connection_co
         }
         if (fallback_attempts_by_remote_.size() >= options_.max_tracker_entries)
         {
-            LOG_CTX_WARN(ctx,
-                         "{} reason {} stage rate_limit mode tracker_capacity entries {} limit {}",
-                         mux::log_event::kFallback,
-                         log_reason,
-                         fallback_attempts_by_remote_.size(),
-                         options_.max_tracker_entries);
+            LOG_WARN("event {} conn_id {} remote {} reason {} stage rate_limit mode tracker_capacity entries {} limit {}",
+                     mux::log_event::kFallback,
+                     request.conn_id,
+                     remote_addr,
+                     log_reason,
+                     fallback_attempts_by_remote_.size(),
+                     options_.max_tracker_entries);
             return {};
         }
     }
@@ -120,14 +123,14 @@ fallback_gate::budget_ticket fallback_gate::try_acquire(const mux::connection_co
 
     if (attempts.size() >= options_.max_attempts_per_window_per_source)
     {
-        LOG_CTX_WARN(ctx,
-                     "{} reason {} stage rate_limit mode per_source remote {} attempts {} window_sec {} limit {}",
-                     mux::log_event::kFallback,
-                     log_reason,
-                     remote_addr,
-                     attempts.size(),
-                     options_.rate_limit_window_sec,
-                     options_.max_attempts_per_window_per_source);
+        LOG_WARN("event {} conn_id {} remote {} reason {} stage rate_limit mode per_source attempts {} window_sec {} limit {}",
+                 mux::log_event::kFallback,
+                 request.conn_id,
+                 remote_addr,
+                 log_reason,
+                 attempts.size(),
+                 options_.rate_limit_window_sec,
+                 options_.max_attempts_per_window_per_source);
         return {};
     }
 

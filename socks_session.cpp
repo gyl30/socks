@@ -23,7 +23,6 @@
 #include "context_pool.h"
 #include "socks_session.h"
 #include "connection_tracker.h"
-#include "connection_context.h"
 #include "tcp_socks_session.h"
 #include "udp_socks_session.h"
 
@@ -45,7 +44,7 @@ bool secure_string_equals(const std::string& lhs, const std::string& rhs)
     return diff == 0;
 }
 
-[[nodiscard]] bool is_valid_domain_char(const uint8_t c)
+[[nodiscard]] bool is_valid_domain_char(uint8_t c)
 {
     return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '-' || c == '.' || c == '_';
 }
@@ -69,10 +68,11 @@ socks_session::socks_session(boost::asio::ip::tcp::socket socket,
                              io_worker& worker,
                              std::shared_ptr<client_tunnel_pool> tunnel_pool,
                              std::shared_ptr<router> router,
-                             const uint32_t sid,
+                             uint32_t sid,
                              const config& cfg,
                              std::shared_ptr<void> active_connection_guard)
     : sid_(sid),
+      conn_id_(sid),
       username_(cfg.socks.username),
       password_(cfg.socks.password),
       auth_enabled_(cfg.socks.auth),
@@ -83,8 +83,6 @@ socks_session::socks_session(boost::asio::ip::tcp::socket socket,
       active_guard_(std::move(active_connection_guard)),
       tunnel_pool_(std::move(tunnel_pool))
 {
-    ctx_.new_trace_id();
-    ctx_.conn_id(sid);
     if (!active_guard_)
     {
         active_guard_ = acquire_active_connection_guard();
@@ -104,12 +102,12 @@ void socks_session::stop()
     ec = socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
     if (ec && ec != boost::asio::error::not_connected)
     {
-        LOG_WARN("socks session {} shutdown failed {}", sid_, ec.message());
+        LOG_WARN("event {} conn_id {} shutdown client failed {}", log_event::kSocks, conn_id_, ec.message());
     }
     ec = socket_.close(ec);
     if (ec && ec != boost::asio::error::bad_descriptor)
     {
-        LOG_WARN("socks session {} close failed {}", sid_, ec.message());
+        LOG_WARN("event {} conn_id {} close client failed {}", log_event::kSocks, conn_id_, ec.message());
     }
 }
 
@@ -117,7 +115,7 @@ boost::asio::awaitable<void> socks_session::run_loop()
 {
     if (!co_await handshake())
     {
-        LOG_CTX_WARN(ctx_, "{} handshake failed", log_event::kSocks);
+        LOG_WARN("event {} conn_id {} handshake failed", log_event::kSocks, conn_id_);
         stop();
         co_return;
     }
@@ -125,7 +123,7 @@ boost::asio::awaitable<void> socks_session::run_loop()
     const auto [ok, host, port, cmd] = co_await read_request();
     if (!ok)
     {
-        LOG_CTX_WARN(ctx_, "{} request invalid", log_event::kSocks);
+        LOG_WARN("event {} conn_id {} request invalid", log_event::kSocks, conn_id_);
         stop();
         co_return;
     }
@@ -143,7 +141,7 @@ boost::asio::awaitable<void> socks_session::run_loop()
     }
     else
     {
-        LOG_WARN("socks session {} cmd {} unsupported", sid_, cmd);
+        LOG_WARN("event {} conn_id {} cmd {} unsupported", log_event::kSocks, conn_id_, cmd);
         co_await reply_error(socks::kRepCmdNotSupported);
         co_return;
     }
@@ -171,7 +169,7 @@ boost::asio::awaitable<bool> socks_session::handshake()
 
     if (selected_method == socks::kMethodNoAcceptable)
     {
-        LOG_WARN("socks session {} no acceptable method", sid_);
+        LOG_WARN("event {} conn_id {} no acceptable method", log_event::kSocks, conn_id_);
         co_return false;
     }
 
@@ -190,26 +188,26 @@ boost::asio::awaitable<bool> socks_session::read_socks_greeting(uint8_t& method_
     co_await timeout_io::wait_read_with_timeout(socket_, boost::asio::buffer(ver_nmethods, 2), cfg_.timeout.read, ec);
     if (ec)
     {
-        LOG_ERROR("socks session {} handshake failed {}", sid_, ec.message());
+        LOG_ERROR("event {} conn_id {} read greeting failed {}", log_event::kSocks, conn_id_, ec.message());
         co_return false;
     }
     if (ver_nmethods[0] != socks::kVer)
     {
-        LOG_ERROR("socks session {} handshake method version {} failed", sid_, static_cast<int>(ver_nmethods[0]));
+        LOG_ERROR("event {} conn_id {} invalid greeting version {}", log_event::kSocks, conn_id_, static_cast<int>(ver_nmethods[0]));
         co_return false;
     }
     method_count = ver_nmethods[1];
     co_return true;
 }
 
-boost::asio::awaitable<bool> socks_session::read_auth_methods(const uint8_t method_count, std::vector<uint8_t>& methods)
+boost::asio::awaitable<bool> socks_session::read_auth_methods(uint8_t method_count, std::vector<uint8_t>& methods)
 {
     methods.assign(method_count, 0);
     boost::system::error_code ec;
     co_await timeout_io::wait_read_with_timeout(socket_, boost::asio::buffer(methods), cfg_.timeout.read, ec);
     if (ec)
     {
-        LOG_ERROR("socks methods read failed {}", ec.message());
+        LOG_ERROR("event {} conn_id {} read methods failed {}", log_event::kSocks, conn_id_, ec.message());
         co_return false;
     }
     co_return true;
@@ -234,14 +232,14 @@ uint8_t socks_session::select_auth_method(const std::vector<uint8_t>& methods) c
     return socks::kMethodNoAcceptable;
 }
 
-boost::asio::awaitable<bool> socks_session::write_selected_method(const uint8_t method)
+boost::asio::awaitable<bool> socks_session::write_selected_method(uint8_t method)
 {
     uint8_t resp[] = {socks::kVer, method};
     boost::system::error_code ec;
     co_await timeout_io::wait_write_with_timeout(socket_, boost::asio::buffer(resp), cfg_.timeout.write, ec);
     if (ec)
     {
-        LOG_ERROR("socks session {} handshake failed {}", sid_, ec.message());
+        LOG_ERROR("event {} conn_id {} write selected method failed {}", log_event::kSocks, conn_id_, ec.message());
         co_return false;
     }
     co_return true;
@@ -277,7 +275,7 @@ boost::asio::awaitable<bool> socks_session::do_password_auth()
 
     if (!success)
     {
-        LOG_WARN("socks session {} auth failed", sid_);
+        LOG_WARN("event {} conn_id {} auth failed", log_event::kAuth, conn_id_);
         const auto delay_ec = co_await timeout_io::wait_for(worker_.io_context, std::chrono::milliseconds(constants::socks::kAuthFailDelayMs));
         (void)delay_ec;
     }
@@ -341,7 +339,7 @@ bool socks_session::verify_credentials(const std::string& username, const std::s
     return user_match && pass_match;
 }
 
-boost::asio::awaitable<bool> socks_session::write_auth_result(const bool success)
+boost::asio::awaitable<bool> socks_session::write_auth_result(bool success)
 {
     uint8_t result[] = {0x01, success ? static_cast<uint8_t>(0x00) : static_cast<uint8_t>(0x01)};
     boost::system::error_code ec;
@@ -362,9 +360,9 @@ boost::asio::awaitable<void> socks_session::delay_invalid_request() const
     (void)delay_ec;
 }
 
-bool socks_session::is_supported_cmd(const uint8_t cmd) { return cmd == socks::kCmdConnect || cmd == socks::kCmdUdpAssociate; }
+bool socks_session::is_supported_cmd(uint8_t cmd) { return cmd == socks::kCmdConnect || cmd == socks::kCmdUdpAssociate; }
 
-bool socks_session::is_supported_atyp(const uint8_t cmd, const uint8_t atyp)
+bool socks_session::is_supported_atyp(uint8_t cmd, uint8_t atyp)
 {
     if (atyp == socks::kAtypIpv4 || atyp == socks::kAtypIpv6)
     {
@@ -443,7 +441,7 @@ boost::asio::awaitable<bool> socks_session::read_request_ipv6(std::string& host)
     co_return true;
 }
 
-boost::asio::awaitable<bool> socks_session::read_request_host(const uint8_t atyp, const uint8_t cmd, std::string& host)
+boost::asio::awaitable<bool> socks_session::read_request_host(uint8_t atyp, uint8_t cmd, std::string& host)
 {
     if (atyp == socks::kAtypIpv4)
     {
@@ -462,12 +460,12 @@ boost::asio::awaitable<bool> socks_session::read_request_host(const uint8_t atyp
     co_return false;
 }
 
-socks_session::request_info socks_session::make_invalid_request(const uint8_t cmd)
+socks_session::request_info socks_session::make_invalid_request(uint8_t cmd)
 {
     return request_info{.ok = false, .host = "", .port = 0, .cmd = cmd};
 }
 
-boost::asio::awaitable<socks_session::request_info> socks_session::reject_request(const uint8_t cmd, const uint8_t rep)
+boost::asio::awaitable<socks_session::request_info> socks_session::reject_request(uint8_t cmd, uint8_t rep)
 {
     co_await delay_invalid_request();
     co_await reply_error(rep);
@@ -525,7 +523,7 @@ boost::asio::awaitable<std::optional<socks_session::request_info>> socks_session
     co_return std::nullopt;
 }
 
-boost::asio::awaitable<socks_session::request_info> socks_session::read_request_target(const uint8_t cmd, const uint8_t atyp)
+boost::asio::awaitable<socks_session::request_info> socks_session::read_request_target(uint8_t cmd, uint8_t atyp)
 {
     std::string host;
     if (!co_await read_request_host(atyp, cmd, host))

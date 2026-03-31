@@ -6,7 +6,7 @@
 namespace tls
 {
 
-bool is_valid_tls13_compat_ccs(const std::array<uint8_t, 5>& header, const uint8_t body_byte)
+bool is_valid_tls13_compat_ccs(const std::array<uint8_t, 5>& header, uint8_t body_byte)
 {
     if (header[0] != 0x14)
     {

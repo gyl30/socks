@@ -65,7 +65,7 @@ void normalize_base64_url(std::string& text)
     }
 }
 
-std::size_t base64_real_length(const std::string& padded_input, const std::size_t decoded_len)
+std::size_t base64_real_length(const std::string& padded_input, std::size_t decoded_len)
 {
     std::size_t real_len = decoded_len;
     if (!padded_input.empty() && padded_input.back() == '=')
@@ -103,7 +103,7 @@ bool is_hex_separator(const char ch)
     return ch == ':' || ch == '-' || std::isspace(value) != 0;
 }
 
-const EVP_MD* tls13_signature_digest(const uint16_t signature_scheme, boost::system::error_code& ec)
+const EVP_MD* tls13_signature_digest(uint16_t signature_scheme, boost::system::error_code& ec)
 {
     using tls::consts::sig_alg::kEcdsaSecp256r1Sha256;
     using tls::consts::sig_alg::kEcdsaSecp384r1Sha384;
@@ -138,7 +138,7 @@ const EVP_MD* tls13_signature_digest(const uint16_t signature_scheme, boost::sys
     }
 }
 
-bool tls13_signature_scheme_matches_key(const uint16_t signature_scheme, const EVP_PKEY* pub_key)
+bool tls13_signature_scheme_matches_key(uint16_t signature_scheme, const EVP_PKEY* pub_key)
 {
     using tls::consts::sig_alg::kEcdsaSecp256r1Sha256;
     using tls::consts::sig_alg::kEcdsaSecp384r1Sha384;
@@ -172,7 +172,7 @@ bool tls13_signature_scheme_matches_key(const uint16_t signature_scheme, const E
     }
 }
 
-bool tls13_signature_scheme_is_rsa_pss(const uint16_t signature_scheme)
+bool tls13_signature_scheme_is_rsa_pss(uint16_t signature_scheme)
 {
     using tls::consts::sig_alg::kRsaPssRsaeSha256;
     using tls::consts::sig_alg::kRsaPssRsaeSha384;
@@ -180,7 +180,7 @@ bool tls13_signature_scheme_is_rsa_pss(const uint16_t signature_scheme)
     return signature_scheme == kRsaPssRsaeSha256 || signature_scheme == kRsaPssRsaeSha384 || signature_scheme == kRsaPssRsaeSha512;
 }
 
-openssl_ptrs::evp_pkey_ctx_ptr create_hkdf_context(const EVP_MD* md, const int mode, boost::system::error_code& ec)
+openssl_ptrs::evp_pkey_ctx_ptr create_hkdf_context(const EVP_MD* md, int mode, boost::system::error_code& ec)
 {
     openssl_ptrs::evp_pkey_ctx_ptr ctx(EVP_PKEY_CTX_new_id(EVP_PKEY_HKDF, nullptr));
     if (ctx == nullptr || EVP_PKEY_derive_init(ctx.get()) <= 0)
@@ -473,7 +473,7 @@ void validate_aead_decrypt_inputs(const EVP_CIPHER* cipher,
 
 void apply_aead_tag(const cipher_context& ctx,
                     const std::span<const uint8_t> ciphertext,
-                    const std::size_t plaintext_len,
+                    std::size_t plaintext_len,
                     boost::system::error_code& ec)
 {
     const uint8_t* tag = ciphertext.data() + plaintext_len;
@@ -487,7 +487,7 @@ void apply_aead_tag(const cipher_context& ctx,
 std::size_t decrypt_aead_payload(const cipher_context& ctx,
                                  const std::span<const uint8_t> aad,
                                  const std::span<const uint8_t> ciphertext,
-                                 const std::size_t plaintext_len,
+                                 std::size_t plaintext_len,
                                  const std::span<uint8_t> output_buffer,
                                  boost::system::error_code& ec)
 {
@@ -915,7 +915,7 @@ std::vector<uint8_t> hkdf_extract(const std::vector<uint8_t>& salt, const std::v
 }
 
 std::vector<uint8_t> hkdf_expand(
-    const std::vector<uint8_t>& prk, const std::vector<uint8_t>& info, const std::size_t len, const EVP_MD* md, boost::system::error_code& ec)
+    const std::vector<uint8_t>& prk, const std::vector<uint8_t>& info, std::size_t len, const EVP_MD* md, boost::system::error_code& ec)
 {
     ensure_openssl_initialized();
 
@@ -1313,7 +1313,7 @@ std::vector<uint8_t> hmac_sha512(const std::vector<uint8_t>& key, const std::vec
 }
 
 void verify_tls13_signature(EVP_PKEY* pub_key,
-                            const uint16_t signature_scheme,
+                            uint16_t signature_scheme,
                             const std::vector<uint8_t>& transcript_hash,
                             const std::vector<uint8_t>& signature,
                             boost::system::error_code& ec)

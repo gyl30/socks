@@ -94,7 +94,7 @@ bool client_hello_parser::read_extension_header(reader& r, uint16_t& type, uint1
 
 bool client_hello_parser::read_sni_item_header(reader& r, uint8_t& type, uint16_t& len) { return r.read_u8(type) && r.read_u16(len); }
 
-bool client_hello_parser::handle_sni_item(reader& r, const uint8_t type, const uint16_t len, client_hello_info& info)
+bool client_hello_parser::handle_sni_item(reader& r, uint8_t type, uint16_t len, client_hello_info& info)
 {
     if (type == 0x00)
     {
@@ -117,7 +117,7 @@ bool client_hello_parser::handle_sni_item(reader& r, const uint8_t type, const u
 
 bool client_hello_parser::read_key_share_item_header(reader& r, uint16_t& group, uint16_t& len) { return r.read_u16(group) && r.read_u16(len); }
 
-void client_hello_parser::handle_key_share_item(const reader& r, const uint16_t group, const uint16_t len, client_hello_info& info)
+void client_hello_parser::handle_key_share_item(const reader& r, uint16_t group, uint16_t len, client_hello_info& info)
 {
     if (group == consts::group::kX25519)
     {

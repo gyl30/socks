@@ -25,7 +25,7 @@ namespace mux
 namespace
 {
 
-void setup_acceptor(boost::asio::ip::tcp::acceptor& acceptor, const std::string& host, const uint16_t port, boost::system::error_code& ec)
+void setup_acceptor(boost::asio::ip::tcp::acceptor& acceptor, const std::string& host, uint16_t port, boost::system::error_code& ec)
 {
     const auto listen_addr = boost::asio::ip::make_address(host, ec);
     if (ec)

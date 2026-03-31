@@ -37,11 +37,9 @@ class upstream
     [[nodiscard]] virtual boost::asio::awaitable<std::size_t> read(std::vector<uint8_t>& buf, boost::system::error_code& ec) = 0;
 };
 
-[[nodiscard]] std::shared_ptr<upstream> make_direct_upstream(const boost::asio::any_io_executor& executor, connection_context ctx, const config& cfg);
-[[nodiscard]] std::shared_ptr<upstream> make_proxy_upstream(std::shared_ptr<mux_connection> tunnel, connection_context ctx, const config& cfg);
-[[nodiscard]] std::shared_ptr<upstream> make_proxy_upstream(std::shared_ptr<client_tunnel_pool> tunnel_pool,
-                                                            connection_context ctx,
-                                                            const config& cfg);
+[[nodiscard]] std::shared_ptr<upstream> make_direct_upstream(const boost::asio::any_io_executor& executor, uint32_t conn_id, const config& cfg);
+[[nodiscard]] std::shared_ptr<upstream> make_proxy_upstream(std::shared_ptr<mux_connection> tunnel, uint32_t conn_id, const config& cfg);
+[[nodiscard]] std::shared_ptr<upstream> make_proxy_upstream(std::shared_ptr<client_tunnel_pool> tunnel_pool, uint32_t conn_id, const config& cfg);
 
 }    // namespace mux
 

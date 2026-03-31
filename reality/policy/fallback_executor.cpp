@@ -11,7 +11,6 @@
 #include "constants.h"
 #include "timeout_io.h"
 #include "scoped_exit.h"
-#include "connection_context.h"
 #include "reality/policy/fallback_executor.h"
 
 namespace reality
@@ -40,45 +39,63 @@ void close_tcp_socket(boost::asio::ip::tcp::socket& socket)
 fallback_executor::fallback_executor(boost::asio::io_context& io_context, const mux::config& cfg) : io_context_(io_context), cfg_(cfg) {}
 
 boost::asio::awaitable<void> fallback_executor::run(
-    fallback_request& request, const std::string& host, const uint16_t port, const char* reason, boost::system::error_code& ec) const
+    fallback_request& request, const std::string& host, uint16_t port, const char* reason, boost::system::error_code& ec) const
 {
     ec.clear();
     const char* log_reason = normalize_reason(reason);
-    auto& ctx = request.ctx;
     if (request.client_socket == nullptr)
     {
         ec = boost::asio::error::bad_descriptor;
-        LOG_CTX_WARN(ctx, "{} reason {} missing client socket", mux::log_event::kFallback, log_reason);
+        LOG_WARN("event {} conn_id {} remote {} reason {} missing client socket",
+                 mux::log_event::kFallback,
+                 request.conn_id,
+                 request.remote_addr,
+                 log_reason);
         co_return;
     }
 
-    ctx.set_target(host, port);
-    LOG_CTX_INFO(
-        ctx, "{} reason {} target {}:{} client_hello_size {}", mux::log_event::kFallback, log_reason, host, port, request.client_hello_record.size());
+    LOG_INFO("event {} conn_id {} local {}:{} remote {}:{} sni {} reason {} target {}:{} client_hello_size {}",
+             mux::log_event::kFallback,
+             request.conn_id,
+             request.local_addr.empty() ? "unknown" : request.local_addr,
+             request.local_port,
+             request.remote_addr.empty() ? "unknown" : request.remote_addr,
+             request.remote_port,
+             request.sni.empty() ? "unknown" : request.sni,
+             log_reason,
+             host,
+             port,
+             request.client_hello_record.size());
 
     boost::asio::ip::tcp::socket upstream_socket(io_context_);
     DEFER(if (request.client_socket != nullptr) { close_tcp_socket(*request.client_socket); } close_tcp_socket(upstream_socket););
 
-    co_await connect_target(upstream_socket, ctx, host, port, ec);
+    co_await connect_target(upstream_socket, request, host, port, ec);
     if (ec)
     {
         co_return;
     }
 
-    co_await write_initial_client_hello(upstream_socket, ctx, host, port, request.client_hello_record, ec);
+    co_await write_initial_client_hello(upstream_socket, request, host, port, request.client_hello_record, ec);
     if (ec)
     {
         co_return;
     }
 
-    co_await relay_bidirectional(*request.client_socket, upstream_socket, ctx);
-    LOG_CTX_INFO(ctx, "{} finished target {}:{}", mux::log_event::kFallback, host, port);
+    co_await relay_bidirectional(*request.client_socket, upstream_socket, request);
+    LOG_INFO("event {} conn_id {} remote {}:{} finished target {}:{}",
+             mux::log_event::kFallback,
+             request.conn_id,
+             request.remote_addr.empty() ? "unknown" : request.remote_addr,
+             request.remote_port,
+             host,
+             port);
 }
 
 boost::asio::awaitable<void> fallback_executor::connect_target(boost::asio::ip::tcp::socket& upstream_socket,
-                                                               const mux::connection_context& ctx,
+                                                               const fallback_request& request,
                                                                const std::string& host,
-                                                               const uint16_t port,
+                                                               uint16_t port,
                                                                boost::system::error_code& ec) const
 {
     ec.clear();
@@ -87,13 +104,25 @@ boost::asio::awaitable<void> fallback_executor::connect_target(boost::asio::ip::
     const auto endpoints = co_await mux::timeout_io::wait_resolve_with_timeout(resolver, host, std::to_string(port), cfg_.timeout.connect, ec);
     if (ec)
     {
-        LOG_CTX_WARN(ctx, "{} stage resolve target {}:{} error {}", mux::log_event::kFallback, host, port, ec.message());
+        LOG_WARN("event {} conn_id {} remote {} stage resolve target {}:{} error {}",
+                 mux::log_event::kFallback,
+                 request.conn_id,
+                 request.remote_addr,
+                 host,
+                 port,
+                 ec.message());
         co_return;
     }
     if (endpoints.begin() == endpoints.end())
     {
         ec = boost::asio::error::host_not_found;
-        LOG_CTX_WARN(ctx, "{} stage resolve target {}:{} error {}", mux::log_event::kFallback, host, port, ec.message());
+        LOG_WARN("event {} conn_id {} remote {} stage resolve target {}:{} error {}",
+                 mux::log_event::kFallback,
+                 request.conn_id,
+                 request.remote_addr,
+                 host,
+                 port,
+                 ec.message());
         co_return;
     }
 
@@ -124,7 +153,12 @@ boost::asio::awaitable<void> fallback_executor::connect_target(boost::asio::ip::
         if (!op_ec)
         {
             ec.clear();
-            LOG_CTX_INFO(ctx, "{} stage connect target {}:{} connected", mux::log_event::kFallback, host, port);
+            LOG_INFO("event {} conn_id {} remote {} stage connect target {}:{} connected",
+                     mux::log_event::kFallback,
+                     request.conn_id,
+                     request.remote_addr,
+                     host,
+                     port);
             co_return;
         }
 
@@ -132,13 +166,19 @@ boost::asio::awaitable<void> fallback_executor::connect_target(boost::asio::ip::
     }
 
     ec = last_ec;
-    LOG_CTX_WARN(ctx, "{} stage connect target {}:{} error {}", mux::log_event::kFallback, host, port, ec.message());
+    LOG_WARN("event {} conn_id {} remote {} stage connect target {}:{} error {}",
+             mux::log_event::kFallback,
+             request.conn_id,
+             request.remote_addr,
+             host,
+             port,
+             ec.message());
 }
 
 boost::asio::awaitable<void> fallback_executor::write_initial_client_hello(boost::asio::ip::tcp::socket& upstream_socket,
-                                                                           const mux::connection_context& ctx,
+                                                                           const fallback_request& request,
                                                                            const std::string& host,
-                                                                           const uint16_t port,
+                                                                           uint16_t port,
                                                                            const std::vector<uint8_t>& client_hello_record,
                                                                            boost::system::error_code& ec) const
 {
@@ -152,14 +192,20 @@ boost::asio::awaitable<void> fallback_executor::write_initial_client_hello(boost
         {
             ec = boost::asio::error::fault;
         }
-        LOG_CTX_WARN(ctx, "{} stage initial_write target {}:{} error {}", mux::log_event::kFallback, host, port, ec.message());
+        LOG_WARN("event {} conn_id {} remote {} stage initial_write target {}:{} error {}",
+                 mux::log_event::kFallback,
+                 request.conn_id,
+                 request.remote_addr,
+                 host,
+                 port,
+                 ec.message());
         co_return;
     }
 }
 
 boost::asio::awaitable<void> fallback_executor::relay_data(boost::asio::ip::tcp::socket& src,
                                                            boost::asio::ip::tcp::socket& dst,
-                                                           const mux::connection_context& ctx,
+                                                           const fallback_request& request,
                                                            const char* direction) const
 {
     const auto fallback_timeout = cfg_.timeout.idle;
@@ -176,13 +222,23 @@ boost::asio::awaitable<void> fallback_executor::relay_data(boost::asio::ip::tcp:
                 shutdown_ec = dst.shutdown(boost::asio::ip::tcp::socket::shutdown_send, shutdown_ec);
                 if (shutdown_ec && shutdown_ec != boost::asio::error::not_connected)
                 {
-                    LOG_CTX_WARN(ctx, "{} stage {} shutdown send error {}", mux::log_event::kFallback, direction, shutdown_ec.message());
+                    LOG_WARN("event {} conn_id {} remote {} stage {} shutdown send error {}",
+                             mux::log_event::kFallback,
+                             request.conn_id,
+                             request.remote_addr,
+                             direction,
+                             shutdown_ec.message());
                 }
                 co_return;
             }
             if (ec != boost::asio::error::operation_aborted && ec != boost::asio::error::connection_reset)
             {
-                LOG_CTX_WARN(ctx, "{} stage {} read error {}", mux::log_event::kFallback, direction, ec.message());
+                LOG_WARN("event {} conn_id {} remote {} stage {} read error {}",
+                         mux::log_event::kFallback,
+                         request.conn_id,
+                         request.remote_addr,
+                         direction,
+                         ec.message());
             }
             close_tcp_socket(dst);
             co_return;
@@ -195,13 +251,24 @@ boost::asio::awaitable<void> fallback_executor::relay_data(boost::asio::ip::tcp:
         const auto written = co_await mux::timeout_io::wait_write_with_timeout(dst, boost::asio::buffer(buf.data(), n), fallback_timeout, ec);
         if (ec)
         {
-            LOG_CTX_WARN(ctx, "{} stage {} write error {}", mux::log_event::kFallback, direction, ec.message());
+            LOG_WARN("event {} conn_id {} remote {} stage {} write error {}",
+                     mux::log_event::kFallback,
+                     request.conn_id,
+                     request.remote_addr,
+                     direction,
+                     ec.message());
             co_return;
         }
         if (written != n)
         {
             ec = boost::asio::error::fault;
-            LOG_CTX_WARN(ctx, "{} stage {} short write {} of {}", mux::log_event::kFallback, direction, written, n);
+            LOG_WARN("event {} conn_id {} remote {} stage {} short write {} of {}",
+                     mux::log_event::kFallback,
+                     request.conn_id,
+                     request.remote_addr,
+                     direction,
+                     written,
+                     n);
             co_return;
         }
     }
@@ -209,11 +276,11 @@ boost::asio::awaitable<void> fallback_executor::relay_data(boost::asio::ip::tcp:
 
 boost::asio::awaitable<void> fallback_executor::relay_bidirectional(boost::asio::ip::tcp::socket& client_socket,
                                                                     boost::asio::ip::tcp::socket& upstream_socket,
-                                                                    const mux::connection_context& ctx) const
+                                                                    const fallback_request& request) const
 {
     using boost::asio::experimental::awaitable_operators::operator&&;
-    co_await (relay_data(client_socket, upstream_socket, ctx, "client_to_target") &&
-              relay_data(upstream_socket, client_socket, ctx, "target_to_client"));
+    co_await (relay_data(client_socket, upstream_socket, request, "client_to_target") &&
+              relay_data(upstream_socket, client_socket, request, "target_to_client"));
 }
 
 }    // namespace reality

@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <string>
 
 #include "reality/handshake/fingerprint.h"
 
@@ -115,5 +116,33 @@ constexpr std::array<reality::fingerprint_type, 4> kFetchFingerprints = {
 }    // namespace reality_limits
 
 }    // namespace constants
+
+namespace mux
+{
+
+namespace log_event
+{
+
+constexpr const char* kConnInit = "conn_init";
+constexpr const char* kConnEstablished = "conn_established";
+constexpr const char* kConnClose = "conn_close";
+constexpr const char* kHandshake = "handshake";
+constexpr const char* kDataSend = "data_send";
+constexpr const char* kDataRecv = "data_recv";
+constexpr const char* kStreamOpen = "stream_open";
+constexpr const char* kStreamClose = "stream_close";
+constexpr const char* kRoute = "route";
+constexpr const char* kFallback = "fallback";
+constexpr const char* kAuth = "auth";
+constexpr const char* kMux = "mux";
+constexpr const char* kMuxFrame = "mux_frame";
+constexpr const char* kSocks = "socks";
+constexpr const char* kDns = "dns";
+constexpr const char* kTimeout = "timeout";
+constexpr const char* kCert = "cert";
+
+}    // namespace log_event
+
+}    // namespace mux
 
 #endif

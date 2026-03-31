@@ -36,7 +36,7 @@ namespace
 }    // namespace
 
 std::pair<std::vector<uint8_t>, std::vector<uint8_t>> derive_traffic_keys(
-    const std::vector<uint8_t>& secret, boost::system::error_code& ec, const std::size_t key_len, const std::size_t iv_len, const EVP_MD* md)
+    const std::vector<uint8_t>& secret, boost::system::error_code& ec, std::size_t key_len, std::size_t iv_len, const EVP_MD* md)
 {
     ec.clear();
     auto key = crypto_util::hkdf_expand_label(secret, "key", {}, key_len, md, ec);

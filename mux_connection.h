@@ -7,14 +7,15 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <cstdint>
 #include <unordered_map>
 
 #include <boost/asio.hpp>
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/experimental/concurrent_channel.hpp>
 
+#include "constants.h"
 #include "mux_protocol.h"
-#include "connection_context.h"
 #include "reality/session/engine.h"
 
 namespace reality
@@ -38,8 +39,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
                    io_worker& worker,
                    reality::reality_record_context record_context,
                    const config& cfg,
-                   uint32_t conn_id,
-                   const std::string& trace_id = "");
+                   uint32_t conn_id);
 
     virtual ~mux_connection();
 
@@ -78,7 +78,10 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
 
     const config& cfg_;
     uint32_t cid_ = 0;
-    connection_context ctx_;
+    std::string local_addr_;
+    uint16_t local_port_ = 0;
+    std::string remote_addr_;
+    uint16_t remote_port_ = 0;
     io_worker& worker_;
     std::mutex mutex_;
     reality_engine reality_engine_;

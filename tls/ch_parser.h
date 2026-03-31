@@ -49,16 +49,16 @@ class client_hello_parser
     {
        public:
         explicit reader(const std::vector<uint8_t>& buf) : ptr_(buf.data()), end_(buf.data() + buf.size()), start_(buf.data()) {}
-        reader(const uint8_t* p, const std::size_t len, const uint8_t* s) : ptr_(p), end_(p + len), start_(s) {}
+        reader(const uint8_t* p, std::size_t len, const uint8_t* s) : ptr_(p), end_(p + len), start_(s) {}
 
         [[nodiscard]] bool valid() const { return ptr_ != nullptr; }
-        [[nodiscard]] bool has(const std::size_t n) const { return valid() && std::cmp_less_equal(n, end_ - ptr_); }
+        [[nodiscard]] bool has(std::size_t n) const { return valid() && std::cmp_less_equal(n, end_ - ptr_); }
         [[nodiscard]] std::size_t remaining() const { return valid() ? static_cast<std::size_t>(end_ - ptr_) : 0; }
         [[nodiscard]] std::size_t offset() const { return valid() ? static_cast<std::size_t>(ptr_ - start_) : 0; }
-        [[nodiscard]] uint8_t peek(const std::size_t off) const { return has(off + 1) ? ptr_[off] : static_cast<uint8_t>(0); }
+        [[nodiscard]] uint8_t peek(std::size_t off) const { return has(off + 1) ? ptr_[off] : static_cast<uint8_t>(0); }
         [[nodiscard]] const uint8_t* data() const { return ptr_; }
 
-        bool skip(const std::size_t n)
+        bool skip(std::size_t n)
         {
             if (!has(n))
             {
@@ -89,7 +89,7 @@ class client_hello_parser
             return true;
         }
 
-        bool read_vector(std::vector<uint8_t>& out, const std::size_t n)
+        bool read_vector(std::vector<uint8_t>& out, std::size_t n)
         {
             if (!has(n))
             {
@@ -100,7 +100,7 @@ class client_hello_parser
             return true;
         }
 
-        reader slice(const std::size_t n)
+        reader slice(std::size_t n)
         {
             if (!has(n))
             {

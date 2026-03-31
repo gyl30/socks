@@ -2,6 +2,7 @@
 #define UDP_SOCKS_SESSION_H
 
 #include <atomic>
+#include <chrono>
 #include <memory>
 #include <string>
 #include <vector>
@@ -12,7 +13,6 @@
 
 #include "net_utils.h"
 #include "lru_cache.h"
-#include "connection_context.h"
 #include "client_tunnel_pool.h"
 
 namespace mux
@@ -85,7 +85,10 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
 
     using proxy_stream_channel_type = boost::asio::experimental::concurrent_channel<void(boost::system::error_code, std::shared_ptr<mux_stream>)>;
 
-    connection_context ctx_;
+    uint32_t conn_id_ = 0;
+    uint64_t tx_bytes_ = 0;
+    uint64_t rx_bytes_ = 0;
+    std::chrono::steady_clock::time_point start_time_ = std::chrono::steady_clock::now();
     const config& cfg_;
     io_worker& worker_;
     boost::asio::steady_timer timer_;

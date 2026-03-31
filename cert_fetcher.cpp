@@ -30,7 +30,6 @@ extern "C"
 #include "tls/cipher_suite.h"
 #include "tls/key_schedule.h"
 #include "tls/record_layer.h"
-#include "connection_context.h"
 #include "tls/handshake_builder.h"
 #include "tls/handshake_message.h"
 #include "tls/handshake_reassembler.h"
@@ -45,7 +44,6 @@ namespace
 {
 struct fetch_context
 {
-    mux::connection_context ctx;
     boost::asio::io_context io_context;
     boost::asio::ip::tcp::socket socket{io_context};
     std::string host;
@@ -113,14 +111,14 @@ boost::system::error_code derive_server_record_protection(fetch_context& ctx,
     auto shared_secret = tls::crypto_util::x25519_derive(std::vector<uint8_t>(ctx.client_private, ctx.client_private + 32), server_public_key, ec);
     if (ec)
     {
-        LOG_CTX_ERROR(ctx.ctx, "{} x25519 derive failed", mux::log_event::kCert);
+        LOG_ERROR("{} x25519 derive failed", mux::log_event::kCert);
         return ec;
     }
 
     auto handshake_keys = tls::key_schedule::derive_handshake_keys(shared_secret, ctx.transcript.finish(), suite.md, ec);
     if (ec)
     {
-        LOG_CTX_ERROR(ctx.ctx, "{} derive keys failed", mux::log_event::kCert);
+        LOG_ERROR("{} derive keys failed", mux::log_event::kCert);
         return ec;
     }
 
@@ -128,7 +126,7 @@ boost::system::error_code derive_server_record_protection(fetch_context& ctx,
         tls::key_schedule::derive_traffic_keys(handshake_keys.server_handshake_traffic_secret, ec, suite.key_len, iv_len, suite.md);
     if (ec)
     {
-        LOG_CTX_ERROR(ctx.ctx, "{} derive traffic keys failed", mux::log_event::kCert);
+        LOG_ERROR("{} derive traffic keys failed", mux::log_event::kCert);
         return ec;
     }
 
@@ -144,11 +142,11 @@ void connect(fetch_context& ctx, boost::system::error_code& ec)
     const auto resolved = resolver.resolve(ctx.host, std::to_string(ctx.port), ec);
     if (ec)
     {
-        LOG_CTX_ERROR(ctx.ctx, "{} stage resolve target {}:{} error {}", mux::log_event::kCert, ctx.host, ctx.port, ec.message());
+        LOG_ERROR("{} stage resolve target {}:{} error {}", mux::log_event::kCert, ctx.host, ctx.port, ec.message());
         return;
     }
     boost::asio::connect(ctx.socket, resolved, ec);
-    LOG_CTX_ERROR(ctx.ctx, "{} stage connect target {}:{} error {}", mux::log_event::kCert, ctx.host, ctx.port, ec.message());
+    LOG_ERROR("{} stage connect target {}:{} error {}", mux::log_event::kCert, ctx.host, ctx.port, ec.message());
 }
 
 bool init_handshake_material(fetch_context& ctx, std::vector<uint8_t>& client_random, std::vector<uint8_t>& session_id)
@@ -172,7 +170,7 @@ boost::system::error_code send_client_hello_record(fetch_context& ctx, const std
 {
     if (client_hello.size() > std::numeric_limits<uint16_t>::max())
     {
-        LOG_CTX_ERROR(ctx.ctx, "{} client hello too large {}", mux::log_event::kCert, client_hello.size());
+        LOG_ERROR("{} client hello too large {}", mux::log_event::kCert, client_hello.size());
         return std::make_error_code(std::errc::message_size);
     }
 
@@ -183,12 +181,12 @@ boost::system::error_code send_client_hello_record(fetch_context& ctx, const std
     const auto written = boost::asio::write(ctx.socket, boost::asio::buffer(client_hello_record), write_ec);
     if (write_ec)
     {
-        LOG_CTX_ERROR(ctx.ctx, "{} write ch failed {}", mux::log_event::kCert, write_ec.message());
+        LOG_ERROR("{} write ch failed {}", mux::log_event::kCert, write_ec.message());
         return write_ec;
     }
     if (written != client_hello_record.size())
     {
-        LOG_CTX_ERROR(ctx.ctx, "{} write ch short write {} of {}", mux::log_event::kCert, written, client_hello_record.size());
+        LOG_ERROR("{} write ch short write {} of {}", mux::log_event::kCert, written, client_hello_record.size());
         return boost::asio::error::fault;
     }
     return boost::system::error_code{};
@@ -200,11 +198,11 @@ bool validate_server_hello_body(const fetch_context& ctx, const std::vector<uint
     {
         return true;
     }
-    LOG_CTX_ERROR(ctx.ctx, "{} server hello empty", mux::log_event::kCert);
+    LOG_ERROR("{} server hello empty", mux::log_event::kCert);
     return false;
 }
 
-void validate_record_length(const uint16_t len, boost::system::error_code& ec)
+void validate_record_length(uint16_t len, boost::system::error_code& ec)
 {
     ec.clear();
     if (len <= constants::reality_limits::kMaxEncryptedRecordLen)
@@ -224,12 +222,12 @@ std::pair<boost::system::error_code, std::vector<uint8_t>> read_record_plaintext
         const auto header_size = boost::asio::read(ctx.socket, boost::asio::buffer(header), ec);
         if (ec)
         {
-            LOG_CTX_ERROR(ctx.ctx, "{} read header failed {}", mux::log_event::kCert, ec.message());
+            LOG_ERROR("{} read header failed {}", mux::log_event::kCert, ec.message());
             return std::make_pair(ec, std::vector<uint8_t>{});
         }
         if (header_size != sizeof(header))
         {
-            LOG_CTX_ERROR(ctx.ctx, "{} short read header {} of {}", mux::log_event::kCert, header_size, sizeof(header));
+            LOG_ERROR("{} short read header {} of {}", mux::log_event::kCert, header_size, sizeof(header));
             return std::make_pair(boost::asio::error::fault, std::vector<uint8_t>{});
         }
 
@@ -238,7 +236,7 @@ std::pair<boost::system::error_code, std::vector<uint8_t>> read_record_plaintext
         validate_record_length(len, len_ec);
         if (len_ec)
         {
-            LOG_CTX_ERROR(ctx.ctx, "{} plaintext record too large {}", mux::log_event::kCert, len);
+            LOG_ERROR("{} plaintext record too large {}", mux::log_event::kCert, len);
             return std::make_pair(len_ec, std::vector<uint8_t>{});
         }
 
@@ -247,12 +245,12 @@ std::pair<boost::system::error_code, std::vector<uint8_t>> read_record_plaintext
         const auto body_size = len == 0 ? std::size_t{0} : boost::asio::read(ctx.socket, boost::asio::buffer(body), body_ec);
         if (body_ec)
         {
-            LOG_CTX_ERROR(ctx.ctx, "{} read body failed {}", mux::log_event::kCert, body_ec.message());
+            LOG_ERROR("{} read body failed {}", mux::log_event::kCert, body_ec.message());
             return std::make_pair(body_ec, std::vector<uint8_t>{});
         }
         if (body_size != body.size())
         {
-            LOG_CTX_ERROR(ctx.ctx, "{} short read body {} of {}", mux::log_event::kCert, body_size, body.size());
+            LOG_ERROR("{} short read body {} of {}", mux::log_event::kCert, body_size, body.size());
             return std::make_pair(boost::asio::error::fault, std::vector<uint8_t>{});
         }
 
@@ -260,24 +258,24 @@ std::pair<boost::system::error_code, std::vector<uint8_t>> read_record_plaintext
         {
             if (len != 1 || body[0] != 0x01)
             {
-                LOG_CTX_ERROR(ctx.ctx, "{} invalid tls13 compat ccs len {}", mux::log_event::kCert, len);
+                LOG_ERROR("{} invalid tls13 compat ccs len {}", mux::log_event::kCert, len);
                 return std::make_pair(boost::asio::error::invalid_argument, std::vector<uint8_t>{});
             }
             if (ccs_count >= constants::tls_limits::kMaxCompatCcsRecords)
             {
-                LOG_CTX_ERROR(ctx.ctx, "{} too many tls13 compat ccs before server hello {}", mux::log_event::kCert, ccs_count);
+                LOG_ERROR("{} too many tls13 compat ccs before server hello {}", mux::log_event::kCert, ccs_count);
                 return std::make_pair(std::make_error_code(std::errc::bad_message), std::vector<uint8_t>{});
             }
 
             ++ccs_count;
             ctx.material.sends_change_cipher_spec = true;
-            LOG_CTX_DEBUG(ctx.ctx, "{} skip tls13 compat ccs before server hello count {}", mux::log_event::kCert, ccs_count);
+            LOG_DEBUG("{} skip tls13 compat ccs before server hello count {}", mux::log_event::kCert, ccs_count);
             continue;
         }
 
         if (header[0] != tls::kContentTypeHandshake)
         {
-            LOG_CTX_ERROR(ctx.ctx, "{} expected handshake type {}", mux::log_event::kCert, header[0]);
+            LOG_ERROR("{} expected handshake type {}", mux::log_event::kCert, header[0]);
             return std::make_pair(boost::asio::error::fault, std::vector<uint8_t>{});
         }
 
@@ -290,7 +288,7 @@ boost::system::error_code process_server_hello(fetch_context& ctx, const std::ve
     std::vector<uint8_t> server_hello;
     if (!tls::extract_handshake_message(server_hello_body, server_hello))
     {
-        LOG_CTX_ERROR(ctx.ctx, "{} server hello too short {}", mux::log_event::kCert, server_hello_body.size());
+        LOG_ERROR("{} server hello too short {}", mux::log_event::kCert, server_hello_body.size());
         return boost::asio::error::fault;
     }
 
@@ -312,7 +310,7 @@ boost::system::error_code process_server_hello(fetch_context& ctx, const std::ve
     }
     else
     {
-        LOG_CTX_WARN(ctx.ctx, "{} parse server hello extensions failed", mux::log_event::kCert);
+        LOG_WARN("{} parse server hello extensions failed", mux::log_event::kCert);
     }
     if (auto key_share = tls::extract_server_key_share(server_hello); key_share)
     {
@@ -324,10 +322,10 @@ boost::system::error_code process_server_hello(fetch_context& ctx, const std::ve
     const auto suite = tls::select_tls13_suite(cipher_suite);
     if (!suite.has_value())
     {
-        LOG_CTX_ERROR(ctx.ctx, "{} unsupported cipher suite 0x{:04x}", mux::log_event::kCert, cipher_suite);
+        LOG_ERROR("{} unsupported cipher suite 0x{:04x}", mux::log_event::kCert, cipher_suite);
         return boost::asio::error::no_protocol_option;
     }
-    LOG_CTX_INFO(ctx.ctx, "{} selected tls13 cipher suite 0x{:04x}", mux::log_event::kCert, cipher_suite);
+    LOG_INFO("{} selected tls13 cipher suite 0x{:04x}", mux::log_event::kCert, cipher_suite);
 
     ctx.transcript.set_protocol_hash(suite->md);
     return derive_server_record_protection(ctx, server_hello, *suite);
@@ -347,8 +345,7 @@ boost::system::error_code perform_handshake_start(fetch_context& ctx)
         client_hello_builder::build(spec, session_id, client_random, std::vector<uint8_t>(ctx.client_public, ctx.client_public + 32), {}, ctx.sni);
     if (client_hello.empty())
     {
-        LOG_CTX_ERROR(
-            ctx.ctx, "{} invalid client hello for sni '{}' fingerprint {}", mux::log_event::kCert, ctx.sni, fingerprint_name(ctx.fingerprint));
+        LOG_ERROR("{} invalid client hello for sni '{}' fingerprint {}", mux::log_event::kCert, ctx.sni, fingerprint_name(ctx.fingerprint));
         return boost::asio::error::invalid_argument;
     }
 
@@ -371,7 +368,7 @@ boost::system::error_code perform_handshake_start(fetch_context& ctx)
     return process_server_hello(ctx, read_result.second);
 }
 
-void read_record_body(fetch_context& ctx, const uint16_t len, std::vector<uint8_t>& record, boost::system::error_code& ec)
+void read_record_body(fetch_context& ctx, uint16_t len, std::vector<uint8_t>& record, boost::system::error_code& ec)
 {
     ec.clear();
     record.assign(len, 0);
@@ -387,7 +384,7 @@ void read_record_body(fetch_context& ctx, const uint16_t len, std::vector<uint8_
     }
     if (body_size != len)
     {
-        LOG_CTX_ERROR(ctx.ctx, "{} short read record body {} of {}", mux::log_event::kCert, body_size, len);
+        LOG_ERROR("{} short read record body {} of {}", mux::log_event::kCert, body_size, len);
         ec = boost::asio::error::fault;
     }
 }
@@ -425,7 +422,7 @@ std::pair<uint8_t, std::span<uint8_t>> handle_record_by_content_type(fetch_conte
             return decrypt_application_record(ctx, header, record, plaintext_buffer, ec);
 
         case tls::kContentTypeAlert:
-            LOG_CTX_WARN(ctx.ctx, "{} received plaintext alert", mux::log_event::kCert);
+            LOG_WARN("{} received plaintext alert", mux::log_event::kCert);
             ec = boost::asio::error::connection_reset;
             return {};
 
@@ -446,7 +443,7 @@ std::pair<uint8_t, std::span<uint8_t>> read_record(fetch_context& ctx, std::vect
     }
     if (header_size != sizeof(header))
     {
-        LOG_CTX_ERROR(ctx.ctx, "{} short read record header {} of {}", mux::log_event::kCert, header_size, sizeof(header));
+        LOG_ERROR("{} short read record header {} of {}", mux::log_event::kCert, header_size, sizeof(header));
         ec = boost::asio::error::fault;
         return {};
     }
@@ -472,13 +469,13 @@ bool process_handshake_message(fetch_context& ctx, const std::vector<uint8_t>& m
     const uint8_t message_type = message[0];
     const uint32_t message_len =
         (static_cast<uint32_t>(message[1]) << 16) | (static_cast<uint32_t>(message[2]) << 8) | static_cast<uint32_t>(message[3]);
-    LOG_CTX_INFO(ctx.ctx, "{} found handshake 0x{:02x} len {}", mux::log_event::kCert, message_type, message_len);
+    LOG_INFO("{} found handshake 0x{:02x} len {}", mux::log_event::kCert, message_type, message_len);
 
     if (message_type == 0x08)
     {
         if (auto alpn = tls::extract_alpn_from_encrypted_extensions(message); alpn)
         {
-            LOG_CTX_INFO(ctx.ctx, "{} learned alpn {}", mux::log_event::kCert, *alpn);
+            LOG_INFO("{} learned alpn {}", mux::log_event::kCert, *alpn);
             ctx.material.fingerprint.alpn = *alpn;
         }
         tls::handshake_extension_layout encrypted_extensions_layout;
@@ -489,16 +486,16 @@ bool process_handshake_message(fetch_context& ctx, const std::vector<uint8_t>& m
         }
         else
         {
-            LOG_CTX_WARN(ctx.ctx, "{} parse encrypted extensions layout failed", mux::log_event::kCert);
+            LOG_WARN("{} parse encrypted extensions layout failed", mux::log_event::kCert);
         }
     }
     else if (message_type == 0x0b)
     {
-        LOG_CTX_INFO(ctx.ctx, "{} found certificate len {}", mux::log_event::kCert, message_len);
+        LOG_INFO("{} found certificate len {}", mux::log_event::kCert, message_len);
         ctx.material.certificate_message = message;
         if (!tls::parse_certificate_chain(message, ctx.material.certificate_chain))
         {
-            LOG_CTX_ERROR(ctx.ctx, "{} parse certificate chain failed", mux::log_event::kCert);
+            LOG_ERROR("{} parse certificate chain failed", mux::log_event::kCert);
             return false;
         }
         ctx.saw_certificate = true;
@@ -509,22 +506,21 @@ bool process_handshake_message(fetch_context& ctx, const std::vector<uint8_t>& m
         std::vector<uint8_t> certificate_message;
         if (!tls::decompress_certificate_message(message, constants::tls_limits::kMaxHandshakeMessageSize, certificate_message, ec))
         {
-            LOG_CTX_ERROR(ctx.ctx, "{} decompress certificate failed {}", mux::log_event::kCert, ec.message());
+            LOG_ERROR("{} decompress certificate failed {}", mux::log_event::kCert, ec.message());
             return false;
         }
-        LOG_CTX_INFO(
-            ctx.ctx, "{} found compressed certificate len {} decompressed_len {}", mux::log_event::kCert, message_len, certificate_message.size());
+        LOG_INFO("{} found compressed certificate len {} decompressed_len {}", mux::log_event::kCert, message_len, certificate_message.size());
         ctx.material.certificate_message = std::move(certificate_message);
         if (!tls::parse_certificate_chain(ctx.material.certificate_message, ctx.material.certificate_chain))
         {
-            LOG_CTX_ERROR(ctx.ctx, "{} parse decompressed certificate chain failed", mux::log_event::kCert);
+            LOG_ERROR("{} parse decompressed certificate chain failed", mux::log_event::kCert);
             return false;
         }
         ctx.saw_certificate = true;
     }
     else if (message_type == 0x14)
     {
-        LOG_CTX_INFO(ctx.ctx, "{} observed server finished", mux::log_event::kCert);
+        LOG_INFO("{} observed server finished", mux::log_event::kCert);
         ctx.saw_server_finished = true;
     }
 
@@ -560,14 +556,14 @@ bool consume_handshake_messages(fetch_context& ctx,
 void append_next_handshake_record(fetch_context& ctx,
                                   tls::handshake_reassembler& assembler,
                                   std::vector<uint8_t>& plaintext_buffer,
-                                  const uint32_t record_index,
+                                  uint32_t record_index,
                                   boost::system::error_code& ec)
 {
     ec.clear();
     const auto read_result = read_record(ctx, plaintext_buffer, ec);
     if (ec)
     {
-        LOG_CTX_ERROR(ctx.ctx, "{} read record {} failed {}", mux::log_event::kCert, record_index, ec.message());
+        LOG_ERROR("{} read record {} failed {}", mux::log_event::kCert, record_index, ec.message());
         return;
     }
 
@@ -600,7 +596,7 @@ bool collect_site_material(fetch_context& ctx)
         append_next_handshake_record(ctx, assembler, plaintext_buffer, i, ec);
         if (ec)
         {
-            LOG_CTX_ERROR(ctx.ctx, "{} append record failed {}", mux::log_event::kCert, ec.message());
+            LOG_ERROR("{} append record failed {}", mux::log_event::kCert, ec.message());
             break;
         }
 
@@ -610,27 +606,26 @@ bool collect_site_material(fetch_context& ctx)
         }
         if (ec)
         {
-            LOG_CTX_ERROR(ctx.ctx, "{} consume failed {}", mux::log_event::kCert, ec.message());
+            LOG_ERROR("{} consume failed {}", mux::log_event::kCert, ec.message());
             break;
         }
     }
 
     if (ctx.saw_certificate)
     {
-        LOG_CTX_WARN(ctx.ctx, "{} server finished not observed before fetch stopped", mux::log_event::kCert);
+        LOG_WARN("{} server finished not observed before fetch stopped", mux::log_event::kCert);
     }
     else
     {
-        LOG_CTX_WARN(ctx.ctx, "{} certificate not found", mux::log_event::kCert);
+        LOG_WARN("{} certificate not found", mux::log_event::kCert);
     }
     return false;
 }
 
 site_material fetch_once(std::string host,
-                         const uint16_t port,
+                         uint16_t port,
                          std::string sni,
                          const fingerprint_type fingerprint,
-                         const std::string& trace_id,
                          boost::system::error_code& ec)
 {
     fetch_context ctx;
@@ -638,11 +633,8 @@ site_material fetch_once(std::string host,
     ctx.port = port;
     ctx.sni = std::move(sni);
     ctx.fingerprint = fingerprint;
-    ctx.ctx.trace_id(trace_id);
-    ctx.ctx.set_target(ctx.host, ctx.port);
-    ctx.ctx.sni(ctx.sni);
 
-    LOG_CTX_INFO(ctx.ctx, "{} starting fetch fingerprint {}", mux::log_event::kCert, fingerprint_name(ctx.fingerprint));
+    LOG_INFO("{} starting fetch fingerprint {}", mux::log_event::kCert, fingerprint_name(ctx.fingerprint));
 
     connect(ctx, ec);
     if (ec)
@@ -670,14 +662,14 @@ site_material fetch_once(std::string host,
 }    // namespace
 
 site_material fetch_site_material(
-    const std::string& host, uint16_t port, const std::string& sni, boost::system::error_code& ec, const std::string& trace_id)
+    const std::string& host, uint16_t port, const std::string& sni, boost::system::error_code& ec)
 {
     ec.clear();
     boost::system::error_code last_ec = boost::asio::error::fault;
 
     for (const auto fingerprint : constants::reality_limits::kFetchFingerprints)
     {
-        auto material = fetch_once(std::string(host), port, std::string(sni), fingerprint, trace_id, ec);
+        auto material = fetch_once(std::string(host), port, std::string(sni), fingerprint, ec);
         if (!ec)
         {
             return material;

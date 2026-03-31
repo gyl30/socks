@@ -37,7 +37,7 @@ boost::asio::awaitable<mux_frame> mux_stream::async_read(boost::system::error_co
     co_return data;
 }
 
-boost::asio::awaitable<mux_frame> mux_stream::async_read(const uint32_t timeout_sec, boost::system::error_code& ec)
+boost::asio::awaitable<mux_frame> mux_stream::async_read(uint32_t timeout_sec, boost::system::error_code& ec)
 {
     auto data = co_await timeout_io::wait_receive_with_timeout<mux_frame>(recv_channel_, timeout_sec, ec);
     co_return data;

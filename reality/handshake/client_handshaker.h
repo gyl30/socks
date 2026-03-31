@@ -16,7 +16,6 @@ namespace mux
 {
 
 struct config;
-class connection_context;
 
 }    // namespace mux
 
@@ -36,7 +35,7 @@ class client_handshaker
                       uint32_t max_handshake_records);
 
     [[nodiscard]] boost::asio::awaitable<client_handshake_result> run(boost::asio::ip::tcp::socket& socket,
-                                                                      const mux::connection_context& ctx,
+                                                                      uint32_t conn_id,
                                                                       boost::system::error_code& ec) const;
 
    private:

@@ -11,7 +11,7 @@ namespace reality
 {
 
 [[nodiscard]] site_material fetch_site_material(
-    const std::string& host, uint16_t port, const std::string& sni, boost::system::error_code& ec, const std::string& trace_id = "");
+    const std::string& host, uint16_t port, const std::string& sni, boost::system::error_code& ec);
 
 }    // namespace reality
 

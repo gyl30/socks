@@ -42,7 +42,7 @@ boost::asio::mutable_buffer reality_engine::read_buffer(std::size_t size_hint, b
     return boost::asio::buffer(rx_buf_.data() + static_cast<std::ptrdiff_t>(rx_buf_offset_ + rx_buf_size_), size_hint);
 }
 
-void reality_engine::commit_read(const std::size_t n) { rx_buf_size_ += n; }
+void reality_engine::commit_read(std::size_t n) { rx_buf_size_ += n; }
 
 std::span<const uint8_t> reality_engine::encrypt_record(const std::vector<uint8_t>& plaintext, boost::system::error_code& ec)
 {

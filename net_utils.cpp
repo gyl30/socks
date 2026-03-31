@@ -53,7 +53,7 @@ namespace mux::net
 namespace
 {
 
-uint64_t fnv1a_update(uint64_t hash, const unsigned char* data, const std::size_t len)
+uint64_t fnv1a_update(uint64_t hash, const unsigned char* data, std::size_t len)
 {
     for (std::size_t i = 0; i < len; ++i)
     {
@@ -82,7 +82,7 @@ cmsghdr* next_cmsg_header(const msghdr& msg, cmsghdr* current)
     return next;
 }
 
-void log_original_dst_getsockopt_failure(const int level, const int option, const boost::system::error_code& ec)
+void log_original_dst_getsockopt_failure(int level, int option, const boost::system::error_code& ec)
 {
     static std::atomic<uint64_t> last_log_ms{0};
     static std::atomic<uint32_t> suppressed{0};
@@ -105,7 +105,7 @@ void log_original_dst_getsockopt_failure(const int level, const int option, cons
         "get original tcp dst getsockopt failed level {} opt {} errno {} error {} suppressed {}", level, option, ec.value(), ec.message(), dropped);
 }
 
-boost::system::error_code select_original_dst_error(const bool prefer_ipv6,
+boost::system::error_code select_original_dst_error(bool prefer_ipv6,
                                                     const boost::system::error_code& v4_ec,
                                                     const boost::system::error_code& v6_ec)
 {
@@ -146,14 +146,14 @@ bool try_get_original_dst_from_local_endpoint(boost::asio::ip::tcp::socket& sock
 }
 #endif
 
-boost::asio::ip::udp::endpoint make_v4_endpoint(const in_addr& addr, const uint16_t port)
+boost::asio::ip::udp::endpoint make_v4_endpoint(const in_addr& addr, uint16_t port)
 {
     boost::asio::ip::address_v4::bytes_type bytes{};
     std::memcpy(bytes.data(), &addr, bytes.size());
     return {boost::asio::ip::address_v4(bytes), boost::endian::big_to_native(port)};
 }
 
-boost::asio::ip::udp::endpoint make_v6_endpoint(const in6_addr& addr, const uint16_t port, const uint32_t scope_id)
+boost::asio::ip::udp::endpoint make_v6_endpoint(const in6_addr& addr, uint16_t port, uint32_t scope_id)
 {
     boost::asio::ip::address_v6::bytes_type bytes{};
     const auto normalized_scope_id = static_cast<boost::asio::ip::scope_id_type>(scope_id);
@@ -162,7 +162,7 @@ boost::asio::ip::udp::endpoint make_v6_endpoint(const in6_addr& addr, const uint
 }
 
 #ifdef __linux__
-bool has_valid_cmsg_payload(const cmsghdr* cm, const std::size_t payload_len) { return cm->cmsg_len >= CMSG_LEN(payload_len); }
+bool has_valid_cmsg_payload(const cmsghdr* cm, std::size_t payload_len) { return cm->cmsg_len >= CMSG_LEN(payload_len); }
 
 std::optional<boost::asio::ip::udp::endpoint> parse_ipv4_original_dst(const cmsghdr* cm)
 {
@@ -200,7 +200,7 @@ std::optional<boost::asio::ip::udp::endpoint> parse_original_dst_control_message
 }
 #endif
 
-boost::asio::ip::udp::endpoint endpoint_from_sockaddr_v4(const sockaddr_storage& addr, const std::size_t len)
+boost::asio::ip::udp::endpoint endpoint_from_sockaddr_v4(const sockaddr_storage& addr, std::size_t len)
 {
     if (len < sizeof(sockaddr_in))
     {
@@ -210,7 +210,7 @@ boost::asio::ip::udp::endpoint endpoint_from_sockaddr_v4(const sockaddr_storage&
     return make_v4_endpoint(v4->sin_addr, v4->sin_port);
 }
 
-boost::asio::ip::udp::endpoint endpoint_from_sockaddr_v6(const sockaddr_storage& addr, const std::size_t len)
+boost::asio::ip::udp::endpoint endpoint_from_sockaddr_v6(const sockaddr_storage& addr, std::size_t len)
 {
     if (len < sizeof(sockaddr_in6))
     {
@@ -222,7 +222,7 @@ boost::asio::ip::udp::endpoint endpoint_from_sockaddr_v6(const sockaddr_storage&
 
 }    // namespace
 
-void set_socket_mark(const socket_handle_t fd, const uint32_t mark, boost::system::error_code& ec)
+void set_socket_mark(const socket_handle_t fd, uint32_t mark, boost::system::error_code& ec)
 {
     ec.clear();
 #ifdef __linux__
@@ -244,7 +244,7 @@ void set_socket_mark(const socket_handle_t fd, const uint32_t mark, boost::syste
 #endif
 }
 
-void set_socket_transparent_v4(const int fd, boost::system::error_code& ec)
+void set_socket_transparent_v4(int fd, boost::system::error_code& ec)
 {
     ec.clear();
 #ifdef __linux__
@@ -262,7 +262,7 @@ void set_socket_transparent_v4(const int fd, boost::system::error_code& ec)
 #endif
 }
 
-void set_socket_transparent_v6(const int fd, boost::system::error_code& ec)
+void set_socket_transparent_v6(int fd, boost::system::error_code& ec)
 {
     ec.clear();
 #ifdef __linux__
@@ -280,7 +280,7 @@ void set_socket_transparent_v6(const int fd, boost::system::error_code& ec)
 #endif
 }
 
-void set_socket_transparent(const int fd, const bool ipv6, boost::system::error_code& ec)
+void set_socket_transparent(int fd, bool ipv6, boost::system::error_code& ec)
 {
     ec.clear();
     if (!ipv6)
@@ -305,7 +305,7 @@ void set_socket_transparent(const int fd, const bool ipv6, boost::system::error_
     return;
 }
 
-void set_socket_recv_origdst_v4(const int fd, boost::system::error_code& ec)
+void set_socket_recv_origdst_v4(int fd, boost::system::error_code& ec)
 {
     ec.clear();
 #ifdef __linux__
@@ -323,7 +323,7 @@ void set_socket_recv_origdst_v4(const int fd, boost::system::error_code& ec)
 #endif
 }
 
-void set_socket_recv_origdst_v6(const int fd, boost::system::error_code& ec)
+void set_socket_recv_origdst_v6(int fd, boost::system::error_code& ec)
 {
     ec.clear();
 #ifdef __linux__
@@ -341,7 +341,7 @@ void set_socket_recv_origdst_v6(const int fd, boost::system::error_code& ec)
 #endif
 }
 
-void set_socket_recv_origdst(const int fd, const bool ipv6, boost::system::error_code& ec)
+void set_socket_recv_origdst(int fd, bool ipv6, boost::system::error_code& ec)
 {
     ec.clear();
     if (!ipv6)
@@ -437,7 +437,7 @@ std::optional<boost::asio::ip::udp::endpoint> parse_original_dst(const msghdr& m
 #endif
 }
 
-boost::asio::ip::udp::endpoint endpoint_from_sockaddr(const sockaddr_storage& addr, const std::size_t len)
+boost::asio::ip::udp::endpoint endpoint_from_sockaddr(const sockaddr_storage& addr, std::size_t len)
 {
     if (addr.ss_family == AF_INET)
     {
@@ -458,7 +458,7 @@ bool get_original_tcp_dst(boost::asio::ip::tcp::socket& socket, boost::asio::ip:
     const auto peer_endpoint = socket.remote_endpoint(peer_ec);
     const bool prefer_ipv6 = !peer_ec && peer_endpoint.address().is_v6();
 
-    const auto try_get_original_dst = [&](const int level, const int option, boost::system::error_code& op_ec) -> bool
+    const auto try_get_original_dst = [&](int level, int option, boost::system::error_code& op_ec) -> bool
     {
         sockaddr_storage addr{};
         decltype(addrinfo{}.ai_addrlen) addr_len = sizeof(addr);

@@ -1,6 +1,7 @@
 #ifndef REMOTE_SESSION_H
 #define REMOTE_SESSION_H
 
+#include <chrono>
 #include <memory>
 #include <cstdint>
 
@@ -11,7 +12,6 @@
 #include "mux_stream.h"
 #include "mux_protocol.h"
 #include "mux_connection.h"
-#include "connection_context.h"
 
 namespace mux
 {
@@ -22,7 +22,7 @@ class remote_tcp_session : public std::enable_shared_from_this<remote_tcp_sessio
     remote_tcp_session(boost::asio::io_context& io_context,
                        const std::shared_ptr<mux_connection>& connection,
                        uint32_t id,
-                       const connection_context& ctx,
+                       uint32_t conn_id,
                        const config& cfg);
 
     [[nodiscard]] bool has_stream() const;
@@ -38,8 +38,11 @@ class remote_tcp_session : public std::enable_shared_from_this<remote_tcp_sessio
 
    private:
     uint32_t id_;
+    uint32_t conn_id_ = 0;
     const config& cfg_;
-    connection_context ctx_;
+    uint64_t tx_bytes_ = 0;
+    uint64_t rx_bytes_ = 0;
+    std::chrono::steady_clock::time_point start_time_ = std::chrono::steady_clock::now();
     boost::asio::ip::tcp::socket socket_;
     boost::asio::steady_timer idle_timer_;
     std::shared_ptr<mux_stream> stream_;

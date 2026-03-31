@@ -9,7 +9,6 @@
 #include <boost/asio/awaitable.hpp>
 
 #include "reality/types.h"
-#include "connection_context.h"
 
 namespace mux
 {
@@ -27,7 +26,12 @@ struct site_material;
 struct server_handshake_context
 {
     boost::asio::ip::tcp::socket* socket = nullptr;
-    mux::connection_context ctx;
+    uint32_t conn_id = 0;
+    std::string local_addr;
+    uint16_t local_port = 0;
+    std::string remote_addr;
+    uint16_t remote_port = 0;
+    std::string sni;
 };
 
 class server_handshaker
