@@ -12,6 +12,9 @@ env:
   BOOST_VERSION: "1.89.0"
   BOOST_ARCHIVE: "boost_1_89_0.tar.bz2"
   BOOST_SRC_DIR: "boost_1_89_0"
+  BROTLI_VERSION: "1.1.0"
+  BROTLI_ARCHIVE: "brotli-1.1.0.tar.gz"
+  BROTLI_SRC_DIR: "brotli-1.1.0"
   OPENSSL_VERSION: "3.6.0"
   OPENSSL_ARCHIVE: "openssl-3.6.0.tar.gz"
   OPENSSL_SRC_DIR: "openssl-3.6.0"
@@ -72,6 +75,9 @@ jobs:
             -e BOOST_VERSION \
             -e BOOST_ARCHIVE \
             -e BOOST_SRC_DIR \
+            -e BROTLI_VERSION \
+            -e BROTLI_ARCHIVE \
+            -e BROTLI_SRC_DIR \
             -e CCACHE_MAXSIZE \
             -e OPENSSL_VERSION \
             -e OPENSSL_ARCHIVE \
@@ -234,6 +240,9 @@ jobs:
             -e BOOST_VERSION \
             -e BOOST_ARCHIVE \
             -e BOOST_SRC_DIR \
+            -e BROTLI_VERSION \
+            -e BROTLI_ARCHIVE \
+            -e BROTLI_SRC_DIR \
             -e CCACHE_MAXSIZE \
             -e OPENSSL_VERSION \
             -e OPENSSL_ARCHIVE \
@@ -256,9 +265,7 @@ jobs:
                 build-base \
                 clang \
                 lld \
-                linux-headers \
-                brotli-dev \
-                brotli-static
+                linux-headers
 
               mkdir -p /workspace/.cache/boost
               if [ ! -d "/workspace/.cache/boost/${BOOST_SRC_DIR}" ]; then
@@ -275,6 +282,10 @@ jobs:
               fi
 
               BOOST_ROOT="/workspace/.cache/boost/${BOOST_SRC_DIR}"
+              BROTLI_CACHE_ROOT="/workspace/.cache/brotli/${{ matrix.libc }}-${{ matrix.arch }}-${{ matrix.compiler }}"
+              BROTLI_ROOT="${BROTLI_CACHE_ROOT}/install-${BROTLI_VERSION}"
+              BROTLI_ARCHIVE_PATH="${BROTLI_CACHE_ROOT}/${BROTLI_ARCHIVE}"
+              BROTLI_SOURCE_DIR="${BROTLI_CACHE_ROOT}/${BROTLI_SRC_DIR}"
               OPENSSL_CACHE_ROOT="/workspace/.cache/openssl/${{ matrix.libc }}-${{ matrix.arch }}"
               OPENSSL_ROOT="${OPENSSL_CACHE_ROOT}/install-${OPENSSL_VERSION}"
               OPENSSL_ARCHIVE_PATH="${OPENSSL_CACHE_ROOT}/${OPENSSL_ARCHIVE}"
@@ -282,6 +293,7 @@ jobs:
               OPENSSL_CMAKE_DIR="${OPENSSL_ROOT}/lib64/cmake/OpenSSL"
               CCACHE_DIR="/workspace/.cache/ccache/linux-${{ matrix.libc }}-${{ matrix.arch }}-${{ matrix.compiler }}"
 
+              mkdir -p "${BROTLI_CACHE_ROOT}"
               mkdir -p "${OPENSSL_CACHE_ROOT}"
               mkdir -p "${CCACHE_DIR}"
               export CCACHE_DIR
@@ -291,7 +303,25 @@ jobs:
               export CCACHE_COMPRESS=1
               ccache -M "${CCACHE_MAXSIZE}"
               ccache -z
-              if ! grep -q "OPENSSL_VERSION_STR \"${OPENSSL_VERSION}\"" "${OPENSSL_ROOT}/include/openssl/opensslv.h" 2>/dev/null || [ ! -f "${OPENSSL_ROOT}/lib/libssl.a" ] || [ ! -f "${OPENSSL_ROOT}/lib/libcrypto.a" ]; then
+              if [ ! -f "${BROTLI_ROOT}/lib/libbrotlidec.a" ] || [ ! -f "${BROTLI_ROOT}/lib/libbrotlicommon.a" ]; then
+                if [ ! -f "${BROTLI_ARCHIVE_PATH}" ]; then
+                  wget -O "${BROTLI_ARCHIVE_PATH}" "https://github.com/google/brotli/archive/refs/tags/v${BROTLI_VERSION}.tar.gz"
+                fi
+
+                rm -rf "${BROTLI_SOURCE_DIR}" "${BROTLI_ROOT}"
+                tar xf "${BROTLI_ARCHIVE_PATH}" -C "${BROTLI_CACHE_ROOT}"
+                cmake -S "${BROTLI_SOURCE_DIR}" -B "${BROTLI_SOURCE_DIR}/build" -GNinja \
+                  -DCMAKE_BUILD_TYPE=Release \
+                  -DCMAKE_C_COMPILER="${CC_BIN}" \
+                  -DCMAKE_CXX_COMPILER="${CXX_BIN}" \
+                  -DCMAKE_INSTALL_PREFIX="${BROTLI_ROOT}" \
+                  -DCMAKE_INSTALL_LIBDIR=lib \
+                  -DBUILD_TESTING=OFF \
+                  -DBROTLI_DISABLE_TESTS=ON \
+                  -DBUILD_SHARED_LIBS=OFF
+                cmake --build "${BROTLI_SOURCE_DIR}/build" --target install --parallel
+              fi
+              if ! grep -q "OPENSSL_VERSION_STR \"${OPENSSL_VERSION}\"" "${OPENSSL_ROOT}/include/openssl/opensslv.h" 2>/dev/null || { [ ! -f "${OPENSSL_ROOT}/lib/libssl.a" ] && [ ! -f "${OPENSSL_ROOT}/lib64/libssl.a" ]; } || { [ ! -f "${OPENSSL_ROOT}/lib/libcrypto.a" ] && [ ! -f "${OPENSSL_ROOT}/lib64/libcrypto.a" ]; }; then
                 if [ ! -f "${OPENSSL_ARCHIVE_PATH}" ]; then
                   wget -O "${OPENSSL_ARCHIVE_PATH}" "https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/${OPENSSL_ARCHIVE}"
                 fi
@@ -327,6 +357,9 @@ jobs:
                 -DBoost_NO_BOOST_CMAKE=ON \
                 -DBoost_NO_SYSTEM_PATHS=ON \
                 -DBOOST_ROOT="${BOOST_ROOT}" \
+                -DBROTLIDEC_LIBRARY="${BROTLI_ROOT}/lib/libbrotlidec.a" \
+                -DBROTLICOMMON_LIBRARY="${BROTLI_ROOT}/lib/libbrotlicommon.a" \
+                -DBROTLI_INCLUDE_DIR="${BROTLI_ROOT}/include" \
                 -DOpenSSL_DIR="${OPENSSL_CMAKE_DIR}" \
                 -DOPENSSL_ROOT_DIR="${OPENSSL_ROOT}" \
                 -DCMAKE_PREFIX_PATH="${BOOST_ROOT};${OPENSSL_ROOT}"

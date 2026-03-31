@@ -125,7 +125,7 @@ inline     void JsonPrettyWriter::int64(int64_t v) { m->Int64(v); }
 inline     void JsonPrettyWriter::string(const char* s) { m->String(s); }
 inline     void JsonPrettyWriter::string(const char* s, size_t len) { m->String(s, (rapidjson::SizeType)len); }
 inline     void reflect(JsonPrettyWriter &vis, bool &v              ) { vis.m->Bool(v); }
-inline     void reflect(JsonPrettyWriter &vis, unsigned char &v     ) { vis.m->Int((rapidjson::SizeType)v); }
+inline     void reflect(JsonPrettyWriter &vis, unsigned char &v     ) { vis.m->Int(v); }
 inline     void reflect(JsonPrettyWriter &vis, short &v             ) { vis.m->Int(v); }
 inline     void reflect(JsonPrettyWriter &vis, unsigned short &v    ) { vis.m->Int(v); }
 inline     void reflect(JsonPrettyWriter &vis, int &v               ) { vis.m->Int(v); }
