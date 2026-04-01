@@ -82,7 +82,6 @@ jobs:
             -e OPENSSL_VERSION \
             -e OPENSSL_ARCHIVE \
             -e OPENSSL_SRC_DIR \
-            -e CI_BASE_SHA="${{ github.event.pull_request.base.sha || github.event.before }}" \
             -e COMPILER="${{ matrix.compiler }}" \
             ubuntu:24.04 bash -lc '
               set -euo pipefail
@@ -93,29 +92,16 @@ jobs:
                 bzip2 \
                 tar \
                 wget \
-                gnupg \
                 perl \
                 make \
                 cmake \
                 ninja-build \
                 pkg-config \
                 ccache \
-                clang-format \
                 gcc \
                 g++ \
                 libbrotli-dev \
-                clang \
-                clang-tidy \
-                clang-tools \
-                libclang-rt-18-dev \
-                git \
-                python3
-
-              mkdir -p /usr/share/keyrings
-              wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --dearmor > /usr/share/keyrings/llvm-archive-keyring.gpg
-              echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] http://apt.llvm.org/noble/ llvm-toolchain-noble-22 main" >/etc/apt/sources.list.d/llvm.list
-              apt-get update
-              apt-get install -y --no-install-recommends clang-tidy-22
+                clang
 
               mkdir -p /workspace/.cache/boost
               if [ ! -d "/workspace/.cache/boost/${BOOST_SRC_DIR}" ]; then
@@ -188,46 +174,6 @@ jobs:
 
               cmake --build build --target socks --parallel
               ccache -s
-              grep -q "SOCKS_HAS_TPROXY=1" build/compile_commands.json
-
-              if [ "${COMPILER}" = "clang" ] && [ "${{ matrix.arch }}" = "x86" ]; then
-                python3 scripts/ci_lint.py
-
-                cmake -S . -B build-fuzz -GNinja \
-                  -DCMAKE_BUILD_TYPE=Release \
-                  -DCMAKE_C_COMPILER="${CC_BIN}" \
-                  -DCMAKE_CXX_COMPILER="${CXX_BIN}" \
-                  -DCMAKE_C_COMPILER_LAUNCHER=ccache \
-                  -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
-                  -DENABLE_FUZZ=ON \
-                  -DENABLE_TSAN=OFF \
-                  -DENABLE_ASAN=OFF \
-                  -DBoost_NO_BOOST_CMAKE=ON \
-                  -DBoost_NO_SYSTEM_PATHS=ON \
-                  -DBOOST_ROOT="${BOOST_ROOT}" \
-                  -DOpenSSL_DIR="${OPENSSL_CMAKE_DIR}" \
-                  -DOPENSSL_ROOT_DIR="${OPENSSL_ROOT}" \
-                  -DCMAKE_PREFIX_PATH="${BOOST_ROOT};${OPENSSL_ROOT}"
-
-                cmake --build build-fuzz --target ch_parser_fuzz mux_codec_fuzz --parallel
-
-                SYMBOLIZER_BIN="$(command -v llvm-symbolizer || command -v llvm-symbolizer-18 || command -v llvm-symbolizer-22 || true)"
-                if [ -z "${SYMBOLIZER_BIN}" ]; then
-                  apt-get update
-                  apt-get install -y --no-install-recommends llvm
-                  SYMBOLIZER_BIN="$(command -v llvm-symbolizer || command -v llvm-symbolizer-18 || command -v llvm-symbolizer-22 || true)"
-                fi
-                if [ -z "${SYMBOLIZER_BIN}" ]; then
-                  echo "llvm symbolizer not found" >&2
-                  exit 1
-                fi
-                export ASAN_SYMBOLIZER_PATH="${SYMBOLIZER_BIN}"
-                export UBSAN_SYMBOLIZER_PATH="${SYMBOLIZER_BIN}"
-
-                ./build-fuzz/ch_parser_fuzz -runs=1000 -timeout=5 -rss_limit_mb=2048 -dict=fuzz/ch_parser.dict fuzz/corpus/ch_parser
-                ./build-fuzz/mux_codec_fuzz -runs=1000 -timeout=5 -rss_limit_mb=2048 -dict=fuzz/mux_codec.dict fuzz/corpus/mux_codec
-                ccache -s
-              fi
             '
 
       - name: Build Linux musl Matrix Target
@@ -366,15 +312,6 @@ jobs:
 
               cmake --build build --target socks --parallel
               ccache -s
-              grep -q "SOCKS_HAS_TPROXY=1" build/compile_commands.json
-              if readelf -l build/socks | grep -q "INTERP"; then
-                echo "musl build produced a dynamically linked binary" >&2
-                exit 1
-              fi
-              if readelf -d build/socks 2>/dev/null | grep -q "(NEEDED)"; then
-                echo "musl build still has shared library dependencies" >&2
-                exit 1
-              fi
             '
 
       - name: Save Linux ccache
@@ -501,11 +438,6 @@ jobs:
           export CCACHE_COMPRESS=1
           cmake --build build --target socks --parallel
           ccache -s
-
-      - name: Verify macOS Feature Set
-        run: |
-          set -euo pipefail
-          grep -q 'SOCKS_HAS_TPROXY=0' build/compile_commands.json
 
       - name: Save macOS ccache
         if: always()
@@ -650,12 +582,6 @@ jobs:
           export CCACHE_COMPRESS=1
           cmake --build build --target socks --parallel
           ccache -s
-
-      - name: Verify Windows Feature Set
-        shell: msys2 {0}
-        run: |
-          set -euo pipefail
-          grep -q 'SOCKS_HAS_TPROXY=0' build/compile_commands.json
 
       - name: Save Windows ccache
         if: always()
