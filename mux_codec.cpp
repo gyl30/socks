@@ -48,6 +48,27 @@ std::atomic<uint64_t> g_decode_warn_total{0};
                                });
 }
 
+bool encode_addr_payload(uint8_t first_byte, std::string_view addr, uint16_t port, const char* payload_name, std::vector<uint8_t>& buf)
+{
+    if (!is_printable_ascii_text(addr))
+    {
+        const auto warn_total = next_decode_warn_total();
+        if (should_log_decode_warn(warn_total))
+        {
+            LOG_WARN("{} payload encode invalid addr len {} warn_total {}", payload_name, addr.size(), warn_total);
+        }
+        return false;
+    }
+
+    buf.push_back(first_byte);
+    const auto addr_len = static_cast<uint8_t>(addr.size());
+    buf.push_back(addr_len);
+    buf.insert(buf.end(), addr.begin(), addr.begin() + addr_len);
+    buf.push_back(static_cast<uint8_t>((port >> 8) & 0xFF));
+    buf.push_back(static_cast<uint8_t>(port & 0xFF));
+    return true;
+}
+
 }    // namespace
 
 void mux_codec::encode_header(const frame_header& h, std::vector<uint8_t>& buf)
@@ -159,24 +180,7 @@ void mux_codec::decode_frames(std::vector<uint8_t>& pending,
 
 bool mux_codec::encode_syn(const syn_payload& p, std::vector<uint8_t>& buf)
 {
-    if (!is_printable_ascii_text(p.addr))
-    {
-        const auto warn_total = next_decode_warn_total();
-        if (should_log_decode_warn(warn_total))
-        {
-            LOG_WARN("syn payload encode invalid addr_len {} warn_total {}", p.addr.size(), warn_total);
-        }
-        return false;
-    }
-    buf.push_back(p.socks_cmd);
-
-    const auto addr_len = static_cast<uint8_t>(p.addr.size());
-    buf.push_back(addr_len);
-    buf.insert(buf.end(), p.addr.begin(), p.addr.begin() + addr_len);
-
-    buf.push_back(static_cast<uint8_t>((p.port >> 8) & 0xFF));
-    buf.push_back(static_cast<uint8_t>(p.port & 0xFF));
-    return true;
+    return encode_addr_payload(p.socks_cmd, p.addr, p.port, "syn", buf);
 }
 
 bool mux_codec::decode_syn(const uint8_t* data, std::size_t len, syn_payload& out)
@@ -218,24 +222,7 @@ bool mux_codec::decode_syn(const uint8_t* data, std::size_t len, syn_payload& ou
 
 bool mux_codec::encode_ack(const ack_payload& p, std::vector<uint8_t>& buf)
 {
-    if (!is_printable_ascii_text(p.bnd_addr))
-    {
-        const auto warn_total = next_decode_warn_total();
-        if (should_log_decode_warn(warn_total))
-        {
-            LOG_WARN("ack payload encode invalid addr len {} warn_total {}", p.bnd_addr.size(), warn_total);
-        }
-        return false;
-    }
-    buf.push_back(p.socks_rep);
-
-    const auto addr_len = static_cast<uint8_t>(p.bnd_addr.size());
-    buf.push_back(addr_len);
-    buf.insert(buf.end(), p.bnd_addr.begin(), p.bnd_addr.begin() + addr_len);
-
-    buf.push_back(static_cast<uint8_t>((p.bnd_port >> 8) & 0xFF));
-    buf.push_back(static_cast<uint8_t>(p.bnd_port & 0xFF));
-    return true;
+    return encode_addr_payload(p.socks_rep, p.bnd_addr, p.bnd_port, "ack", buf);
 }
 
 bool mux_codec::decode_ack(const uint8_t* data, std::size_t len, ack_payload& out)

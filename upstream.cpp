@@ -19,6 +19,7 @@
 #include "mux_codec.h"
 #include "net_utils.h"
 #include "mux_stream.h"
+#include "mux_session_utils.h"
 #include "mux_protocol.h"
 #include "mux_connection.h"
 #include "client_tunnel_pool.h"
@@ -29,54 +30,11 @@ namespace mux
 namespace
 {
 
-[[nodiscard]] const char* mux_command_name(uint8_t cmd)
-{
-    switch (cmd)
-    {
-        case mux::kCmdSyn:
-            return "syn";
-        case mux::kCmdAck:
-            return "ack";
-        case mux::kCmdDat:
-            return "dat";
-        case mux::kCmdFin:
-            return "fin";
-        case mux::kCmdRst:
-            return "rst";
-        default:
-            return "unknown";
-    }
-}
-
 [[nodiscard]] bool is_expected_proxy_stream_read_shutdown(const boost::system::error_code& ec)
 {
     return ec == boost::asio::error::operation_aborted || ec == boost::asio::error::bad_descriptor ||
            ec == boost::asio::experimental::error::channel_errors::channel_closed ||
            ec == boost::asio::experimental::error::channel_errors::channel_cancelled;
-}
-
-boost::asio::awaitable<void> send_connect_reset(const std::shared_ptr<mux_stream>& stream, uint32_t conn_id, const char* stage)
-{
-    if (stream == nullptr)
-    {
-        co_return;
-    }
-
-    mux_frame rst_frame;
-    rst_frame.h.stream_id = stream->id();
-    rst_frame.h.command = mux::kCmdRst;
-
-    boost::system::error_code rst_ec;
-    co_await stream->async_write(std::move(rst_frame), rst_ec);
-    if (rst_ec)
-    {
-        LOG_WARN("event {} conn_id {} stream_id {} stage {} send rst failed {}",
-                 log_event::kRoute,
-                 conn_id,
-                 stream->id(),
-                 stage,
-                 rst_ec.message());
-    }
 }
 
 }    // namespace
@@ -385,7 +343,7 @@ boost::asio::awaitable<void> proxy_upstream::wait_connect_ack(const std::shared_
                   ack_ec.message());
         result.ec = ack_ec;
         result.socks_rep = map_connect_error_to_socks_rep(ack_ec);
-        co_await send_connect_reset(stream, conn_id_, "wait_ack");
+        co_await session_util::send_stream_reset(stream, log_event::kRoute, conn_id_, "wait_ack");
         co_return;
     }
     if (ack_frame.h.command != kCmdAck)
@@ -397,11 +355,11 @@ boost::asio::awaitable<void> proxy_upstream::wait_connect_ack(const std::shared_
                  host,
                  port,
                  ack_frame.h.command,
-                 mux_command_name(ack_frame.h.command),
+                 session_util::mux_command_name(ack_frame.h.command),
                  ack_frame.payload.size());
         result.ec = boost::asio::error::connection_aborted;
         result.socks_rep = map_connect_error_to_socks_rep(result.ec);
-        co_await send_connect_reset(stream, conn_id_, "wait_ack_unexpected_cmd");
+        co_await session_util::send_stream_reset(stream, log_event::kRoute, conn_id_, "wait_ack_unexpected_cmd");
         co_return;
     }
 
@@ -416,7 +374,7 @@ boost::asio::awaitable<void> proxy_upstream::wait_connect_ack(const std::shared_
                  port);
         result.ec = boost::asio::error::invalid_argument;
         result.socks_rep = map_connect_error_to_socks_rep(result.ec);
-        co_await send_connect_reset(stream, conn_id_, "decode_ack");
+        co_await session_util::send_stream_reset(stream, log_event::kRoute, conn_id_, "decode_ack");
         co_return;
     }
     result.socks_rep = ack.socks_rep;
@@ -551,7 +509,7 @@ boost::asio::awaitable<std::size_t> proxy_upstream::read(std::vector<uint8_t>& b
                  conn_id_,
                  stream->id(),
                  data_frame.h.command,
-                 mux_command_name(data_frame.h.command),
+                 session_util::mux_command_name(data_frame.h.command),
                  data_frame.payload.size());
         reset_received_ = data_frame.h.command == mux::kCmdRst;
         if (data_frame.h.command == mux::kCmdFin)
@@ -571,7 +529,7 @@ boost::asio::awaitable<std::size_t> proxy_upstream::read(std::vector<uint8_t>& b
                  conn_id_,
                  stream->id(),
                  data_frame.h.command,
-                 mux_command_name(data_frame.h.command),
+                 session_util::mux_command_name(data_frame.h.command),
                  data_frame.payload.size());
         protocol_error_ = true;
         ec = boost::asio::error::invalid_argument;

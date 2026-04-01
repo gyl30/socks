@@ -21,6 +21,7 @@
 #include "mux_codec.h"
 #include "net_utils.h"
 #include "mux_stream.h"
+#include "mux_session_utils.h"
 #include "scoped_exit.h"
 #include "mux_protocol.h"
 #include "mux_connection.h"
@@ -28,44 +29,6 @@
 
 namespace mux
 {
-
-namespace
-{
-
-void update_stream_close_command(std::atomic<uint8_t>& stream_close_command, uint8_t next_command)
-{
-    auto current = stream_close_command.load(std::memory_order_relaxed);
-    for (;;)
-    {
-        uint8_t desired = current;
-        if (next_command == mux::kCmdRst)
-        {
-            desired = mux::kCmdRst;
-        }
-        else if (next_command == mux::kNoStreamControl && current != mux::kCmdRst)
-        {
-            desired = mux::kNoStreamControl;
-        }
-        if (desired == current)
-        {
-            return;
-        }
-        if (stream_close_command.compare_exchange_weak(current, desired, std::memory_order_relaxed))
-        {
-            return;
-        }
-    }
-}
-
-[[nodiscard]] std::string udp_target_key(const std::string& host, uint16_t port) { return host + "|" + std::to_string(port); }
-
-template <typename Cache>
-void evict_expired(Cache& cache, uint64_t now_ms)
-{
-    cache.evict_while([&](const auto&, const auto& entry) { return entry.expires_at <= now_ms; });
-}
-
-}    // namespace
 
 remote_udp_session::remote_udp_session(boost::asio::io_context& io_context,
                                        const std::shared_ptr<mux_connection>& connection,
@@ -107,22 +70,6 @@ boost::asio::awaitable<void> remote_udp_session::start_impl()
     DEFER(boost::system::error_code ignore; ignore = udp_socket_.close(ignore); (void)ignore;);
 
     boost::system::error_code ec;
-    const auto send_fail_ack = [&](uint8_t rep) -> boost::asio::awaitable<void>
-    {
-        const ack_payload ack{.socks_rep = rep, .bnd_addr = "0.0.0.0", .bnd_port = 0};
-        std::vector<uint8_t> ack_data;
-        if (!mux_codec::encode_ack(ack, ack_data))
-        {
-            co_return;
-        }
-
-        mux_frame ack_frame;
-        ack_frame.h.stream_id = id_;
-        ack_frame.h.command = mux::kCmdAck;
-        ack_frame.payload = std::move(ack_data);
-        boost::system::error_code ack_ec;
-        co_await stream_->async_write(ack_frame, ack_ec);
-    };
 
     auto bind_udp_socket = [&]() -> bool
     {
@@ -164,7 +111,7 @@ boost::asio::awaitable<void> remote_udp_session::start_impl()
 
     if (!bind_udp_socket())
     {
-        co_await send_fail_ack(socks::kRepGenFail);
+        co_await session_util::send_fail_ack(stream_, id_, socks::kRepGenFail);
         co_return;
     }
 
@@ -172,7 +119,7 @@ boost::asio::awaitable<void> remote_udp_session::start_impl()
     const auto local_ep = udp_socket_.local_endpoint(local_ep_ec);
     if (local_ep_ec)
     {
-        co_await send_fail_ack(socks::kRepGenFail);
+        co_await session_util::send_fail_ack(stream_, id_, socks::kRepGenFail);
         co_return;
     }
     const ack_payload ack{
@@ -248,17 +195,17 @@ boost::asio::awaitable<void> remote_udp_session::mux_to_udp()
             {
                 continue;
             }
-            update_stream_close_command(stream_close_command_, mux::kNoStreamControl);
+            session_util::update_stream_close_command(stream_close_command_, mux::kNoStreamControl);
             break;
         }
         if (data_frame.h.command == mux::kCmdRst || data_frame.h.command == mux::kCmdFin)
         {
-            update_stream_close_command(stream_close_command_, mux::kNoStreamControl);
+            session_util::update_stream_close_command(stream_close_command_, mux::kNoStreamControl);
             break;
         }
         if (data_frame.h.command != mux::kCmdDat)
         {
-            update_stream_close_command(stream_close_command_, mux::kCmdRst);
+            session_util::update_stream_close_command(stream_close_command_, mux::kCmdRst);
             ec = boost::asio::error::invalid_argument;
             break;
         }
@@ -267,11 +214,11 @@ boost::asio::awaitable<void> remote_udp_session::mux_to_udp()
         {
             if (ec == boost::asio::error::invalid_argument || ec == boost::system::errc::make_error_code(boost::system::errc::bad_message))
             {
-                update_stream_close_command(stream_close_command_, mux::kCmdRst);
+                session_util::update_stream_close_command(stream_close_command_, mux::kCmdRst);
             }
             else
             {
-                update_stream_close_command(stream_close_command_, mux::kNoStreamControl);
+                session_util::update_stream_close_command(stream_close_command_, mux::kNoStreamControl);
             }
             break;
         }
@@ -362,7 +309,7 @@ boost::asio::awaitable<void> remote_udp_session::on_frame(const mux_frame& frame
     const auto normalized_target = net::normalize_endpoint(target_ep);
     const auto now_ms = net::now_ms();
     const auto expires_at = now_ms + constants::udp::kCacheTtlMs;
-    evict_expired(allowed_reply_peers_, now_ms);
+    session_util::evict_expired(allowed_reply_peers_, now_ms);
     allowed_reply_peers_.put(normalized_target, peer_cache_entry{expires_at});
 }
 
@@ -396,7 +343,7 @@ boost::asio::awaitable<void> remote_udp_session::udp_to_mux()
                   ep.port());
         const auto normalized_ep = net::normalize_endpoint(ep);
         const auto now_ms = net::now_ms();
-        evict_expired(allowed_reply_peers_, now_ms);
+        session_util::evict_expired(allowed_reply_peers_, now_ms);
         auto* peer = allowed_reply_peers_.get(normalized_ep);
         if (peer == nullptr || peer->expires_at <= now_ms)
         {
@@ -459,7 +406,7 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> remote_udp_session::resol
                                                                                                    boost::system::error_code& ec)
 {
     ec.clear();
-    const auto key = udp_target_key(host, port);
+    const auto key = session_util::udp_target_key(host, port);
     const auto now_ms = net::now_ms();
     resolved_targets_.evict_if([&](const auto&, const auto& entry) { return entry.expires_at <= now_ms; });
     auto* cached = resolved_targets_.get(key);
