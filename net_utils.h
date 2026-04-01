@@ -142,6 +142,28 @@ inline boost::asio::awaitable<void> await_with_timeout(uint32_t timeout_sec,
     on_timeout(std::get<1>(op_or_timeout));
 }
 
+template <typename OpFactory>
+inline boost::asio::awaitable<std::size_t> wait_size_op_with_timeout(uint32_t timeout_sec, OpFactory&& op_factory, boost::system::error_code& ec)
+{
+    std::size_t transfer_size = 0;
+    co_await await_with_timeout(
+        timeout_sec,
+        std::forward<OpFactory>(op_factory),
+        [&](const auto& result)
+        {
+            const auto& [op_ec, n] = result;
+            ec = op_ec;
+            transfer_size = n;
+        },
+        [&](const auto& wait_result)
+        {
+            const auto& [wait_ec] = wait_result;
+            ec = wait_ec ? wait_ec : boost::system::error_code{boost::asio::error::timed_out};
+            transfer_size = 0;
+        });
+    co_return transfer_size;
+}
+
 }    // namespace detail
 
 inline uint64_t timeout_seconds_to_milliseconds(uint32_t timeout_sec) { return static_cast<uint64_t>(timeout_sec) * 1000ULL; }
@@ -212,23 +234,10 @@ inline boost::asio::awaitable<std::size_t> wait_read_with_timeout(boost::asio::i
                                                                   uint32_t timeout_sec,
                                                                   boost::system::error_code& ec)
 {
-    std::size_t read_size = 0;
-    co_await detail::await_with_timeout(
+    co_return co_await detail::wait_size_op_with_timeout(
         timeout_sec,
         [&]() { return boost::asio::async_read(socket, buffer, boost::asio::as_tuple(boost::asio::use_awaitable)); },
-        [&](const auto& result)
-        {
-            const auto& [read_ec, n] = result;
-            ec = read_ec;
-            read_size = n;
-        },
-        [&](const auto& wait_result)
-        {
-            const auto& [wait_ec] = wait_result;
-            ec = wait_ec ? wait_ec : boost::system::error_code{boost::asio::error::timed_out};
-            read_size = 0;
-        });
-    co_return read_size;
+        ec);
 }
 
 template <typename ConstBufferSequence>
@@ -237,23 +246,10 @@ inline boost::asio::awaitable<std::size_t> wait_write_with_timeout(boost::asio::
                                                                    uint32_t timeout_sec,
                                                                    boost::system::error_code& ec)
 {
-    std::size_t write_size = 0;
-    co_await detail::await_with_timeout(
+    co_return co_await detail::wait_size_op_with_timeout(
         timeout_sec,
         [&]() { return boost::asio::async_write(socket, buffers, boost::asio::as_tuple(boost::asio::use_awaitable)); },
-        [&](const auto& result)
-        {
-            const auto& [op_ec, n] = result;
-            ec = op_ec;
-            write_size = n;
-        },
-        [&](const auto& wait_result)
-        {
-            const auto& [wait_ec] = wait_result;
-            ec = wait_ec ? wait_ec : boost::system::error_code{boost::asio::error::timed_out};
-            write_size = 0;
-        });
-    co_return write_size;
+        ec);
 }
 
 template <typename MutableBufferSequence>
@@ -262,23 +258,10 @@ inline boost::asio::awaitable<std::size_t> wait_read_some_with_timeout(boost::as
                                                                        uint32_t timeout_sec,
                                                                        boost::system::error_code& ec)
 {
-    std::size_t read_size = 0;
-    co_await detail::await_with_timeout(
+    co_return co_await detail::wait_size_op_with_timeout(
         timeout_sec,
         [&]() { return socket.async_read_some(buffers, boost::asio::as_tuple(boost::asio::use_awaitable)); },
-        [&](const auto& result)
-        {
-            const auto& [op_ec, n] = result;
-            ec = op_ec;
-            read_size = n;
-        },
-        [&](const auto& wait_result)
-        {
-            const auto& [wait_ec] = wait_result;
-            ec = wait_ec ? wait_ec : boost::system::error_code{boost::asio::error::timed_out};
-            read_size = 0;
-        });
-    co_return read_size;
+        ec);
 }
 
 template <typename ConstBufferSequence>
@@ -287,23 +270,10 @@ inline boost::asio::awaitable<std::size_t> wait_write_some_with_timeout(boost::a
                                                                         uint32_t timeout_sec,
                                                                         boost::system::error_code& ec)
 {
-    std::size_t write_size = 0;
-    co_await detail::await_with_timeout(
+    co_return co_await detail::wait_size_op_with_timeout(
         timeout_sec,
         [&]() { return socket.async_write_some(buffers, boost::asio::as_tuple(boost::asio::use_awaitable)); },
-        [&](const auto& result)
-        {
-            const auto& [op_ec, n] = result;
-            ec = op_ec;
-            write_size = n;
-        },
-        [&](const auto& wait_result)
-        {
-            const auto& [wait_ec] = wait_result;
-            ec = wait_ec ? wait_ec : boost::system::error_code{boost::asio::error::timed_out};
-            write_size = 0;
-        });
-    co_return write_size;
+        ec);
 }
 
 template <typename InternetProtocol>
