@@ -131,7 +131,10 @@ boost::asio::awaitable<proxy_udp_stream> connect_remote_address(const std::share
     if (stream == nullptr)
     {
         ec = boost::asio::error::connection_aborted;
-        LOG_ERROR("event {} conn_id {} failed to create stream", log_event::kSocks, conn_id);
+        LOG_ERROR("event {} conn_id {} failed to create stream tunnel_ptr {}",
+                  log_event::kSocks,
+                  conn_id,
+                  static_cast<const void*>(tunnel.get()));
         co_return proxy_udp_stream{};
     }
     bool keep_stream = false;
