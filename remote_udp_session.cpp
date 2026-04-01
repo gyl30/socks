@@ -309,7 +309,7 @@ boost::asio::awaitable<void> remote_udp_session::on_frame(const mux_frame& frame
     const auto normalized_target = net::normalize_endpoint(target_ep);
     const auto now_ms = net::now_ms();
     const auto expires_at = now_ms + constants::udp::kCacheTtlMs;
-    session_util::evict_expired(allowed_reply_peers_, now_ms);
+    allowed_reply_peers_.evict_if([&](const auto&, const auto& entry) { return entry.expires_at <= now_ms; });
     allowed_reply_peers_.put(normalized_target, peer_cache_entry{expires_at});
 }
 
@@ -343,7 +343,7 @@ boost::asio::awaitable<void> remote_udp_session::udp_to_mux()
                   ep.port());
         const auto normalized_ep = net::normalize_endpoint(ep);
         const auto now_ms = net::now_ms();
-        session_util::evict_expired(allowed_reply_peers_, now_ms);
+        allowed_reply_peers_.evict_if([&](const auto&, const auto& entry) { return entry.expires_at <= now_ms; });
         auto* peer = allowed_reply_peers_.get(normalized_ep);
         if (peer == nullptr || peer->expires_at <= now_ms)
         {
