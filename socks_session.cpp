@@ -21,6 +21,7 @@
 #include "protocol.h"
 #include "net_utils.h"
 #include "context_pool.h"
+#include "run_loop_spawner.h"
 #include "socks_session.h"
 #include "connection_tracker.h"
 #include "tcp_socks_session.h"
@@ -75,7 +76,7 @@ socks_session::~socks_session() = default;
 
 void socks_session::start()
 {
-    worker_.group.spawn([self = shared_from_this()]() -> boost::asio::awaitable<void> { co_await self->run_loop(); });
+    run_loop_spawner::spawn(worker_, shared_from_this());
 }
 
 void socks_session::stop()

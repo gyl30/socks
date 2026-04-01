@@ -30,6 +30,7 @@ namespace mux
 
 struct config;
 struct io_worker;
+struct run_loop_spawner;
 class mux_stream;
 
 class mux_connection : public std::enable_shared_from_this<mux_connection>
@@ -75,6 +76,8 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     boost::asio::awaitable<void> on_tls_record(uint8_t type, std::span<const uint8_t> plaintext, boost::system::error_code& ec);
     [[nodiscard]] uint32_t acquire_next_id();
     [[nodiscard]] bool is_stream_limit_reached();
+
+    friend struct run_loop_spawner;
 
     const config& cfg_;
     uint32_t cid_ = 0;
