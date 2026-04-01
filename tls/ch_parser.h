@@ -127,6 +127,7 @@ class client_hello_parser
     static void handle_key_share_item(const reader& r, uint16_t group, uint16_t len, client_hello_info& info);
     static void finalize_key_share_info(client_hello_info& info);
     static void finalize_tls13_info(client_hello_info& info);
+    static bool parse_u16_list_payload(reader& r, std::vector<uint16_t>& values, bool use_u8_length_prefix);
     static bool parse_before_extensions(reader& r, client_hello_info& info);
     static void parse_extension_block(reader& r, client_hello_info& info);
 
