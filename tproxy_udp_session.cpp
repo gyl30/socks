@@ -23,6 +23,7 @@
 #include "net_utils.h"
 #include "mux_stream.h"
 #include "mux_protocol.h"
+#include "mux_session_utils.h"
 #include "context_pool.h"
 #include "mux_connection.h"
 #include "client_tunnel_pool.h"
@@ -34,60 +35,6 @@ namespace mux
 
 namespace
 {
-
-[[nodiscard]] bool is_normal_close_error(const boost::system::error_code& ec)
-{
-    return ec == boost::asio::error::operation_aborted || ec == boost::asio::error::bad_descriptor;
-}
-
-boost::asio::awaitable<void> send_udp_stream_reset(const std::shared_ptr<mux_stream>& stream, uint32_t conn_id, const char* stage)
-{
-    if (stream == nullptr)
-    {
-        co_return;
-    }
-
-    mux_frame rst_frame;
-    rst_frame.h.stream_id = stream->id();
-    rst_frame.h.command = mux::kCmdRst;
-
-    boost::system::error_code rst_ec;
-    co_await stream->async_write(std::move(rst_frame), rst_ec);
-    if (rst_ec)
-    {
-        LOG_WARN("event {} conn_id {} stream_id {} stage {} send rst failed {}",
-                 log_event::kMux,
-                 conn_id,
-                 stream->id(),
-                 stage,
-                 rst_ec.message());
-    }
-}
-
-void update_stream_close_command(std::atomic<uint8_t>& stream_close_command, uint8_t next_command)
-{
-    auto current = stream_close_command.load(std::memory_order_relaxed);
-    for (;;)
-    {
-        uint8_t desired = current;
-        if (next_command == mux::kCmdRst)
-        {
-            desired = mux::kCmdRst;
-        }
-        else if (next_command == mux::kNoStreamControl && current != mux::kCmdRst)
-        {
-            desired = mux::kNoStreamControl;
-        }
-        if (desired == current)
-        {
-            return;
-        }
-        if (stream_close_command.compare_exchange_weak(current, desired, std::memory_order_relaxed))
-        {
-            return;
-        }
-    }
-}
 
 void set_socket_reuse_port(int fd, boost::system::error_code& ec)
 {
@@ -155,7 +102,7 @@ boost::asio::awaitable<std::shared_ptr<mux_stream>> connect_remote_udp_stream(co
     if (ec)
     {
         LOG_WARN("event {} conn_id {} stream_id {} read udp ack failed {}", log_event::kMux, conn_id, stream->id(), ec.message());
-        co_await send_udp_stream_reset(stream, conn_id, "read_udp_ack");
+        co_await session_util::send_stream_reset(stream, log_event::kMux, conn_id, "read_udp_ack");
         tunnel->close_and_remove_stream(stream);
         co_return nullptr;
     }
@@ -167,7 +114,7 @@ boost::asio::awaitable<std::shared_ptr<mux_stream>> connect_remote_udp_stream(co
                  conn_id,
                  stream->id(),
                  ack_frame.h.command);
-        co_await send_udp_stream_reset(stream, conn_id, "unexpected_udp_ack_command");
+        co_await session_util::send_stream_reset(stream, log_event::kMux, conn_id, "unexpected_udp_ack_command");
         tunnel->close_and_remove_stream(stream);
         co_return nullptr;
     }
@@ -177,7 +124,7 @@ boost::asio::awaitable<std::shared_ptr<mux_stream>> connect_remote_udp_stream(co
     {
         ec = boost::asio::error::invalid_argument;
         LOG_WARN("event {} conn_id {} stream_id {} invalid udp ack payload", log_event::kMux, conn_id, stream->id());
-        co_await send_udp_stream_reset(stream, conn_id, "invalid_udp_ack_payload");
+        co_await session_util::send_stream_reset(stream, log_event::kMux, conn_id, "invalid_udp_ack_payload");
         tunnel->close_and_remove_stream(stream);
         co_return nullptr;
     }
@@ -584,17 +531,17 @@ boost::asio::awaitable<void> tproxy_udp_session::proxy_to_client()
             {
                 continue;
             }
-            update_stream_close_command(stream_close_command_, mux::kNoStreamControl);
+            session_util::update_stream_close_command(stream_close_command_, mux::kNoStreamControl);
             break;
         }
         if (frame.h.command == mux::kCmdFin || frame.h.command == mux::kCmdRst)
         {
-            update_stream_close_command(stream_close_command_, mux::kNoStreamControl);
+            session_util::update_stream_close_command(stream_close_command_, mux::kNoStreamControl);
             break;
         }
         if (frame.h.command != mux::kCmdDat)
         {
-            update_stream_close_command(stream_close_command_, mux::kCmdRst);
+            session_util::update_stream_close_command(stream_close_command_, mux::kCmdRst);
             LOG_WARN("event {} conn_id {} stream_id {} unexpected proxy udp frame {}",
                      log_event::kMux,
                      conn_id_,
@@ -606,13 +553,13 @@ boost::asio::awaitable<void> tproxy_udp_session::proxy_to_client()
         socks_udp_header header;
         if (!socks_codec::decode_udp_header(frame.payload.data(), frame.payload.size(), header))
         {
-            update_stream_close_command(stream_close_command_, mux::kCmdRst);
+            session_util::update_stream_close_command(stream_close_command_, mux::kCmdRst);
             LOG_WARN("event {} conn_id {} stream_id {} decode proxy udp header failed", log_event::kMux, conn_id_, stream_->id());
             break;
         }
         if (header.header_len > frame.payload.size())
         {
-            update_stream_close_command(stream_close_command_, mux::kCmdRst);
+            session_util::update_stream_close_command(stream_close_command_, mux::kCmdRst);
             LOG_WARN("event {} conn_id {} stream_id {} proxy udp header length invalid {}",
                      log_event::kMux,
                      conn_id_,
@@ -622,7 +569,7 @@ boost::asio::awaitable<void> tproxy_udp_session::proxy_to_client()
         }
         if (header.frag != 0x00)
         {
-            update_stream_close_command(stream_close_command_, mux::kCmdRst);
+            session_util::update_stream_close_command(stream_close_command_, mux::kCmdRst);
             LOG_WARN("event {} conn_id {} stream_id {} proxy udp fragment unsupported {}",
                      log_event::kMux,
                      conn_id_,
@@ -632,7 +579,7 @@ boost::asio::awaitable<void> tproxy_udp_session::proxy_to_client()
         }
         if (header.port == 0)
         {
-            update_stream_close_command(stream_close_command_, mux::kCmdRst);
+            session_util::update_stream_close_command(stream_close_command_, mux::kCmdRst);
             LOG_WARN("event {} conn_id {} stream_id {} proxy udp source port invalid", log_event::kMux, conn_id_, stream_->id());
             break;
         }
@@ -641,7 +588,7 @@ boost::asio::awaitable<void> tproxy_udp_session::proxy_to_client()
         const auto source_addr = boost::asio::ip::make_address(header.addr, addr_ec);
         if (addr_ec)
         {
-            update_stream_close_command(stream_close_command_, mux::kCmdRst);
+            session_util::update_stream_close_command(stream_close_command_, mux::kCmdRst);
             LOG_WARN("event {} conn_id {} stream_id {} parse proxy udp source address failed {}",
                      log_event::kMux,
                      conn_id_,
@@ -655,7 +602,7 @@ boost::asio::awaitable<void> tproxy_udp_session::proxy_to_client()
         const auto payload_len = frame.payload.size() - header.header_len;
         if (!(co_await send_to_client(source_endpoint, payload, payload_len)))
         {
-            update_stream_close_command(stream_close_command_, mux::kCmdRst);
+            session_util::update_stream_close_command(stream_close_command_, mux::kCmdRst);
             break;
         }
         last_activity_time_ms_ = net::now_ms();
@@ -705,7 +652,7 @@ boost::asio::awaitable<bool> tproxy_udp_session::send_to_client(const boost::asi
         {
             ec = boost::asio::error::operation_aborted;
         }
-        if (stopped_.load(std::memory_order_relaxed) || is_normal_close_error(ec))
+        if (stopped_.load(std::memory_order_relaxed) || session_util::is_normal_close_error(ec))
         {
             co_return false;
         }
@@ -717,7 +664,7 @@ boost::asio::awaitable<bool> tproxy_udp_session::send_to_client(const boost::asi
         boost::asio::buffer(payload, payload_len), client_endpoint_, boost::asio::as_tuple(boost::asio::use_awaitable));
     if (send_ec)
     {
-        if (stopped_.load(std::memory_order_relaxed) || is_normal_close_error(send_ec))
+        if (stopped_.load(std::memory_order_relaxed) || session_util::is_normal_close_error(send_ec))
         {
             co_return false;
         }

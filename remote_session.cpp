@@ -18,6 +18,7 @@
 #include "protocol.h"
 #include "mux_codec.h"
 #include "net_utils.h"
+#include "mux_session_utils.h"
 #include "scoped_exit.h"
 #include "mux_protocol.h"
 #include "mux_connection.h"
@@ -28,25 +29,6 @@ namespace mux
 
 namespace
 {
-
-[[nodiscard]] const char* mux_command_name(uint8_t cmd)
-{
-    switch (cmd)
-    {
-        case mux::kCmdSyn:
-            return "syn";
-        case mux::kCmdAck:
-            return "ack";
-        case mux::kCmdDat:
-            return "dat";
-        case mux::kCmdFin:
-            return "fin";
-        case mux::kCmdRst:
-            return "rst";
-        default:
-            return "unknown";
-    }
-}
 
 [[nodiscard]] uint8_t map_connect_error_to_socks_rep(const boost::system::error_code& ec)
 {
@@ -141,22 +123,6 @@ boost::asio::awaitable<void> remote_tcp_session::run(const syn_payload& syn)
 
     LOG_INFO("event {} conn_id {} stream_id {} target {}:{} connecting", log_event::kMux, conn_id_, id_, syn.addr, syn.port);
     boost::system::error_code ec;
-    const auto send_fail_ack = [&](uint8_t rep) -> boost::asio::awaitable<void>
-    {
-        const ack_payload ack{.socks_rep = rep, .bnd_addr = "0.0.0.0", .bnd_port = 0};
-        std::vector<uint8_t> ack_data;
-        if (!mux_codec::encode_ack(ack, ack_data))
-        {
-            co_return;
-        }
-
-        mux_frame ack_frame;
-        ack_frame.h.stream_id = id_;
-        ack_frame.h.command = mux::kCmdAck;
-        ack_frame.payload = std::move(ack_data);
-        boost::system::error_code ack_ec;
-        co_await stream_->async_write(ack_frame, ack_ec);
-    };
     boost::asio::ip::tcp::resolver resolver(socket_.get_executor());
     auto resolve_res = co_await net::wait_resolve_with_timeout(resolver, syn.addr, std::to_string(syn.port), cfg_.timeout.connect, ec);
     if (ec)
@@ -170,7 +136,7 @@ boost::asio::awaitable<void> remote_tcp_session::run(const syn_payload& syn)
                  syn.port,
                  ec.message(),
                  rep);
-        co_await send_fail_ack(rep);
+        co_await session_util::send_fail_ack(stream_, id_, rep);
         co_return;
     }
     if (resolve_res.begin() == resolve_res.end())
@@ -182,7 +148,7 @@ boost::asio::awaitable<void> remote_tcp_session::run(const syn_payload& syn)
                  syn.addr,
                  syn.port,
                  socks::kRepHostUnreach);
-        co_await send_fail_ack(socks::kRepHostUnreach);
+        co_await session_util::send_fail_ack(stream_, id_, socks::kRepHostUnreach);
         co_return;
     }
     boost::system::error_code connect_ec = boost::asio::error::host_unreachable;
@@ -216,7 +182,7 @@ boost::asio::awaitable<void> remote_tcp_session::run(const syn_payload& syn)
                  syn.port,
                  connect_ec.message(),
                  rep);
-        co_await send_fail_ack(rep);
+        co_await session_util::send_fail_ack(stream_, id_, rep);
         co_return;
     }
     ec.clear();
@@ -233,7 +199,7 @@ boost::asio::awaitable<void> remote_tcp_session::run(const syn_payload& syn)
     if (local_ep_ec)
     {
         LOG_WARN("event {} conn_id {} stream_id {} local endpoint unavailable {}", log_event::kMux, conn_id_, id_, local_ep_ec.message());
-        co_await send_fail_ack(socks::kRepGenFail);
+        co_await session_util::send_fail_ack(stream_, id_, socks::kRepGenFail);
         co_return;
     }
     std::string bind_addr = local_ep.address().to_string();
@@ -302,7 +268,7 @@ boost::asio::awaitable<void> remote_tcp_session::upstream()
                      conn_id_,
                      id_,
                      frame.h.command,
-                     mux_command_name(frame.h.command),
+                     session_util::mux_command_name(frame.h.command),
                      frame.payload.size());
             close_from_fin();
             break;
@@ -314,7 +280,7 @@ boost::asio::awaitable<void> remote_tcp_session::upstream()
                      conn_id_,
                      id_,
                      frame.h.command,
-                     mux_command_name(frame.h.command),
+                     session_util::mux_command_name(frame.h.command),
                      frame.payload.size());
             stream_->close();
             close_from_reset();
@@ -327,7 +293,7 @@ boost::asio::awaitable<void> remote_tcp_session::upstream()
                      conn_id_,
                      id_,
                      frame.h.command,
-                     mux_command_name(frame.h.command),
+                     session_util::mux_command_name(frame.h.command),
                      frame.payload.size());
             boost::system::error_code rst_ec;
             co_await send_stream_control_frame(stream_, mux::kCmdRst, rst_ec);
