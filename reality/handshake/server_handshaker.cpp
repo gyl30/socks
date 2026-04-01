@@ -746,16 +746,19 @@ std::string select_reality_alpn(const tls::client_hello_info& hello, const site_
     return cached_alpn;
 }
 
-std::vector<uint16_t> select_server_hello_extension_order(const site_material* site_material)
+template <typename Predicate>
+std::vector<uint16_t> select_extension_order(const site_material* site_material,
+                                             const std::vector<uint16_t> site_material::*extension_types_member,
+                                             Predicate&& should_keep)
 {
     if (site_material == nullptr)
     {
         return {};
     }
     std::vector<uint16_t> out;
-    for (const auto ext_type : site_material->server_hello_extension_types)
+    for (const auto ext_type : site_material->*extension_types_member)
     {
-        if (ext_type == tls::consts::ext::kSupportedVersions || ext_type == tls::consts::ext::kKeyShare)
+        if (should_keep(ext_type))
         {
             out.push_back(ext_type);
         }
@@ -763,21 +766,20 @@ std::vector<uint16_t> select_server_hello_extension_order(const site_material* s
     return out;
 }
 
+std::vector<uint16_t> select_server_hello_extension_order(const site_material* site_material)
+{
+    return select_extension_order(
+        site_material,
+        &site_material::server_hello_extension_types,
+        [](uint16_t ext_type) { return ext_type == tls::consts::ext::kSupportedVersions || ext_type == tls::consts::ext::kKeyShare; });
+}
+
 std::vector<uint16_t> select_encrypted_extensions_order(const site_material* site_material)
 {
-    if (site_material == nullptr)
-    {
-        return {};
-    }
-    std::vector<uint16_t> out;
-    for (const auto ext_type : site_material->encrypted_extension_types)
-    {
-        if (ext_type == tls::consts::ext::kAlpn || ext_type == tls::consts::ext::kPadding)
-        {
-            out.push_back(ext_type);
-        }
-    }
-    return out;
+    return select_extension_order(
+        site_material,
+        &site_material::encrypted_extension_types,
+        [](uint16_t ext_type) { return ext_type == tls::consts::ext::kAlpn || ext_type == tls::consts::ext::kPadding; });
 }
 
 bool should_include_encrypted_extensions_padding(const site_material* site_material)

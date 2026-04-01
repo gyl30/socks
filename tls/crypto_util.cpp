@@ -298,14 +298,15 @@ bool validate_mlkem768_ciphertext(const std::vector<uint8_t>& ciphertext, boost:
     return true;
 }
 
-openssl_ptrs::evp_pkey_ptr create_mlkem768_private_key_object(const std::vector<uint8_t>& private_key, boost::system::error_code& ec)
+template <typename Validator, typename Creator>
+openssl_ptrs::evp_pkey_ptr create_mlkem768_key_object(const std::vector<uint8_t>& key, Validator&& validator, Creator&& creator, boost::system::error_code& ec)
 {
-    if (!validate_mlkem768_private_key(private_key, ec))
+    if (!validator(key, ec))
     {
         return nullptr;
     }
 
-    openssl_ptrs::evp_pkey_ptr pkey(EVP_PKEY_new_raw_private_key_ex(nullptr, "ML-KEM-768", nullptr, private_key.data(), private_key.size()));
+    openssl_ptrs::evp_pkey_ptr pkey(creator(key));
     if (pkey == nullptr)
     {
         ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
@@ -314,20 +315,28 @@ openssl_ptrs::evp_pkey_ptr create_mlkem768_private_key_object(const std::vector<
     return pkey;
 }
 
+openssl_ptrs::evp_pkey_ptr create_mlkem768_private_key_object(const std::vector<uint8_t>& private_key, boost::system::error_code& ec)
+{
+    return create_mlkem768_key_object(
+        private_key,
+        validate_mlkem768_private_key,
+        [](const std::vector<uint8_t>& key)
+        {
+            return EVP_PKEY_new_raw_private_key_ex(nullptr, "ML-KEM-768", nullptr, key.data(), key.size());
+        },
+        ec);
+}
+
 openssl_ptrs::evp_pkey_ptr create_mlkem768_public_key_object(const std::vector<uint8_t>& public_key, boost::system::error_code& ec)
 {
-    if (!validate_mlkem768_public_key(public_key, ec))
-    {
-        return nullptr;
-    }
-
-    openssl_ptrs::evp_pkey_ptr pkey(EVP_PKEY_new_raw_public_key_ex(nullptr, "ML-KEM-768", nullptr, public_key.data(), public_key.size()));
-    if (pkey == nullptr)
-    {
-        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
-        return nullptr;
-    }
-    return pkey;
+    return create_mlkem768_key_object(
+        public_key,
+        validate_mlkem768_public_key,
+        [](const std::vector<uint8_t>& key)
+        {
+            return EVP_PKEY_new_raw_public_key_ex(nullptr, "ML-KEM-768", nullptr, key.data(), key.size());
+        },
+        ec);
 }
 
 bool export_mlkem768_keypair(const EVP_PKEY* pkey, std::vector<uint8_t>& public_key, std::vector<uint8_t>& private_key, boost::system::error_code& ec)
@@ -607,6 +616,77 @@ bool base64_url_decode(const std::string& input, std::vector<uint8_t>& out)
     return true;
 }
 
+constexpr std::size_t kRaw25519KeySize = 32;
+
+void cleanse_raw_keypair(uint8_t out_public[32], uint8_t out_private[32])
+{
+    OPENSSL_cleanse(out_public, kRaw25519KeySize);
+    OPENSSL_cleanse(out_private, kRaw25519KeySize);
+}
+
+bool export_raw_keypair(const openssl_ptrs::evp_pkey_ptr& pkey, uint8_t out_public[32], uint8_t out_private[32])
+{
+    std::size_t len = kRaw25519KeySize;
+    if (EVP_PKEY_get_raw_public_key(pkey.get(), out_public, &len) != 1 || len != kRaw25519KeySize)
+    {
+        cleanse_raw_keypair(out_public, out_private);
+        return false;
+    }
+
+    len = kRaw25519KeySize;
+    if (EVP_PKEY_get_raw_private_key(pkey.get(), out_private, &len) != 1 || len != kRaw25519KeySize)
+    {
+        cleanse_raw_keypair(out_public, out_private);
+        return false;
+    }
+    return true;
+}
+
+bool generate_raw_keypair(const int key_type, uint8_t out_public[32], uint8_t out_private[32])
+{
+    const openssl_ptrs::evp_pkey_ctx_ptr pkey_ctx_ptr(EVP_PKEY_CTX_new_id(key_type, nullptr));
+    if (pkey_ctx_ptr != nullptr && EVP_PKEY_keygen_init(pkey_ctx_ptr.get()) > 0)
+    {
+        EVP_PKEY* raw_pkey = nullptr;
+        if (EVP_PKEY_keygen(pkey_ctx_ptr.get(), &raw_pkey) > 0)
+        {
+            const openssl_ptrs::evp_pkey_ptr pkey(raw_pkey);
+            return export_raw_keypair(pkey, out_public, out_private);
+        }
+    }
+
+    cleanse_raw_keypair(out_public, out_private);
+    return false;
+}
+
+std::vector<uint8_t> extract_raw_public_key_from_private(const int key_type, const std::vector<uint8_t>& private_key, boost::system::error_code& ec)
+{
+    if (private_key.size() != kRaw25519KeySize)
+    {
+        ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
+        return {};
+    }
+
+    const openssl_ptrs::evp_pkey_ptr pkey(EVP_PKEY_new_raw_private_key(key_type, nullptr, private_key.data(), kRaw25519KeySize));
+    if (pkey == nullptr)
+    {
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return {};
+    }
+
+    auto public_key = extract_raw_public_key(pkey.get(), ec);
+    if (ec)
+    {
+        return {};
+    }
+    if (public_key.size() != kRaw25519KeySize)
+    {
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return {};
+    }
+    return public_key;
+}
+
 uint16_t random_grease()
 {
     ensure_openssl_initialized();
@@ -625,126 +705,25 @@ uint16_t random_grease()
 bool generate_x25519_keypair(uint8_t out_public[32], uint8_t out_private[32])
 {
     ensure_openssl_initialized();
-
-    const openssl_ptrs::evp_pkey_ctx_ptr pkey_ctx_ptr(EVP_PKEY_CTX_new_id(EVP_PKEY_X25519, nullptr));
-
-    if (pkey_ctx_ptr != nullptr && EVP_PKEY_keygen_init(pkey_ctx_ptr.get()) > 0)
-    {
-        EVP_PKEY* raw_pkey = nullptr;
-        if (EVP_PKEY_keygen(pkey_ctx_ptr.get(), &raw_pkey) > 0)
-        {
-            const openssl_ptrs::evp_pkey_ptr pkey(raw_pkey);
-            std::size_t len = 32;
-            if (EVP_PKEY_get_raw_public_key(pkey.get(), out_public, &len) != 1 || len != 32)
-            {
-                OPENSSL_cleanse(out_public, 32);
-                OPENSSL_cleanse(out_private, 32);
-                return false;
-            }
-            len = 32;
-            if (EVP_PKEY_get_raw_private_key(pkey.get(), out_private, &len) != 1 || len != 32)
-            {
-                OPENSSL_cleanse(out_public, 32);
-                OPENSSL_cleanse(out_private, 32);
-                return false;
-            }
-            return true;
-        }
-    }
-
-    OPENSSL_cleanse(out_public, 32);
-    OPENSSL_cleanse(out_private, 32);
-    return false;
+    return generate_raw_keypair(EVP_PKEY_X25519, out_public, out_private);
 }
 
 bool generate_ed25519_keypair(uint8_t out_public[32], uint8_t out_private[32])
 {
     ensure_openssl_initialized();
-
-    const openssl_ptrs::evp_pkey_ctx_ptr pkey_ctx_ptr(EVP_PKEY_CTX_new_id(EVP_PKEY_ED25519, nullptr));
-    if (pkey_ctx_ptr != nullptr && EVP_PKEY_keygen_init(pkey_ctx_ptr.get()) > 0)
-    {
-        EVP_PKEY* raw_pkey = nullptr;
-        if (EVP_PKEY_keygen(pkey_ctx_ptr.get(), &raw_pkey) > 0)
-        {
-            const openssl_ptrs::evp_pkey_ptr pkey(raw_pkey);
-            std::size_t len = 32;
-            if (EVP_PKEY_get_raw_public_key(pkey.get(), out_public, &len) != 1 || len != 32)
-            {
-                OPENSSL_cleanse(out_public, 32);
-                OPENSSL_cleanse(out_private, 32);
-                return false;
-            }
-            len = 32;
-            if (EVP_PKEY_get_raw_private_key(pkey.get(), out_private, &len) != 1 || len != 32)
-            {
-                OPENSSL_cleanse(out_public, 32);
-                OPENSSL_cleanse(out_private, 32);
-                return false;
-            }
-            return true;
-        }
-    }
-
-    OPENSSL_cleanse(out_public, 32);
-    OPENSSL_cleanse(out_private, 32);
-    return false;
+    return generate_raw_keypair(EVP_PKEY_ED25519, out_public, out_private);
 }
 
 std::vector<uint8_t> extract_public_key(const std::vector<uint8_t>& private_key, boost::system::error_code& ec)
 {
     ensure_openssl_initialized();
-
-    if (private_key.size() != 32)
-    {
-        ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
-        return {};
-    }
-
-    const openssl_ptrs::evp_pkey_ptr pkey(EVP_PKEY_new_raw_private_key(EVP_PKEY_X25519, nullptr, private_key.data(), 32));
-    if (pkey == nullptr)
-    {
-        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
-        return {};
-    }
-
-    std::size_t len = 32;
-    std::vector<uint8_t> public_key(32);
-    if (EVP_PKEY_get_raw_public_key(pkey.get(), public_key.data(), &len) != 1)
-    {
-        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
-        return {};
-    }
-
-    return public_key;
+    return extract_raw_public_key_from_private(EVP_PKEY_X25519, private_key, ec);
 }
 
 std::vector<uint8_t> extract_ed25519_public_key(const std::vector<uint8_t>& private_key, boost::system::error_code& ec)
 {
     ensure_openssl_initialized();
-
-    if (private_key.size() != 32)
-    {
-        ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
-        return {};
-    }
-
-    const openssl_ptrs::evp_pkey_ptr pkey(EVP_PKEY_new_raw_private_key(EVP_PKEY_ED25519, nullptr, private_key.data(), 32));
-    if (pkey == nullptr)
-    {
-        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
-        return {};
-    }
-
-    std::size_t len = 32;
-    std::vector<uint8_t> public_key(32);
-    if (EVP_PKEY_get_raw_public_key(pkey.get(), public_key.data(), &len) != 1)
-    {
-        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
-        return {};
-    }
-
-    return public_key;
+    return extract_raw_public_key_from_private(EVP_PKEY_ED25519, private_key, ec);
 }
 
 std::vector<uint8_t> x25519_derive(const std::vector<uint8_t>& private_key,

@@ -168,6 +168,34 @@ bool build_sni_ext(std::vector<uint8_t>& ext_buffer, uint16_t& ext_type, const e
     return true;
 }
 
+template <typename Range, typename Transform>
+void push_u16_list_extension(std::vector<uint8_t>& ext_buffer, const Range& values, bool use_u8_length_prefix, Transform&& transform)
+{
+    std::vector<uint8_t> list_data;
+    for (const auto& value : values)
+    {
+        message_builder::push_u16(list_data, transform(value));
+    }
+    if (use_u8_length_prefix)
+    {
+        message_builder::push_vector_u8(ext_buffer, list_data);
+        return;
+    }
+    message_builder::push_vector_u16(ext_buffer, list_data);
+}
+
+void push_protocol_name_list_extension(std::vector<uint8_t>& ext_buffer, const std::vector<std::string>& protocols)
+{
+    std::vector<uint8_t> proto_list;
+    for (const auto& protocol : protocols)
+    {
+        message_builder::push_vector_u8(proto_list, std::vector<uint8_t>(protocol.begin(), protocol.end()));
+    }
+    message_builder::push_vector_u16(ext_buffer, proto_list);
+}
+
+uint16_t identity_u16(const uint16_t value) { return value; }
+
 bool build_supported_groups_ext(const std::shared_ptr<extension_blueprint>& ext_ptr,
                                 std::vector<uint8_t>& ext_buffer,
                                 uint16_t& ext_type,
@@ -175,16 +203,18 @@ bool build_supported_groups_ext(const std::shared_ptr<extension_blueprint>& ext_
 {
     ext_type = tls::consts::ext::kSupportedGroups;
     auto bp = std::static_pointer_cast<supported_groups_blueprint>(ext_ptr);
-    std::vector<uint8_t> list_data;
-    for (auto g : bp->groups())
-    {
-        if (g == tls::kGreasePlaceholder)
+    push_u16_list_extension(
+        ext_buffer,
+        bp->groups(),
+        false,
+        [&](uint16_t group)
         {
-            g = ctx.grease_ctx.get_grease(1);
-        }
-        message_builder::push_u16(list_data, g);
-    }
-    message_builder::push_vector_u16(ext_buffer, list_data);
+            if (group == tls::kGreasePlaceholder)
+            {
+                return ctx.grease_ctx.get_grease(1);
+            }
+            return group;
+        });
     return true;
 }
 
@@ -200,12 +230,7 @@ bool build_alpn_ext(const std::shared_ptr<extension_blueprint>& ext_ptr, std::ve
 {
     ext_type = tls::consts::ext::kAlpn;
     auto bp = std::static_pointer_cast<alpn_blueprint>(ext_ptr);
-    std::vector<uint8_t> proto_list;
-    for (const auto& p : bp->protocols())
-    {
-        message_builder::push_vector_u8(proto_list, std::vector<uint8_t>(p.begin(), p.end()));
-    }
-    message_builder::push_vector_u16(ext_buffer, proto_list);
+    push_protocol_name_list_extension(ext_buffer, bp->protocols());
     return true;
 }
 
@@ -222,12 +247,7 @@ bool build_signature_algorithms_ext(const std::shared_ptr<extension_blueprint>& 
 {
     ext_type = tls::consts::ext::kSignatureAlg;
     auto bp = std::static_pointer_cast<signature_algorithms_blueprint>(ext_ptr);
-    std::vector<uint8_t> list_data;
-    for (auto a : bp->algorithms())
-    {
-        message_builder::push_u16(list_data, a);
-    }
-    message_builder::push_vector_u16(ext_buffer, list_data);
+    push_u16_list_extension(ext_buffer, bp->algorithms(), false, identity_u16);
     return true;
 }
 
@@ -298,16 +318,18 @@ bool build_supported_versions_ext(const std::shared_ptr<extension_blueprint>& ex
 {
     ext_type = tls::consts::ext::kSupportedVersions;
     auto bp = std::static_pointer_cast<supported_versions_blueprint>(ext_ptr);
-    std::vector<uint8_t> ver_list;
-    for (auto v : bp->versions())
-    {
-        if (v == tls::kGreasePlaceholder)
+    push_u16_list_extension(
+        ext_buffer,
+        bp->versions(),
+        true,
+        [&](uint16_t version)
         {
-            v = ctx.grease_ctx.get_grease(4);
-        }
-        message_builder::push_u16(ver_list, v);
-    }
-    message_builder::push_vector_u8(ext_buffer, ver_list);
+            if (version == tls::kGreasePlaceholder)
+            {
+                return ctx.grease_ctx.get_grease(4);
+            }
+            return version;
+        });
     return true;
 }
 
@@ -315,12 +337,7 @@ bool build_compress_certificate_ext(const std::shared_ptr<extension_blueprint>& 
 {
     ext_type = tls::consts::ext::kCompressCert;
     auto bp = std::static_pointer_cast<compress_cert_blueprint>(ext_ptr);
-    std::vector<uint8_t> alg_list;
-    for (auto a : bp->algorithms())
-    {
-        message_builder::push_u16(alg_list, a);
-    }
-    message_builder::push_vector_u8(ext_buffer, alg_list);
+    push_u16_list_extension(ext_buffer, bp->algorithms(), true, identity_u16);
     return true;
 }
 
@@ -328,12 +345,7 @@ bool build_application_settings_ext(const std::shared_ptr<extension_blueprint>& 
 {
     ext_type = tls::consts::ext::kApplicationSettings;
     auto bp = std::static_pointer_cast<application_settings_blueprint>(ext_ptr);
-    std::vector<uint8_t> proto_list;
-    for (const auto& p : bp->supported_protocols())
-    {
-        message_builder::push_vector_u8(proto_list, std::vector<uint8_t>(p.begin(), p.end()));
-    }
-    message_builder::push_vector_u16(ext_buffer, proto_list);
+    push_protocol_name_list_extension(ext_buffer, bp->supported_protocols());
     return true;
 }
 
@@ -341,12 +353,7 @@ bool build_application_settings_new_ext(const std::shared_ptr<extension_blueprin
 {
     ext_type = tls::consts::ext::kApplicationSettingsNew;
     auto bp = std::static_pointer_cast<application_settings_new_blueprint>(ext_ptr);
-    std::vector<uint8_t> proto_list;
-    for (const auto& p : bp->supported_protocols())
-    {
-        message_builder::push_vector_u8(proto_list, std::vector<uint8_t>(p.begin(), p.end()));
-    }
-    message_builder::push_vector_u16(ext_buffer, proto_list);
+    push_protocol_name_list_extension(ext_buffer, bp->supported_protocols());
     return true;
 }
 
@@ -392,12 +399,7 @@ bool build_delegated_credentials_ext(const std::shared_ptr<extension_blueprint>&
 {
     ext_type = tls::consts::ext::kDelegatedCredentials;
     auto bp = std::static_pointer_cast<delegated_credentials_blueprint>(ext_ptr);
-    std::vector<uint8_t> alg_list;
-    for (auto a : bp->algorithms())
-    {
-        message_builder::push_u16(alg_list, a);
-    }
-    message_builder::push_vector_u16(ext_buffer, alg_list);
+    push_u16_list_extension(ext_buffer, bp->algorithms(), false, identity_u16);
     return true;
 }
 
