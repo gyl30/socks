@@ -32,6 +32,7 @@ extern "C"
 #include "mux_stream.h"
 #include "net_utils.h"
 #include "mux_protocol.h"
+#include "run_loop_spawner.h"
 #include "mux_connection.h"
 #include "reality/session/engine.h"
 #include "reality/session/session.h"
@@ -236,7 +237,7 @@ void mux_connection::start()
     last_write_time_ms_ = now_ms;
     last_non_heartbeat_read_time_ms_ = now_ms;
     last_non_heartbeat_write_time_ms_ = now_ms;
-    worker_.group.spawn([self = shared_from_this()]() -> boost::asio::awaitable<void> { co_await self->run_loop(); });
+    run_loop_spawner::spawn(worker_, shared_from_this());
 }
 
 boost::asio::awaitable<void> mux_connection::run_loop()

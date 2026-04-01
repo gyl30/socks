@@ -19,6 +19,8 @@
 namespace mux
 {
 
+struct run_loop_spawner;
+
 class socks_session : public std::enable_shared_from_this<socks_session>
 {
    public:
@@ -100,6 +102,8 @@ class socks_session : public std::enable_shared_from_this<socks_session>
     boost::asio::awaitable<void> reply_error(uint8_t code);
 
    private:
+    friend struct run_loop_spawner;
+
     uint32_t sid_;
     uint32_t conn_id_ = 0;
     std::string username_;
