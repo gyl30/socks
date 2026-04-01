@@ -5,8 +5,8 @@
 #include <algorithm>
 
 #include "log.h"
-#include "rule_file_utils.h"
 #include "domain_matcher.h"
+#include "rule_file_utils.h"
 
 namespace mux
 {

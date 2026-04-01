@@ -8,9 +8,9 @@
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/ip/address.hpp>
 
-#include "constants.h"
 #include "log.h"
 #include "router.h"
+#include "constants.h"
 #include "ip_matcher.h"
 #include "domain_matcher.h"
 

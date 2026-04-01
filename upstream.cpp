@@ -19,9 +19,9 @@
 #include "mux_codec.h"
 #include "net_utils.h"
 #include "mux_stream.h"
-#include "mux_session_utils.h"
 #include "mux_protocol.h"
 #include "mux_connection.h"
+#include "mux_session_utils.h"
 #include "client_tunnel_pool.h"
 
 namespace mux
