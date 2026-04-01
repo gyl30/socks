@@ -26,7 +26,6 @@
 #include "tls/handshake_message.h"
 #include "reality/session/session.h"
 #include "reality/handshake/fingerprint.h"
-#include "reality/session/lightweight_client.h"
 #include "reality/handshake/client_handshaker.h"
 
 namespace mux
@@ -208,74 +207,6 @@ std::shared_ptr<mux_connection> client_tunnel_pool::select_tunnel()
     return nullptr;
 }
 
-static boost::asio::awaitable<void> run_real_certificate_fallback(const config& cfg,
-                                                                  const auto& options,
-                                                                  boost::asio::ip::tcp::socket& socket,
-                                                                  const reality::client_handshake_result& handshake_ret,
-                                                                  uint32_t conn_id)
-{
-    if (!handshake_ret.negotiated.negotiated_alpn.empty() && handshake_ret.negotiated.negotiated_alpn != "http/1.1")
-    {
-        LOG_INFO("event {} conn_id {} sni {} stage skip_request negotiated_alpn {}",
-                 log_event::kFallback,
-                 conn_id,
-                 options.sni,
-                 handshake_ret.negotiated.negotiated_alpn);
-        co_return;
-    }
-
-    boost::system::error_code ec;
-    auto record_context = reality::build_reality_record_context(handshake_ret, ec);
-    if (ec)
-    {
-        LOG_WARN("event {} conn_id {} sni {} stage build_session error {}", log_event::kFallback, conn_id, options.sni, ec.message());
-        co_return;
-    }
-
-    reality::lightweight_http_visit_options visit_options;
-    visit_options.host = options.sni;
-    visit_options.write_timeout_sec = cfg.timeout.write;
-    visit_options.read_timeout_sec = cfg.timeout.read;
-
-    const auto visit_result = co_await reality::run_lightweight_http_visit(socket, std::move(record_context), visit_options, ec);
-    if (ec)
-    {
-        LOG_WARN("event {} conn_id {} sni {} stage {} error {}",
-                 log_event::kFallback,
-                 conn_id,
-                 options.sni,
-                 visit_result.error_stage,
-                 ec.message());
-        co_return;
-    }
-
-    const auto tx_bytes = visit_result.tx_plain_bytes;
-    const auto rx_bytes = visit_result.rx_plain_bytes;
-
-    if (visit_result.saw_application_data)
-    {
-        LOG_INFO("event {} conn_id {} sni {} stage lightweight_visit_complete status \"{}\" tx_plain {}B rx_plain {}B header_complete {} alert {}",
-                 log_event::kFallback,
-                 conn_id,
-                 options.sni,
-                 visit_result.status_line.empty() ? "unknown" : visit_result.status_line,
-                 tx_bytes,
-                 rx_bytes,
-                 visit_result.header_complete,
-                 visit_result.saw_alert);
-    }
-    else
-    {
-        LOG_WARN("event {} conn_id {} sni {} stage lightweight_visit_no_response tx_plain {}B alert {}",
-                 log_event::kFallback,
-                 conn_id,
-                 options.sni,
-                 tx_bytes,
-                 visit_result.saw_alert);
-    }
-    co_return;
-}
-
 static boost::asio::awaitable<reality::client_handshake_result> perform_reality_handshake_with_timeout(
     const config& cfg, const auto& options, boost::asio::ip::tcp::socket& socket, uint32_t conn_id, boost::system::error_code& ec)
 {
@@ -392,8 +323,10 @@ static boost::asio::awaitable<std::shared_ptr<mux_connection>> connect_remote_on
              tls::named_group_name(handshake_ret.negotiated.key_share_group));
     if (handshake_ret.auth_mode == reality::client_auth_mode::kRealCertificateFallback)
     {
-        LOG_WARN("event {} conn_id {} received real certificate fallback run lightweight visit", log_event::kHandshake, cid);
-        co_await run_real_certificate_fallback(cfg, options, socket, handshake_ret, cid);
+        LOG_WARN("event {} conn_id {} sni {} peer is not a reality endpoint close without fallback",
+                 log_event::kHandshake,
+                 cid,
+                 options.sni);
         boost::system::error_code close_ec;
         close_ec = socket.close(close_ec);
         if (close_ec)
