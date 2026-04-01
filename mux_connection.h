@@ -69,11 +69,13 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     boost::asio::awaitable<void> heartbeat_loop();
 
    private:
+    boost::asio::awaitable<void> handle_heartbeat_frame(std::vector<uint8_t> payload);
     boost::asio::awaitable<void> on_mux_frame(mux::frame_header header, std::vector<uint8_t> payload);
     boost::asio::awaitable<void> handle_unknown_stream(mux::frame_header header, std::vector<uint8_t> payload);
     boost::asio::awaitable<void> handle_stream_frame(const mux::frame_header& header, std::vector<uint8_t> payload);
     boost::asio::awaitable<void> queue_incoming_syn(mux::frame_header header, std::vector<uint8_t> payload);
     boost::asio::awaitable<void> on_tls_record(uint8_t type, std::span<const uint8_t> plaintext, boost::system::error_code& ec);
+    boost::asio::awaitable<void> send_heartbeat_frame(boost::system::error_code& ec);
     [[nodiscard]] uint32_t acquire_next_id();
     [[nodiscard]] bool is_stream_limit_reached();
 
@@ -95,8 +97,10 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     uint64_t last_write_time_ms_{0};
     uint64_t last_non_heartbeat_read_time_ms_{0};
     uint64_t last_non_heartbeat_write_time_ms_{0};
+    uint64_t last_heartbeat_rtt_ms_{0};
     boost::asio::ip::tcp::socket socket_;
     std::atomic<bool> stopped_{false};
+    bool heartbeat_rtt_valid_ = false;
     std::vector<uint8_t> pending_plaintext_;
     using channel_type = boost::asio::experimental::concurrent_channel<void(boost::system::error_code, mux_frame)>;
     using stop_channel_type = boost::asio::experimental::concurrent_channel<void(boost::system::error_code)>;

@@ -43,6 +43,92 @@ namespace mux
 namespace
 {
 
+constexpr char kHeartbeatProbeMagic[] = "hbt1";
+constexpr uint8_t kHeartbeatProbeRequest = 1;
+constexpr uint8_t kHeartbeatProbeResponse = 2;
+constexpr std::size_t kHeartbeatProbeMagicSize = 4;
+constexpr std::size_t kHeartbeatProbeTypeOffset = kHeartbeatProbeMagicSize;
+constexpr std::size_t kHeartbeatProbeTimestampOffset = kHeartbeatProbeTypeOffset + 1;
+constexpr std::size_t kHeartbeatProbeHeaderSize = kHeartbeatProbeTimestampOffset + 8;
+
+void encode_u64_be(const uint64_t value, uint8_t* out)
+{
+    out[0] = static_cast<uint8_t>((value >> 56) & 0xFF);
+    out[1] = static_cast<uint8_t>((value >> 48) & 0xFF);
+    out[2] = static_cast<uint8_t>((value >> 40) & 0xFF);
+    out[3] = static_cast<uint8_t>((value >> 32) & 0xFF);
+    out[4] = static_cast<uint8_t>((value >> 24) & 0xFF);
+    out[5] = static_cast<uint8_t>((value >> 16) & 0xFF);
+    out[6] = static_cast<uint8_t>((value >> 8) & 0xFF);
+    out[7] = static_cast<uint8_t>(value & 0xFF);
+}
+
+[[nodiscard]] uint64_t decode_u64_be(const uint8_t* data)
+{
+    return (static_cast<uint64_t>(data[0]) << 56) | (static_cast<uint64_t>(data[1]) << 48) | (static_cast<uint64_t>(data[2]) << 40) |
+           (static_cast<uint64_t>(data[3]) << 32) | (static_cast<uint64_t>(data[4]) << 24) | (static_cast<uint64_t>(data[5]) << 16) |
+           (static_cast<uint64_t>(data[6]) << 8) | static_cast<uint64_t>(data[7]);
+}
+
+void write_heartbeat_probe_prefix(std::vector<uint8_t>& payload, uint8_t type, uint64_t send_ms)
+{
+    payload[0] = static_cast<uint8_t>(kHeartbeatProbeMagic[0]);
+    payload[1] = static_cast<uint8_t>(kHeartbeatProbeMagic[1]);
+    payload[2] = static_cast<uint8_t>(kHeartbeatProbeMagic[2]);
+    payload[3] = static_cast<uint8_t>(kHeartbeatProbeMagic[3]);
+    payload[kHeartbeatProbeTypeOffset] = type;
+    encode_u64_be(send_ms, payload.data() + static_cast<std::ptrdiff_t>(kHeartbeatProbeTimestampOffset));
+}
+
+[[nodiscard]] bool decode_heartbeat_probe(const std::span<const uint8_t> payload, uint8_t& type, uint64_t& send_ms)
+{
+    if (payload.size() < kHeartbeatProbeHeaderSize)
+    {
+        return false;
+    }
+    if (payload[0] != static_cast<uint8_t>(kHeartbeatProbeMagic[0]) || payload[1] != static_cast<uint8_t>(kHeartbeatProbeMagic[1]) ||
+        payload[2] != static_cast<uint8_t>(kHeartbeatProbeMagic[2]) || payload[3] != static_cast<uint8_t>(kHeartbeatProbeMagic[3]))
+    {
+        return false;
+    }
+    type = payload[kHeartbeatProbeTypeOffset];
+    if (type != kHeartbeatProbeRequest && type != kHeartbeatProbeResponse)
+    {
+        return false;
+    }
+    send_ms = decode_u64_be(payload.data() + static_cast<std::ptrdiff_t>(kHeartbeatProbeTimestampOffset));
+    return true;
+}
+
+[[nodiscard]] uint64_t next_heartbeat_interval_ms(const config& cfg)
+{
+    static thread_local std::mt19937 rng(std::random_device{}());
+    std::uniform_int_distribution<uint32_t> interval_dist(cfg.heartbeat.min_interval, cfg.heartbeat.max_interval);
+    return static_cast<uint64_t>(interval_dist(rng)) * 1000ULL;
+}
+
+[[nodiscard]] std::size_t next_heartbeat_payload_size(const config& cfg, bool with_probe_prefix)
+{
+    static thread_local std::mt19937 rng(std::random_device{}());
+    std::uniform_int_distribution<uint32_t> padding_dist(cfg.heartbeat.min_padding, cfg.heartbeat.max_padding);
+    const auto padding_len = padding_dist(rng);
+    const auto payload_len = std::min<std::size_t>(padding_len, mux::kMaxPayload);
+    if (!with_probe_prefix)
+    {
+        return payload_len;
+    }
+    return std::max<std::size_t>(payload_len, kHeartbeatProbeHeaderSize);
+}
+
+[[nodiscard]] bool fill_random_bytes(std::vector<uint8_t>& payload, std::size_t offset)
+{
+    if (payload.size() <= offset)
+    {
+        return true;
+    }
+    return RAND_bytes(payload.data() + static_cast<std::ptrdiff_t>(offset), static_cast<int>(payload.size() - offset)) == 1;
+}
+
 void handle_post_handshake_record(uint32_t cid, const std::span<const uint8_t> plaintext, boost::system::error_code& ec)
 {
     if (plaintext.empty())
@@ -488,40 +574,82 @@ boost::asio::awaitable<void> mux_connection::timeout_loop()
     stop();
 }
 
+boost::asio::awaitable<void> mux_connection::send_heartbeat_frame(boost::system::error_code& ec)
+{
+    std::vector<uint8_t> payload(next_heartbeat_payload_size(cfg_, true));
+    write_heartbeat_probe_prefix(payload, kHeartbeatProbeRequest, net::now_ms());
+    if (!fill_random_bytes(payload, kHeartbeatProbeHeaderSize))
+    {
+        LOG_ERROR("mux {} heartbeat rand failed", cid_);
+        ec = boost::asio::error::fault;
+        co_return;
+    }
+    LOG_DEBUG("mux {} sending heartbeat size {}", cid_, payload.size());
+
+    mux_frame msg;
+    msg.h.stream_id = mux::kStreamIdHeartbeat;
+    msg.h.command = mux::kCmdDat;
+    msg.payload = std::move(payload);
+    co_await send_async(std::move(msg), ec);
+}
+
 boost::asio::awaitable<void> mux_connection::heartbeat_loop()
 {
-    static thread_local std::mt19937 rng(std::random_device{}());
-
     while (true)
     {
-        std::uniform_int_distribution<uint32_t> interval_dist(cfg_.heartbeat.min_interval, cfg_.heartbeat.max_interval);
-        const auto interval = interval_dist(rng);
-        auto ec = co_await net::wait_for(worker_.io_context, std::chrono::seconds(interval));
+        auto ec = co_await net::wait_for(worker_.io_context, std::chrono::milliseconds(next_heartbeat_interval_ms(cfg_)));
         if (ec)
         {
             break;
         }
 
-        std::uniform_int_distribution<uint32_t> padding_dist(cfg_.heartbeat.min_padding, cfg_.heartbeat.max_padding);
-        const auto padding_len = padding_dist(rng);
-        const auto heartbeat_padding_len = std::min<std::size_t>(padding_len, mux::kMaxPayload);
-        std::vector<uint8_t> padding(heartbeat_padding_len);
-        if (heartbeat_padding_len > 0 && RAND_bytes(padding.data(), static_cast<int>(heartbeat_padding_len)) != 1)
+        co_await send_heartbeat_frame(ec);
+        if (ec)
         {
-            LOG_ERROR("mux {} heartbeat rand failed", cid_);
             break;
         }
-
-        LOG_DEBUG("mux {} sending heartbeat size {}", cid_, heartbeat_padding_len);
-
-        mux_frame msg;
-        msg.h.stream_id = mux::kStreamIdHeartbeat;
-        msg.h.command = mux::kCmdDat;
-        msg.payload = std::move(padding);
-        co_await send_async(std::move(msg), ec);
     }
 
     LOG_DEBUG("mux {} heartbeat loop finished", cid_);
+}
+
+boost::asio::awaitable<void> mux_connection::handle_heartbeat_frame(std::vector<uint8_t> payload)
+{
+    uint8_t type = 0;
+    uint64_t send_ms = 0;
+    if (!decode_heartbeat_probe(payload, type, send_ms))
+    {
+        LOG_DEBUG("mux {} heartbeat received size {}", cid_, payload.size());
+        co_return;
+    }
+
+    if (type == kHeartbeatProbeRequest)
+    {
+        payload[kHeartbeatProbeTypeOffset] = kHeartbeatProbeResponse;
+        mux_frame response;
+        response.h.stream_id = mux::kStreamIdHeartbeat;
+        response.h.command = mux::kCmdDat;
+        response.payload = std::move(payload);
+
+        boost::system::error_code ec;
+        co_await send_async(std::move(response), ec);
+        if (ec)
+        {
+            LOG_WARN("mux {} heartbeat response send failed {}", cid_, ec.message());
+        }
+        co_return;
+    }
+
+    const auto now_ms = net::now_ms();
+    if (send_ms > now_ms)
+    {
+        LOG_DEBUG("mux {} ignore heartbeat response send_ms {} now_ms {}", cid_, send_ms, now_ms);
+        co_return;
+    }
+
+    last_heartbeat_rtt_ms_ = now_ms - send_ms;
+    heartbeat_rtt_valid_ = true;
+    LOG_DEBUG("mux {} heartbeat rtt_ms {}", cid_, last_heartbeat_rtt_ms_);
 }
 
 boost::asio::awaitable<void> mux_connection::on_mux_frame(const mux::frame_header header, std::vector<uint8_t> payload)
@@ -530,8 +658,7 @@ boost::asio::awaitable<void> mux_connection::on_mux_frame(const mux::frame_heade
 
     if (header.stream_id == mux::kStreamIdHeartbeat)
     {
-        LOG_DEBUG("mux {} heartbeat received size {}", cid_, payload.size());
-        co_return;
+        co_return co_await handle_heartbeat_frame(std::move(payload));
     }
     last_non_heartbeat_read_time_ms_ = net::now_ms();
 
