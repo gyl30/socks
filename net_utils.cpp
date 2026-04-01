@@ -284,12 +284,22 @@ void set_socket_mark(const socket_handle_t fd, uint32_t mark, boost::system::err
 
 void set_socket_transparent_v4(int fd, boost::system::error_code& ec)
 {
+#ifdef __linux__
     set_socket_bool_option(fd, SOL_IP, IP_TRANSPARENT, ec);
+#else
+    (void)fd;
+    ec = std::make_error_code(std::errc::not_supported);
+#endif
 }
 
 void set_socket_transparent_v6(int fd, boost::system::error_code& ec)
 {
+#ifdef __linux__
     set_socket_bool_option(fd, SOL_IPV6, IPV6_TRANSPARENT, ec);
+#else
+    (void)fd;
+    ec = std::make_error_code(std::errc::not_supported);
+#endif
 }
 
 void set_socket_transparent(int fd, bool ipv6, boost::system::error_code& ec)
@@ -299,12 +309,22 @@ void set_socket_transparent(int fd, bool ipv6, boost::system::error_code& ec)
 
 void set_socket_recv_origdst_v4(int fd, boost::system::error_code& ec)
 {
+#ifdef __linux__
     set_socket_bool_option(fd, SOL_IP, IP_RECVORIGDSTADDR, ec);
+#else
+    (void)fd;
+    ec = std::make_error_code(std::errc::not_supported);
+#endif
 }
 
 void set_socket_recv_origdst_v6(int fd, boost::system::error_code& ec)
 {
+#ifdef __linux__
     set_socket_bool_option(fd, SOL_IPV6, IPV6_RECVORIGDSTADDR, ec);
+#else
+    (void)fd;
+    ec = std::make_error_code(std::errc::not_supported);
+#endif
 }
 
 void set_socket_recv_origdst(int fd, bool ipv6, boost::system::error_code& ec)
