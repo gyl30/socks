@@ -44,24 +44,6 @@ bool secure_string_equals(const std::string& lhs, const std::string& rhs)
     return diff == 0;
 }
 
-[[nodiscard]] bool is_valid_domain_char(uint8_t c)
-{
-    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '-' || c == '.' || c == '_';
-}
-
-[[nodiscard]] bool is_valid_domain(const std::string& domain)
-{
-    for (const char ch : domain)
-    {
-        const auto c = static_cast<uint8_t>(ch);
-        if (!is_valid_domain_char(c))
-        {
-            return false;
-        }
-    }
-    return true;
-}
-
 }    // namespace
 
 socks_session::socks_session(boost::asio::ip::tcp::socket socket,
@@ -371,19 +353,26 @@ bool socks_session::is_supported_atyp(uint8_t cmd, uint8_t atyp)
     return atyp == socks::kAtypDomain && (cmd == socks::kCmdConnect || cmd == socks::kCmdUdpAssociate);
 }
 
-boost::asio::awaitable<bool> socks_session::read_request_ipv4(std::string& host)
+template <typename Address>
+boost::asio::awaitable<bool> socks_session::read_request_ip(std::string& host, const char* address_type_name)
 {
+    using bytes_type = typename Address::bytes_type;
     boost::system::error_code ec;
-    boost::asio::ip::address_v4::bytes_type bytes_v4;
-    co_await net::wait_read_with_timeout(socket_, boost::asio::buffer(bytes_v4), cfg_.timeout.read, ec);
+    bytes_type bytes{};
+    co_await net::wait_read_with_timeout(socket_, boost::asio::buffer(bytes), cfg_.timeout.read, ec);
     if (ec)
     {
-        LOG_ERROR("socks session {} request read ipv4 failed {}", sid_, ec.message());
+        LOG_ERROR("socks session {} request read {} failed {}", sid_, address_type_name, ec.message());
         co_await reply_error(socks::kRepGenFail);
         co_return false;
     }
-    host = boost::asio::ip::address_v4(bytes_v4).to_string();
+    host = Address(bytes).to_string();
     co_return true;
+}
+
+boost::asio::awaitable<bool> socks_session::read_request_ipv4(std::string& host)
+{
+    co_return co_await read_request_ip<boost::asio::ip::address_v4>(host, "ipv4");
 }
 
 boost::asio::awaitable<bool> socks_session::read_request_domain(std::string& host)
@@ -417,7 +406,7 @@ boost::asio::awaitable<bool> socks_session::read_request_domain(std::string& hos
         co_await reply_error(socks::kRepGenFail);
         co_return false;
     }
-    if (!is_valid_domain(host))
+    if (!socks::is_valid_domain(host))
     {
         LOG_ERROR("socks session {} request domain invalid", sid_);
         co_await reply_error(socks::kRepGenFail);
@@ -428,17 +417,7 @@ boost::asio::awaitable<bool> socks_session::read_request_domain(std::string& hos
 
 boost::asio::awaitable<bool> socks_session::read_request_ipv6(std::string& host)
 {
-    boost::system::error_code ec;
-    boost::asio::ip::address_v6::bytes_type bytes_v6;
-    co_await net::wait_read_with_timeout(socket_, boost::asio::buffer(bytes_v6), cfg_.timeout.read, ec);
-    if (ec)
-    {
-        LOG_ERROR("socks session {} request read ipv6 failed {}", sid_, ec.message());
-        co_await reply_error(socks::kRepGenFail);
-        co_return false;
-    }
-    host = boost::asio::ip::address_v6(bytes_v6).to_string();
-    co_return true;
+    co_return co_await read_request_ip<boost::asio::ip::address_v6>(host, "ipv6");
 }
 
 boost::asio::awaitable<bool> socks_session::read_request_host(uint8_t atyp, uint8_t cmd, std::string& host)

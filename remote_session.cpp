@@ -29,28 +29,6 @@ namespace mux
 
 namespace
 {
-
-[[nodiscard]] uint8_t map_connect_error_to_socks_rep(const boost::system::error_code& ec)
-{
-    if (ec == boost::asio::error::connection_refused)
-    {
-        return socks::kRepConnRefused;
-    }
-    if (ec == boost::asio::error::network_unreachable)
-    {
-        return socks::kRepNetUnreach;
-    }
-    if (ec == boost::asio::error::host_unreachable || ec == boost::asio::error::host_not_found || ec == boost::asio::error::host_not_found_try_again)
-    {
-        return socks::kRepHostUnreach;
-    }
-    if (ec == boost::asio::error::timed_out)
-    {
-        return socks::kRepTtlExpired;
-    }
-    return socks::kRepGenFail;
-}
-
 boost::asio::awaitable<void> send_stream_control_frame(const std::shared_ptr<mux_stream>& stream,
                                                        uint8_t command,
                                                        boost::system::error_code& ec)
@@ -127,7 +105,7 @@ boost::asio::awaitable<void> remote_tcp_session::run(const syn_payload& syn)
     auto resolve_res = co_await net::wait_resolve_with_timeout(resolver, syn.addr, std::to_string(syn.port), cfg_.timeout.connect, ec);
     if (ec)
     {
-        const auto rep = map_connect_error_to_socks_rep(ec);
+        const auto rep = socks::map_connect_error_to_socks_rep(ec);
         LOG_WARN("event {} conn_id {} stream_id {} resolve failed target {}:{} error {} rep {}",
                  log_event::kMux,
                  conn_id_,
@@ -173,7 +151,7 @@ boost::asio::awaitable<void> remote_tcp_session::run(const syn_payload& syn)
     }
     if (connect_ec)
     {
-        const auto rep = map_connect_error_to_socks_rep(connect_ec);
+        const auto rep = socks::map_connect_error_to_socks_rep(connect_ec);
         LOG_WARN("event {} conn_id {} stream_id {} connect failed target {}:{} error {} rep {}",
                  log_event::kMux,
                  conn_id_,

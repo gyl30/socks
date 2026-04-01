@@ -64,6 +64,9 @@ class socks_session : public std::enable_shared_from_this<socks_session>
 
     [[nodiscard]] static bool is_supported_atyp(uint8_t cmd, uint8_t atyp);
 
+    template <typename Address>
+    boost::asio::awaitable<bool> read_request_ip(std::string& host, const char* address_type_name);
+
     boost::asio::awaitable<bool> read_request_ipv4(std::string& host);
 
     boost::asio::awaitable<bool> read_request_domain(std::string& host);
