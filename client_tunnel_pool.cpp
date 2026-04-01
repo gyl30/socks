@@ -201,6 +201,7 @@ std::shared_ptr<mux_connection> client_tunnel_pool::select_tunnel()
         {
             continue;
         }
+        LOG_DEBUG("client pool selected tunnel slot {} ptr {}", slot, static_cast<const void*>(tunnel.get()));
         return tunnel;
     }
 
@@ -372,6 +373,7 @@ boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(uint32_t in
         {
             const std::scoped_lock<std::mutex> lock(tunnel_mutex_);
             tunnel_pool_[index] = tunnel;
+            LOG_INFO("client pool installed tunnel slot {} ptr {}", index, static_cast<const void*>(tunnel.get()));
         }
 
         co_await tunnel->async_wait_stopped();
@@ -380,6 +382,7 @@ boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(uint32_t in
             const std::scoped_lock<std::mutex> lock(tunnel_mutex_);
             if (tunnel_pool_[index] == tunnel)
             {
+                LOG_INFO("client pool removing tunnel slot {} ptr {}", index, static_cast<const void*>(tunnel.get()));
                 tunnel_pool_[index].reset();
             }
         }

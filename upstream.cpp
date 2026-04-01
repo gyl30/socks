@@ -433,7 +433,10 @@ boost::asio::awaitable<upstream_connect_result> proxy_upstream::connect(const st
     if (stream == nullptr)
     {
         ec = boost::asio::error::connection_aborted;
-        LOG_ERROR("event {} conn_id {} create stream failed", log_event::kRoute, conn_id_);
+        LOG_ERROR("event {} conn_id {} create stream failed tunnel_ptr {}",
+                  log_event::kRoute,
+                  conn_id_,
+                  static_cast<const void*>(tunnel_.get()));
         result.ec = ec;
         result.socks_rep = socks::map_connect_error_to_socks_rep(ec);
         co_return result;
