@@ -7,12 +7,12 @@
 #include <fstream>
 #include <utility>
 #include <charconv>
-#include <string_view>
 
 #include <boost/asio.hpp>
 
 #include "log.h"
 #include "ip_matcher.h"
+#include "rule_file_utils.h"
 
 namespace mux
 {
@@ -36,39 +36,6 @@ bool get_bit_v6(const std::array<uint8_t, 16>& bytes, int index)
     return ((bytes[static_cast<std::size_t>(byte_index)] >> bit_index) & 1U) != 0U;
 }
 
-void trim_ascii_whitespace(std::string& line)
-{
-    line.erase(0, line.find_first_not_of(" \t\r\n"));
-    const auto last = line.find_last_not_of(" \t\r\n");
-    if (last == std::string::npos)
-    {
-        line.clear();
-        return;
-    }
-    line.erase(last + 1);
-}
-
-std::string sanitize_ip_rule_line(const std::string_view raw_line)
-{
-    std::string line(raw_line);
-    const auto comment_pos = line.find('#');
-    if (comment_pos != std::string::npos)
-    {
-        line.erase(comment_pos);
-    }
-    trim_ascii_whitespace(line);
-    return line;
-}
-
-bool read_ip_rule_line(std::ifstream& ip_file, std::string& line)
-{
-    if (!std::getline(ip_file, line))
-    {
-        return false;
-    }
-    line = sanitize_ip_rule_line(line);
-    return true;
-}
 }    // namespace
 
 bool ip_matcher::match_v4(const boost::asio::ip::address_v4& addr, const std::unique_ptr<trie_node>& root)
@@ -228,7 +195,7 @@ bool ip_matcher::load(const std::string& filename)
     }
 
     std::string line;
-    while (read_ip_rule_line(ip_file, line))
+    while (rule_file_util::read_rule_line(ip_file, line))
     {
         if (line.empty())
         {

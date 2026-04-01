@@ -3,9 +3,9 @@
 #include <cstddef>
 #include <fstream>
 #include <algorithm>
-#include <string_view>
 
 #include "log.h"
+#include "rule_file_utils.h"
 #include "domain_matcher.h"
 
 namespace mux
@@ -14,38 +14,13 @@ namespace mux
 namespace
 {
 
-void trim_ascii_whitespace(std::string& line)
+void normalize_domain(std::string& domain)
 {
-    line.erase(0, line.find_first_not_of(" \t\r\n"));
-    const auto last = line.find_last_not_of(" \t\r\n");
-    if (last == std::string::npos)
+    if (!domain.empty() && domain.back() == '.')
     {
-        line.clear();
-        return;
+        domain.pop_back();
     }
-    line.erase(last + 1);
-}
-
-std::string sanitize_domain_rule_line(const std::string_view raw_line)
-{
-    std::string line(raw_line);
-    const auto comment_pos = line.find('#');
-    if (comment_pos != std::string::npos)
-    {
-        line.erase(comment_pos);
-    }
-    trim_ascii_whitespace(line);
-    return line;
-}
-
-bool read_domain_rule_line(std::ifstream& domain_file, std::string& line)
-{
-    if (!std::getline(domain_file, line))
-    {
-        return false;
-    }
-    line = sanitize_domain_rule_line(line);
-    return true;
+    std::ranges::transform(domain, domain.begin(), [](const unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
 }
 
 }    // namespace
@@ -60,7 +35,7 @@ bool domain_matcher::load(const std::string& filename)
     }
 
     std::string line;
-    while (read_domain_rule_line(domain_file, line))
+    while (rule_file_util::read_rule_line(domain_file, line))
     {
         if (line.empty())
         {
@@ -79,11 +54,7 @@ void domain_matcher::add(std::string domain)
     {
         return;
     }
-    if (domain.back() == '.')
-    {
-        domain.pop_back();
-    }
-    std::ranges::transform(domain, domain.begin(), [](const unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    normalize_domain(domain);
     (void)domains_.insert(domain);
 }
 
@@ -93,13 +64,7 @@ bool domain_matcher::match(std::string domain) const
     {
         return false;
     }
-
-    if (domain.back() == '.')
-    {
-        domain.pop_back();
-    }
-
-    std::ranges::transform(domain, domain.begin(), [](const unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    normalize_domain(domain);
 
     if (domains_.contains(domain))
     {
