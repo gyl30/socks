@@ -21,6 +21,7 @@
 #include "mux_codec.h"
 #include "net_utils.h"
 #include "mux_stream.h"
+#include "mux_session_utils.h"
 #include "scoped_exit.h"
 #include "mux_protocol.h"
 #include "context_pool.h"
@@ -34,43 +35,11 @@ namespace mux
 namespace
 {
 
-[[nodiscard]] bool is_normal_close_error(const boost::system::error_code& ec)
-{
-    return ec == boost::asio::error::operation_aborted || ec == boost::asio::error::bad_descriptor;
-}
-
-void update_stream_close_command(std::atomic<uint8_t>& stream_close_command, uint8_t next_command)
-{
-    auto current = stream_close_command.load(std::memory_order_relaxed);
-    for (;;)
-    {
-        uint8_t desired = current;
-        if (next_command == mux::kCmdRst)
-        {
-            desired = mux::kCmdRst;
-        }
-        else if (next_command == mux::kNoStreamControl && current != mux::kCmdRst)
-        {
-            desired = mux::kNoStreamControl;
-        }
-        if (desired == current)
-        {
-            return;
-        }
-        if (stream_close_command.compare_exchange_weak(current, desired, std::memory_order_relaxed))
-        {
-            return;
-        }
-    }
-}
-
 struct proxy_udp_stream
 {
     std::shared_ptr<mux_connection> tunnel;
     std::shared_ptr<mux_stream> stream;
 };
-
-[[nodiscard]] std::string udp_target_key(const std::string& host, uint16_t port) { return host + "|" + std::to_string(port); }
 
 boost::asio::awaitable<void> write_socks_error_reply(boost::asio::ip::tcp::socket& socket,
                                                      uint8_t rep,
@@ -107,36 +76,6 @@ void open_and_bind_udp_socket(boost::asio::ip::udp::socket& sock, const boost::a
     if (ec)
     {
         return;
-    }
-}
-
-template <typename Cache>
-void evict_expired(Cache& cache, uint64_t now_ms)
-{
-    cache.evict_while([&](const auto&, const auto& entry) { return entry.expires_at <= now_ms; });
-}
-
-boost::asio::awaitable<void> send_udp_stream_reset(const std::shared_ptr<mux_stream>& stream, uint32_t conn_id, const char* stage)
-{
-    if (stream == nullptr)
-    {
-        co_return;
-    }
-
-    mux_frame rst_frame;
-    rst_frame.h.stream_id = stream->id();
-    rst_frame.h.command = mux::kCmdRst;
-
-    boost::system::error_code rst_ec;
-    co_await stream->async_write(std::move(rst_frame), rst_ec);
-    if (rst_ec)
-    {
-        LOG_WARN("event {} conn_id {} stream_id {} stage {} send rst failed {}",
-                 log_event::kSocks,
-                 conn_id,
-                 stream->id(),
-                 stage,
-                 rst_ec.message());
     }
 }
 
@@ -222,7 +161,7 @@ boost::asio::awaitable<proxy_udp_stream> connect_remote_address(const std::share
     if (ec)
     {
         LOG_WARN("event {} conn_id {} stream_id {} ack failed {}", log_event::kSocks, conn_id, stream->id(), ec.message());
-        co_await send_udp_stream_reset(stream, conn_id, "read_udp_ack");
+        co_await session_util::send_stream_reset(stream, log_event::kSocks, conn_id, "read_udp_ack");
         co_return proxy_udp_stream{};
     }
     if (ack_frame.h.command != mux::kCmdAck)
@@ -233,7 +172,7 @@ boost::asio::awaitable<proxy_udp_stream> connect_remote_address(const std::share
                  conn_id,
                  stream->id(),
                  ack_frame.h.command);
-        co_await send_udp_stream_reset(stream, conn_id, "unexpected_udp_ack_command");
+        co_await session_util::send_stream_reset(stream, log_event::kSocks, conn_id, "unexpected_udp_ack_command");
         co_return proxy_udp_stream{};
     }
 
@@ -242,7 +181,7 @@ boost::asio::awaitable<proxy_udp_stream> connect_remote_address(const std::share
     {
         ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
         LOG_WARN("event {} conn_id {} stream_id {} ack invalid payload", log_event::kSocks, conn_id, stream->id());
-        co_await send_udp_stream_reset(stream, conn_id, "invalid_udp_ack_payload");
+        co_await session_util::send_stream_reset(stream, log_event::kSocks, conn_id, "invalid_udp_ack_payload");
         co_return proxy_udp_stream{};
     }
     if (ack_pl.socks_rep != socks::kRepSuccess)
@@ -572,7 +511,7 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> udp_socks_session::resolv
                                                                                                   uint16_t port,
                                                                                                   boost::system::error_code& ec)
 {
-    const auto key = udp_target_key(host, port);
+    const auto key = session_util::udp_target_key(host, port);
     const auto now_ms_value = net::now_ms();
     resolved_targets_.evict_if([&](const auto&, const auto& entry) { return entry.expires_at <= now_ms_value; });
 
@@ -662,7 +601,7 @@ boost::asio::awaitable<void> udp_socks_session::forward_direct_packet(const sock
     const auto target = co_await resolve_target_endpoint(header.addr, header.port, ec);
     if (ec)
     {
-        if (!is_normal_close_error(ec))
+        if (!session_util::is_normal_close_error(ec))
         {
             ec.clear();
         }
@@ -685,7 +624,7 @@ boost::asio::awaitable<void> udp_socks_session::forward_direct_packet(const sock
     (void)send_n;
     if (send_ec)
     {
-        if (is_normal_close_error(send_ec))
+        if (session_util::is_normal_close_error(send_ec))
         {
             ec = send_ec;
         }
@@ -704,7 +643,7 @@ boost::asio::awaitable<void> udp_socks_session::forward_direct_packet(const sock
     const auto normalized_target = net::normalize_endpoint(target);
     const auto now_ms_value = net::now_ms();
     const auto expires_at = now_ms_value + constants::udp::kCacheTtlMs;
-    evict_expired(direct_peers_, now_ms_value);
+    session_util::evict_expired(direct_peers_, now_ms_value);
     direct_peers_.put(normalized_target, peer_cache_entry{expires_at});
     tx_bytes_ += payload_len;
     last_activity_time_ms_ = now_ms_value;
@@ -721,7 +660,7 @@ boost::asio::awaitable<void> udp_socks_session::direct_udp_socket_loop(boost::as
             co_await direct_socket.async_receive_from(boost::asio::buffer(buf), sender, boost::asio::redirect_error(boost::asio::use_awaitable, ec));
         if (ec)
         {
-            if (!is_normal_close_error(ec))
+            if (!session_util::is_normal_close_error(ec))
             {
                 LOG_WARN("event {} conn_id {} direct udp receive error {}", log_event::kRoute, conn_id_, ec.message());
                 ec = direct_socket.close(ec);
@@ -730,7 +669,7 @@ boost::asio::awaitable<void> udp_socks_session::direct_udp_socket_loop(boost::as
             break;
         }
         const auto now_ms_value = net::now_ms();
-        evict_expired(direct_peers_, now_ms_value);
+        session_util::evict_expired(direct_peers_, now_ms_value);
         const auto normalized_sender = net::normalize_endpoint(sender);
         auto* peer = direct_peers_.get(normalized_sender);
         if (peer == nullptr || peer->expires_at <= now_ms_value)
@@ -750,7 +689,7 @@ boost::asio::awaitable<void> udp_socks_session::direct_udp_socket_loop(boost::as
         co_await forward_direct_reply_to_client(sender, buf.data(), n, ec);
         if (ec)
         {
-            if (!is_normal_close_error(ec))
+            if (!session_util::is_normal_close_error(ec))
             {
                 ec = direct_socket.close(ec);
                 (void)ec;
@@ -954,7 +893,7 @@ boost::asio::awaitable<void> udp_socks_session::udp_socket_loop()
             const auto ready = co_await ensure_proxy_stream(open_ec);
             if (!ready)
             {
-                update_stream_close_command(stream_close_command_, mux::kNoStreamControl);
+                session_util::update_stream_close_command(stream_close_command_, mux::kNoStreamControl);
                 break;
             }
 
@@ -967,7 +906,7 @@ boost::asio::awaitable<void> udp_socks_session::udp_socket_loop()
             co_await stream->async_write(data_frame, write_ec);
             if (write_ec)
             {
-                update_stream_close_command(stream_close_command_, mux::kNoStreamControl);
+                session_util::update_stream_close_command(stream_close_command_, mux::kNoStreamControl);
                 clear_proxy_stream_if_current(stream);
                 LOG_WARN("event {} conn_id {} stream_id {} write to stream failed {}",
                          log_event::kSocks,
@@ -1020,13 +959,13 @@ boost::asio::awaitable<void> udp_socks_session::stream_to_udp_sock(std::shared_p
             {
                 continue;
             }
-            update_stream_close_command(stream_close_command_, mux::kNoStreamControl);
+            session_util::update_stream_close_command(stream_close_command_, mux::kNoStreamControl);
             clear_proxy_stream_if_current(stream);
             break;
         }
         if (data_frame.h.command == mux::kCmdRst || data_frame.h.command == mux::kCmdFin)
         {
-            update_stream_close_command(stream_close_command_, mux::kNoStreamControl);
+            session_util::update_stream_close_command(stream_close_command_, mux::kNoStreamControl);
             clear_proxy_stream_if_current(stream);
             LOG_INFO("event {} conn_id {} stream_id {} recv control cmd {} closing",
                      log_event::kSocks,
@@ -1037,7 +976,7 @@ boost::asio::awaitable<void> udp_socks_session::stream_to_udp_sock(std::shared_p
         }
         if (data_frame.h.command != mux::kCmdDat)
         {
-            update_stream_close_command(stream_close_command_, mux::kCmdRst);
+            session_util::update_stream_close_command(stream_close_command_, mux::kCmdRst);
             LOG_WARN("event {} conn_id {} stream_id {} recv unexpected cmd {} dropping session",
                      log_event::kSocks,
                      conn_id_,
@@ -1066,7 +1005,7 @@ boost::asio::awaitable<void> udp_socks_session::stream_to_udp_sock(std::shared_p
             boost::asio::buffer(data_frame.payload), client_addr_, boost::asio::as_tuple(boost::asio::use_awaitable));
         if (send_ec)
         {
-            update_stream_close_command(stream_close_command_, mux::kCmdRst);
+            session_util::update_stream_close_command(stream_close_command_, mux::kCmdRst);
             LOG_ERROR("event {} conn_id {} stream_id {} send error {}",
                       log_event::kSocks,
                       conn_id_,
@@ -1099,7 +1038,7 @@ boost::asio::awaitable<void> udp_socks_session::keep_tcp_alive()
         ignored_bytes += n;
         if (ignored_bytes >= constants::udp::kTcpControlIgnoreLimitBytes)
         {
-            update_stream_close_command(stream_close_command_, mux::kCmdRst);
+            session_util::update_stream_close_command(stream_close_command_, mux::kCmdRst);
             LOG_WARN("event {} conn_id {} tcp control channel flooded ignored_bytes {}", log_event::kSocks, conn_id_, ignored_bytes);
             close_impl();
             co_return;
