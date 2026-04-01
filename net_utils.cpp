@@ -140,6 +140,50 @@ bool try_get_original_dst_from_local_endpoint(boost::asio::ip::tcp::socket& sock
 }
 #endif
 
+void set_socket_bool_option(int fd, int level, int option, boost::system::error_code& ec)
+{
+    ec.clear();
+#ifdef __linux__
+    constexpr int one = 1;
+    if (setsockopt(fd, level, option, &one, sizeof(one)) != 0)
+    {
+        ec = boost::system::error_code(errno, boost::system::system_category());
+        return;
+    }
+    return;
+#else
+    (void)fd;
+    (void)level;
+    (void)option;
+    ec = std::make_error_code(std::errc::not_supported);
+    return;
+#endif
+}
+
+using socket_option_setter = void (*)(int fd, boost::system::error_code& ec);
+
+void set_dual_stack_socket_option(int fd, bool ipv6, socket_option_setter set_v4, socket_option_setter set_v6, boost::system::error_code& ec)
+{
+    ec.clear();
+    if (!ipv6)
+    {
+        set_v4(fd, ec);
+        return;
+    }
+
+    boost::system::error_code v4_ec;
+    boost::system::error_code v6_ec;
+    set_v4(fd, v4_ec);
+    set_v6(fd, v6_ec);
+    if (!v4_ec || !v6_ec)
+    {
+        ec.clear();
+        return;
+    }
+
+    ec = v6_ec;
+}
+
 boost::asio::ip::udp::endpoint make_v4_endpoint(const in_addr& addr, uint16_t port)
 {
     boost::asio::ip::address_v4::bytes_type bytes{};
@@ -240,124 +284,32 @@ void set_socket_mark(const socket_handle_t fd, uint32_t mark, boost::system::err
 
 void set_socket_transparent_v4(int fd, boost::system::error_code& ec)
 {
-    ec.clear();
-#ifdef __linux__
-    const int one = 1;
-    if (setsockopt(fd, SOL_IP, IP_TRANSPARENT, &one, sizeof(one)) != 0)
-    {
-        ec = boost::system::error_code(errno, boost::system::system_category());
-        return;
-    }
-    return;
-#else
-    (void)fd;
-    ec = std::make_error_code(std::errc::not_supported);
-    return;
-#endif
+    set_socket_bool_option(fd, SOL_IP, IP_TRANSPARENT, ec);
 }
 
 void set_socket_transparent_v6(int fd, boost::system::error_code& ec)
 {
-    ec.clear();
-#ifdef __linux__
-    const int one = 1;
-    if (setsockopt(fd, SOL_IPV6, IPV6_TRANSPARENT, &one, sizeof(one)) != 0)
-    {
-        ec = boost::system::error_code(errno, boost::system::system_category());
-        return;
-    }
-    return;
-#else
-    (void)fd;
-    ec = std::make_error_code(std::errc::not_supported);
-    return;
-#endif
+    set_socket_bool_option(fd, SOL_IPV6, IPV6_TRANSPARENT, ec);
 }
 
 void set_socket_transparent(int fd, bool ipv6, boost::system::error_code& ec)
 {
-    ec.clear();
-    if (!ipv6)
-    {
-        set_socket_transparent_v4(fd, ec);
-        return;
-    }
-
-    boost::system::error_code v4_ec;
-    boost::system::error_code v6_ec;
-    set_socket_transparent_v4(fd, v4_ec);
-    set_socket_transparent_v6(fd, v6_ec);
-
-    // 双栈或纯 ipv6 场景下只要有一侧成功即可 避免把可用 socket 误判为失败
-    if (!v4_ec || !v6_ec)
-    {
-        ec.clear();
-        return;
-    }
-
-    ec = v6_ec;
-    return;
+    set_dual_stack_socket_option(fd, ipv6, set_socket_transparent_v4, set_socket_transparent_v6, ec);
 }
 
 void set_socket_recv_origdst_v4(int fd, boost::system::error_code& ec)
 {
-    ec.clear();
-#ifdef __linux__
-    const int one = 1;
-    if (setsockopt(fd, SOL_IP, IP_RECVORIGDSTADDR, &one, sizeof(one)) != 0)
-    {
-        ec = boost::system::error_code(errno, boost::system::system_category());
-        return;
-    }
-    return;
-#else
-    (void)fd;
-    ec = std::make_error_code(std::errc::not_supported);
-    return;
-#endif
+    set_socket_bool_option(fd, SOL_IP, IP_RECVORIGDSTADDR, ec);
 }
 
 void set_socket_recv_origdst_v6(int fd, boost::system::error_code& ec)
 {
-    ec.clear();
-#ifdef __linux__
-    const int one = 1;
-    if (setsockopt(fd, SOL_IPV6, IPV6_RECVORIGDSTADDR, &one, sizeof(one)) != 0)
-    {
-        ec = boost::system::error_code(errno, boost::system::system_category());
-        return;
-    }
-    return;
-#else
-    (void)fd;
-    ec = std::make_error_code(std::errc::not_supported);
-    return;
-#endif
+    set_socket_bool_option(fd, SOL_IPV6, IPV6_RECVORIGDSTADDR, ec);
 }
 
 void set_socket_recv_origdst(int fd, bool ipv6, boost::system::error_code& ec)
 {
-    ec.clear();
-    if (!ipv6)
-    {
-        set_socket_recv_origdst_v4(fd, ec);
-        return;
-    }
-
-    boost::system::error_code v4_ec;
-    boost::system::error_code v6_ec;
-    set_socket_recv_origdst_v4(fd, v4_ec);
-    set_socket_recv_origdst_v6(fd, v6_ec);
-
-    // 原始目标地址辅助信息和透明代理选项保持同样策略 任一协议栈成功即可继续
-    if (!v4_ec || !v6_ec)
-    {
-        ec.clear();
-        return;
-    }
-
-    ec = v6_ec;
-    return;
+    set_dual_stack_socket_option(fd, ipv6, set_socket_recv_origdst_v4, set_socket_recv_origdst_v6, ec);
 }
 
 boost::asio::ip::address normalize_address(const boost::asio::ip::address& addr)

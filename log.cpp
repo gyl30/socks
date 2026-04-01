@@ -14,6 +14,7 @@
 
 static void init_default_log(const std::string& filename);
 static void set_log_level();
+static uint32_t get_env_uint32_or_default(const char* env_name, uint32_t default_value);
 static uint32_t get_log_file_size();
 static uint32_t get_log_file_count();
 static spdlog::level::level_enum parse_level_name(const std::string& level);
@@ -87,32 +88,21 @@ static spdlog::level::level_enum parse_level_name(const std::string& level)
     return spdlog::level::info;
 }
 
-static uint32_t get_log_file_size()
+static uint32_t get_env_uint32_or_default(const char* env_name, uint32_t default_value)
 {
-    if (const char* env_value = std::getenv("kLogFileSize"); env_value != nullptr && *env_value != '\0')
+    if (const char* env_value = std::getenv(env_name); env_value != nullptr && *env_value != '\0')
     {
-        uint32_t file_size = 0;
+        uint32_t value_u32 = 0;
         const std::string_view value(env_value);
-        const auto [ptr, ec] = std::from_chars(value.data(), value.data() + value.size(), file_size);
+        const auto [ptr, ec] = std::from_chars(value.data(), value.data() + value.size(), value_u32);
         if (ec == std::errc() && ptr == value.data() + value.size())
         {
-            return file_size;
+            return value_u32;
         }
     }
-    return constants::log::kFileSize;
+    return default_value;
 }
 
-static uint32_t get_log_file_count()
-{
-    if (const char* env_value = std::getenv("kLogFileCount"); env_value != nullptr && *env_value != '\0')
-    {
-        uint32_t file_count = 0;
-        const std::string_view value(env_value);
-        const auto [ptr, ec] = std::from_chars(value.data(), value.data() + value.size(), file_count);
-        if (ec == std::errc() && ptr == value.data() + value.size())
-        {
-            return file_count;
-        }
-    }
-    return constants::log::kFileCount;
-}
+static uint32_t get_log_file_size() { return get_env_uint32_or_default("kLogFileSize", constants::log::kFileSize); }
+
+static uint32_t get_log_file_count() { return get_env_uint32_or_default("kLogFileCount", constants::log::kFileCount); }
