@@ -94,27 +94,6 @@ class proxy_upstream final : public upstream
     bool protocol_error_ = false;
 };
 
-[[nodiscard]] static uint8_t map_connect_error_to_socks_rep(const boost::system::error_code& ec)
-{
-    if (ec == boost::asio::error::connection_refused)
-    {
-        return socks::kRepConnRefused;
-    }
-    if (ec == boost::asio::error::network_unreachable)
-    {
-        return socks::kRepNetUnreach;
-    }
-    if (ec == boost::asio::error::host_unreachable || ec == boost::asio::error::host_not_found || ec == boost::asio::error::host_not_found_try_again)
-    {
-        return socks::kRepHostUnreach;
-    }
-    if (ec == boost::asio::error::timed_out)
-    {
-        return socks::kRepTtlExpired;
-    }
-    return socks::kRepGenFail;
-}
-
 [[nodiscard]] static boost::system::error_code map_socks_rep_to_connect_error(uint8_t rep)
 {
     switch (rep)
@@ -150,7 +129,7 @@ boost::asio::awaitable<upstream_connect_result> direct_upstream::connect(const s
     {
         LOG_WARN("event {} conn_id {} stage resolve target {}:{} error {}", log_event::kRoute, conn_id_, host, port, ec.message());
         result.ec = ec;
-        result.socks_rep = map_connect_error_to_socks_rep(ec);
+        result.socks_rep = socks::map_connect_error_to_socks_rep(ec);
         co_return result;
     }
 
@@ -205,7 +184,7 @@ boost::asio::awaitable<upstream_connect_result> direct_upstream::connect(const s
         co_return result;
     }
     result.ec = last_ec;
-    result.socks_rep = map_connect_error_to_socks_rep(last_ec);
+    result.socks_rep = socks::map_connect_error_to_socks_rep(last_ec);
     co_return result;
 }
 
@@ -342,7 +321,7 @@ boost::asio::awaitable<void> proxy_upstream::wait_connect_ack(const std::shared_
                   port,
                   ack_ec.message());
         result.ec = ack_ec;
-        result.socks_rep = map_connect_error_to_socks_rep(ack_ec);
+        result.socks_rep = socks::map_connect_error_to_socks_rep(ack_ec);
         co_await session_util::send_stream_reset(stream, log_event::kRoute, conn_id_, "wait_ack");
         co_return;
     }
@@ -358,7 +337,7 @@ boost::asio::awaitable<void> proxy_upstream::wait_connect_ack(const std::shared_
                  session_util::mux_command_name(ack_frame.h.command),
                  ack_frame.payload.size());
         result.ec = boost::asio::error::connection_aborted;
-        result.socks_rep = map_connect_error_to_socks_rep(result.ec);
+        result.socks_rep = socks::map_connect_error_to_socks_rep(result.ec);
         co_await session_util::send_stream_reset(stream, log_event::kRoute, conn_id_, "wait_ack_unexpected_cmd");
         co_return;
     }
@@ -373,7 +352,7 @@ boost::asio::awaitable<void> proxy_upstream::wait_connect_ack(const std::shared_
                  host,
                  port);
         result.ec = boost::asio::error::invalid_argument;
-        result.socks_rep = map_connect_error_to_socks_rep(result.ec);
+        result.socks_rep = socks::map_connect_error_to_socks_rep(result.ec);
         co_await session_util::send_stream_reset(stream, log_event::kRoute, conn_id_, "decode_ack");
         co_return;
     }
@@ -437,7 +416,7 @@ boost::asio::awaitable<upstream_connect_result> proxy_upstream::connect(const st
             ec = boost::asio::error::not_connected;
             LOG_ERROR("event {} conn_id {} wait tunnel failed", log_event::kRoute, conn_id_);
             result.ec = ec;
-            result.socks_rep = map_connect_error_to_socks_rep(ec);
+            result.socks_rep = socks::map_connect_error_to_socks_rep(ec);
             co_return result;
         }
     }
@@ -446,7 +425,7 @@ boost::asio::awaitable<upstream_connect_result> proxy_upstream::connect(const st
         ec = boost::asio::error::not_connected;
         LOG_ERROR("event {} conn_id {} create stream failed no tunnel", log_event::kRoute, conn_id_);
         result.ec = ec;
-        result.socks_rep = map_connect_error_to_socks_rep(ec);
+        result.socks_rep = socks::map_connect_error_to_socks_rep(ec);
         co_return result;
     }
 
@@ -456,14 +435,14 @@ boost::asio::awaitable<upstream_connect_result> proxy_upstream::connect(const st
         ec = boost::asio::error::connection_aborted;
         LOG_ERROR("event {} conn_id {} create stream failed", log_event::kRoute, conn_id_);
         result.ec = ec;
-        result.socks_rep = map_connect_error_to_socks_rep(ec);
+        result.socks_rep = socks::map_connect_error_to_socks_rep(ec);
         co_return result;
     }
     co_await send_syn_request(stream, host, port, ec);
     if (ec)
     {
         result.ec = ec;
-        result.socks_rep = map_connect_error_to_socks_rep(ec);
+        result.socks_rep = socks::map_connect_error_to_socks_rep(ec);
         tunnel_->close_and_remove_stream(stream);
         co_return result;
     }
