@@ -455,104 +455,68 @@ void client_hello_parser::parse_key_share(reader& r, client_hello_info& info)
     finalize_key_share_info(info);
 }
 
+bool client_hello_parser::parse_u16_list_payload(reader& r, std::vector<uint16_t>& values, bool use_u8_length_prefix)
+{
+    uint16_t list_len_u16 = 0;
+    uint8_t list_len_u8 = 0;
+    const auto list_len =
+        use_u8_length_prefix ? (r.read_u8(list_len_u8) ? static_cast<std::size_t>(list_len_u8) : 0) : (r.read_u16(list_len_u16) ? list_len_u16 : 0);
+    if (list_len == 0 || (list_len % 2) != 0)
+    {
+        return false;
+    }
+
+    reader values_r = r.slice(list_len);
+    if (!values_r.valid() || r.remaining() != 0)
+    {
+        return false;
+    }
+
+    std::vector<uint16_t> parsed_values;
+    parsed_values.reserve(list_len / 2);
+    while (values_r.remaining() >= 2)
+    {
+        uint16_t value = 0;
+        if (!values_r.read_u16(value))
+        {
+            return false;
+        }
+        parsed_values.push_back(value);
+    }
+    if (values_r.remaining() != 0)
+    {
+        return false;
+    }
+
+    values = parsed_values;
+    return true;
+}
+
 void client_hello_parser::parse_supported_groups(reader& r, client_hello_info& info)
 {
-    uint16_t groups_len = 0;
-    if (!r.read_u16(groups_len) || groups_len == 0 || (groups_len % 2) != 0)
+    if (!parse_u16_list_payload(r, info.supported_groups, false))
     {
         info.malformed_supported_groups = true;
         return;
-    }
-
-    reader groups_r = r.slice(groups_len);
-    if (!groups_r.valid() || r.remaining() != 0)
-    {
-        info.malformed_supported_groups = true;
-        return;
-    }
-
-    while (groups_r.remaining() >= 2)
-    {
-        uint16_t group = 0;
-        if (!groups_r.read_u16(group))
-        {
-            info.malformed_supported_groups = true;
-            return;
-        }
-        info.supported_groups.push_back(group);
-    }
-    if (groups_r.remaining() != 0)
-    {
-        info.malformed_supported_groups = true;
     }
 }
 
 void client_hello_parser::parse_supported_versions(reader& r, client_hello_info& info)
 {
-    uint8_t versions_len = 0;
-    if (!r.read_u8(versions_len) || versions_len == 0 || (versions_len % 2) != 0)
+    if (!parse_u16_list_payload(r, info.supported_versions, true))
     {
         info.malformed_supported_versions = true;
         return;
-    }
-
-    reader versions_r = r.slice(versions_len);
-    if (!versions_r.valid() || r.remaining() != 0)
-    {
-        info.malformed_supported_versions = true;
-        return;
-    }
-
-    while (versions_r.remaining() >= 2)
-    {
-        uint16_t version = 0;
-        if (!versions_r.read_u16(version))
-        {
-            info.malformed_supported_versions = true;
-            return;
-        }
-        info.supported_versions.push_back(version);
-    }
-    if (versions_r.remaining() != 0)
-    {
-        info.malformed_supported_versions = true;
     }
 }
 
 void client_hello_parser::parse_signature_algorithms(reader& r, client_hello_info& info)
 {
-    uint16_t algorithms_len = 0;
-    if (!r.read_u16(algorithms_len) || algorithms_len == 0 || (algorithms_len % 2) != 0)
+    if (!parse_u16_list_payload(r, info.signature_algorithms, false))
     {
         info.malformed_signature_algorithms = true;
         info.signature_algorithms.clear();
         return;
-    }
-
-    reader algorithms_r = r.slice(algorithms_len);
-    if (!algorithms_r.valid() || r.remaining() != 0)
-    {
-        info.malformed_signature_algorithms = true;
-        info.signature_algorithms.clear();
-        return;
-    }
-
-    while (algorithms_r.remaining() >= 2)
-    {
-        uint16_t sig_alg = 0;
-        if (!algorithms_r.read_u16(sig_alg))
-        {
-            info.malformed_signature_algorithms = true;
-            info.signature_algorithms.clear();
-            return;
-        }
-        info.signature_algorithms.push_back(sig_alg);
-    }
-
-    if (algorithms_r.remaining() != 0)
-    {
-        info.malformed_signature_algorithms = true;
-        info.signature_algorithms.clear();
     }
 }
 

@@ -81,6 +81,19 @@ const key_share_blueprint* find_key_share_blueprint(const fingerprint_instance& 
     return nullptr;
 }
 
+template <typename Spec>
+bool has_key_share_group(const Spec& spec, uint16_t group)
+{
+    const auto* key_share = find_key_share_blueprint(spec);
+    if (key_share == nullptr)
+    {
+        return false;
+    }
+
+    const auto& values = key_share->key_shares();
+    return std::ranges::any_of(values, [group](const key_share_blueprint::key_share_entry& entry) { return entry.group == group; });
+}
+
 void shuffle_extensions(std::vector<std::shared_ptr<extension_blueprint>>& exts)
 {
     std::vector<std::size_t> indices;
@@ -510,26 +523,12 @@ fingerprint_template build_chrome120_mlkem768_template()
 
 bool fingerprint_has_key_share_group(const fingerprint_template& spec, uint16_t group)
 {
-    const auto* key_share = find_key_share_blueprint(spec);
-    if (key_share == nullptr)
-    {
-        return false;
-    }
-
-    const auto& values = key_share->key_shares();
-    return std::ranges::any_of(values, [group](const key_share_blueprint::key_share_entry& entry) { return entry.group == group; });
+    return has_key_share_group(spec, group);
 }
 
 bool fingerprint_has_key_share_group(const fingerprint_instance& spec, uint16_t group)
 {
-    const auto* key_share = find_key_share_blueprint(spec);
-    if (key_share == nullptr)
-    {
-        return false;
-    }
-
-    const auto& values = key_share->key_shares();
-    return std::ranges::any_of(values, [group](const key_share_blueprint::key_share_entry& entry) { return entry.group == group; });
+    return has_key_share_group(spec, group);
 }
 
 void fingerprint_append_key_share_group(fingerprint_template& spec, uint16_t group)
