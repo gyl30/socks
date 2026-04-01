@@ -61,23 +61,8 @@ static std::optional<std::string> resolve_rule_path(const std::string& filename)
     return std::nullopt;
 }
 
-static bool load_ip_rule(const std::shared_ptr<ip_matcher>& matcher, const std::string& filename, const char* rule_name)
-{
-    const auto path = resolve_rule_path(filename);
-    if (!path.has_value())
-    {
-        LOG_WARN("load {} rule failed file not found {}", rule_name, filename);
-        return false;
-    }
-    if (!matcher->load(*path))
-    {
-        LOG_WARN("load {} rule failed {}", rule_name, *path);
-        return false;
-    }
-    return true;
-}
-
-static bool load_domain_rule(const std::shared_ptr<domain_matcher>& matcher, const std::string& filename, const char* rule_name)
+template <typename Matcher>
+static bool load_rule(const std::shared_ptr<Matcher>& matcher, const std::string& filename, const char* rule_name)
 {
     const auto path = resolve_rule_path(filename);
     if (!path.has_value())
@@ -98,19 +83,19 @@ bool router::load()
     bool load_ok = true;
 
     block_ip_matcher_ = std::make_shared<ip_matcher>();
-    load_ok = load_ip_rule(block_ip_matcher_, "block_ip.txt", "block ip") && load_ok;
+    load_ok = load_rule(block_ip_matcher_, "block_ip.txt", "block ip") && load_ok;
 
     direct_ip_matcher_ = std::make_shared<ip_matcher>();
-    load_ok = load_ip_rule(direct_ip_matcher_, "direct_ip.txt", "direct ip") && load_ok;
+    load_ok = load_rule(direct_ip_matcher_, "direct_ip.txt", "direct ip") && load_ok;
 
     proxy_domain_matcher_ = std::make_shared<domain_matcher>();
-    load_ok = load_domain_rule(proxy_domain_matcher_, "proxy_domain.txt", "proxy domain") && load_ok;
+    load_ok = load_rule(proxy_domain_matcher_, "proxy_domain.txt", "proxy domain") && load_ok;
 
     block_domain_matcher_ = std::make_shared<domain_matcher>();
-    load_ok = load_domain_rule(block_domain_matcher_, "block_domain.txt", "block domain") && load_ok;
+    load_ok = load_rule(block_domain_matcher_, "block_domain.txt", "block domain") && load_ok;
 
     direct_domain_matcher_ = std::make_shared<domain_matcher>();
-    load_ok = load_domain_rule(direct_domain_matcher_, "direct_domain.txt", "direct domain") && load_ok;
+    load_ok = load_rule(direct_domain_matcher_, "direct_domain.txt", "direct domain") && load_ok;
 
     return load_ok;
 }
