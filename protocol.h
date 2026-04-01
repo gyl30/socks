@@ -2,11 +2,13 @@
 #define PROTOCOL_H
 
 #include <string>
+#include <string_view>
 #include <vector>
 #include <cstddef>
 #include <cstring>
 
 #include <boost/asio/ip/address.hpp>
+#include <boost/system/error_code.hpp>
 
 namespace socks
 {
@@ -36,6 +38,12 @@ constexpr uint8_t kRepConnRefused = 0x05;
 constexpr uint8_t kRepTtlExpired = 0x06;
 constexpr uint8_t kRepCmdNotSupported = 0x07;
 constexpr uint8_t kRepAddrTypeNotSupported = 0x08;
+
+[[nodiscard]] bool is_valid_domain_char(uint8_t c);
+
+[[nodiscard]] bool is_valid_domain(std::string_view domain);
+
+[[nodiscard]] uint8_t map_connect_error_to_socks_rep(const boost::system::error_code& ec);
 
 }    // namespace socks
 

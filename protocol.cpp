@@ -1,4 +1,5 @@
 #include <string>
+#include <string_view>
 #include <vector>
 #include <cstddef>
 #include <cstring>
@@ -20,22 +21,53 @@ namespace
     return len - pos >= need;
 }    // namespace
 
+}    // namespace
+
+namespace socks
+{
+
 [[nodiscard]] bool is_valid_domain_char(uint8_t c)
 {
     return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '-' || c == '.' || c == '_';
 }
 
-[[nodiscard]] bool is_valid_domain(const uint8_t* begin, const uint8_t* end)
+[[nodiscard]] bool is_valid_domain(const std::string_view domain)
 {
-    for (auto* it = begin; it != end; ++it)
+    for (const char ch : domain)
     {
-        if (!is_valid_domain_char(*it))
+        if (!is_valid_domain_char(static_cast<uint8_t>(ch)))
         {
             return false;
         }
     }
     return true;
 }
+
+[[nodiscard]] uint8_t map_connect_error_to_socks_rep(const boost::system::error_code& ec)
+{
+    if (ec == boost::asio::error::connection_refused)
+    {
+        return socks::kRepConnRefused;
+    }
+    if (ec == boost::asio::error::network_unreachable)
+    {
+        return socks::kRepNetUnreach;
+    }
+    if (ec == boost::asio::error::host_unreachable || ec == boost::asio::error::host_not_found || ec == boost::asio::error::host_not_found_try_again)
+    {
+        return socks::kRepHostUnreach;
+    }
+    if (ec == boost::asio::error::timed_out)
+    {
+        return socks::kRepTtlExpired;
+    }
+    return socks::kRepGenFail;
+}
+
+}    // namespace socks
+
+namespace
+{
 
 bool parse_ipv4_address(const uint8_t* data, std::size_t len, std::size_t& pos, std::string& addr)
 {
@@ -72,7 +104,7 @@ bool parse_domain_address(const uint8_t* data, std::size_t len, std::size_t& pos
     {
         return false;
     }
-    if (!is_valid_domain(domain_begin, domain_end))
+    if (!socks::is_valid_domain(std::string_view(reinterpret_cast<const char*>(domain_begin), domain_len)))
     {
         return false;
     }
