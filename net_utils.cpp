@@ -31,16 +31,16 @@
 
 #endif
 
+#include <boost/system/errc.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/ip/udp.hpp>
 #include <boost/asio/ip/address.hpp>
-#include <boost/system/errc.hpp>
+#include <boost/endian/conversion.hpp>
 #include <boost/system/detail/errc.hpp>
-#include <boost/system/detail/error_code.hpp>
 #include <boost/asio/ip/address_v4.hpp>
 #include <boost/asio/ip/address_v6.hpp>
+#include <boost/system/detail/error_code.hpp>
 #include <boost/system/detail/system_category.hpp>
-#include <boost/endian/conversion.hpp>
 
 #include "constants.h"
 #include "net_utils.h"

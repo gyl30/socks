@@ -21,9 +21,9 @@ extern "C"
 #include "tls/core.h"
 #include "tls/server_name.h"
 #include "reality/handshake/fingerprint.h"
-#include "reality/handshake/fingerprint_blueprint.h"
-#include "reality/handshake/fingerprint_internal.h"
 #include "reality/handshake/client_hello_builder.h"
+#include "reality/handshake/fingerprint_internal.h"
+#include "reality/handshake/fingerprint_blueprint.h"
 
 namespace reality
 {

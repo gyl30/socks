@@ -1,8 +1,8 @@
 #ifndef RULE_FILE_UTILS_H
 #define RULE_FILE_UTILS_H
 
-#include <fstream>
 #include <string>
+#include <fstream>
 #include <string_view>
 
 namespace mux::rule_file_util

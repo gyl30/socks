@@ -1,8 +1,8 @@
 #include <chrono>
 #include <memory>
 #include <string>
-#include <utility>
 #include <vector>
+#include <utility>
 #include <cstring>
 #include <algorithm>
 
@@ -18,11 +18,11 @@
 #include "protocol.h"
 #include "mux_codec.h"
 #include "net_utils.h"
-#include "mux_session_utils.h"
 #include "scoped_exit.h"
 #include "mux_protocol.h"
 #include "mux_connection.h"
 #include "remote_session.h"
+#include "mux_session_utils.h"
 
 namespace mux
 {
