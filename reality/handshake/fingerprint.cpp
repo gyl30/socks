@@ -14,8 +14,8 @@ extern "C"
 
 #include "tls/core.h"
 #include "reality/handshake/fingerprint.h"
-#include "reality/handshake/fingerprint_internal.h"
 #include "reality/handshake/fingerprint_patch.h"
+#include "reality/handshake/fingerprint_internal.h"
 #include "reality/handshake/fingerprint_blueprint.h"
 #include "reality/handshake/fingerprint_mutation_internal.h"
 

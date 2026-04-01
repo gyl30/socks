@@ -16,15 +16,15 @@
 
 #include "log.h"
 #include "config.h"
-#include "constants.h"
 #include "protocol.h"
 #include "mux_codec.h"
 #include "net_utils.h"
+#include "constants.h"
 #include "mux_stream.h"
-#include "mux_session_utils.h"
 #include "scoped_exit.h"
 #include "mux_protocol.h"
 #include "mux_connection.h"
+#include "mux_session_utils.h"
 #include "remote_udp_session.h"
 
 namespace mux

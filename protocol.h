@@ -2,13 +2,13 @@
 #define PROTOCOL_H
 
 #include <string>
-#include <string_view>
 #include <vector>
 #include <cstddef>
 #include <cstring>
+#include <string_view>
 
-#include <boost/asio/ip/address.hpp>
 #include <boost/system/error_code.hpp>
+#include <boost/asio/ip/address.hpp>
 
 namespace socks
 {

@@ -1,8 +1,6 @@
 #ifndef SOCKS_SESSION_H
 #define SOCKS_SESSION_H
 
-#include "client_tunnel_pool.h"
-
 #include <array>
 #include <memory>
 #include <string>
@@ -12,6 +10,8 @@
 
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/awaitable.hpp>
+
+#include "client_tunnel_pool.h"
 
 #include "router.h"
 #include "constants.h"

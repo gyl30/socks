@@ -1,16 +1,16 @@
 #include <memory>
 #include <string>
 #include <vector>
-#include <charconv>
 #include <cstdint>
+#include <charconv>
 #include <string_view>
 
 #include <spdlog/spdlog.h>
-#include <spdlog/sinks/rotating_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
+#include <spdlog/sinks/rotating_file_sink.h>
 
-#include "constants.h"
 #include "log.h"
+#include "constants.h"
 
 static void init_default_log(const std::string& filename);
 static void set_log_level();
