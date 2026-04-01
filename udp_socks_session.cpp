@@ -645,7 +645,7 @@ boost::asio::awaitable<void> udp_socks_session::forward_direct_packet(const sock
     const auto normalized_target = net::normalize_endpoint(target);
     const auto now_ms_value = net::now_ms();
     const auto expires_at = now_ms_value + constants::udp::kCacheTtlMs;
-    session_util::evict_expired(direct_peers_, now_ms_value);
+    direct_peers_.evict_if([&](const auto&, const auto& entry) { return entry.expires_at <= now_ms_value; });
     direct_peers_.put(normalized_target, peer_cache_entry{expires_at});
     tx_bytes_ += payload_len;
     last_activity_time_ms_ = now_ms_value;
@@ -671,7 +671,7 @@ boost::asio::awaitable<void> udp_socks_session::direct_udp_socket_loop(boost::as
             break;
         }
         const auto now_ms_value = net::now_ms();
-        session_util::evict_expired(direct_peers_, now_ms_value);
+        direct_peers_.evict_if([&](const auto&, const auto& entry) { return entry.expires_at <= now_ms_value; });
         const auto normalized_sender = net::normalize_endpoint(sender);
         auto* peer = direct_peers_.get(normalized_sender);
         if (peer == nullptr || peer->expires_at <= now_ms_value)
