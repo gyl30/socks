@@ -6,7 +6,6 @@
 #include <boost/system/error_code.hpp>
 
 #include "site_material.h"
-
 namespace reality
 {
 

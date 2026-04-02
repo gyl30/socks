@@ -5,7 +5,6 @@
 
 #include "tls/core.h"
 #include "tls/ch_parser.h"
-
 namespace tls
 {
 

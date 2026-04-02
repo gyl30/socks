@@ -2,8 +2,8 @@
 #define LOG_H
 
 #include <string>
-#include <spdlog/spdlog.h>
 
+#include <spdlog/spdlog.h>
 void init_log(const std::string& filename);
 void set_level(const std::string& level);
 void shutdown_log();

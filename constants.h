@@ -3,12 +3,11 @@
 
 #include <array>
 #include <chrono>
+#include <string>
 #include <cstddef>
 #include <cstdint>
-#include <string>
 
 #include "reality/handshake/fingerprint.h"
-
 namespace constants
 {
 

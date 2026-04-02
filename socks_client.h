@@ -9,7 +9,6 @@
 #include <boost/asio/awaitable.hpp>
 
 #include "context_pool.h"
-
 namespace mux
 {
 

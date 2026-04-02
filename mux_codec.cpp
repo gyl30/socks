@@ -14,7 +14,6 @@
 #include "log.h"
 #include "mux_codec.h"
 #include "mux_protocol.h"
-
 namespace mux
 {
 

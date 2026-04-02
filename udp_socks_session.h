@@ -11,10 +11,9 @@
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/experimental/concurrent_channel.hpp>
 
-#include "net_utils.h"
 #include "lru_cache.h"
+#include "net_utils.h"
 #include "client_tunnel_pool.h"
-
 namespace mux
 {
 

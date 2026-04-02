@@ -8,7 +8,6 @@
 #include <algorithm>
 
 #include <boost/asio.hpp>
-
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/asio/redirect_error.hpp>
@@ -17,16 +16,15 @@
 #include "log.h"
 #include "config.h"
 #include "protocol.h"
+#include "constants.h"
 #include "mux_codec.h"
 #include "net_utils.h"
-#include "constants.h"
 #include "mux_stream.h"
 #include "scoped_exit.h"
 #include "mux_protocol.h"
 #include "mux_connection.h"
 #include "mux_session_utils.h"
 #include "remote_udp_session.h"
-
 namespace mux
 {
 

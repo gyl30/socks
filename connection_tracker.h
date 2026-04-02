@@ -2,9 +2,8 @@
 #define CONNECTION_TRACKER_H
 
 #include <atomic>
-#include <cstdint>
 #include <memory>
-
+#include <cstdint>
 namespace mux
 {
 

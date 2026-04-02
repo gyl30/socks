@@ -12,7 +12,6 @@
 #include "mux_stream.h"
 #include "mux_protocol.h"
 #include "mux_connection.h"
-
 namespace mux
 {
 

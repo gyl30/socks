@@ -6,7 +6,6 @@
 
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/ip/address.hpp>
-
 namespace mux
 {
 

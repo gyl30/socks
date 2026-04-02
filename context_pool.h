@@ -12,7 +12,6 @@
 #include <boost/asio/executor_work_guard.hpp>
 
 #include "task_group.h"
-
 namespace mux
 {
 struct io_worker

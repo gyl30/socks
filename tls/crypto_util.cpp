@@ -10,7 +10,6 @@
 #include <utility>
 
 #include <boost/system/errc.hpp>
-
 extern "C"
 {
 #include <openssl/bio.h>

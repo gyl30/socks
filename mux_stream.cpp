@@ -1,6 +1,6 @@
 #include <memory>
-#include <utility>
 #include <vector>
+#include <utility>
 #include <algorithm>
 
 #include <boost/asio.hpp>
@@ -8,11 +8,10 @@
 
 #include "config.h"
 #include "constants.h"
-#include "mux_stream.h"
 #include "net_utils.h"
+#include "mux_stream.h"
 #include "mux_protocol.h"
 #include "mux_connection.h"
-
 namespace mux
 {
 

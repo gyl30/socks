@@ -11,11 +11,9 @@
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/awaitable.hpp>
 
-#include "client_tunnel_pool.h"
-
 #include "router.h"
 #include "constants.h"
-
+#include "client_tunnel_pool.h"
 namespace mux
 {
 

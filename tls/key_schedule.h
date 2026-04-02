@@ -8,7 +8,6 @@
 #include <utility>
 
 #include <boost/system/error_code.hpp>
-
 extern "C"
 {
 #include <openssl/evp.h>

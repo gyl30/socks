@@ -5,7 +5,6 @@
 #include <utility>
 
 #include <boost/asio.hpp>
-
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/asio/redirect_error.hpp>
@@ -13,12 +12,11 @@
 #include "log.h"
 #include "config.h"
 #include "router.h"
-#include "context_pool.h"
 #include "net_utils.h"
+#include "context_pool.h"
 #include "socks_client.h"
 #include "socks_session.h"
 #include "client_tunnel_pool.h"
-
 namespace mux
 {
 

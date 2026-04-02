@@ -7,7 +7,6 @@
 #include <utility>
 
 #include <boost/asio.hpp>
-
 namespace mux
 {
 

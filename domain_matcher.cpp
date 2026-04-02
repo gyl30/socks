@@ -7,7 +7,6 @@
 #include "log.h"
 #include "domain_matcher.h"
 #include "rule_file_utils.h"
-
 namespace mux
 {
 

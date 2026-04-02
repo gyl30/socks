@@ -13,7 +13,6 @@
 #include "log.h"
 #include "ip_matcher.h"
 #include "rule_file_utils.h"
-
 namespace mux
 {
 

@@ -1,7 +1,7 @@
+#include <mutex>
 #include <atomic>
 #include <chrono>
 #include <memory>
-#include <mutex>
 #include <string>
 #include <vector>
 #include <cstddef>
@@ -27,7 +27,6 @@
 #include "reality/session/session.h"
 #include "reality/handshake/fingerprint.h"
 #include "reality/handshake/client_handshaker.h"
-
 namespace mux
 {
 

@@ -50,6 +50,17 @@ struct config
         uint32_t mark = 0x11;
     } tproxy;
 
+    struct tun_t
+    {
+        bool enabled = false;
+        std::string name = "socks-tun";
+        uint32_t mtu = 1500;
+        std::string ipv4 = "198.18.0.1";
+        uint8_t ipv4_prefix = 32;
+        std::string ipv6 = "fd00::1";
+        uint8_t ipv6_prefix = 128;
+    } tun;
+
     struct timeout_t
     {
         uint32_t read = 100;

@@ -6,7 +6,6 @@
 
 #include "reality/handshake/fingerprint.h"
 #include "reality/handshake/fingerprint_blueprint.h"
-
 namespace reality
 {
 

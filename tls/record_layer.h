@@ -8,7 +8,6 @@
 #include <cstring>
 
 #include <boost/system/detail/error_code.hpp>
-
 extern "C"
 {
 #include <openssl/types.h>

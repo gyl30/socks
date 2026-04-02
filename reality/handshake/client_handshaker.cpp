@@ -14,7 +14,6 @@
 
 #include <boost/asio.hpp>
 #include <boost/asio/awaitable.hpp>
-
 extern "C"
 {
 #include <openssl/bio.h>

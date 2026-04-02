@@ -10,9 +10,8 @@
 #include <boost/asio.hpp>
 #include <boost/asio/awaitable.hpp>
 
-#include "constants.h"
 #include "upstream.h"
-
+#include "constants.h"
 namespace mux
 {
 

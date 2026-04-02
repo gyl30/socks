@@ -1,30 +1,34 @@
+#include <cstdio>
 #include <memory>
 #include <string>
 #include <thread>
 #include <vector>
-#include <cstdio>
 #include <csignal>
 #include <cstring>
 #include <iostream>
 #include <string_view>
 
+#include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/signal_set.hpp>
+#include <boost/asio/use_awaitable.hpp>
 
 #include "log.h"
 #include "config.h"
+#include "net_utils.h"
 #include "scoped_exit.h"
 #include "context_pool.h"
 #include "socks_client.h"
 #include "remote_server.h"
-#include "tls/crypto_util.h"
-
+#if SOCKS_HAS_TUN
+#include "tun_client.h"
+#endif
 #if SOCKS_HAS_TPROXY
 #include "tproxy_client.h"
-
 #endif
+#include "tls/crypto_util.h"
 namespace
 {
 
@@ -32,6 +36,9 @@ struct runtime_services
 {
     std::shared_ptr<mux::remote_server> server = nullptr;
     std::shared_ptr<mux::socks_client> socks = nullptr;
+#if SOCKS_HAS_TUN
+    std::shared_ptr<mux::tun_client> tun = nullptr;
+#endif
 #if SOCKS_HAS_TPROXY
     std::shared_ptr<mux::tproxy_client> tproxy = nullptr;
 #endif
@@ -42,6 +49,8 @@ void print_usage(std::string_view prog)
     std::cout << "Usage:\n"
               << prog << " -c <config>  Run with configuration file\n"
               << prog << " x25519       Generate key pair for kX25519 key exchange\n"
+              << prog << " probe-connect <host> <port> [timeout]  Probe a TCP connect from this binary\n"
+              << prog << " probe-connect-thread <host> <port> [timeout]  Probe a TCP connect from a worker thread\n"
               << prog << " config       Dump default configuration\n";
 }
 
@@ -59,6 +68,81 @@ void dump_x25519()
     const std::string private_key_hex = tls::crypto_util::bytes_to_hex(vec_private_key);
     const std::string public_key_hex = tls::crypto_util::bytes_to_hex(vec_public_key);
     std::cout << "private key: " << private_key_hex << '\n' << "public key:  " << public_key_hex << '\n';
+}
+
+boost::asio::awaitable<int> run_probe_connect_async(std::string host, uint16_t port, uint32_t timeout_sec)
+{
+    auto executor = co_await boost::asio::this_coro::executor;
+    boost::asio::ip::tcp::socket socket(executor);
+    boost::system::error_code ec;
+
+    const auto addr = boost::asio::ip::make_address(host, ec);
+    if (ec)
+    {
+        std::cout << "parse_ec=" << ec.value() << " msg=" << ec.message() << '\n';
+        co_return 1;
+    }
+
+    const boost::asio::ip::tcp::endpoint endpoint(addr, port);
+    ec = socket.open(endpoint.protocol(), ec);
+    if (ec)
+    {
+        std::cout << "open_ec=" << ec.value() << " msg=" << ec.message() << '\n';
+        co_return 1;
+    }
+
+    co_await mux::net::wait_connect_with_timeout(socket, endpoint, timeout_sec, ec);
+    std::cout << "connect_ec=" << ec.value() << " msg=" << ec.message();
+
+    boost::system::error_code local_ep_ec;
+    const auto local_ep = socket.local_endpoint(local_ep_ec);
+    if (local_ep_ec)
+    {
+        std::cout << " local=unavailable(" << local_ep_ec.message() << ')';
+    }
+    else
+    {
+        std::cout << " local=" << local_ep.address().to_string() << ':' << local_ep.port();
+    }
+
+    std::cout << " open=" << socket.is_open() << '\n';
+    co_return ec ? 1 : 0;
+}
+
+boost::asio::awaitable<void> run_probe_connect_task(std::string host, uint16_t port, uint32_t timeout_sec, int& rc)
+{
+    rc = co_await run_probe_connect_async(std::move(host), port, timeout_sec);
+}
+
+int run_probe_connect(const char* host, const char* port_str, const char* timeout_str)
+{
+    const auto port_raw = std::strtoul(port_str, nullptr, 10);
+    const auto timeout_raw = timeout_str != nullptr ? std::strtoul(timeout_str, nullptr, 10) : 5UL;
+    if (port_raw > 65535UL)
+    {
+        std::cout << "invalid port=" << port_raw << '\n';
+        return 1;
+    }
+
+    boost::asio::io_context io_context;
+    int rc = 1;
+    boost::asio::co_spawn(io_context,
+                          run_probe_connect_task(host, static_cast<uint16_t>(port_raw), static_cast<uint32_t>(timeout_raw), rc),
+                          boost::asio::detached);
+    io_context.run();
+    return rc;
+}
+
+int run_probe_connect_thread(const char* host, const char* port_str, const char* timeout_str)
+{
+    int rc = 1;
+    std::thread worker(
+        [&]()
+        {
+            rc = run_probe_connect(host, port_str, timeout_str);
+        });
+    worker.join();
+    return rc;
 }
 
 int register_signal(boost::asio::signal_set& signals, int signal, const char* signal_name)
@@ -104,6 +188,13 @@ runtime_services start_services(mux::io_context_pool& pool, const mux::config& c
         services.socks = std::make_shared<mux::socks_client>(pool, cfg);
         services.socks->start();
     }
+#if SOCKS_HAS_TUN
+    if (is_client_mode && cfg.tun.enabled)
+    {
+        services.tun = std::make_shared<mux::tun_client>(pool, cfg);
+        services.tun->start();
+    }
+#endif
 #if SOCKS_HAS_TPROXY
     if (is_client_mode && cfg.tproxy.enabled)
     {
@@ -120,6 +211,12 @@ void stop_services(const runtime_services& services, const mux::io_context_pool&
     {
         services.socks->stop();
     }
+#if SOCKS_HAS_TUN
+    if (services.tun != nullptr)
+    {
+        services.tun->stop();
+    }
+#endif
 #if SOCKS_HAS_TPROXY
     if (services.tproxy != nullptr)
     {
@@ -210,6 +307,26 @@ int main(int argc, char** argv)
         std::fputs(default_config.c_str(), stdout);
         std::fputc('\n', stdout);
         return 0;
+    }
+
+    if (std::strcmp(mode, "probe-connect") == 0)
+    {
+        if (argc < 4)
+        {
+            print_usage(argv[0]);
+            return 1;
+        }
+        return run_probe_connect(argv[2], argv[3], argc > 4 ? argv[4] : nullptr);
+    }
+
+    if (std::strcmp(mode, "probe-connect-thread") == 0)
+    {
+        if (argc < 4)
+        {
+            print_usage(argv[0]);
+            return 1;
+        }
+        return run_probe_connect_thread(argv[2], argv[3], argc > 4 ? argv[4] : nullptr);
     }
 
     if (std::strcmp(mode, "-c") != 0)

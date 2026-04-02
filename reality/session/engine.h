@@ -1,19 +1,18 @@
 #ifndef REALITY_ENGINE_H
 #define REALITY_ENGINE_H
 
+#include <span>
 #include <array>
+#include <vector>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
-#include <span>
-#include <vector>
 
 #include <boost/asio/buffer.hpp>
 #include <boost/system/error_code.hpp>
 
-#include "reality/session/session.h"
 #include "tls/cipher_context.h"
-
+#include "reality/session/session.h"
 namespace mux
 {
 

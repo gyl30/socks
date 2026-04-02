@@ -6,7 +6,6 @@
 #include <vector>
 
 #include "tls/core.h"
-
 namespace reality
 {
 
