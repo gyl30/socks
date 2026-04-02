@@ -1,15 +1,19 @@
 #include <cerrno>
 #include <cstdio>
+#include <limits>
+#include <memory>
 #include <string>
 #include <cstring>
 #include <utility>
 #include <algorithm>
 #include <type_traits>
 #ifdef _WIN32
-#include <windows.h>
-#include <iphlpapi.h>
-#include <netioapi.h>
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
 #include <winsock2.h>
+#include <windows.h>
+#include <netioapi.h>
 #include <ws2tcpip.h>
 #else
 #include <fcntl.h>
@@ -29,8 +33,8 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <net/if_utun.h>
-#include <netinet6/nd6.h>
 #include <netinet/in_var.h>
+#include <netinet6/in6_var.h>
 #include <sys/sys_domain.h>
 #include <sys/kern_control.h>
 #include <TargetConditionals.h>
@@ -40,6 +44,7 @@
 #include <boost/system/errc.hpp>
 #ifdef _WIN32
 #include "wintun.h"
+#include "tun_device_windows_helper.h"
 #pragma comment(lib, "iphlpapi.lib")
 #endif
 
@@ -318,81 +323,36 @@ bool tun_device::configure(const config::tun_t& cfg, boost::system::error_code& 
     NET_LUID luid{};
     windows_->get_adapter_luid(windows_->adapter, &luid);
 
-    MIB_IFROW if_row{};
-    const DWORD index_result = ConvertInterfaceLuidToIndex(&luid, &if_row.dwIndex);
-    if (index_result != NO_ERROR)
-    {
-        ec = win32_result_ec(index_result);
-        return false;
-    }
-
-    const DWORD get_if_result = GetIfEntry(&if_row);
-    if (get_if_result != NO_ERROR)
-    {
-        ec = win32_result_ec(get_if_result);
-        return false;
-    }
-    if_row.dwMtu = cfg.mtu;
-    const DWORD set_if_result = SetIfEntry(&if_row);
-    if (set_if_result != NO_ERROR)
-    {
-        ec = win32_result_ec(set_if_result);
-        return false;
-    }
-
-    auto set_unicast_address = [&](int family, const void* raw_addr, uint8_t prefix) -> bool
-    {
-        MIB_UNICASTIPADDRESS_ROW address_row;
-        InitializeUnicastIpAddressEntry(&address_row);
-        address_row.InterfaceLuid = luid;
-        address_row.OnLinkPrefixLength = prefix;
-        address_row.DadState = IpDadStatePreferred;
-        if (family == AF_INET)
-        {
-            address_row.Address.Ipv4.sin_family = AF_INET;
-            std::memcpy(&address_row.Address.Ipv4.sin_addr, raw_addr, 4);
-        }
-        else
-        {
-            address_row.Address.Ipv6.sin6_family = AF_INET6;
-            std::memcpy(&address_row.Address.Ipv6.sin6_addr, raw_addr, 16);
-        }
-
-        const DWORD result = CreateUnicastIpAddressEntry(&address_row);
-        if (result != ERROR_SUCCESS && result != ERROR_OBJECT_ALREADY_EXISTS)
-        {
-            ec = {static_cast<int>(result), boost::system::system_category()};
-            return false;
-        }
-        return true;
-    };
-
+    IN_ADDR addr4{};
+    const void* raw_addr4 = nullptr;
     if (!cfg.ipv4.empty())
     {
-        IN_ADDR addr4{};
         if (InetPtonA(AF_INET, cfg.ipv4.c_str(), &addr4) != 1)
         {
             ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
             return false;
         }
-        if (!set_unicast_address(AF_INET, &addr4, cfg.ipv4_prefix))
-        {
-            return false;
-        }
+        raw_addr4 = &addr4;
     }
 
+    IN6_ADDR addr6{};
+    const void* raw_addr6 = nullptr;
     if (!cfg.ipv6.empty())
     {
-        IN6_ADDR addr6{};
         if (InetPtonA(AF_INET6, cfg.ipv6.c_str(), &addr6) != 1)
         {
             ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
             return false;
         }
-        if (!set_unicast_address(AF_INET6, &addr6, cfg.ipv6_prefix))
-        {
-            return false;
-        }
+        raw_addr6 = &addr6;
+    }
+
+    const DWORD configure_result = tun_device_windows_configure_interface(
+        &luid, cfg.mtu, raw_addr4, cfg.ipv4_prefix, raw_addr6, cfg.ipv6_prefix);
+    if (configure_result != NO_ERROR)
+    {
+        ec = win32_result_ec(configure_result);
+        return false;
     }
 
     return true;
@@ -771,8 +731,8 @@ bool tun_device::set_ipv6(const std::string& address, const uint8_t prefix, boos
 
     in6_aliasreq ifra{};
     std::strncpy(ifra.ifra_name, name_.c_str(), IFNAMSIZ - 1);
-    ifra.ifra_lifetime.ia6t_vltime = ND6_INFINITE_LIFETIME;
-    ifra.ifra_lifetime.ia6t_pltime = ND6_INFINITE_LIFETIME;
+    ifra.ifra_lifetime.ia6t_vltime = std::numeric_limits<uint32_t>::max();
+    ifra.ifra_lifetime.ia6t_pltime = std::numeric_limits<uint32_t>::max();
     ifra.ifra_addr.sin6_len = sizeof(sockaddr_in6);
     ifra.ifra_addr.sin6_family = AF_INET6;
     if (::inet_pton(AF_INET6, address.c_str(), &ifra.ifra_addr.sin6_addr) != 1)
