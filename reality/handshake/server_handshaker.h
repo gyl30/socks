@@ -9,7 +9,6 @@
 #include <boost/asio/awaitable.hpp>
 
 #include "reality/types.h"
-
 namespace mux
 {
 

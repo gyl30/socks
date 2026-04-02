@@ -2,7 +2,6 @@
 #include <cstdint>
 
 #include "tls/record_validation.h"
-
 namespace tls
 {
 

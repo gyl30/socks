@@ -14,7 +14,6 @@
 
 #include "lru_cache.h"
 #include "client_tunnel_pool.h"
-
 namespace mux
 {
 

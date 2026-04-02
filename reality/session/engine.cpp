@@ -1,11 +1,10 @@
 #include <span>
 #include <array>
-#include <optional>
 #include <vector>
-#include <utility>
 #include <cstddef>
+#include <utility>
+#include <optional>
 #include <algorithm>
-
 extern "C"
 {
 #include <openssl/types.h>

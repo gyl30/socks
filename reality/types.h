@@ -1,10 +1,9 @@
 #ifndef REALITY_TYPES_H
 #define REALITY_TYPES_H
 
-#include <cstdint>
 #include <string>
 #include <vector>
-
+#include <cstdint>
 extern "C"
 {
 #include <openssl/types.h>

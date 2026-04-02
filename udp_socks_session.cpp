@@ -1,5 +1,5 @@
-#include <atomic>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <memory>
 #include <string>
@@ -17,17 +17,16 @@
 #include "config.h"
 #include "router.h"
 #include "protocol.h"
-#include "net_utils.h"
 #include "constants.h"
+#include "net_utils.h"
 #include "mux_stream.h"
 #include "scoped_exit.h"
-#include "mux_protocol.h"
 #include "context_pool.h"
+#include "mux_protocol.h"
 #include "mux_connection.h"
 #include "mux_session_utils.h"
 #include "udp_socks_session.h"
 #include "client_tunnel_pool.h"
-
 namespace mux
 {
 

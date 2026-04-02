@@ -1,12 +1,11 @@
 #ifndef REALITY_CLIENT_HELLO_BUILDER_H
 #define REALITY_CLIENT_HELLO_BUILDER_H
 
-#include <cstdint>
 #include <string>
 #include <vector>
+#include <cstdint>
 
 #include "reality/handshake/fingerprint.h"
-
 namespace reality
 {
 

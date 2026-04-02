@@ -2,9 +2,9 @@
 #define REMOTE_SERVER_H
 
 #include <array>
+#include <atomic>
 #include <memory>
 #include <vector>
-#include <atomic>
 #include <optional>
 
 #include <boost/asio/awaitable.hpp>
@@ -15,7 +15,6 @@
 #include "site_material.h"
 #include "reality/policy/fallback_gate.h"
 #include "reality/policy/fallback_executor.h"
-
 namespace mux
 {
 

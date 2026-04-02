@@ -3,11 +3,8 @@
 #include <string>
 #include <vector>
 #include <utility>
-#include <cstring>
-#include <algorithm>
 
 #include <boost/asio.hpp>
-
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/asio/redirect_error.hpp>
@@ -23,7 +20,6 @@
 #include "mux_connection.h"
 #include "remote_session.h"
 #include "mux_session_utils.h"
-
 namespace mux
 {
 
@@ -45,6 +41,7 @@ boost::asio::awaitable<void> send_stream_control_frame(const std::shared_ptr<mux
     co_await stream->async_write(control_frame, ec);
 }
 }    // namespace
+
 remote_tcp_session::remote_tcp_session(boost::asio::io_context& io_context,
                                        const std::shared_ptr<mux_connection>& connection,
                                        uint32_t id,
@@ -132,21 +129,56 @@ boost::asio::awaitable<void> remote_tcp_session::run(const syn_payload& syn)
     boost::system::error_code connect_ec = boost::asio::error::host_unreachable;
     for (const auto& entry : resolve_res)
     {
+        const auto endpoint = entry.endpoint();
+        const auto endpoint_text = endpoint.address().to_string() + ":" + std::to_string(endpoint.port());
         if (socket_.is_open())
         {
             boost::system::error_code close_ec;
             close_ec = socket_.close(close_ec);
             (void)close_ec;
         }
-        connect_ec = socket_.open(entry.endpoint().protocol(), connect_ec);
+        connect_ec = socket_.open(endpoint.protocol(), connect_ec);
         if (connect_ec)
         {
+            LOG_DEBUG("event {} conn_id {} stream_id {} open endpoint {} failed {}",
+                      log_event::kMux,
+                      conn_id_,
+                      id_,
+                      endpoint_text,
+                      connect_ec.message());
             continue;
         }
-        co_await net::wait_connect_with_timeout(socket_, entry.endpoint(), cfg_.timeout.connect, connect_ec);
+        LOG_DEBUG("event {} conn_id {} stream_id {} connect try endpoint {}",
+                  log_event::kMux,
+                  conn_id_,
+                  id_,
+                  endpoint_text);
+        co_await net::wait_connect_with_timeout(socket_, endpoint, cfg_.timeout.connect, connect_ec);
         if (!connect_ec)
         {
             break;
+        }
+        boost::system::error_code local_ep_ec;
+        const auto local_ep = socket_.local_endpoint(local_ep_ec);
+        if (local_ep_ec)
+        {
+            LOG_DEBUG("event {} conn_id {} stream_id {} connect try endpoint {} failed {} local_ep_unavailable {}",
+                      log_event::kMux,
+                      conn_id_,
+                      id_,
+                      endpoint_text,
+                      connect_ec.message(),
+                      local_ep_ec.message());
+        }
+        else
+        {
+            LOG_DEBUG("event {} conn_id {} stream_id {} connect try endpoint {} failed {} local_ep {}",
+                      log_event::kMux,
+                      conn_id_,
+                      id_,
+                      endpoint_text,
+                      connect_ec.message(),
+                      local_ep.address().to_string() + ":" + std::to_string(local_ep.port()));
         }
     }
     if (connect_ec)

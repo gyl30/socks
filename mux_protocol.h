@@ -1,13 +1,12 @@
 #ifndef MUX_PROTOCOL_H
 #define MUX_PROTOCOL_H
 
+#include <limits>
 #include <string>
 #include <vector>
-#include <limits>
 #include <cstddef>
 
 #include "tls/core.h"
-
 namespace mux
 {
 constexpr uint8_t kCmdSyn = 0x01;

@@ -6,7 +6,6 @@
 #include <cstring>
 
 #include <boost/system/error_code.hpp>
-
 extern "C"
 {
 #include <openssl/rand.h>

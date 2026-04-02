@@ -11,7 +11,6 @@
 
 #include "log.h"
 #include "context_pool.h"
-
 namespace mux
 {
 

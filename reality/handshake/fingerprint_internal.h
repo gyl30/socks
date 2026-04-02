@@ -7,7 +7,6 @@
 
 #include "tls/core.h"
 #include "reality/handshake/fingerprint.h"
-
 namespace reality
 {
 

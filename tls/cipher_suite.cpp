@@ -3,7 +3,6 @@
 #include <openssl/evp.h>
 
 #include "tls/cipher_suite.h"
-
 namespace tls
 {
 

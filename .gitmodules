@@ -1,3 +1,6 @@
 [submodule "third/rapidjson"]
 	path = third/rapidjson
 	url = https://github.com/Tencent/rapidjson.git
+[submodule "third/lwip"]
+	path = third/lwip
+	url = https://github.com/heiher/lwip
