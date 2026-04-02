@@ -11,7 +11,6 @@
 
 #include "mux_connection.h"
 #include "client_tunnel_pool.h"
-
 namespace mux
 {
 

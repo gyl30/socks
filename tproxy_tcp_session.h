@@ -3,9 +3,9 @@
 
 #include <atomic>
 #include <chrono>
-#include <cstdint>
 #include <memory>
 #include <string>
+#include <cstdint>
 #include <utility>
 
 #include <boost/asio/awaitable.hpp>
@@ -13,7 +13,6 @@
 
 #include "router.h"
 #include "upstream.h"
-
 namespace mux
 {
 

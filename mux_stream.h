@@ -8,7 +8,6 @@
 #include <boost/asio/experimental/concurrent_channel.hpp>
 
 #include "mux_protocol.h"
-
 namespace mux
 {
 

@@ -6,9 +6,8 @@
 #include "log.h"
 #include "constants.h"
 #include "net_utils.h"
-#include "reality/policy/fallback_executor.h"
 #include "reality/policy/fallback_gate.h"
-
+#include "reality/policy/fallback_executor.h"
 namespace reality
 {
 

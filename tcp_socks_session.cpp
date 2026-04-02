@@ -19,7 +19,6 @@
 #include "net_utils.h"
 #include "scoped_exit.h"
 #include "tcp_socks_session.h"
-
 namespace mux
 {
 

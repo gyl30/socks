@@ -17,7 +17,6 @@
 #include "constants.h"
 #include "mux_protocol.h"
 #include "reality/session/engine.h"
-
 namespace reality
 {
 

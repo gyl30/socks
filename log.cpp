@@ -6,12 +6,11 @@
 #include <string_view>
 
 #include <spdlog/spdlog.h>
-#include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/sinks/rotating_file_sink.h>
+#include <spdlog/sinks/stdout_color_sinks.h>
 
 #include "log.h"
 #include "constants.h"
-
 static void init_default_log(const std::string& filename);
 static void set_log_level();
 static uint32_t get_env_uint32_or_default(const char* env_name, uint32_t default_value);

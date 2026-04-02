@@ -13,7 +13,6 @@
 #include "constants.h"
 #include "ip_matcher.h"
 #include "domain_matcher.h"
-
 namespace mux
 {
 

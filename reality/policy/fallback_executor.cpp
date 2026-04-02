@@ -12,7 +12,6 @@
 #include "net_utils.h"
 #include "scoped_exit.h"
 #include "reality/policy/fallback_executor.h"
-
 namespace reality
 {
 

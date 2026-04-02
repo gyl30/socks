@@ -19,13 +19,12 @@
 #include <boost/asio/as_tuple.hpp>
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/this_coro.hpp>
-#include <boost/system/error_code.hpp>
 #include <boost/asio/steady_timer.hpp>
+#include <boost/system/error_code.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/asio/ip/basic_resolver.hpp>
 #include <boost/asio/experimental/concurrent_channel.hpp>
 #include <boost/asio/experimental/awaitable_operators.hpp>
-
 namespace mux::net
 {
 

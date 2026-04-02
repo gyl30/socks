@@ -1,9 +1,8 @@
-#include <vector>
 #include <limits>
+#include <vector>
 #include <cstddef>
 
 #include <boost/asio.hpp>
-
 extern "C"
 {
 #include <brotli/decode.h>

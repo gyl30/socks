@@ -7,7 +7,6 @@
 #include <boost/system/error_code.hpp>
 
 #include "mux_protocol.h"
-
 namespace mux
 {
 

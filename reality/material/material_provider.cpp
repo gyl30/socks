@@ -8,7 +8,6 @@
 #include "cert_fetcher.h"
 #include "site_material.h"
 #include "reality/material/material_provider.h"
-
 namespace reality
 {
 
