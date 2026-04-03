@@ -195,6 +195,56 @@ def start_process(args, stdout_path, extra_env=None):
     return ManagedProcess(args, stdout_path, extra_env=extra_env)
 
 
+def append_runtime_dir(runtime_dirs, path):
+    if not path or not os.path.isdir(path) or path in runtime_dirs:
+        return
+    runtime_dirs.append(path)
+
+
+def append_runtime_dirs(runtime_dirs, raw):
+    if not raw:
+        return
+    for path in raw.split(":"):
+        append_runtime_dir(runtime_dirs, path)
+
+
+def append_root_runtime_dirs(runtime_dirs, root):
+    if not root:
+        return
+    append_runtime_dir(runtime_dirs, os.path.join(root, "lib64"))
+    append_runtime_dir(runtime_dirs, os.path.join(root, "lib"))
+
+
+def read_binary_runpath(binary):
+    try:
+        result = subprocess.run(
+            ["readelf", "-d", str(binary)],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        return ""
+    if result.returncode != 0:
+        return ""
+    match = re.search(r"\((?:RUNPATH|RPATH)\).*?\[(.*?)\]", result.stdout)
+    if match is None:
+        return ""
+    return match.group(1)
+
+
+def build_runtime_env(binary):
+    runtime_dirs = []
+    append_runtime_dirs(runtime_dirs, os.environ.get("SOCKS_RUNTIME_LIB_DIRS", ""))
+    append_root_runtime_dirs(runtime_dirs, os.environ.get("OPENSSL_ROOT_DIR", ""))
+    append_root_runtime_dirs(runtime_dirs, os.environ.get("BROTLI_ROOT_DIR", ""))
+    append_runtime_dirs(runtime_dirs, read_binary_runpath(binary))
+    append_runtime_dirs(runtime_dirs, os.environ.get("LD_LIBRARY_PATH", ""))
+    if not runtime_dirs:
+        return {}
+    return {"LD_LIBRARY_PATH": ":".join(runtime_dirs)}
+
+
 def main():
     parser = argparse.ArgumentParser(description="Local-stack end-to-end reality integration test")
     parser.add_argument("--binary", default=str(pathlib.Path("build") / "socks"), help="path to the socks binary")
@@ -216,6 +266,7 @@ def main():
     temp_root = pathlib.Path(tempfile.mkdtemp(prefix=".tmp-reality-integration.", dir=repo_root))
     helper_processes = []
     try:
+        runtime_env = build_runtime_env(binary)
         server_port = allocate_tcp_port()
         socks_port = allocate_tcp_port()
         https_port = allocate_tcp_port()
@@ -225,7 +276,7 @@ def main():
         socks_host = "127.0.0.1"
         reality_sni = "www.example.com"
 
-        key_output = run_checked([str(binary), "x25519"], capture_output=True)
+        key_output = run_checked([str(binary), "x25519"], env=runtime_env, capture_output=True)
         private_key, public_key = parse_key_output(key_output.stdout)
 
         key_path, cert_path = build_cert(temp_root, origin_host)
@@ -353,14 +404,22 @@ def main():
         save_json(temp_root / "server.json", server_cfg)
         save_json(temp_root / "client.json", client_cfg)
 
-        server_process = start_process([str(binary), "-c", str(temp_root / "server.json")], str(server_log))
+        server_process = start_process(
+            [str(binary), "-c", str(temp_root / "server.json")],
+            str(server_log),
+            extra_env=runtime_env,
+        )
         helper_processes.append(server_process)
 
-        client_process = start_process([str(binary), "-c", str(temp_root / "client.json")], str(client_log))
+        client_process = start_process(
+            [str(binary), "-c", str(temp_root / "client.json")],
+            str(client_log),
+            extra_env=runtime_env,
+        )
         helper_processes.append(client_process)
 
-        wait_for_log_text(server_log, f"remote server listening on 127.0.0.1:{server_port}", 20, "server log")
-        wait_for_log_text(client_log, f"local socks5 listening on {socks_host}:{socks_port}", 20, "client log")
+        wait_for_log_text(server_log, f"listen 127.0.0.1:{server_port} server listening", 20, "server log")
+        wait_for_log_text(client_log, f"listen {socks_host}:{socks_port} socks listening", 20, "client log")
         wait_for_port(socks_host, socks_port, 20, "socks5 proxy")
 
         proxy_url = f"socks5://{socks_host}:{socks_port}"

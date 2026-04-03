@@ -17,6 +17,9 @@ for cmd in python3 curl; do
     fi
 done
 
+source "$repo_root/scripts/runtime_env.sh"
+init_runtime_ld_library_path "$binary"
+
 tmp_dir="$(mktemp -d "$repo_root/.tmp-socks5-test.XXXXXX")"
 keep_artifacts="${KEEP_TEST_ARTIFACTS:-0}"
 declare -a pids=()
@@ -75,7 +78,7 @@ udp_sock.close()
 PY
 )
 
-key_output="$("$binary" x25519)"
+key_output="$(env LD_LIBRARY_PATH="$runtime_ld_library_path" "$binary" x25519)"
 private_key="$(awk '/private key:/{print $3}' <<<"$key_output")"
 public_key="$(awk '/public key:/{print $3}' <<<"$key_output")"
 short_id="0102030405060708"
@@ -180,11 +183,11 @@ python3 "$repo_root/scripts/socks5_udp_echo_server.py" --host 127.0.0.1 --port "
 udp_echo_pid=$!
 pids+=("$udp_echo_pid")
 
-"$binary" -c "$tmp_dir/server.json" >"$tmp_dir/server.stdout.log" 2>&1 &
+env LD_LIBRARY_PATH="$runtime_ld_library_path" "$binary" -c "$tmp_dir/server.json" >"$tmp_dir/server.stdout.log" 2>&1 &
 server_pid=$!
 pids+=("$server_pid")
 
-"$binary" -c "$tmp_dir/client.json" >"$tmp_dir/client.stdout.log" 2>&1 &
+env LD_LIBRARY_PATH="$runtime_ld_library_path" "$binary" -c "$tmp_dir/client.json" >"$tmp_dir/client.stdout.log" 2>&1 &
 client_pid=$!
 pids+=("$client_pid")
 
