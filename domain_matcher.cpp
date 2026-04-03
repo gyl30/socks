@@ -4,6 +4,7 @@
 #include <fstream>
 #include <algorithm>
 
+#include "constants.h"
 #include "log.h"
 #include "domain_matcher.h"
 #include "rule_file_utils.h"
@@ -29,7 +30,7 @@ bool domain_matcher::load(const std::string& filename)
     std::ifstream domain_file(filename);
     if (!domain_file.is_open())
     {
-        LOG_WARN("failed to open domain file {}", filename);
+        LOG_WARN("event {} stage load_domain_rule file {} error open_failed", log_event::kRoute, filename);
         return false;
     }
 
@@ -43,7 +44,7 @@ bool domain_matcher::load(const std::string& filename)
 
         add(line);
     }
-    LOG_INFO("loaded {} proxy domain rules", domains_.size());
+    LOG_INFO("event {} stage load_domain_rule file {} count {}", log_event::kRoute, filename, domains_.size());
     return true;
 }
 

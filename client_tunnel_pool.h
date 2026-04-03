@@ -5,6 +5,7 @@
 #include <atomic>
 #include <memory>
 #include <vector>
+#include <cstddef>
 
 #include <boost/asio.hpp>
 #include <boost/asio/awaitable.hpp>
@@ -26,6 +27,7 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
     void stop();
 
     [[nodiscard]] std::shared_ptr<mux_connection> select_tunnel();
+    [[nodiscard]] std::size_t active_tunnels() const;
 
    private:
     boost::asio::awaitable<void> connect_remote_loop(uint32_t index, io_worker& worker);
@@ -35,7 +37,7 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
     io_context_pool& pool_;
     std::atomic<uint32_t> next_tunnel_index_{0};
     std::atomic<uint32_t> next_conn_id_{1};
-    std::mutex tunnel_mutex_;
+    mutable std::mutex tunnel_mutex_;
     std::vector<std::shared_ptr<mux_connection>> tunnel_pool_;
     std::atomic<bool> stop_ = false;
 };

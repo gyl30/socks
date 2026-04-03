@@ -40,6 +40,8 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
 
    private:
     void apply_request_peer_constraint(const std::string& host, uint16_t port) const;
+    [[nodiscard]] std::string current_client_host() const;
+    [[nodiscard]] uint16_t current_client_port() const;
     [[nodiscard]] boost::asio::awaitable<route_type> decide_udp_route(const socks_udp_header& header) const;
     [[nodiscard]] boost::asio::awaitable<bool> ensure_proxy_stream(boost::system::error_code& ec);
     [[nodiscard]] boost::asio::awaitable<boost::asio::ip::udp::endpoint> resolve_target_endpoint(const std::string& host,
@@ -106,10 +108,17 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
     bool proxy_stream_started_ = false;
     bool has_client_ip_ = false;
     bool has_client_addr_ = false;
+    bool has_last_target_ = false;
     bool direct_udp_v4_running_ = false;
     bool direct_udp_v6_running_ = false;
+    std::string tcp_peer_host_ = "unknown";
+    uint16_t tcp_peer_port_ = 0;
+    std::string udp_bind_host_ = "unknown";
+    uint16_t udp_bind_port_ = 0;
     boost::asio::ip::address client_ip_;
     boost::asio::ip::udp::endpoint client_addr_;
+    std::string last_target_addr_;
+    uint16_t last_target_port_ = 0;
     lru_cache<std::string, endpoint_cache_entry> resolved_targets_;
     lru_cache<boost::asio::ip::udp::endpoint, peer_cache_entry, net::udp_endpoint_hash, net::udp_endpoint_equal> direct_peers_;
     std::shared_ptr<void> active_connection_guard_;

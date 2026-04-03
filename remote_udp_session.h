@@ -5,6 +5,7 @@
 #include <chrono>
 #include <memory>
 #include <string>
+#include <cstdint>
 
 #include <boost/asio.hpp>
 #include <boost/asio/awaitable.hpp>
@@ -56,6 +57,8 @@ class remote_udp_session : public std::enable_shared_from_this<remote_udp_sessio
     uint32_t id_;
     uint32_t conn_id_ = 0;
     const config& cfg_;
+    std::string bind_host_ = "unknown";
+    uint16_t bind_port_ = 0;
     uint64_t tx_bytes_ = 0;
     uint64_t rx_bytes_ = 0;
     std::chrono::steady_clock::time_point start_time_ = std::chrono::steady_clock::now();

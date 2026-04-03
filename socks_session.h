@@ -104,9 +104,14 @@ class socks_session : public std::enable_shared_from_this<socks_session>
 
     uint32_t sid_;
     uint32_t conn_id_ = 0;
+    std::string local_host_ = "unknown";
+    uint16_t local_port_ = 0;
+    std::string client_host_ = "unknown";
+    uint16_t client_port_ = 0;
     std::string username_;
     std::string password_;
     bool auth_enabled_ = false;
+    bool peer_closed_before_greeting_ = false;
     const config& cfg_;
     io_worker& worker_;
     boost::asio::ip::tcp::socket socket_;
