@@ -51,11 +51,18 @@ class tcp_socks_session : public std::enable_shared_from_this<tcp_socks_session>
     uint64_t tx_bytes_ = 0;
     uint64_t rx_bytes_ = 0;
     std::chrono::steady_clock::time_point start_time_ = std::chrono::steady_clock::now();
+    std::string local_host_ = "unknown";
+    uint16_t local_port_ = 0;
+    std::string client_host_ = "unknown";
+    uint16_t client_port_ = 0;
     const config& cfg_;
     boost::asio::ip::tcp::socket socket_;
     boost::asio::steady_timer idle_timer_;
     uint64_t last_activity_time_ms_{0};
     std::atomic<bool> backend_closed_{false};
+    std::string target_host_;
+    uint16_t target_port_ = 0;
+    std::string route_name_ = "unknown";
     std::shared_ptr<router> router_;
     std::shared_ptr<client_tunnel_pool> tunnel_pool_;
     std::shared_ptr<void> active_connection_guard_;

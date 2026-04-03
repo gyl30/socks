@@ -128,11 +128,34 @@ void write_heartbeat_probe_prefix(std::vector<uint8_t>& payload, uint8_t type, u
     return RAND_bytes(payload.data() + static_cast<std::ptrdiff_t>(offset), static_cast<int>(payload.size() - offset)) == 1;
 }
 
-void handle_post_handshake_record(uint32_t cid, const std::span<const uint8_t> plaintext, boost::system::error_code& ec)
+[[nodiscard]] bool is_expected_mux_shutdown(const boost::system::error_code& ec)
+{
+    return ec == boost::asio::error::operation_aborted || ec == boost::asio::error::bad_descriptor || ec == boost::asio::error::eof;
+}
+
+[[nodiscard]] bool is_expected_mux_channel_shutdown(const boost::system::error_code& ec)
+{
+    return is_expected_mux_shutdown(ec) || ec == boost::asio::experimental::error::channel_errors::channel_closed ||
+           ec == boost::asio::experimental::error::channel_errors::channel_cancelled;
+}
+
+void handle_post_handshake_record(uint32_t cid,
+                                  std::string_view local_host,
+                                  uint16_t local_port,
+                                  std::string_view remote_host,
+                                  uint16_t remote_port,
+                                  const std::span<const uint8_t> plaintext,
+                                  boost::system::error_code& ec)
 {
     if (plaintext.empty())
     {
-        LOG_WARN("mux {} empty post handshake record", cid);
+        LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} stage post_handshake empty record",
+                 log_event::kHandshake,
+                 cid,
+                 local_host,
+                 local_port,
+                 remote_host,
+                 remote_port);
         ec = boost::asio::error::invalid_argument;
         return;
     }
@@ -140,17 +163,38 @@ void handle_post_handshake_record(uint32_t cid, const std::span<const uint8_t> p
     const auto handshake_type = plaintext.front();
     if (handshake_type == tls::kHandshakeTypeNewSessionTicket)
     {
-        LOG_DEBUG("mux {} ignore new session ticket", cid);
+        LOG_DEBUG("event {} conn_id {} local {}:{} remote {}:{} stage post_handshake ignore handshake_type {}",
+                  log_event::kHandshake,
+                  cid,
+                  local_host,
+                  local_port,
+                  remote_host,
+                  remote_port,
+                  handshake_type);
         return;
     }
     if (handshake_type == tls::kHandshakeTypeKeyUpdate)
     {
-        LOG_WARN("mux {} key update unsupported", cid);
+        LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} stage post_handshake unsupported handshake_type {}",
+                 log_event::kHandshake,
+                 cid,
+                 local_host,
+                 local_port,
+                 remote_host,
+                 remote_port,
+                 handshake_type);
         ec = boost::asio::error::operation_not_supported;
         return;
     }
 
-    LOG_WARN("mux {} unsupported post handshake type {}", cid, handshake_type);
+    LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} stage post_handshake unsupported handshake_type {}",
+             log_event::kHandshake,
+             cid,
+             local_host,
+             local_port,
+             remote_host,
+             remote_port,
+             handshake_type);
     ec = boost::asio::error::invalid_argument;
 }
 
@@ -195,6 +239,30 @@ mux_connection::mux_connection(boost::asio::ip::tcp::socket socket,
 
 mux_connection::~mux_connection() = default;
 
+std::string_view mux_connection::local_host() const
+{
+    if (local_addr_.empty())
+    {
+        return "unknown";
+    }
+    return local_addr_;
+}
+
+std::string_view mux_connection::remote_host() const
+{
+    if (remote_addr_.empty())
+    {
+        return "unknown";
+    }
+    return remote_addr_;
+}
+
+std::size_t mux_connection::stream_count()
+{
+    const std::scoped_lock<std::mutex> lock(mutex_);
+    return streams_.size();
+}
+
 std::shared_ptr<mux_stream> mux_connection::find_stream(uint32_t stream_id)
 {
     const std::scoped_lock<std::mutex> lock(mutex_);
@@ -221,12 +289,28 @@ boost::asio::awaitable<void> mux_connection::handle_unknown_stream(mux::frame_he
     {
         if (is_stream_limit_reached())
         {
-            LOG_WARN("mux {} drop incoming syn stream {} max_streams {}", cid_, header.stream_id, cfg_.limits.max_streams);
+            LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} stream_id {} stage handle_unknown_stream drop incoming_syn max_streams {} active_streams {}",
+                     log_event::kMux,
+                     cid_,
+                     local_host(),
+                     local_port_,
+                     remote_host(),
+                     remote_port_,
+                     header.stream_id,
+                     cfg_.limits.max_streams,
+                     stream_count());
             co_return;
         }
         if (incoming_syn_channel_ == nullptr)
         {
-            LOG_DEBUG("mux {} drop incoming syn on stream {} without accept loop", cid_, header.stream_id);
+            LOG_DEBUG("event {} conn_id {} local {}:{} remote {}:{} stream_id {} stage handle_unknown_stream drop incoming_syn no_accept_loop",
+                      log_event::kMux,
+                      cid_,
+                      local_host(),
+                      local_port_,
+                      remote_host(),
+                      remote_port_,
+                      header.stream_id);
             co_return;
         }
 
@@ -234,7 +318,28 @@ boost::asio::awaitable<void> mux_connection::handle_unknown_stream(mux::frame_he
         co_return;
     }
 
-    LOG_DEBUG("mux {} drop frame for unknown stream {} cmd {}", cid_, header.stream_id, header.command);
+    if (header.command == mux::kCmdDat)
+    {
+        LOG_TRACE("event {} conn_id {} local {}:{} remote {}:{} stream_id {} stage handle_unknown_stream drop late_dat_frame",
+                  log_event::kMux,
+                  cid_,
+                  local_host(),
+                  local_port_,
+                  remote_host(),
+                  remote_port_,
+                  header.stream_id);
+        co_return;
+    }
+
+    LOG_DEBUG("event {} conn_id {} local {}:{} remote {}:{} stream_id {} stage handle_unknown_stream drop frame cmd {}",
+              log_event::kMux,
+              cid_,
+              local_host(),
+              local_port_,
+              remote_host(),
+              remote_port_,
+              header.stream_id,
+              header.command);
 }
 
 boost::asio::awaitable<void> mux_connection::handle_stream_frame(const mux::frame_header& header, std::vector<uint8_t> payload)
@@ -253,7 +358,14 @@ boost::asio::awaitable<void> mux_connection::handle_stream_frame(const mux::fram
     {
         if (ec == boost::asio::error::timed_out)
         {
-            LOG_WARN("mux {} stream {} backpressure timeout reset only this stream", cid_, header.stream_id);
+            LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} stream_id {} stage deliver_frame backpressure timeout reset_stream",
+                     log_event::kMux,
+                     cid_,
+                     local_host(),
+                     local_port_,
+                     remote_host(),
+                     remote_port_,
+                     header.stream_id);
             close_and_remove_stream(stream);
 
             mux_frame rst_frame;
@@ -263,7 +375,15 @@ boost::asio::awaitable<void> mux_connection::handle_stream_frame(const mux::fram
             co_await send_async_with_timeout(std::move(rst_frame), constants::mux::kControlFrameSendTimeoutSec, rst_ec);
             if (rst_ec)
             {
-                LOG_WARN("mux {} stream {} send rst failed {}", cid_, header.stream_id, rst_ec.message());
+                LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} stream_id {} stage deliver_frame send_rst error {}",
+                         log_event::kMux,
+                         cid_,
+                         local_host(),
+                         local_port_,
+                         remote_host(),
+                         remote_port_,
+                         header.stream_id,
+                         rst_ec.message());
             }
             co_return;
         }
@@ -271,12 +391,27 @@ boost::asio::awaitable<void> mux_connection::handle_stream_frame(const mux::fram
         if (ec == boost::asio::error::operation_aborted || ec == boost::asio::error::bad_descriptor ||
             ec == boost::asio::experimental::error::channel_errors::channel_closed)
         {
-            LOG_DEBUG("mux {} stream {} channel closed drop late frame", cid_, header.stream_id);
+            LOG_DEBUG("event {} conn_id {} local {}:{} remote {}:{} stream_id {} stage deliver_frame drop late_frame channel_closed",
+                      log_event::kMux,
+                      cid_,
+                      local_host(),
+                      local_port_,
+                      remote_host(),
+                      remote_port_,
+                      header.stream_id);
             close_and_remove_stream(stream);
             co_return;
         }
 
-        LOG_ERROR("mux {} deliver frame to stream {} failed {}", cid_, header.stream_id, ec.message());
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} stream_id {} stage deliver_frame error {}",
+                  log_event::kMux,
+                  cid_,
+                  local_host(),
+                  local_port_,
+                  remote_host(),
+                  remote_port_,
+                  header.stream_id,
+                  ec.message());
         stop();
     }
 }
@@ -294,7 +429,15 @@ boost::asio::awaitable<void> mux_connection::queue_incoming_syn(mux::frame_heade
         co_return;
     }
 
-    LOG_WARN("mux {} queue incoming syn stream {} failed {}", cid_, header.stream_id, send_ec.message());
+    LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} stream_id {} stage queue_incoming_syn error {}",
+             log_event::kMux,
+             cid_,
+             local_host(),
+             local_port_,
+             remote_host(),
+             remote_port_,
+             header.stream_id,
+             send_ec.message());
 }
 
 void mux_connection::remove_stream(const std::shared_ptr<mux_stream>& stream)
@@ -327,11 +470,25 @@ void mux_connection::start()
 
 boost::asio::awaitable<void> mux_connection::run_loop()
 {
-    LOG_DEBUG("mux {} started loops", cid_);
+    LOG_DEBUG("event {} conn_id {} local {}:{} remote {}:{} active_streams {} mux loops started",
+              log_event::kConnInit,
+              cid_,
+              local_host(),
+              local_port_,
+              remote_host(),
+              remote_port_,
+              stream_count());
     using boost::asio::experimental::awaitable_operators::operator||;
     co_await (read_loop() || write_loop() || timeout_loop() || heartbeat_loop());
     stop();
-    LOG_INFO("mux {} loops finished stopped", cid_);
+    LOG_INFO("event {} conn_id {} local {}:{} remote {}:{} active_streams {} mux loops finished stopped",
+             log_event::kConnClose,
+             cid_,
+             local_host(),
+             local_port_,
+             remote_host(),
+             remote_port_,
+             stream_count());
 }
 
 void mux_connection::stop()
@@ -378,7 +535,14 @@ void mux_connection::stop_on_executor()
     ec = socket_.close(ec);
     if (ec)
     {
-        LOG_WARN("event {} conn_id {} close failed {}", log_event::kConnClose, cid_, ec.message());
+        LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} stage stop close failed {}",
+                 log_event::kConnClose,
+                 cid_,
+                 local_host(),
+                 local_port_,
+                 remote_host(),
+                 remote_port_,
+                 ec.message());
     }
     if (stop_channel_ != nullptr)
     {
@@ -394,9 +558,16 @@ boost::asio::awaitable<void> mux_connection::async_wait_stopped()
     }
     boost::system::error_code ec;
     co_await stop_channel_->async_receive(boost::asio::redirect_error(boost::asio::use_awaitable, ec));
-    if (ec)
+    if (ec && !is_expected_mux_channel_shutdown(ec))
     {
-        LOG_WARN("mux {} wait stopped error {}", cid_, ec.message());
+        LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} stage wait_stopped error {}",
+                 log_event::kConnClose,
+                 cid_,
+                 local_host(),
+                 local_port_,
+                 remote_host(),
+                 remote_port_,
+                 ec.message());
     }
 }
 
@@ -421,13 +592,41 @@ boost::asio::awaitable<void> mux_connection::read_loop()
         const auto buf = reality_engine_.read_buffer(8192, ec);
         if (ec)
         {
-            LOG_ERROR("mux {} read buffer error {}", cid_, ec.message());
+            LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} stage read_loop read_buffer error {}",
+                      log_event::kMux,
+                      cid_,
+                      local_host(),
+                      local_port_,
+                      remote_host(),
+                      remote_port_,
+                      ec.message());
             break;
         }
         const auto n = co_await socket_.async_read_some(buf, boost::asio::redirect_error(boost::asio::use_awaitable, ec));
         if (ec)
         {
-            LOG_ERROR("mux {} read error {}", cid_, ec.message());
+            if (is_expected_mux_shutdown(ec))
+            {
+                LOG_INFO("event {} conn_id {} local {}:{} remote {}:{} stage read_loop socket_read stopped {}",
+                         log_event::kConnClose,
+                         cid_,
+                         local_host(),
+                         local_port_,
+                         remote_host(),
+                         remote_port_,
+                         ec.message());
+            }
+            else
+            {
+                LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} stage read_loop socket_read error {}",
+                          log_event::kMux,
+                          cid_,
+                          local_host(),
+                          local_port_,
+                          remote_host(),
+                          remote_port_,
+                          ec.message());
+            }
             break;
         }
 
@@ -461,11 +660,38 @@ boost::asio::awaitable<void> mux_connection::read_loop()
         }
         if (ec)
         {
-            LOG_ERROR("mux {} process_decrypted_records error {}", cid_, ec.message());
+            if (is_expected_mux_shutdown(ec))
+            {
+                LOG_INFO("event {} conn_id {} local {}:{} remote {}:{} stage read_loop decrypt_record stopped {}",
+                         log_event::kConnClose,
+                         cid_,
+                         local_host(),
+                         local_port_,
+                         remote_host(),
+                         remote_port_,
+                         ec.message());
+            }
+            else
+            {
+                LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} stage read_loop decrypt_record error {}",
+                          log_event::kMux,
+                          cid_,
+                          local_host(),
+                          local_port_,
+                          remote_host(),
+                          remote_port_,
+                          ec.message());
+            }
             break;
         }
     }
-    LOG_DEBUG("mux {} read loop finished", cid_);
+    LOG_DEBUG("event {} conn_id {} local {}:{} remote {}:{} stage read_loop finished",
+              log_event::kConnClose,
+              cid_,
+              local_host(),
+              local_port_,
+              remote_host(),
+              remote_port_);
 }
 
 boost::asio::awaitable<void> mux_connection::on_tls_record(uint8_t type,
@@ -494,11 +720,18 @@ boost::asio::awaitable<void> mux_connection::on_tls_record(uint8_t type,
     }
     if (type == tls::kContentTypeHandshake)
     {
-        handle_post_handshake_record(cid_, plaintext, ec);
+        handle_post_handshake_record(cid_, local_host(), local_port_, remote_host(), remote_port_, plaintext, ec);
         co_return;
     }
 
-    LOG_WARN("mux {} unsupported record type {}", cid_, type);
+    LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} stage on_tls_record unsupported content_type {}",
+             log_event::kMux,
+             cid_,
+             local_host(),
+             local_port_,
+             remote_host(),
+             remote_port_,
+             type);
     ec = boost::asio::error::invalid_argument;
 }
 
@@ -519,7 +752,14 @@ boost::asio::awaitable<void> mux_connection::write_loop()
         const auto ct = reality_engine_.encrypt_record(mux_frame, ec);
         if (ec)
         {
-            LOG_ERROR("mux {} encrypt error {}", cid_, ec.message());
+            LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} stage write_loop encrypt error {}",
+                      log_event::kMux,
+                      cid_,
+                      local_host(),
+                      local_port_,
+                      remote_host(),
+                      remote_port_,
+                      ec.message());
             break;
         }
 
@@ -527,12 +767,27 @@ boost::asio::awaitable<void> mux_connection::write_loop()
 
         if (ec)
         {
-            LOG_ERROR("mux {} write error {}", cid_, ec.message());
+            LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} stage write_loop socket_write error {}",
+                      log_event::kMux,
+                      cid_,
+                      local_host(),
+                      local_port_,
+                      remote_host(),
+                      remote_port_,
+                      ec.message());
             break;
         }
         if (n != ct.size())
         {
-            LOG_ERROR("mux {} write error {}:{}", cid_, n, ct.size());
+            LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} stage write_loop short_write wrote {} expected {}",
+                      log_event::kMux,
+                      cid_,
+                      local_host(),
+                      local_port_,
+                      remote_host(),
+                      remote_port_,
+                      n,
+                      ct.size());
         }
         write_bytes_ += n;
         last_write_time_ms_ = net::now_ms();
@@ -541,7 +796,13 @@ boost::asio::awaitable<void> mux_connection::write_loop()
             last_non_heartbeat_write_time_ms_ = last_write_time_ms_;
         }
     }
-    LOG_DEBUG("mux {} write loop finished", cid_);
+    LOG_DEBUG("event {} conn_id {} local {}:{} remote {}:{} stage write_loop finished",
+              log_event::kConnClose,
+              cid_,
+              local_host(),
+              local_port_,
+              remote_host(),
+              remote_port_);
 }
 
 boost::asio::awaitable<void> mux_connection::timeout_loop()
@@ -569,7 +830,13 @@ boost::asio::awaitable<void> mux_connection::timeout_loop()
         }
     }
 
-    LOG_DEBUG("mux {} timeout loop finished", cid_);
+    LOG_DEBUG("event {} conn_id {} local {}:{} remote {}:{} stage timeout_loop finished",
+              log_event::kConnClose,
+              cid_,
+              local_host(),
+              local_port_,
+              remote_host(),
+              remote_port_);
     stop();
 }
 
@@ -579,11 +846,24 @@ boost::asio::awaitable<void> mux_connection::send_heartbeat_frame(boost::system:
     write_heartbeat_probe_prefix(payload, kHeartbeatProbeRequest, net::now_ms());
     if (!fill_random_bytes(payload, kHeartbeatProbeHeaderSize))
     {
-        LOG_ERROR("mux {} heartbeat rand failed", cid_);
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} stage heartbeat rand error",
+                  log_event::kMux,
+                  cid_,
+                  local_host(),
+                  local_port_,
+                  remote_host(),
+                  remote_port_);
         ec = boost::asio::error::fault;
         co_return;
     }
-    LOG_DEBUG("mux {} sending heartbeat size {}", cid_, payload.size());
+    LOG_DEBUG("event {} conn_id {} local {}:{} remote {}:{} stage heartbeat send payload_size {}",
+              log_event::kMux,
+              cid_,
+              local_host(),
+              local_port_,
+              remote_host(),
+              remote_port_,
+              payload.size());
 
     mux_frame msg;
     msg.h.stream_id = mux::kStreamIdHeartbeat;
@@ -609,7 +889,13 @@ boost::asio::awaitable<void> mux_connection::heartbeat_loop()
         }
     }
 
-    LOG_DEBUG("mux {} heartbeat loop finished", cid_);
+    LOG_DEBUG("event {} conn_id {} local {}:{} remote {}:{} stage heartbeat finished",
+              log_event::kConnClose,
+              cid_,
+              local_host(),
+              local_port_,
+              remote_host(),
+              remote_port_);
 }
 
 boost::asio::awaitable<void> mux_connection::handle_heartbeat_frame(std::vector<uint8_t> payload)
@@ -618,7 +904,14 @@ boost::asio::awaitable<void> mux_connection::handle_heartbeat_frame(std::vector<
     uint64_t send_ms = 0;
     if (!decode_heartbeat_probe(payload, type, send_ms))
     {
-        LOG_DEBUG("mux {} heartbeat received size {}", cid_, payload.size());
+        LOG_DEBUG("event {} conn_id {} local {}:{} remote {}:{} stage heartbeat recv_unknown payload_size {}",
+                  log_event::kMux,
+                  cid_,
+                  local_host(),
+                  local_port_,
+                  remote_host(),
+                  remote_port_,
+                  payload.size());
         co_return;
     }
 
@@ -634,7 +927,14 @@ boost::asio::awaitable<void> mux_connection::handle_heartbeat_frame(std::vector<
         co_await send_async(std::move(response), ec);
         if (ec)
         {
-            LOG_WARN("mux {} heartbeat response send failed {}", cid_, ec.message());
+            LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} stage heartbeat send_response error {}",
+                     log_event::kMux,
+                     cid_,
+                     local_host(),
+                     local_port_,
+                     remote_host(),
+                     remote_port_,
+                     ec.message());
         }
         co_return;
     }
@@ -642,18 +942,43 @@ boost::asio::awaitable<void> mux_connection::handle_heartbeat_frame(std::vector<
     const auto now_ms = net::now_ms();
     if (send_ms > now_ms)
     {
-        LOG_DEBUG("mux {} ignore heartbeat response send_ms {} now_ms {}", cid_, send_ms, now_ms);
+        LOG_DEBUG("event {} conn_id {} local {}:{} remote {}:{} stage heartbeat ignore_response send_ms {} now_ms {}",
+                  log_event::kMux,
+                  cid_,
+                  local_host(),
+                  local_port_,
+                  remote_host(),
+                  remote_port_,
+                  send_ms,
+                  now_ms);
         co_return;
     }
 
     last_heartbeat_rtt_ms_ = now_ms - send_ms;
     heartbeat_rtt_valid_ = true;
-    LOG_DEBUG("mux {} heartbeat rtt_ms {}", cid_, last_heartbeat_rtt_ms_);
+    LOG_DEBUG("event {} conn_id {} local {}:{} remote {}:{} stage heartbeat rtt_ms {}",
+              log_event::kMux,
+              cid_,
+              local_host(),
+              local_port_,
+              remote_host(),
+              remote_port_,
+              last_heartbeat_rtt_ms_);
 }
 
 boost::asio::awaitable<void> mux_connection::on_mux_frame(const mux::frame_header header, std::vector<uint8_t> payload)
 {
-    LOG_TRACE("mux {} recv frame stream {} cmd {} len {} payload size {}", cid_, header.stream_id, header.command, header.length, payload.size());
+    LOG_TRACE("event {} conn_id {} local {}:{} remote {}:{} stream_id {} cmd {} len {} payload_size {} recv frame",
+              log_event::kMuxFrame,
+              cid_,
+              local_host(),
+              local_port_,
+              remote_host(),
+              remote_port_,
+              header.stream_id,
+              header.command,
+              header.length,
+              payload.size());
 
     if (header.stream_id == mux::kStreamIdHeartbeat)
     {
@@ -672,12 +997,26 @@ std::shared_ptr<mux_stream> mux_connection::create_stream()
         const std::scoped_lock<std::mutex> lock(mutex_);
         if (stopped_.load(std::memory_order_relaxed))
         {
-            LOG_WARN("mux {} create stream rejected stopped", cid_);
+            LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} stage create_stream rejected stopped",
+                     log_event::kMux,
+                     cid_,
+                     local_host(),
+                     local_port_,
+                     remote_host(),
+                     remote_port_);
             return nullptr;
         }
         if (cfg_.limits.max_streams > 0 && streams_.size() >= cfg_.limits.max_streams)
         {
-            LOG_WARN("mux {} create stream rejected max_streams {}", cid_, cfg_.limits.max_streams);
+            LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} stage create_stream rejected max_streams {} active_streams {}",
+                     log_event::kMux,
+                     cid_,
+                     local_host(),
+                     local_port_,
+                     remote_host(),
+                     remote_port_,
+                     cfg_.limits.max_streams,
+                     streams_.size());
             return nullptr;
         }
         stream_id = acquire_next_id();
@@ -689,7 +1028,13 @@ std::shared_ptr<mux_stream> mux_connection::create_stream()
     }
     if (stream_id == mux::kStreamIdHeartbeat)
     {
-        LOG_ERROR("mux {} stream id exhausted closing connection", cid_);
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} stage create_stream stream_id exhausted closing connection",
+                  log_event::kMux,
+                  cid_,
+                  local_host(),
+                  local_port_,
+                  remote_host(),
+                  remote_port_);
         stop();
         return nullptr;
     }
@@ -700,7 +1045,13 @@ std::shared_ptr<mux_stream> mux_connection::create_incoming_stream(uint32_t stre
 {
     if (stream_id == mux::kStreamIdHeartbeat)
     {
-        LOG_WARN("mux {} reject incoming heartbeat stream id", cid_);
+        LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} stage create_incoming_stream reject heartbeat stream_id",
+                 log_event::kMux,
+                 cid_,
+                 local_host(),
+                 local_port_,
+                 remote_host(),
+                 remote_port_);
         return nullptr;
     }
 
@@ -708,7 +1059,14 @@ std::shared_ptr<mux_stream> mux_connection::create_incoming_stream(uint32_t stre
     const auto it = streams_.find(stream_id);
     if (it != streams_.end())
     {
-        LOG_WARN("mux {} incoming stream {} already registered", cid_, stream_id);
+        LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} stream_id {} stage create_incoming_stream already_registered",
+                 log_event::kMux,
+                 cid_,
+                 local_host(),
+                 local_port_,
+                 remote_host(),
+                 remote_port_,
+                 stream_id);
         return nullptr;
     }
 
@@ -737,20 +1095,51 @@ boost::asio::awaitable<void> mux_connection::send_async_with_timeout(mux_frame m
 {
     if (msg.payload.size() > mux::kMaxPayload)
     {
-        LOG_ERROR("mux {} payload too large {}", cid_, msg.payload.size());
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} stream_id {} cmd {} stage send payload_too_large {}",
+                  log_event::kMux,
+                  cid_,
+                  local_host(),
+                  local_port_,
+                  remote_host(),
+                  remote_port_,
+                  msg.h.stream_id,
+                  msg.h.command,
+                  msg.payload.size());
         ec = boost::asio::error::message_size;
         co_return;
     }
 
     if (msg.h.command != mux::kCmdDat || msg.payload.size() < 128)
     {
-        LOG_TRACE("mux {} send frame stream {} cmd {} size {}", cid_, msg.h.stream_id, msg.h.command, msg.payload.size());
+        LOG_TRACE("event {} conn_id {} local {}:{} remote {}:{} stream_id {} cmd {} payload_size {} send frame",
+                  log_event::kMuxFrame,
+                  cid_,
+                  local_host(),
+                  local_port_,
+                  remote_host(),
+                  remote_port_,
+                  msg.h.stream_id,
+                  msg.h.command,
+                  msg.payload.size());
     }
 
     co_await net::wait_send_with_timeout<mux_frame>(*write_channel_, std::move(msg), timeout_sec, ec);
     if (ec)
     {
-        LOG_ERROR("mux {} send failed error {}", cid_, ec.message());
+        if (is_expected_mux_channel_shutdown(ec))
+        {
+            co_return;
+        }
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} stream_id {} cmd {} stage send error {}",
+                  log_event::kMux,
+                  cid_,
+                  local_host(),
+                  local_port_,
+                  remote_host(),
+                  remote_port_,
+                  msg.h.stream_id,
+                  msg.h.command,
+                  ec.message());
         co_return;
     }
     co_return;
@@ -773,7 +1162,13 @@ uint32_t mux_connection::acquire_next_id()
         }
     }
 
-    LOG_ERROR("mux {} stream id exhausted", cid_);
+    LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} stage acquire_stream_id exhausted",
+              log_event::kMux,
+              cid_,
+              local_host(),
+              local_port_,
+              remote_host(),
+              remote_port_);
     return mux::kStreamIdHeartbeat;
 }
 

@@ -52,13 +52,18 @@ void set_socket_reuse_port(int fd, boost::system::error_code& ec)
 
 boost::asio::awaitable<std::shared_ptr<mux_stream>> connect_remote_udp_stream(const std::shared_ptr<mux_connection>& tunnel,
                                                                               uint32_t conn_id,
+                                                                              const boost::asio::ip::udp::endpoint& target_endpoint,
                                                                               boost::system::error_code& ec)
 {
     ec.clear();
     if (tunnel == nullptr)
     {
         ec = boost::asio::error::not_connected;
-        LOG_WARN("event {} conn_id {} no active tunnel for udp associate", log_event::kMux, conn_id);
+        LOG_WARN("event {} conn_id {} target {}:{} no active tunnel for udp associate",
+                 log_event::kMux,
+                 conn_id,
+                 target_endpoint.address().to_string(),
+                 target_endpoint.port());
         co_return nullptr;
     }
 
@@ -66,7 +71,12 @@ boost::asio::awaitable<std::shared_ptr<mux_stream>> connect_remote_udp_stream(co
     if (stream == nullptr)
     {
         ec = boost::asio::error::operation_aborted;
-        LOG_WARN("event {} conn_id {} create udp stream failed", log_event::kMux, conn_id);
+        LOG_WARN("event {} conn_id {} target {}:{} create udp stream failed tunnel_ptr {}",
+                 log_event::kMux,
+                 conn_id,
+                 target_endpoint.address().to_string(),
+                 target_endpoint.port(),
+                 static_cast<const void*>(tunnel.get()));
         co_return nullptr;
     }
 
@@ -79,7 +89,12 @@ boost::asio::awaitable<std::shared_ptr<mux_stream>> connect_remote_udp_stream(co
     if (!mux_codec::encode_syn(syn, syn_data))
     {
         ec = boost::asio::error::invalid_argument;
-        LOG_WARN("event {} conn_id {} encode udp syn failed", log_event::kMux, conn_id);
+        LOG_WARN("event {} conn_id {} stream_id {} target {}:{} encode udp syn failed",
+                 log_event::kMux,
+                 conn_id,
+                 stream->id(),
+                 target_endpoint.address().to_string(),
+                 target_endpoint.port());
         tunnel->close_and_remove_stream(stream);
         co_return nullptr;
     }
@@ -91,7 +106,13 @@ boost::asio::awaitable<std::shared_ptr<mux_stream>> connect_remote_udp_stream(co
     co_await stream->async_write(std::move(syn_frame), ec);
     if (ec)
     {
-        LOG_WARN("event {} conn_id {} stream_id {} send udp syn failed {}", log_event::kMux, conn_id, stream->id(), ec.message());
+        LOG_WARN("event {} conn_id {} stream_id {} target {}:{} send udp syn failed {}",
+                 log_event::kMux,
+                 conn_id,
+                 stream->id(),
+                 target_endpoint.address().to_string(),
+                 target_endpoint.port(),
+                 ec.message());
         tunnel->close_and_remove_stream(stream);
         co_return nullptr;
     }
@@ -99,7 +120,13 @@ boost::asio::awaitable<std::shared_ptr<mux_stream>> connect_remote_udp_stream(co
     const auto ack_frame = co_await stream->async_read(ec);
     if (ec)
     {
-        LOG_WARN("event {} conn_id {} stream_id {} read udp ack failed {}", log_event::kMux, conn_id, stream->id(), ec.message());
+        LOG_WARN("event {} conn_id {} stream_id {} target {}:{} read udp ack failed {}",
+                 log_event::kMux,
+                 conn_id,
+                 stream->id(),
+                 target_endpoint.address().to_string(),
+                 target_endpoint.port(),
+                 ec.message());
         co_await session_util::send_stream_reset(stream, log_event::kMux, conn_id, "read_udp_ack");
         tunnel->close_and_remove_stream(stream);
         co_return nullptr;
@@ -107,10 +134,12 @@ boost::asio::awaitable<std::shared_ptr<mux_stream>> connect_remote_udp_stream(co
     if (ack_frame.h.command != mux::kCmdAck)
     {
         ec = boost::asio::error::invalid_argument;
-        LOG_WARN("event {} conn_id {} stream_id {} unexpected udp ack command {}",
+        LOG_WARN("event {} conn_id {} stream_id {} target {}:{} unexpected udp ack command {}",
                  log_event::kMux,
                  conn_id,
                  stream->id(),
+                 target_endpoint.address().to_string(),
+                 target_endpoint.port(),
                  ack_frame.h.command);
         co_await session_util::send_stream_reset(stream, log_event::kMux, conn_id, "unexpected_udp_ack_command");
         tunnel->close_and_remove_stream(stream);
@@ -121,7 +150,12 @@ boost::asio::awaitable<std::shared_ptr<mux_stream>> connect_remote_udp_stream(co
     if (!mux_codec::decode_ack(ack_frame.payload.data(), ack_frame.payload.size(), ack))
     {
         ec = boost::asio::error::invalid_argument;
-        LOG_WARN("event {} conn_id {} stream_id {} invalid udp ack payload", log_event::kMux, conn_id, stream->id());
+        LOG_WARN("event {} conn_id {} stream_id {} target {}:{} invalid udp ack payload",
+                 log_event::kMux,
+                 conn_id,
+                 stream->id(),
+                 target_endpoint.address().to_string(),
+                 target_endpoint.port());
         co_await session_util::send_stream_reset(stream, log_event::kMux, conn_id, "invalid_udp_ack_payload");
         tunnel->close_and_remove_stream(stream);
         co_return nullptr;
@@ -129,7 +163,13 @@ boost::asio::awaitable<std::shared_ptr<mux_stream>> connect_remote_udp_stream(co
     if (ack.socks_rep != socks::kRepSuccess)
     {
         ec = boost::asio::error::operation_aborted;
-        LOG_WARN("event {} conn_id {} stream_id {} udp ack rejected rep {}", log_event::kMux, conn_id, stream->id(), ack.socks_rep);
+        LOG_WARN("event {} conn_id {} stream_id {} target {}:{} udp ack rejected rep {}",
+                 log_event::kMux,
+                 conn_id,
+                 stream->id(),
+                 target_endpoint.address().to_string(),
+                 target_endpoint.port(),
+                 ack.socks_rep);
         tunnel->close_and_remove_stream(stream);
         co_return nullptr;
     }
@@ -287,9 +327,13 @@ boost::asio::awaitable<bool> tproxy_udp_session::run_proxy_mode()
         co_await stream_->async_write(std::move(close_frame), close_ec);
         if (close_ec)
         {
-            LOG_WARN("event {} conn_id {} stream_id {} send udp {} failed {}",
+            LOG_WARN("event {} conn_id {} client {}:{} target {}:{} stream_id {} send udp {} failed {}",
                      log_event::kMux,
                      conn_id_,
+                     client_endpoint_.address().to_string(),
+                     client_endpoint_.port(),
+                     target_endpoint_.address().to_string(),
+                     target_endpoint_.port(),
                      stream_->id(),
                      close_command == mux::kCmdRst ? "rst" : "fin",
                      close_ec.message());
@@ -312,7 +356,14 @@ boost::asio::awaitable<bool> tproxy_udp_session::open_direct_socket()
     ec = upstream_socket_.open(protocol, ec);
     if (ec)
     {
-        LOG_WARN("event {} conn_id {} open direct udp socket failed {}", log_event::kConnInit, conn_id_, ec.message());
+        LOG_WARN("event {} conn_id {} client {}:{} target {}:{} open direct udp socket failed {}",
+                 log_event::kConnInit,
+                 conn_id_,
+                 client_endpoint_.address().to_string(),
+                 client_endpoint_.port(),
+                 target_endpoint_.address().to_string(),
+                 target_endpoint_.port(),
+                 ec.message());
         co_return false;
     }
 
@@ -321,7 +372,14 @@ boost::asio::awaitable<bool> tproxy_udp_session::open_direct_socket()
         net::set_socket_mark(upstream_socket_.native_handle(), cfg_.tproxy.mark, ec);
         if (ec)
         {
-            LOG_WARN("event {} conn_id {} set direct udp mark failed {}", log_event::kConnInit, conn_id_, ec.message());
+            LOG_WARN("event {} conn_id {} client {}:{} target {}:{} set direct udp mark failed {}",
+                     log_event::kConnInit,
+                     conn_id_,
+                     client_endpoint_.address().to_string(),
+                     client_endpoint_.port(),
+                     target_endpoint_.address().to_string(),
+                     target_endpoint_.port(),
+                     ec.message());
             co_return false;
         }
     }
@@ -329,13 +387,27 @@ boost::asio::awaitable<bool> tproxy_udp_session::open_direct_socket()
     ec = upstream_socket_.bind(boost::asio::ip::udp::endpoint(protocol, 0), ec);
     if (ec)
     {
-        LOG_WARN("event {} conn_id {} bind direct udp socket failed {}", log_event::kConnInit, conn_id_, ec.message());
+        LOG_WARN("event {} conn_id {} client {}:{} target {}:{} bind direct udp socket failed {}",
+                 log_event::kConnInit,
+                 conn_id_,
+                 client_endpoint_.address().to_string(),
+                 client_endpoint_.port(),
+                 target_endpoint_.address().to_string(),
+                 target_endpoint_.port(),
+                 ec.message());
         co_return false;
     }
     ec = upstream_socket_.connect(target_endpoint_, ec);
     if (ec)
     {
-        LOG_WARN("event {} conn_id {} connect direct udp socket failed {}", log_event::kConnInit, conn_id_, ec.message());
+        LOG_WARN("event {} conn_id {} client {}:{} target {}:{} connect direct udp socket failed {}",
+                 log_event::kConnInit,
+                 conn_id_,
+                 client_endpoint_.address().to_string(),
+                 client_endpoint_.port(),
+                 target_endpoint_.address().to_string(),
+                 target_endpoint_.port(),
+                 ec.message());
         co_return false;
     }
 
@@ -359,18 +431,43 @@ boost::asio::awaitable<bool> tproxy_udp_session::open_proxy_stream()
         {
             ec = boost::asio::error::timed_out;
         }
-        LOG_WARN("event {} conn_id {} wait udp tunnel failed {}", log_event::kConnInit, conn_id_, ec.message());
+        LOG_WARN("event {} conn_id {} client {}:{} target {}:{} wait udp tunnel failed {} active_tunnels {} total_slots {}",
+                 log_event::kConnInit,
+                 conn_id_,
+                 client_endpoint_.address().to_string(),
+                 client_endpoint_.port(),
+                 target_endpoint_.address().to_string(),
+                 target_endpoint_.port(),
+                 ec.message(),
+                 tunnel_pool_ != nullptr ? tunnel_pool_->active_tunnels() : 0,
+                 cfg_.limits.max_connections);
         co_return false;
     }
+    LOG_DEBUG("event {} conn_id {} client {}:{} target {}:{} selected udp tunnel ptr {}",
+              log_event::kConnInit,
+              conn_id_,
+              client_endpoint_.address().to_string(),
+              client_endpoint_.port(),
+              target_endpoint_.address().to_string(),
+              target_endpoint_.port(),
+              static_cast<const void*>(tunnel_.get()));
 
-    stream_ = co_await connect_remote_udp_stream(tunnel_, conn_id_, ec);
+    stream_ = co_await connect_remote_udp_stream(tunnel_, conn_id_, target_endpoint_, ec);
     if (ec || stream_ == nullptr)
     {
         if (!ec)
         {
             ec = boost::asio::error::operation_aborted;
         }
-        LOG_WARN("event {} conn_id {} open proxy udp stream failed {}", log_event::kConnInit, conn_id_, ec.message());
+        LOG_WARN("event {} conn_id {} client {}:{} target {}:{} open proxy udp stream failed {} tunnel_ptr {}",
+                 log_event::kConnInit,
+                 conn_id_,
+                 client_endpoint_.address().to_string(),
+                 client_endpoint_.port(),
+                 target_endpoint_.address().to_string(),
+                 target_endpoint_.port(),
+                 ec.message(),
+                 static_cast<const void*>(tunnel_.get()));
         tunnel_.reset();
         co_return false;
     }
@@ -437,7 +534,14 @@ boost::asio::awaitable<void> tproxy_udp_session::packets_to_direct()
         (void)sent;
         if (ec)
         {
-            LOG_WARN("event {} conn_id {} send direct udp payload failed {}", log_event::kMux, conn_id_, ec.message());
+            LOG_WARN("event {} conn_id {} client {}:{} target {}:{} send direct udp payload failed {}",
+                     log_event::kMux,
+                     conn_id_,
+                     client_endpoint_.address().to_string(),
+                     client_endpoint_.port(),
+                     target_endpoint_.address().to_string(),
+                     target_endpoint_.port(),
+                     ec.message());
             break;
         }
         tx_bytes_ += payload.size();
@@ -492,9 +596,13 @@ boost::asio::awaitable<void> tproxy_udp_session::packets_to_proxy()
         data_frame.payload.insert(data_frame.payload.end(), payload.begin(), payload.end());
         if (data_frame.payload.size() > mux::kMaxPayload)
         {
-            LOG_WARN("event {} conn_id {} stream_id {} proxy udp payload too large {} max {}",
+            LOG_WARN("event {} conn_id {} client {}:{} target {}:{} stream_id {} proxy udp payload too large {} max {}",
                      log_event::kMux,
                      conn_id_,
+                     client_endpoint_.address().to_string(),
+                     client_endpoint_.port(),
+                     target_endpoint_.address().to_string(),
+                     target_endpoint_.port(),
                      stream_->id(),
                      data_frame.payload.size(),
                      mux::kMaxPayload);
@@ -504,9 +612,13 @@ boost::asio::awaitable<void> tproxy_udp_session::packets_to_proxy()
         co_await stream_->async_write(std::move(data_frame), ec);
         if (ec)
         {
-            LOG_WARN("event {} conn_id {} stream_id {} send proxy udp payload failed {}",
+            LOG_WARN("event {} conn_id {} client {}:{} target {}:{} stream_id {} send proxy udp payload failed {}",
                      log_event::kMux,
                      conn_id_,
+                     client_endpoint_.address().to_string(),
+                     client_endpoint_.port(),
+                     target_endpoint_.address().to_string(),
+                     target_endpoint_.port(),
                      stream_->id(),
                      ec.message());
             break;
@@ -540,9 +652,13 @@ boost::asio::awaitable<void> tproxy_udp_session::proxy_to_client()
         if (frame.h.command != mux::kCmdDat)
         {
             session_util::update_stream_close_command(stream_close_command_, mux::kCmdRst);
-            LOG_WARN("event {} conn_id {} stream_id {} unexpected proxy udp frame {}",
+            LOG_WARN("event {} conn_id {} client {}:{} target {}:{} stream_id {} unexpected proxy udp frame {}",
                      log_event::kMux,
                      conn_id_,
+                     client_endpoint_.address().to_string(),
+                     client_endpoint_.port(),
+                     target_endpoint_.address().to_string(),
+                     target_endpoint_.port(),
                      stream_->id(),
                      frame.h.command);
             break;
@@ -552,15 +668,26 @@ boost::asio::awaitable<void> tproxy_udp_session::proxy_to_client()
         if (!socks_codec::decode_udp_header(frame.payload.data(), frame.payload.size(), header))
         {
             session_util::update_stream_close_command(stream_close_command_, mux::kCmdRst);
-            LOG_WARN("event {} conn_id {} stream_id {} decode proxy udp header failed", log_event::kMux, conn_id_, stream_->id());
+            LOG_WARN("event {} conn_id {} client {}:{} target {}:{} stream_id {} decode proxy udp header failed",
+                     log_event::kMux,
+                     conn_id_,
+                     client_endpoint_.address().to_string(),
+                     client_endpoint_.port(),
+                     target_endpoint_.address().to_string(),
+                     target_endpoint_.port(),
+                     stream_->id());
             break;
         }
         if (header.header_len > frame.payload.size())
         {
             session_util::update_stream_close_command(stream_close_command_, mux::kCmdRst);
-            LOG_WARN("event {} conn_id {} stream_id {} proxy udp header length invalid {}",
+            LOG_WARN("event {} conn_id {} client {}:{} target {}:{} stream_id {} proxy udp header length invalid {}",
                      log_event::kMux,
                      conn_id_,
+                     client_endpoint_.address().to_string(),
+                     client_endpoint_.port(),
+                     target_endpoint_.address().to_string(),
+                     target_endpoint_.port(),
                      stream_->id(),
                      header.header_len);
             break;
@@ -568,9 +695,13 @@ boost::asio::awaitable<void> tproxy_udp_session::proxy_to_client()
         if (header.frag != 0x00)
         {
             session_util::update_stream_close_command(stream_close_command_, mux::kCmdRst);
-            LOG_WARN("event {} conn_id {} stream_id {} proxy udp fragment unsupported {}",
+            LOG_WARN("event {} conn_id {} client {}:{} target {}:{} stream_id {} proxy udp fragment unsupported {}",
                      log_event::kMux,
                      conn_id_,
+                     client_endpoint_.address().to_string(),
+                     client_endpoint_.port(),
+                     target_endpoint_.address().to_string(),
+                     target_endpoint_.port(),
                      stream_->id(),
                      header.frag);
             break;
@@ -578,7 +709,14 @@ boost::asio::awaitable<void> tproxy_udp_session::proxy_to_client()
         if (header.port == 0)
         {
             session_util::update_stream_close_command(stream_close_command_, mux::kCmdRst);
-            LOG_WARN("event {} conn_id {} stream_id {} proxy udp source port invalid", log_event::kMux, conn_id_, stream_->id());
+            LOG_WARN("event {} conn_id {} client {}:{} target {}:{} stream_id {} proxy udp source port invalid",
+                     log_event::kMux,
+                     conn_id_,
+                     client_endpoint_.address().to_string(),
+                     client_endpoint_.port(),
+                     target_endpoint_.address().to_string(),
+                     target_endpoint_.port(),
+                     stream_->id());
             break;
         }
 
@@ -587,9 +725,13 @@ boost::asio::awaitable<void> tproxy_udp_session::proxy_to_client()
         if (addr_ec)
         {
             session_util::update_stream_close_command(stream_close_command_, mux::kCmdRst);
-            LOG_WARN("event {} conn_id {} stream_id {} parse proxy udp source address failed {}",
+            LOG_WARN("event {} conn_id {} client {}:{} target {}:{} stream_id {} parse proxy udp source address failed {}",
                      log_event::kMux,
                      conn_id_,
+                     client_endpoint_.address().to_string(),
+                     client_endpoint_.port(),
+                     target_endpoint_.address().to_string(),
+                     target_endpoint_.port(),
                      stream_->id(),
                      addr_ec.message());
             break;
@@ -654,7 +796,16 @@ boost::asio::awaitable<bool> tproxy_udp_session::send_to_client(const boost::asi
         {
             co_return false;
         }
-        LOG_WARN("event {} conn_id {} get reply socket failed {}", log_event::kMux, conn_id_, ec.message());
+        LOG_WARN("event {} conn_id {} client {}:{} target {}:{} source {}:{} get reply socket failed {}",
+                 log_event::kMux,
+                 conn_id_,
+                 client_endpoint_.address().to_string(),
+                 client_endpoint_.port(),
+                 target_endpoint_.address().to_string(),
+                 target_endpoint_.port(),
+                 source.address().to_string(),
+                 source.port(),
+                 ec.message());
         co_return true;
     }
 
@@ -671,7 +822,16 @@ boost::asio::awaitable<bool> tproxy_udp_session::send_to_client(const boost::asi
         close_ec = reply_socket->close(close_ec);
         (void)close_ec;
         reply_sockets_.erase(key);
-        LOG_WARN("event {} conn_id {} send udp reply to client failed {}", log_event::kMux, conn_id_, send_ec.message());
+        LOG_WARN("event {} conn_id {} client {}:{} target {}:{} source {}:{} send udp reply to client failed {}",
+                 log_event::kMux,
+                 conn_id_,
+                 client_endpoint_.address().to_string(),
+                 client_endpoint_.port(),
+                 target_endpoint_.address().to_string(),
+                 target_endpoint_.port(),
+                 source.address().to_string(),
+                 source.port(),
+                 send_ec.message());
         co_return true;
     }
 

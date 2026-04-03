@@ -91,7 +91,7 @@ void log_original_dst_getsockopt_failure(int level, int option, const boost::sys
     }
 
     const auto dropped = suppressed.exchange(0, std::memory_order_relaxed);
-    LOG_INFO(
+    LOG_DEBUG(
         "get original tcp dst getsockopt failed level {} opt {} errno {} error {} suppressed {}", level, option, ec.value(), ec.message(), dropped);
 }
 
@@ -456,11 +456,12 @@ bool get_original_tcp_dst(boost::asio::ip::tcp::socket& socket, boost::asio::ip:
         boost::system::error_code local_ec;
         if (try_get_original_dst_from_local_endpoint(socket, endpoint, local_ec))
         {
-            LOG_INFO("get original tcp dst fallback to local endpoint {}:{} after getsockopt failure v6 {} v4 {}",
-                     endpoint.address().to_string(),
-                     endpoint.port(),
-                     v6_ec.message(),
-                     v4_ec.message());
+            LOG_DEBUG("event {} stage get_original_tcp_dst fallback local {}:{} getsockopt_v6 {} getsockopt_v4 {}",
+                      log_event::kRoute,
+                      endpoint.address().to_string(),
+                      endpoint.port(),
+                      v6_ec.message(),
+                      v4_ec.message());
             return true;
         }
         ec = select_original_dst_error(true, v4_ec, v6_ec);
@@ -488,11 +489,12 @@ bool get_original_tcp_dst(boost::asio::ip::tcp::socket& socket, boost::asio::ip:
     boost::system::error_code local_ec;
     if (try_get_original_dst_from_local_endpoint(socket, endpoint, local_ec))
     {
-        LOG_INFO("get original tcp dst fallback to local endpoint {}:{} after getsockopt failure v4 {} v6 {}",
-                 endpoint.address().to_string(),
-                 endpoint.port(),
-                 v4_ec.message(),
-                 v6_ec.message());
+        LOG_DEBUG("event {} stage get_original_tcp_dst fallback local {}:{} getsockopt_v4 {} getsockopt_v6 {}",
+                  log_event::kRoute,
+                  endpoint.address().to_string(),
+                  endpoint.port(),
+                  v4_ec.message(),
+                  v6_ec.message());
         return true;
     }
     ec = select_original_dst_error(false, v4_ec, v6_ec);

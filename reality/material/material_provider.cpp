@@ -16,7 +16,10 @@ site_material load_site_material(const mux::config& cfg, boost::system::error_co
     const std::string target_host = cfg.reality.sni;
     if (target_host.empty())
     {
-        LOG_ERROR("reality site material load failed because reality.sni is empty");
+        LOG_ERROR("event {} target {}:{} stage load_site_material error empty_sni",
+                  mux::log_event::kCert,
+                  "unknown",
+                  constants::reality_limits::kDefaultTlsPort);
         ec = boost::asio::error::invalid_argument;
         return {};
     }
@@ -24,13 +27,20 @@ site_material load_site_material(const mux::config& cfg, boost::system::error_co
     site_material material = fetch_site_material(target_host, constants::reality_limits::kDefaultTlsPort, target_host, ec);
     if (ec)
     {
-        LOG_ERROR("reality site material load failed target {}:{} error {}", target_host, constants::reality_limits::kDefaultTlsPort, ec.message());
+        LOG_ERROR("event {} target {}:{} sni {} stage load_site_material error {}",
+                  mux::log_event::kCert,
+                  target_host,
+                  constants::reality_limits::kDefaultTlsPort,
+                  target_host,
+                  ec.message());
         return {};
     }
 
     LOG_INFO(
-        "reality site material loaded target {} certs {} cert_msg {} alpn '{}' cipher 0x{:04x} sh_exts {} ee_exts {} ee_padding {} ccs {} hs_records "
-        "{} groups {}",
+        "event {} target {}:{} sni {} certs {} cert_msg {} alpn '{}' cipher 0x{:04x} sh_exts {} ee_exts {} ee_padding {} ccs {} hs_records {} groups {}",
+        mux::log_event::kCert,
+        target_host,
+        constants::reality_limits::kDefaultTlsPort,
         target_host,
         material.certificate_chain.size(),
         material.certificate_message.size(),

@@ -15,6 +15,7 @@
 #include <boost/asio/signal_set.hpp>
 #include <boost/asio/use_awaitable.hpp>
 
+#include "constants.h"
 #include "log.h"
 #include "config.h"
 #include "net_utils.h"
@@ -151,7 +152,7 @@ int register_signal(boost::asio::signal_set& signals, int signal, const char* si
     ec = signals.add(signal, ec);
     if (ec)
     {
-        LOG_ERROR("fatal failed to register {} error {}", signal_name, ec.message());
+        LOG_ERROR("event {} stage register_signal signal {} error {}", mux::log_event::kConnInit, signal_name, ec.message());
         return -1;
     }
     return 0;
@@ -253,7 +254,7 @@ int run_with_config(const char* prog, const char* config_path)
 
     if (cfg->mode != "client" && cfg->mode != "server")
     {
-        LOG_ERROR("not supported mode {}", cfg->mode);
+        LOG_ERROR("event {} stage start invalid_mode {}", mux::log_event::kConnInit, cfg->mode);
         return -1;
     }
     mux::io_context_pool pool(resolve_worker_threads(*cfg));
@@ -280,7 +281,7 @@ int run_with_config(const char* prog, const char* config_path)
         });
 
     pool.run();
-    LOG_INFO("{} shutdown", cfg->mode);
+    LOG_INFO("event {} mode {} shutdown", mux::log_event::kConnClose, cfg->mode);
     return 0;
 }
 

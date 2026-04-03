@@ -49,7 +49,34 @@ boost::asio::awaitable<void> write_socks_error_reply(boost::asio::ip::tcp::socke
     co_await net::wait_write_with_timeout(socket, boost::asio::buffer(err), timeout_sec, ec);
     if (ec)
     {
-        LOG_WARN("event {} conn_id {} write error reply failed {}", log_event::kSocks, conn_id, ec.message());
+        const auto write_ec_message = ec.message();
+        std::string local_host = "unknown";
+        uint16_t local_port = 0;
+        std::string remote_host = "unknown";
+        uint16_t remote_port = 0;
+
+        ec.clear();
+        const auto local_ep = socket.local_endpoint(ec);
+        if (!ec)
+        {
+            local_host = local_ep.address().to_string();
+            local_port = local_ep.port();
+        }
+        ec.clear();
+        const auto remote_ep = socket.remote_endpoint(ec);
+        if (!ec)
+        {
+            remote_host = remote_ep.address().to_string();
+            remote_port = remote_ep.port();
+        }
+        LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} write error reply failed {}",
+                 log_event::kSocks,
+                 conn_id,
+                 local_host,
+                 local_port,
+                 remote_host,
+                 remote_port,
+                 write_ec_message);
     }
     co_return;
 }
@@ -87,7 +114,7 @@ void bind_local_udp_address(const boost::asio::ip::tcp::socket& tcp_socket,
     const auto tcp_local_ep = tcp_socket.local_endpoint(ec);
     if (ec)
     {
-        LOG_ERROR("event {} conn_id {} failed to get local endpoint {}", log_event::kSocks, conn_id, ec.message());
+        LOG_ERROR("event {} conn_id {} stage query_tcp_local_endpoint error {}", log_event::kSocks, conn_id, ec.message());
         return;
     }
 
@@ -95,34 +122,61 @@ void bind_local_udp_address(const boost::asio::ip::tcp::socket& tcp_socket,
     open_and_bind_udp_socket(udp_socket, local_addr, ec);
     if (ec)
     {
-        LOG_ERROR("event {} conn_id {} bind udp socket failed {}", log_event::kSocks, conn_id, ec.message());
+        LOG_ERROR("event {} conn_id {} tcp local {}:{} bind udp socket failed {}",
+                  log_event::kSocks,
+                  conn_id,
+                  local_addr.to_string(),
+                  tcp_local_ep.port(),
+                  ec.message());
         return;
     }
     const auto udp_local_ep = udp_socket.local_endpoint(ec);
     if (ec)
     {
-        LOG_ERROR("event {} conn_id {} query udp endpoint failed {}", log_event::kSocks, conn_id, ec.message());
+        LOG_ERROR("event {} conn_id {} tcp local {}:{} query udp endpoint failed {}",
+                  log_event::kSocks,
+                  conn_id,
+                  local_addr.to_string(),
+                  tcp_local_ep.port(),
+                  ec.message());
         return;
     }
     udp_bind_port = udp_local_ep.port();
-    LOG_INFO("event {} conn_id {} udp associate bound {}:{}", log_event::kSocks, conn_id, local_addr.to_string(), udp_bind_port);
+    LOG_INFO("event {} conn_id {} tcp local {}:{} udp associate bound {}:{}",
+             log_event::kSocks,
+             conn_id,
+             local_addr.to_string(),
+             tcp_local_ep.port(),
+             local_addr.to_string(),
+             udp_bind_port);
 }
 
 boost::asio::awaitable<proxy_udp_stream> connect_remote_address(const std::shared_ptr<client_tunnel_pool>& tunnel_pool,
                                                                 uint32_t conn_id,
+                                                                const std::string& target_host,
+                                                                uint16_t target_port,
                                                                 boost::system::error_code& ec)
 {
     if (tunnel_pool == nullptr)
     {
         ec = boost::asio::error::not_connected;
-        LOG_ERROR("event {} conn_id {} failed to create stream no tunnel pool", log_event::kSocks, conn_id);
+        LOG_ERROR("event {} conn_id {} target {}:{} failed to create udp proxy stream no tunnel pool",
+                  log_event::kSocks,
+                  conn_id,
+                  target_host,
+                  target_port);
         co_return proxy_udp_stream{};
     }
     auto tunnel = tunnel_pool->select_tunnel();
     if (!tunnel)
     {
         ec = boost::asio::error::not_connected;
-        LOG_ERROR("event {} conn_id {} wait tunnel failed", log_event::kSocks, conn_id);
+        LOG_ERROR("event {} conn_id {} target {}:{} wait tunnel failed active_tunnels {}",
+                  log_event::kSocks,
+                  conn_id,
+                  target_host,
+                  target_port,
+                  tunnel_pool->active_tunnels());
         co_return proxy_udp_stream{};
     }
 
@@ -130,9 +184,11 @@ boost::asio::awaitable<proxy_udp_stream> connect_remote_address(const std::share
     if (stream == nullptr)
     {
         ec = boost::asio::error::connection_aborted;
-        LOG_ERROR("event {} conn_id {} failed to create stream tunnel_ptr {}",
+        LOG_ERROR("event {} conn_id {} target {}:{} failed to create udp proxy stream tunnel_ptr {}",
                   log_event::kSocks,
                   conn_id,
+                  target_host,
+                  target_port,
                   static_cast<const void*>(tunnel.get()));
         co_return proxy_udp_stream{};
     }
@@ -144,7 +200,12 @@ boost::asio::awaitable<proxy_udp_stream> connect_remote_address(const std::share
     if (!mux_codec::encode_syn(syn, syn_data))
     {
         ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
-        LOG_WARN("event {} conn_id {} syn encode failed", log_event::kSocks, conn_id);
+        LOG_WARN("event {} conn_id {} stream_id {} target {}:{} udp syn encode failed",
+                 log_event::kSocks,
+                 conn_id,
+                 stream->id(),
+                 target_host,
+                 target_port);
         co_return proxy_udp_stream{};
     }
     mux_frame syn_frame;
@@ -154,24 +215,38 @@ boost::asio::awaitable<proxy_udp_stream> connect_remote_address(const std::share
     co_await stream->async_write(syn_frame, ec);
     if (ec)
     {
-        LOG_WARN("event {} conn_id {} stream_id {} syn failed {}", log_event::kSocks, conn_id, stream->id(), ec.message());
+        LOG_WARN("event {} conn_id {} stream_id {} target {}:{} udp syn failed {}",
+                 log_event::kSocks,
+                 conn_id,
+                 stream->id(),
+                 target_host,
+                 target_port,
+                 ec.message());
         co_return proxy_udp_stream{};
     }
 
     auto ack_frame = co_await stream->async_read(ec);
     if (ec)
     {
-        LOG_WARN("event {} conn_id {} stream_id {} ack failed {}", log_event::kSocks, conn_id, stream->id(), ec.message());
+        LOG_WARN("event {} conn_id {} stream_id {} target {}:{} udp ack failed {}",
+                 log_event::kSocks,
+                 conn_id,
+                 stream->id(),
+                 target_host,
+                 target_port,
+                 ec.message());
         co_await session_util::send_stream_reset(stream, log_event::kSocks, conn_id, "read_udp_ack");
         co_return proxy_udp_stream{};
     }
     if (ack_frame.h.command != mux::kCmdAck)
     {
         ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
-        LOG_WARN("event {} conn_id {} stream_id {} ack failed unexpected cmd {}",
+        LOG_WARN("event {} conn_id {} stream_id {} target {}:{} udp ack failed unexpected cmd {}",
                  log_event::kSocks,
                  conn_id,
                  stream->id(),
+                 target_host,
+                 target_port,
                  ack_frame.h.command);
         co_await session_util::send_stream_reset(stream, log_event::kSocks, conn_id, "unexpected_udp_ack_command");
         co_return proxy_udp_stream{};
@@ -181,14 +256,25 @@ boost::asio::awaitable<proxy_udp_stream> connect_remote_address(const std::share
     if (!mux_codec::decode_ack(ack_frame.payload.data(), ack_frame.payload.size(), ack_pl))
     {
         ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
-        LOG_WARN("event {} conn_id {} stream_id {} ack invalid payload", log_event::kSocks, conn_id, stream->id());
+        LOG_WARN("event {} conn_id {} stream_id {} target {}:{} udp ack invalid payload",
+                 log_event::kSocks,
+                 conn_id,
+                 stream->id(),
+                 target_host,
+                 target_port);
         co_await session_util::send_stream_reset(stream, log_event::kSocks, conn_id, "invalid_udp_ack_payload");
         co_return proxy_udp_stream{};
     }
     if (ack_pl.socks_rep != socks::kRepSuccess)
     {
         ec = boost::asio::error::connection_refused;
-        LOG_WARN("event {} conn_id {} stream_id {} ack rejected rep {}", log_event::kSocks, conn_id, stream->id(), ack_pl.socks_rep);
+        LOG_WARN("event {} conn_id {} stream_id {} target {}:{} udp ack rejected rep {}",
+                 log_event::kSocks,
+                 conn_id,
+                 stream->id(),
+                 target_host,
+                 target_port,
+                 ack_pl.socks_rep);
         co_return proxy_udp_stream{};
     }
 
@@ -235,27 +321,55 @@ namespace
 [[nodiscard]] bool decode_client_udp_header(const std::vector<uint8_t>& buf,
                                             std::size_t packet_len,
                                             socks_udp_header& udp_header,
+                                            const boost::asio::ip::udp::endpoint& sender,
+                                            const std::string& bind_host,
+                                            uint16_t bind_port,
                                             uint32_t conn_id)
 {
     if (!socks_codec::decode_udp_header(buf.data(), packet_len, udp_header))
     {
-        LOG_WARN("event {} conn_id {} received invalid udp packet", log_event::kSocks, conn_id);
+        LOG_WARN("event {} conn_id {} peer {}:{} bind {}:{} received invalid udp packet",
+                 log_event::kSocks,
+                 conn_id,
+                 sender.address().to_string(),
+                 sender.port(),
+                 bind_host,
+                 bind_port);
         return false;
     }
 
     if (udp_header.frag != 0x00)
     {
-        LOG_WARN("event {} conn_id {} received fragmented udp packet frag {}", log_event::kSocks, conn_id, udp_header.frag);
+        LOG_WARN("event {} conn_id {} peer {}:{} bind {}:{} received fragmented udp packet frag {}",
+                 log_event::kSocks,
+                 conn_id,
+                 sender.address().to_string(),
+                 sender.port(),
+                 bind_host,
+                 bind_port,
+                 udp_header.frag);
         return false;
     }
     if (udp_header.addr.empty())
     {
-        LOG_WARN("event {} conn_id {} received udp packet with empty target host", log_event::kSocks, conn_id);
+        LOG_WARN("event {} conn_id {} peer {}:{} bind {}:{} received udp packet with empty target host",
+                 log_event::kSocks,
+                 conn_id,
+                 sender.address().to_string(),
+                 sender.port(),
+                 bind_host,
+                 bind_port);
         return false;
     }
     if (udp_header.port == 0)
     {
-        LOG_WARN("event {} conn_id {} received udp packet with invalid target port 0", log_event::kSocks, conn_id);
+        LOG_WARN("event {} conn_id {} peer {}:{} bind {}:{} received udp packet with invalid target port 0",
+                 log_event::kSocks,
+                 conn_id,
+                 sender.address().to_string(),
+                 sender.port(),
+                 bind_host,
+                 bind_port);
         return false;
     }
 
@@ -314,17 +428,38 @@ void udp_socks_session::close_impl()
     close_ec = udp_socket_.close(close_ec);
     if (close_ec && close_ec != boost::asio::error::bad_descriptor)
     {
-        LOG_WARN("event {} conn_id {} close udp socket failed {}", log_event::kSocks, conn_id_, close_ec.message());
+        LOG_WARN("event {} conn_id {} tcp peer {}:{} udp bind {}:{} close udp socket failed {}",
+                 log_event::kSocks,
+                 conn_id_,
+                 tcp_peer_host_,
+                 tcp_peer_port_,
+                 udp_bind_host_,
+                 udp_bind_port_,
+                 close_ec.message());
     }
     close_ec = direct_udp_socket_v4_.close(close_ec);
     if (close_ec && close_ec != boost::asio::error::bad_descriptor)
     {
-        LOG_WARN("event {} conn_id {} close direct udp v4 socket failed {}", log_event::kSocks, conn_id_, close_ec.message());
+        LOG_WARN("event {} conn_id {} tcp peer {}:{} udp bind {}:{} close direct udp v4 socket failed {}",
+                 log_event::kSocks,
+                 conn_id_,
+                 tcp_peer_host_,
+                 tcp_peer_port_,
+                 udp_bind_host_,
+                 udp_bind_port_,
+                 close_ec.message());
     }
     close_ec = direct_udp_socket_v6_.close(close_ec);
     if (close_ec && close_ec != boost::asio::error::bad_descriptor)
     {
-        LOG_WARN("event {} conn_id {} close direct udp v6 socket failed {}", log_event::kSocks, conn_id_, close_ec.message());
+        LOG_WARN("event {} conn_id {} tcp peer {}:{} udp bind {}:{} close direct udp v6 socket failed {}",
+                 log_event::kSocks,
+                 conn_id_,
+                 tcp_peer_host_,
+                 tcp_peer_port_,
+                 udp_bind_host_,
+                 udp_bind_port_,
+                 close_ec.message());
     }
 }
 
@@ -341,28 +476,44 @@ boost::asio::awaitable<void> udp_socks_session::run(const std::string& host, uin
         co_await write_socks_error_reply(socket_, socks::kRepGenFail, conn_id_, cfg_.timeout.write);
         co_return;
     }
+    udp_bind_host_ = local_addr.to_string();
+    udp_bind_port_ = udp_port;
     const auto tcp_remote_ep = socket_.remote_endpoint(ec);
     if (ec)
     {
-        LOG_ERROR("event {} conn_id {} get tcp peer failed {}", log_event::kSocks, conn_id_, ec.message());
+        LOG_ERROR("event {} conn_id {} bind {}:{} get tcp peer failed {}",
+                  log_event::kSocks,
+                  conn_id_,
+                  udp_bind_host_,
+                  udp_bind_port_,
+                  ec.message());
         co_await write_socks_error_reply(socket_, socks::kRepGenFail, conn_id_, cfg_.timeout.write);
         co_return;
     }
     client_ip_ = net::normalize_address(tcp_remote_ep.address());
     has_client_ip_ = true;
+    tcp_peer_host_ = client_ip_.to_string();
+    tcp_peer_port_ = tcp_remote_ep.port();
     LOG_INFO("event {} conn_id {} tcp peer {}:{} udp bind {}:{}",
              log_event::kConnInit,
              conn_id_,
-             client_ip_.to_string(),
-             tcp_remote_ep.port(),
-             local_addr.to_string(),
-             udp_port);
+             tcp_peer_host_,
+             tcp_peer_port_,
+             udp_bind_host_,
+             udp_bind_port_);
     // step 2 reply to tcp socket
     const auto final_rep = detail::build_udp_associate_reply(local_addr, udp_port);
     co_await net::wait_write_with_timeout(socket_, boost::asio::buffer(final_rep), cfg_.timeout.write, ec);
     if (ec)
     {
-        LOG_WARN("event {} conn_id {} write udp associate reply failed {}", log_event::kSocks, conn_id_, ec.message());
+        LOG_WARN("event {} conn_id {} tcp peer {}:{} udp bind {}:{} write udp associate reply failed {}",
+                 log_event::kSocks,
+                 conn_id_,
+                 tcp_peer_host_,
+                 tcp_peer_port_,
+                 udp_bind_host_,
+                 udp_bind_port_,
+                 ec.message());
         co_return;
     }
     boost::system::error_code direct_socket_ec;
@@ -404,11 +555,15 @@ boost::asio::awaitable<void> udp_socks_session::run(const std::string& host, uin
     }
     close_impl();
     const auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time_).count();
-    LOG_INFO("event {} conn_id {} client {}:{} tx_bytes {} rx_bytes {} duration_ms {}",
+    LOG_INFO("event {} conn_id {} tcp peer {}:{} udp bind {}:{} client {}:{} tx_bytes {} rx_bytes {} duration_ms {}",
              log_event::kConnClose,
              conn_id_,
-             has_client_addr_ ? client_addr_.address().to_string() : (has_client_ip_ ? client_ip_.to_string() : "unknown"),
-             has_client_addr_ ? client_addr_.port() : 0,
+             tcp_peer_host_,
+             tcp_peer_port_,
+             udp_bind_host_,
+             udp_bind_port_,
+             current_client_host(),
+             current_client_port(),
              tx_bytes_,
              rx_bytes_,
              duration_ms);
@@ -418,8 +573,56 @@ void udp_socks_session::apply_request_peer_constraint(const std::string& host, u
 {
     if (!host.empty() || port != 0)
     {
-        LOG_INFO("event {} conn_id {} udp associate request peer ignored host {} port {}", log_event::kSocks, conn_id_, host, port);
+        std::string local_host = "unknown";
+        uint16_t local_port = 0;
+        std::string remote_host = "unknown";
+        uint16_t remote_port = 0;
+        boost::system::error_code ec;
+        const auto local_ep = socket_.local_endpoint(ec);
+        if (!ec)
+        {
+            local_host = local_ep.address().to_string();
+            local_port = local_ep.port();
+        }
+        ec.clear();
+        const auto remote_ep = socket_.remote_endpoint(ec);
+        if (!ec)
+        {
+            remote_host = remote_ep.address().to_string();
+            remote_port = remote_ep.port();
+        }
+        LOG_INFO("event {} conn_id {} local {}:{} remote {}:{} udp associate request peer ignored host {} port {}",
+                 log_event::kSocks,
+                 conn_id_,
+                 local_host,
+                 local_port,
+                 remote_host,
+                 remote_port,
+                 host,
+                 port);
     }
+}
+
+std::string udp_socks_session::current_client_host() const
+{
+    if (has_client_addr_)
+    {
+        return client_addr_.address().to_string();
+    }
+    if (has_client_ip_)
+    {
+        return client_ip_.to_string();
+    }
+    return tcp_peer_host_;
+}
+
+uint16_t udp_socks_session::current_client_port() const
+{
+    if (has_client_addr_)
+    {
+        return client_addr_.port();
+    }
+    return tcp_peer_port_;
 }
 
 void udp_socks_session::open_direct_udp_socket(boost::asio::ip::udp::socket& direct_socket,
@@ -430,7 +633,15 @@ void udp_socks_session::open_direct_udp_socket(boost::asio::ip::udp::socket& dir
     ec = direct_socket.open(protocol, ec);
     if (ec)
     {
-        LOG_WARN("event {} conn_id {} open direct udp {} socket failed {}", log_event::kRoute, conn_id_, family, ec.message());
+        LOG_WARN("event {} conn_id {} tcp peer {}:{} udp bind {}:{} open direct udp {} socket failed {}",
+                 log_event::kRoute,
+                 conn_id_,
+                 tcp_peer_host_,
+                 tcp_peer_port_,
+                 udp_bind_host_,
+                 udp_bind_port_,
+                 family,
+                 ec.message());
         return;
     }
     const auto connect_mark = cfg_.tproxy.enabled ? cfg_.tproxy.mark : 0U;
@@ -439,7 +650,15 @@ void udp_socks_session::open_direct_udp_socket(boost::asio::ip::udp::socket& dir
         net::set_socket_mark(direct_socket.native_handle(), connect_mark, ec);
         if (ec)
         {
-            LOG_WARN("event {} conn_id {} set direct udp {} mark failed {}", log_event::kRoute, conn_id_, family, ec.message());
+            LOG_WARN("event {} conn_id {} tcp peer {}:{} udp bind {}:{} set direct udp {} mark failed {}",
+                     log_event::kRoute,
+                     conn_id_,
+                     tcp_peer_host_,
+                     tcp_peer_port_,
+                     udp_bind_host_,
+                     udp_bind_port_,
+                     family,
+                     ec.message());
             boost::system::error_code close_ec;
             close_ec = direct_socket.close(close_ec);
             (void)close_ec;
@@ -449,7 +668,15 @@ void udp_socks_session::open_direct_udp_socket(boost::asio::ip::udp::socket& dir
     ec = direct_socket.bind(boost::asio::ip::udp::endpoint(protocol, 0), ec);
     if (ec)
     {
-        LOG_WARN("event {} conn_id {} bind direct udp {} socket failed {}", log_event::kRoute, conn_id_, family, ec.message());
+        LOG_WARN("event {} conn_id {} tcp peer {}:{} udp bind {}:{} bind direct udp {} socket failed {}",
+                 log_event::kRoute,
+                 conn_id_,
+                 tcp_peer_host_,
+                 tcp_peer_port_,
+                 udp_bind_host_,
+                 udp_bind_port_,
+                 family,
+                 ec.message());
         boost::system::error_code close_ec;
         close_ec = direct_socket.close(close_ec);
         (void)close_ec;
@@ -539,7 +766,16 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> udp_socks_session::resolv
     auto endpoints = co_await net::wait_resolve_with_timeout(resolver, host, std::to_string(port), cfg_.timeout.connect, ec);
     if (ec)
     {
-        LOG_WARN("event {} conn_id {} udp direct resolve failed {}:{} error {}", log_event::kRoute, conn_id_, host, port, ec.message());
+        LOG_WARN("event {} conn_id {} client {}:{} udp bind {}:{} udp direct resolve failed {}:{} error {}",
+                 log_event::kRoute,
+                 conn_id_,
+                 current_client_host(),
+                 current_client_port(),
+                 udp_bind_host_,
+                 udp_bind_port_,
+                 host,
+                 port,
+                 ec.message());
         resolved_targets_.put(key,
                               endpoint_cache_entry{
                                   .endpoint = {},
@@ -552,7 +788,15 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> udp_socks_session::resolv
     if (endpoints.begin() == endpoints.end())
     {
         ec = boost::asio::error::host_not_found;
-        LOG_WARN("event {} conn_id {} udp direct resolve empty {}:{}", log_event::kRoute, conn_id_, host, port);
+        LOG_WARN("event {} conn_id {} client {}:{} udp bind {}:{} udp direct resolve empty {}:{}",
+                 log_event::kRoute,
+                 conn_id_,
+                 current_client_host(),
+                 current_client_port(),
+                 udp_bind_host_,
+                 udp_bind_port_,
+                 host,
+                 port);
         resolved_targets_.put(key,
                               endpoint_cache_entry{
                                   .endpoint = {},
@@ -579,7 +823,15 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> udp_socks_session::resolv
     if (!found)
     {
         ec = boost::asio::error::address_family_not_supported;
-        LOG_WARN("event {} conn_id {} udp direct resolve no compatible endpoint {}:{}", log_event::kRoute, conn_id_, host, port);
+        LOG_WARN("event {} conn_id {} client {}:{} udp bind {}:{} udp direct resolve no compatible endpoint {}:{}",
+                 log_event::kRoute,
+                 conn_id_,
+                 current_client_host(),
+                 current_client_port(),
+                 udp_bind_host_,
+                 udp_bind_port_,
+                 host,
+                 port);
         resolved_targets_.put(key,
                               endpoint_cache_entry{
                                   .endpoint = {},
@@ -612,9 +864,13 @@ boost::asio::awaitable<void> udp_socks_session::forward_direct_packet(const sock
     if (direct_socket == nullptr)
     {
         const auto direct_socket_ec = boost::system::error_code(boost::asio::error::address_family_not_supported);
-        LOG_WARN("event {} conn_id {} udp direct socket unavailable {}:{} error {}",
+        LOG_WARN("event {} conn_id {} client {}:{} udp bind {}:{} udp direct socket unavailable {}:{} error {}",
                  log_event::kRoute,
                  conn_id_,
+                 current_client_host(),
+                 current_client_port(),
+                 udp_bind_host_,
+                 udp_bind_port_,
                  target.address().to_string(),
                  target.port(),
                  direct_socket_ec.message());
@@ -631,9 +887,13 @@ boost::asio::awaitable<void> udp_socks_session::forward_direct_packet(const sock
         }
         else
         {
-            LOG_WARN("event {} conn_id {} udp direct send failed {}:{} error {}",
+            LOG_WARN("event {} conn_id {} client {}:{} udp bind {}:{} udp direct send failed {}:{} error {}",
                      log_event::kRoute,
                      conn_id_,
+                     current_client_host(),
+                     current_client_port(),
+                     udp_bind_host_,
+                     udp_bind_port_,
                      target.address().to_string(),
                      target.port(),
                      send_ec.message());
@@ -663,7 +923,14 @@ boost::asio::awaitable<void> udp_socks_session::direct_udp_socket_loop(boost::as
         {
             if (!session_util::is_normal_close_error(ec))
             {
-                LOG_WARN("event {} conn_id {} direct udp receive error {}", log_event::kRoute, conn_id_, ec.message());
+                LOG_WARN("event {} conn_id {} client {}:{} udp bind {}:{} direct udp receive error {}",
+                         log_event::kRoute,
+                         conn_id_,
+                         current_client_host(),
+                         current_client_port(),
+                         udp_bind_host_,
+                         udp_bind_port_,
+                         ec.message());
                 ec = direct_socket.close(ec);
                 (void)ec;
             }
@@ -679,9 +946,13 @@ boost::asio::awaitable<void> udp_socks_session::direct_udp_socket_loop(boost::as
             {
                 direct_peers_.erase(normalized_sender);
             }
-            LOG_WARN("event {} conn_id {} ignore udp packet from unexpected direct peer {}:{}",
+            LOG_WARN("event {} conn_id {} client {}:{} udp bind {}:{} ignore udp packet from unexpected direct peer {}:{}",
                      log_event::kRoute,
                      conn_id_,
+                     current_client_host(),
+                     current_client_port(),
+                     udp_bind_host_,
+                     udp_bind_port_,
                      sender.address().to_string(),
                      sender.port());
             continue;
@@ -748,7 +1019,15 @@ boost::asio::awaitable<void> udp_socks_session::forward_direct_reply_to_client(c
     const auto packet_len = udp_header.size() + payload_len;
     if (packet_len > constants::udp::kMaxPayload)
     {
-        LOG_WARN("event {} conn_id {} udp reply oversized drop size {} max {}", log_event::kRoute, conn_id_, packet_len, constants::udp::kMaxPayload);
+        LOG_WARN("event {} conn_id {} client {}:{} udp bind {}:{} udp reply oversized drop size {} max {}",
+                 log_event::kRoute,
+                 conn_id_,
+                 current_client_host(),
+                 current_client_port(),
+                 udp_bind_host_,
+                 udp_bind_port_,
+                 packet_len,
+                 constants::udp::kMaxPayload);
         co_return;
     }
 
@@ -763,9 +1042,13 @@ boost::asio::awaitable<void> udp_socks_session::forward_direct_reply_to_client(c
     ec = send_ec;
     if (ec)
     {
-        LOG_WARN("event {} conn_id {} udp direct reply failed {}:{} error {}",
+        LOG_WARN("event {} conn_id {} client {}:{} udp bind {}:{} udp direct reply failed {}:{} error {}",
                  log_event::kRoute,
                  conn_id_,
+                 current_client_host(),
+                 current_client_port(),
+                 udp_bind_host_,
+                 udp_bind_port_,
                  client_addr_.address().to_string(),
                  client_addr_.port(),
                  ec.message());
@@ -781,19 +1064,43 @@ boost::asio::awaitable<bool> udp_socks_session::ensure_proxy_stream(boost::syste
         co_return true;
     }
 
-    const auto proxy_stream = co_await connect_remote_address(tunnel_pool_, conn_id_, ec);
+    const auto proxy_stream = co_await connect_remote_address(tunnel_pool_,
+                                                              conn_id_,
+                                                              has_last_target_ ? last_target_addr_ : "unknown",
+                                                              has_last_target_ ? last_target_port_ : 0,
+                                                              ec);
     if (ec || proxy_stream.stream == nullptr || proxy_stream.tunnel == nullptr)
     {
         if (!ec)
         {
             ec = boost::asio::error::not_connected;
         }
-        LOG_WARN("event {} conn_id {} connect proxy udp stream failed {}", log_event::kSocks, conn_id_, ec.message());
+        LOG_WARN("event {} conn_id {} client {}:{} udp bind {}:{} target {}:{} connect proxy udp stream failed {}",
+                 log_event::kSocks,
+                 conn_id_,
+                 current_client_host(),
+                 current_client_port(),
+                 udp_bind_host_,
+                 udp_bind_port_,
+                 has_last_target_ ? last_target_addr_ : "unknown",
+                 has_last_target_ ? last_target_port_ : 0,
+                 ec.message());
         co_return false;
     }
 
     tunnel_ = proxy_stream.tunnel;
     stream_ = proxy_stream.stream;
+    LOG_INFO("event {} conn_id {} client {}:{} udp bind {}:{} target {}:{} proxy udp stream ready stream_id {} tunnel_ptr {}",
+             log_event::kSocks,
+             conn_id_,
+             current_client_host(),
+             current_client_port(),
+             udp_bind_host_,
+             udp_bind_port_,
+             has_last_target_ ? last_target_addr_ : "unknown",
+             has_last_target_ ? last_target_port_ : 0,
+             stream_->id(),
+             static_cast<const void*>(tunnel_.get()));
     if (!proxy_stream_started_)
     {
         const auto [send_ec] =
@@ -801,7 +1108,16 @@ boost::asio::awaitable<bool> udp_socks_session::ensure_proxy_stream(boost::syste
         if (send_ec)
         {
             ec = send_ec;
-            LOG_WARN("event {} conn_id {} start proxy udp reader failed {}", log_event::kSocks, conn_id_, ec.message());
+            LOG_WARN("event {} conn_id {} client {}:{} udp bind {}:{} target {}:{} start proxy udp reader failed {}",
+                     log_event::kSocks,
+                     conn_id_,
+                     current_client_host(),
+                     current_client_port(),
+                     udp_bind_host_,
+                     udp_bind_port_,
+                     has_last_target_ ? last_target_addr_ : "unknown",
+                     has_last_target_ ? last_target_port_ : 0,
+                     ec.message());
             tunnel_->close_and_remove_stream(stream_);
             stream_.reset();
             tunnel_.reset();
@@ -838,24 +1154,42 @@ boost::asio::awaitable<void> udp_socks_session::udp_socket_loop()
             co_await udp_socket_.async_receive_from(boost::asio::buffer(buf), sender, boost::asio::as_tuple(boost::asio::use_awaitable));
         if (recv_ec)
         {
-            LOG_WARN("event {} conn_id {} receive error {}", log_event::kSocks, conn_id_, recv_ec.message());
+            if (!stopped_ && !session_util::is_normal_close_error(recv_ec))
+            {
+                LOG_WARN("event {} conn_id {} client {}:{} udp bind {}:{} receive error {}",
+                         log_event::kSocks,
+                         conn_id_,
+                         current_client_host(),
+                         current_client_port(),
+                         udp_bind_host_,
+                         udp_bind_port_,
+                         recv_ec.message());
+            }
             break;
         }
         const auto normalized_sender = net::normalize_endpoint(sender);
         if (has_client_ip_ && normalized_sender.address() != client_ip_)
         {
-            LOG_WARN("event {} conn_id {} ignore udp packet from unexpected peer {} expected {}",
+            LOG_WARN("event {} conn_id {} tcp peer {}:{} udp bind {}:{} ignore udp packet from unexpected peer {} expected {}",
                      log_event::kSocks,
                      conn_id_,
+                     tcp_peer_host_,
+                     tcp_peer_port_,
+                     udp_bind_host_,
+                     udp_bind_port_,
                      normalized_sender.address().to_string(),
                      client_ip_.to_string());
             continue;
         }
         if (has_client_addr_ && normalized_sender != client_addr_)
         {
-            LOG_WARN("event {} conn_id {} ignore udp packet from unexpected peer {}:{} expected {}:{}",
+            LOG_WARN("event {} conn_id {} tcp peer {}:{} udp bind {}:{} ignore udp packet from unexpected peer {}:{} expected {}:{}",
                      log_event::kSocks,
                      conn_id_,
+                     tcp_peer_host_,
+                     tcp_peer_port_,
+                     udp_bind_host_,
+                     udp_bind_port_,
                      normalized_sender.address().to_string(),
                      normalized_sender.port(),
                      client_addr_.address().to_string(),
@@ -866,19 +1200,38 @@ boost::asio::awaitable<void> udp_socks_session::udp_socket_loop()
         {
             client_addr_ = normalized_sender;
             has_client_addr_ = true;
-            LOG_INFO("event {} conn_id {} udp peer bound to {}:{}", log_event::kSocks, conn_id_, client_addr_.address().to_string(), client_addr_.port());
+            LOG_INFO("event {} conn_id {} tcp peer {}:{} udp bind {}:{} udp peer bound to {}:{}",
+                     log_event::kSocks,
+                     conn_id_,
+                     tcp_peer_host_,
+                     tcp_peer_port_,
+                     udp_bind_host_,
+                     udp_bind_port_,
+                     client_addr_.address().to_string(),
+                     client_addr_.port());
         }
 
         socks_udp_header udp_header;
-        if (!decode_client_udp_header(buf, n, udp_header, conn_id_))
+        if (!decode_client_udp_header(buf, n, udp_header, normalized_sender, udp_bind_host_, udp_bind_port_, conn_id_))
         {
             continue;
         }
+        last_target_addr_ = udp_header.addr;
+        last_target_port_ = udp_header.port;
+        has_last_target_ = true;
 
         const auto route = co_await decide_udp_route(udp_header);
         if (route == route_type::kBlock)
         {
-            LOG_INFO("event {} conn_id {} udp blocked {}:{}", log_event::kRoute, conn_id_, udp_header.addr, udp_header.port);
+            LOG_INFO("event {} conn_id {} client {}:{} udp bind {}:{} udp blocked {}:{}",
+                     log_event::kRoute,
+                     conn_id_,
+                     current_client_host(),
+                     current_client_port(),
+                     udp_bind_host_,
+                     udp_bind_port_,
+                     udp_header.addr,
+                     udp_header.port);
             continue;
         }
 
@@ -887,7 +1240,14 @@ boost::asio::awaitable<void> udp_socks_session::udp_socket_loop()
         {
             if (n > mux::kMaxPayload)
             {
-                LOG_WARN("event {} conn_id {} udp packet too large for mux frame {}", log_event::kSocks, conn_id_, n);
+                LOG_WARN("event {} conn_id {} client {}:{} udp bind {}:{} udp packet too large for mux frame {}",
+                         log_event::kSocks,
+                         conn_id_,
+                         current_client_host(),
+                         current_client_port(),
+                         udp_bind_host_,
+                         udp_bind_port_,
+                         n);
                 continue;
             }
             boost::system::error_code open_ec;
@@ -909,9 +1269,13 @@ boost::asio::awaitable<void> udp_socks_session::udp_socket_loop()
             {
                 session_util::update_stream_close_command(stream_close_command_, mux::kNoStreamControl);
                 clear_proxy_stream_if_current(stream);
-                LOG_WARN("event {} conn_id {} stream_id {} write to stream failed {}",
+                LOG_WARN("event {} conn_id {} client {}:{} udp bind {}:{} stream_id {} write to stream failed {}",
                          log_event::kSocks,
                          conn_id_,
+                         current_client_host(),
+                         current_client_port(),
+                         udp_bind_host_,
+                         udp_bind_port_,
                          stream->id(),
                          write_ec.message());
                 continue;
@@ -968,9 +1332,13 @@ boost::asio::awaitable<void> udp_socks_session::stream_to_udp_sock(std::shared_p
         {
             session_util::update_stream_close_command(stream_close_command_, mux::kNoStreamControl);
             clear_proxy_stream_if_current(stream);
-            LOG_INFO("event {} conn_id {} stream_id {} recv control cmd {} closing",
+            LOG_INFO("event {} conn_id {} client {}:{} udp bind {}:{} stream_id {} recv control cmd {} closing",
                      log_event::kSocks,
                      conn_id_,
+                     current_client_host(),
+                     current_client_port(),
+                     udp_bind_host_,
+                     udp_bind_port_,
                      stream->id(),
                      data_frame.h.command);
             break;
@@ -978,9 +1346,13 @@ boost::asio::awaitable<void> udp_socks_session::stream_to_udp_sock(std::shared_p
         if (data_frame.h.command != mux::kCmdDat)
         {
             session_util::update_stream_close_command(stream_close_command_, mux::kCmdRst);
-            LOG_WARN("event {} conn_id {} stream_id {} recv unexpected cmd {} dropping session",
+            LOG_WARN("event {} conn_id {} client {}:{} udp bind {}:{} stream_id {} recv unexpected cmd {} dropping session",
                      log_event::kSocks,
                      conn_id_,
+                     current_client_host(),
+                     current_client_port(),
+                     udp_bind_host_,
+                     udp_bind_port_,
                      stream->id(),
                      data_frame.h.command);
             close_impl();
@@ -993,9 +1365,13 @@ boost::asio::awaitable<void> udp_socks_session::stream_to_udp_sock(std::shared_p
 
         if (data_frame.payload.size() > constants::udp::kMaxPayload)
         {
-            LOG_WARN("event {} conn_id {} stream_id {} udp reply oversized drop size {} max {}",
+            LOG_WARN("event {} conn_id {} client {}:{} udp bind {}:{} stream_id {} udp reply oversized drop size {} max {}",
                      log_event::kSocks,
                      conn_id_,
+                     current_client_host(),
+                     current_client_port(),
+                     udp_bind_host_,
+                     udp_bind_port_,
                      stream->id(),
                      data_frame.payload.size(),
                      constants::udp::kMaxPayload);
@@ -1007,9 +1383,13 @@ boost::asio::awaitable<void> udp_socks_session::stream_to_udp_sock(std::shared_p
         if (send_ec)
         {
             session_util::update_stream_close_command(stream_close_command_, mux::kCmdRst);
-            LOG_ERROR("event {} conn_id {} stream_id {} send error {}",
+            LOG_ERROR("event {} conn_id {} client {}:{} udp bind {}:{} stream_id {} send error {}",
                       log_event::kSocks,
                       conn_id_,
+                      current_client_host(),
+                      current_client_port(),
+                      udp_bind_host_,
+                      udp_bind_port_,
                       stream->id(),
                       send_ec.message());
             close_impl();
@@ -1029,7 +1409,31 @@ boost::asio::awaitable<void> udp_socks_session::keep_tcp_alive()
         const auto [ec, n] = co_await socket_.async_read_some(boost::asio::buffer(buf), boost::asio::as_tuple(boost::asio::use_awaitable));
         if (ec)
         {
-            LOG_ERROR("event {} conn_id {} keep tcp alive error {}", log_event::kSocks, conn_id_, ec.message());
+            if (ec == boost::asio::error::eof)
+            {
+                LOG_INFO("event {} conn_id {} tcp peer {}:{} udp bind {}:{} client {}:{} tcp control channel closed eof",
+                         log_event::kConnClose,
+                         conn_id_,
+                         tcp_peer_host_,
+                         tcp_peer_port_,
+                         udp_bind_host_,
+                         udp_bind_port_,
+                         current_client_host(),
+                         current_client_port());
+            }
+            else if (ec != boost::asio::error::operation_aborted)
+            {
+                LOG_ERROR("event {} conn_id {} tcp peer {}:{} udp bind {}:{} client {}:{} keep tcp alive error {}",
+                          log_event::kSocks,
+                          conn_id_,
+                          tcp_peer_host_,
+                          tcp_peer_port_,
+                          udp_bind_host_,
+                          udp_bind_port_,
+                          current_client_host(),
+                          current_client_port(),
+                          ec.message());
+            }
             break;
         }
         if (n == 0)
@@ -1040,7 +1444,16 @@ boost::asio::awaitable<void> udp_socks_session::keep_tcp_alive()
         if (ignored_bytes >= constants::udp::kTcpControlIgnoreLimitBytes)
         {
             session_util::update_stream_close_command(stream_close_command_, mux::kCmdRst);
-            LOG_WARN("event {} conn_id {} tcp control channel flooded ignored_bytes {}", log_event::kSocks, conn_id_, ignored_bytes);
+            LOG_WARN("event {} conn_id {} tcp peer {}:{} udp bind {}:{} client {}:{} tcp control channel flooded ignored_bytes {}",
+                     log_event::kSocks,
+                     conn_id_,
+                     tcp_peer_host_,
+                     tcp_peer_port_,
+                     udp_bind_host_,
+                     udp_bind_port_,
+                     current_client_host(),
+                     current_client_port(),
+                     ignored_bytes);
             close_impl();
             co_return;
         }
@@ -1066,7 +1479,17 @@ boost::asio::awaitable<void> udp_socks_session::idle_watchdog()
         const auto idle_timeout_ms = static_cast<uint64_t>(cfg_.timeout.idle) * 1000ULL;
         if (elapsed_ms > idle_timeout_ms)
         {
-            LOG_WARN("event {} conn_id {} udp session idle closing", log_event::kSocks, conn_id_);
+            LOG_WARN("event {} conn_id {} tcp peer {}:{} udp bind {}:{} client {}:{} last_target {}:{} udp session idle closing",
+                     log_event::kSocks,
+                     conn_id_,
+                     tcp_peer_host_,
+                     tcp_peer_port_,
+                     udp_bind_host_,
+                     udp_bind_port_,
+                     current_client_host(),
+                     current_client_port(),
+                     has_last_target_ ? last_target_addr_ : "unknown",
+                     has_last_target_ ? last_target_port_ : 0);
             break;
         }
     }

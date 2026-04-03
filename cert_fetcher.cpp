@@ -65,6 +65,15 @@ struct fetch_context
     ~fetch_context() { OPENSSL_cleanse(client_private, sizeof(client_private)); }
 };
 
+const char* cert_log_sni(const fetch_context& ctx)
+{
+    if (!ctx.sni.empty())
+    {
+        return ctx.sni.c_str();
+    }
+    return "unknown";
+}
+
 const char* fingerprint_name(const fingerprint_type fingerprint)
 {
     switch (fingerprint)
@@ -111,14 +120,24 @@ boost::system::error_code derive_server_record_protection(fetch_context& ctx,
     auto shared_secret = tls::crypto_util::x25519_derive(std::vector<uint8_t>(ctx.client_private, ctx.client_private + 32), server_public_key, ec);
     if (ec)
     {
-        LOG_ERROR("{} x25519 derive failed", mux::log_event::kCert);
+        LOG_ERROR("event {} target {}:{} sni {} fingerprint {} x25519 derive failed",
+                  mux::log_event::kCert,
+                  ctx.host,
+                  ctx.port,
+                  cert_log_sni(ctx),
+                  fingerprint_name(ctx.fingerprint));
         return ec;
     }
 
     auto handshake_keys = tls::key_schedule::derive_handshake_keys(shared_secret, ctx.transcript.finish(), suite.md, ec);
     if (ec)
     {
-        LOG_ERROR("{} derive keys failed", mux::log_event::kCert);
+        LOG_ERROR("event {} target {}:{} sni {} fingerprint {} derive keys failed",
+                  mux::log_event::kCert,
+                  ctx.host,
+                  ctx.port,
+                  cert_log_sni(ctx),
+                  fingerprint_name(ctx.fingerprint));
         return ec;
     }
 
@@ -126,7 +145,12 @@ boost::system::error_code derive_server_record_protection(fetch_context& ctx,
         tls::key_schedule::derive_traffic_keys(handshake_keys.server_handshake_traffic_secret, ec, suite.key_len, iv_len, suite.md);
     if (ec)
     {
-        LOG_ERROR("{} derive traffic keys failed", mux::log_event::kCert);
+        LOG_ERROR("event {} target {}:{} sni {} fingerprint {} derive traffic keys failed",
+                  mux::log_event::kCert,
+                  ctx.host,
+                  ctx.port,
+                  cert_log_sni(ctx),
+                  fingerprint_name(ctx.fingerprint));
         return ec;
     }
 
@@ -142,11 +166,26 @@ void connect(fetch_context& ctx, boost::system::error_code& ec)
     const auto resolved = resolver.resolve(ctx.host, std::to_string(ctx.port), ec);
     if (ec)
     {
-        LOG_ERROR("{} stage resolve target {}:{} error {}", mux::log_event::kCert, ctx.host, ctx.port, ec.message());
+        LOG_ERROR("event {} target {}:{} sni {} fingerprint {} stage resolve error {}",
+                  mux::log_event::kCert,
+                  ctx.host,
+                  ctx.port,
+                  cert_log_sni(ctx),
+                  fingerprint_name(ctx.fingerprint),
+                  ec.message());
         return;
     }
     boost::asio::connect(ctx.socket, resolved, ec);
-    LOG_ERROR("{} stage connect target {}:{} error {}", mux::log_event::kCert, ctx.host, ctx.port, ec.message());
+    if (ec)
+    {
+        LOG_ERROR("event {} target {}:{} sni {} fingerprint {} stage connect error {}",
+                  mux::log_event::kCert,
+                  ctx.host,
+                  ctx.port,
+                  cert_log_sni(ctx),
+                  fingerprint_name(ctx.fingerprint),
+                  ec.message());
+    }
 }
 
 bool init_handshake_material(fetch_context& ctx, std::vector<uint8_t>& client_random, std::vector<uint8_t>& session_id)
@@ -170,7 +209,13 @@ boost::system::error_code send_client_hello_record(fetch_context& ctx, const std
 {
     if (client_hello.size() > std::numeric_limits<uint16_t>::max())
     {
-        LOG_ERROR("{} client hello too large {}", mux::log_event::kCert, client_hello.size());
+        LOG_ERROR("event {} target {}:{} sni {} fingerprint {} client hello too large {}",
+                  mux::log_event::kCert,
+                  ctx.host,
+                  ctx.port,
+                  cert_log_sni(ctx),
+                  fingerprint_name(ctx.fingerprint),
+                  client_hello.size());
         return std::make_error_code(std::errc::message_size);
     }
 
@@ -181,24 +226,42 @@ boost::system::error_code send_client_hello_record(fetch_context& ctx, const std
     const auto written = boost::asio::write(ctx.socket, boost::asio::buffer(client_hello_record), write_ec);
     if (write_ec)
     {
-        LOG_ERROR("{} write ch failed {}", mux::log_event::kCert, write_ec.message());
+        LOG_ERROR("event {} target {}:{} sni {} fingerprint {} write ch failed {}",
+                  mux::log_event::kCert,
+                  ctx.host,
+                  ctx.port,
+                  cert_log_sni(ctx),
+                  fingerprint_name(ctx.fingerprint),
+                  write_ec.message());
         return write_ec;
     }
     if (written != client_hello_record.size())
     {
-        LOG_ERROR("{} write ch short write {} of {}", mux::log_event::kCert, written, client_hello_record.size());
+        LOG_ERROR("event {} target {}:{} sni {} fingerprint {} write ch short write {} of {}",
+                  mux::log_event::kCert,
+                  ctx.host,
+                  ctx.port,
+                  cert_log_sni(ctx),
+                  fingerprint_name(ctx.fingerprint),
+                  written,
+                  client_hello_record.size());
         return boost::asio::error::fault;
     }
     return boost::system::error_code{};
 }
 
-bool validate_server_hello_body(const std::vector<uint8_t>& server_hello_body)
+bool validate_server_hello_body(fetch_context& ctx, const std::vector<uint8_t>& server_hello_body)
 {
     if (!server_hello_body.empty())
     {
         return true;
     }
-    LOG_ERROR("{} server hello empty", mux::log_event::kCert);
+    LOG_ERROR("event {} target {}:{} sni {} fingerprint {} server hello empty",
+              mux::log_event::kCert,
+              ctx.host,
+              ctx.port,
+              cert_log_sni(ctx),
+              fingerprint_name(ctx.fingerprint));
     return false;
 }
 
@@ -222,12 +285,25 @@ std::pair<boost::system::error_code, std::vector<uint8_t>> read_record_plaintext
         const auto header_size = boost::asio::read(ctx.socket, boost::asio::buffer(header), ec);
         if (ec)
         {
-            LOG_ERROR("{} read header failed {}", mux::log_event::kCert, ec.message());
+            LOG_ERROR("event {} target {}:{} sni {} fingerprint {} read header failed {}",
+                      mux::log_event::kCert,
+                      ctx.host,
+                      ctx.port,
+                      cert_log_sni(ctx),
+                      fingerprint_name(ctx.fingerprint),
+                      ec.message());
             return std::make_pair(ec, std::vector<uint8_t>{});
         }
         if (header_size != sizeof(header))
         {
-            LOG_ERROR("{} short read header {} of {}", mux::log_event::kCert, header_size, sizeof(header));
+            LOG_ERROR("event {} target {}:{} sni {} fingerprint {} short read header {} of {}",
+                      mux::log_event::kCert,
+                      ctx.host,
+                      ctx.port,
+                      cert_log_sni(ctx),
+                      fingerprint_name(ctx.fingerprint),
+                      header_size,
+                      sizeof(header));
             return std::make_pair(boost::asio::error::fault, std::vector<uint8_t>{});
         }
 
@@ -236,7 +312,13 @@ std::pair<boost::system::error_code, std::vector<uint8_t>> read_record_plaintext
         validate_record_length(len, len_ec);
         if (len_ec)
         {
-            LOG_ERROR("{} plaintext record too large {}", mux::log_event::kCert, len);
+            LOG_ERROR("event {} target {}:{} sni {} fingerprint {} plaintext record too large {}",
+                      mux::log_event::kCert,
+                      ctx.host,
+                      ctx.port,
+                      cert_log_sni(ctx),
+                      fingerprint_name(ctx.fingerprint),
+                      len);
             return std::make_pair(len_ec, std::vector<uint8_t>{});
         }
 
@@ -245,12 +327,25 @@ std::pair<boost::system::error_code, std::vector<uint8_t>> read_record_plaintext
         const auto body_size = len == 0 ? std::size_t{0} : boost::asio::read(ctx.socket, boost::asio::buffer(body), body_ec);
         if (body_ec)
         {
-            LOG_ERROR("{} read body failed {}", mux::log_event::kCert, body_ec.message());
+            LOG_ERROR("event {} target {}:{} sni {} fingerprint {} read body failed {}",
+                      mux::log_event::kCert,
+                      ctx.host,
+                      ctx.port,
+                      cert_log_sni(ctx),
+                      fingerprint_name(ctx.fingerprint),
+                      body_ec.message());
             return std::make_pair(body_ec, std::vector<uint8_t>{});
         }
         if (body_size != body.size())
         {
-            LOG_ERROR("{} short read body {} of {}", mux::log_event::kCert, body_size, body.size());
+            LOG_ERROR("event {} target {}:{} sni {} fingerprint {} short read body {} of {}",
+                      mux::log_event::kCert,
+                      ctx.host,
+                      ctx.port,
+                      cert_log_sni(ctx),
+                      fingerprint_name(ctx.fingerprint),
+                      body_size,
+                      body.size());
             return std::make_pair(boost::asio::error::fault, std::vector<uint8_t>{});
         }
 
@@ -258,24 +353,48 @@ std::pair<boost::system::error_code, std::vector<uint8_t>> read_record_plaintext
         {
             if (len != 1 || body[0] != 0x01)
             {
-                LOG_ERROR("{} invalid tls13 compat ccs len {}", mux::log_event::kCert, len);
+                LOG_ERROR("event {} target {}:{} sni {} fingerprint {} invalid tls13 compat ccs len {}",
+                          mux::log_event::kCert,
+                          ctx.host,
+                          ctx.port,
+                          cert_log_sni(ctx),
+                          fingerprint_name(ctx.fingerprint),
+                          len);
                 return std::make_pair(boost::asio::error::invalid_argument, std::vector<uint8_t>{});
             }
             if (ccs_count >= constants::tls_limits::kMaxCompatCcsRecords)
             {
-                LOG_ERROR("{} too many tls13 compat ccs before server hello {}", mux::log_event::kCert, ccs_count);
+                LOG_ERROR("event {} target {}:{} sni {} fingerprint {} too many tls13 compat ccs before server hello {}",
+                          mux::log_event::kCert,
+                          ctx.host,
+                          ctx.port,
+                          cert_log_sni(ctx),
+                          fingerprint_name(ctx.fingerprint),
+                          ccs_count);
                 return std::make_pair(std::make_error_code(std::errc::bad_message), std::vector<uint8_t>{});
             }
 
             ++ccs_count;
             ctx.material.sends_change_cipher_spec = true;
-            LOG_DEBUG("{} skip tls13 compat ccs before server hello count {}", mux::log_event::kCert, ccs_count);
+            LOG_DEBUG("event {} target {}:{} sni {} fingerprint {} skip tls13 compat ccs before server hello count {}",
+                      mux::log_event::kCert,
+                      ctx.host,
+                      ctx.port,
+                      cert_log_sni(ctx),
+                      fingerprint_name(ctx.fingerprint),
+                      ccs_count);
             continue;
         }
 
         if (header[0] != tls::kContentTypeHandshake)
         {
-            LOG_ERROR("{} expected handshake type {}", mux::log_event::kCert, header[0]);
+            LOG_ERROR("event {} target {}:{} sni {} fingerprint {} expected handshake type {}",
+                      mux::log_event::kCert,
+                      ctx.host,
+                      ctx.port,
+                      cert_log_sni(ctx),
+                      fingerprint_name(ctx.fingerprint),
+                      header[0]);
             return std::make_pair(boost::asio::error::fault, std::vector<uint8_t>{});
         }
 
@@ -288,7 +407,13 @@ boost::system::error_code process_server_hello(fetch_context& ctx, const std::ve
     std::vector<uint8_t> server_hello;
     if (!tls::extract_handshake_message(server_hello_body, server_hello))
     {
-        LOG_ERROR("{} server hello too short {}", mux::log_event::kCert, server_hello_body.size());
+        LOG_ERROR("event {} target {}:{} sni {} fingerprint {} server hello too short {}",
+                  mux::log_event::kCert,
+                  ctx.host,
+                  ctx.port,
+                  cert_log_sni(ctx),
+                  fingerprint_name(ctx.fingerprint),
+                  server_hello_body.size());
         return boost::asio::error::fault;
     }
 
@@ -310,7 +435,12 @@ boost::system::error_code process_server_hello(fetch_context& ctx, const std::ve
     }
     else
     {
-        LOG_WARN("{} parse server hello extensions failed", mux::log_event::kCert);
+        LOG_WARN("event {} target {}:{} sni {} fingerprint {} parse server hello extensions failed",
+                 mux::log_event::kCert,
+                 ctx.host,
+                 ctx.port,
+                 cert_log_sni(ctx),
+                 fingerprint_name(ctx.fingerprint));
     }
     if (auto key_share = tls::extract_server_key_share(server_hello); key_share)
     {
@@ -322,10 +452,22 @@ boost::system::error_code process_server_hello(fetch_context& ctx, const std::ve
     const auto suite = tls::select_tls13_suite(cipher_suite);
     if (!suite.has_value())
     {
-        LOG_ERROR("{} unsupported cipher suite 0x{:04x}", mux::log_event::kCert, cipher_suite);
+        LOG_ERROR("event {} target {}:{} sni {} fingerprint {} unsupported cipher suite 0x{:04x}",
+                  mux::log_event::kCert,
+                  ctx.host,
+                  ctx.port,
+                  cert_log_sni(ctx),
+                  fingerprint_name(ctx.fingerprint),
+                  cipher_suite);
         return boost::asio::error::no_protocol_option;
     }
-    LOG_INFO("{} selected tls13 cipher suite 0x{:04x}", mux::log_event::kCert, cipher_suite);
+    LOG_INFO("event {} target {}:{} sni {} fingerprint {} selected tls13 cipher suite 0x{:04x}",
+             mux::log_event::kCert,
+             ctx.host,
+             ctx.port,
+             cert_log_sni(ctx),
+             fingerprint_name(ctx.fingerprint),
+             cipher_suite);
 
     ctx.transcript.set_protocol_hash(suite->md);
     return derive_server_record_protection(ctx, server_hello, *suite);
@@ -345,7 +487,12 @@ boost::system::error_code perform_handshake_start(fetch_context& ctx)
         client_hello_builder::build(spec, session_id, client_random, std::vector<uint8_t>(ctx.client_public, ctx.client_public + 32), {}, ctx.sni);
     if (client_hello.empty())
     {
-        LOG_ERROR("{} invalid client hello for sni '{}' fingerprint {}", mux::log_event::kCert, ctx.sni, fingerprint_name(ctx.fingerprint));
+        LOG_ERROR("event {} target {}:{} sni {} fingerprint {} invalid client hello",
+                  mux::log_event::kCert,
+                  ctx.host,
+                  ctx.port,
+                  cert_log_sni(ctx),
+                  fingerprint_name(ctx.fingerprint));
         return boost::asio::error::invalid_argument;
     }
 
@@ -361,7 +508,7 @@ boost::system::error_code perform_handshake_start(fetch_context& ctx)
     {
         return read_result.first;
     }
-    if (!validate_server_hello_body(read_result.second))
+    if (!validate_server_hello_body(ctx, read_result.second))
     {
         return boost::asio::error::fault;
     }
@@ -384,7 +531,14 @@ void read_record_body(fetch_context& ctx, uint16_t len, std::vector<uint8_t>& re
     }
     if (body_size != len)
     {
-        LOG_ERROR("{} short read record body {} of {}", mux::log_event::kCert, body_size, len);
+        LOG_ERROR("event {} target {}:{} sni {} fingerprint {} short read record body {} of {}",
+                  mux::log_event::kCert,
+                  ctx.host,
+                  ctx.port,
+                  cert_log_sni(ctx),
+                  fingerprint_name(ctx.fingerprint),
+                  body_size,
+                  len);
         ec = boost::asio::error::fault;
     }
 }
@@ -422,7 +576,12 @@ std::pair<uint8_t, std::span<uint8_t>> handle_record_by_content_type(fetch_conte
             return decrypt_application_record(ctx, header, record, plaintext_buffer, ec);
 
         case tls::kContentTypeAlert:
-            LOG_WARN("{} received plaintext alert", mux::log_event::kCert);
+            LOG_WARN("event {} target {}:{} sni {} fingerprint {} received plaintext alert",
+                     mux::log_event::kCert,
+                     ctx.host,
+                     ctx.port,
+                     cert_log_sni(ctx),
+                     fingerprint_name(ctx.fingerprint));
             ec = boost::asio::error::connection_reset;
             return {};
 
@@ -443,7 +602,14 @@ std::pair<uint8_t, std::span<uint8_t>> read_record(fetch_context& ctx, std::vect
     }
     if (header_size != sizeof(header))
     {
-        LOG_ERROR("{} short read record header {} of {}", mux::log_event::kCert, header_size, sizeof(header));
+        LOG_ERROR("event {} target {}:{} sni {} fingerprint {} short read record header {} of {}",
+                  mux::log_event::kCert,
+                  ctx.host,
+                  ctx.port,
+                  cert_log_sni(ctx),
+                  fingerprint_name(ctx.fingerprint),
+                  header_size,
+                  sizeof(header));
         ec = boost::asio::error::fault;
         return {};
     }
@@ -469,13 +635,26 @@ bool process_handshake_message(fetch_context& ctx, const std::vector<uint8_t>& m
     const uint8_t message_type = message[0];
     const uint32_t message_len =
         (static_cast<uint32_t>(message[1]) << 16) | (static_cast<uint32_t>(message[2]) << 8) | static_cast<uint32_t>(message[3]);
-    LOG_INFO("{} found handshake 0x{:02x} len {}", mux::log_event::kCert, message_type, message_len);
+    LOG_INFO("event {} target {}:{} sni {} fingerprint {} found handshake 0x{:02x} len {}",
+             mux::log_event::kCert,
+             ctx.host,
+             ctx.port,
+             cert_log_sni(ctx),
+             fingerprint_name(ctx.fingerprint),
+             message_type,
+             message_len);
 
     if (message_type == 0x08)
     {
         if (auto alpn = tls::extract_alpn_from_encrypted_extensions(message); alpn)
         {
-            LOG_INFO("{} learned alpn {}", mux::log_event::kCert, *alpn);
+            LOG_INFO("event {} target {}:{} sni {} fingerprint {} learned alpn {}",
+                     mux::log_event::kCert,
+                     ctx.host,
+                     ctx.port,
+                     cert_log_sni(ctx),
+                     fingerprint_name(ctx.fingerprint),
+                     *alpn);
             ctx.material.fingerprint.alpn = *alpn;
         }
         tls::handshake_extension_layout encrypted_extensions_layout;
@@ -486,16 +665,32 @@ bool process_handshake_message(fetch_context& ctx, const std::vector<uint8_t>& m
         }
         else
         {
-            LOG_WARN("{} parse encrypted extensions layout failed", mux::log_event::kCert);
+            LOG_WARN("event {} target {}:{} sni {} fingerprint {} parse encrypted extensions layout failed",
+                     mux::log_event::kCert,
+                     ctx.host,
+                     ctx.port,
+                     cert_log_sni(ctx),
+                     fingerprint_name(ctx.fingerprint));
         }
     }
     else if (message_type == 0x0b)
     {
-        LOG_INFO("{} found certificate len {}", mux::log_event::kCert, message_len);
+        LOG_INFO("event {} target {}:{} sni {} fingerprint {} found certificate len {}",
+                 mux::log_event::kCert,
+                 ctx.host,
+                 ctx.port,
+                 cert_log_sni(ctx),
+                 fingerprint_name(ctx.fingerprint),
+                 message_len);
         ctx.material.certificate_message = message;
         if (!tls::parse_certificate_chain(message, ctx.material.certificate_chain))
         {
-            LOG_ERROR("{} parse certificate chain failed", mux::log_event::kCert);
+            LOG_ERROR("event {} target {}:{} sni {} fingerprint {} parse certificate chain failed",
+                      mux::log_event::kCert,
+                      ctx.host,
+                      ctx.port,
+                      cert_log_sni(ctx),
+                      fingerprint_name(ctx.fingerprint));
             return false;
         }
         ctx.saw_certificate = true;
@@ -506,21 +701,44 @@ bool process_handshake_message(fetch_context& ctx, const std::vector<uint8_t>& m
         std::vector<uint8_t> certificate_message;
         if (!tls::decompress_certificate_message(message, constants::tls_limits::kMaxHandshakeMessageSize, certificate_message, ec))
         {
-            LOG_ERROR("{} decompress certificate failed {}", mux::log_event::kCert, ec.message());
+            LOG_ERROR("event {} target {}:{} sni {} fingerprint {} decompress certificate failed {}",
+                      mux::log_event::kCert,
+                      ctx.host,
+                      ctx.port,
+                      cert_log_sni(ctx),
+                      fingerprint_name(ctx.fingerprint),
+                      ec.message());
             return false;
         }
-        LOG_INFO("{} found compressed certificate len {} decompressed_len {}", mux::log_event::kCert, message_len, certificate_message.size());
+        LOG_INFO("event {} target {}:{} sni {} fingerprint {} found compressed certificate len {} decompressed_len {}",
+                 mux::log_event::kCert,
+                 ctx.host,
+                 ctx.port,
+                 cert_log_sni(ctx),
+                 fingerprint_name(ctx.fingerprint),
+                 message_len,
+                 certificate_message.size());
         ctx.material.certificate_message = std::move(certificate_message);
         if (!tls::parse_certificate_chain(ctx.material.certificate_message, ctx.material.certificate_chain))
         {
-            LOG_ERROR("{} parse decompressed certificate chain failed", mux::log_event::kCert);
+            LOG_ERROR("event {} target {}:{} sni {} fingerprint {} parse decompressed certificate chain failed",
+                      mux::log_event::kCert,
+                      ctx.host,
+                      ctx.port,
+                      cert_log_sni(ctx),
+                      fingerprint_name(ctx.fingerprint));
             return false;
         }
         ctx.saw_certificate = true;
     }
     else if (message_type == 0x14)
     {
-        LOG_INFO("{} observed server finished", mux::log_event::kCert);
+        LOG_INFO("event {} target {}:{} sni {} fingerprint {} observed server finished",
+                 mux::log_event::kCert,
+                 ctx.host,
+                 ctx.port,
+                 cert_log_sni(ctx),
+                 fingerprint_name(ctx.fingerprint));
         ctx.saw_server_finished = true;
     }
 
@@ -563,7 +781,14 @@ void append_next_handshake_record(fetch_context& ctx,
     const auto read_result = read_record(ctx, plaintext_buffer, ec);
     if (ec)
     {
-        LOG_ERROR("{} read record {} failed {}", mux::log_event::kCert, record_index, ec.message());
+        LOG_ERROR("event {} target {}:{} sni {} fingerprint {} read record {} failed {}",
+                  mux::log_event::kCert,
+                  ctx.host,
+                  ctx.port,
+                  cert_log_sni(ctx),
+                  fingerprint_name(ctx.fingerprint),
+                  record_index,
+                  ec.message());
         return;
     }
 
@@ -596,7 +821,13 @@ bool collect_site_material(fetch_context& ctx)
         append_next_handshake_record(ctx, assembler, plaintext_buffer, i, ec);
         if (ec)
         {
-            LOG_ERROR("{} append record failed {}", mux::log_event::kCert, ec.message());
+            LOG_ERROR("event {} target {}:{} sni {} fingerprint {} append record failed {}",
+                      mux::log_event::kCert,
+                      ctx.host,
+                      ctx.port,
+                      cert_log_sni(ctx),
+                      fingerprint_name(ctx.fingerprint),
+                      ec.message());
             break;
         }
 
@@ -606,18 +837,34 @@ bool collect_site_material(fetch_context& ctx)
         }
         if (ec)
         {
-            LOG_ERROR("{} consume failed {}", mux::log_event::kCert, ec.message());
+            LOG_ERROR("event {} target {}:{} sni {} fingerprint {} consume failed {}",
+                      mux::log_event::kCert,
+                      ctx.host,
+                      ctx.port,
+                      cert_log_sni(ctx),
+                      fingerprint_name(ctx.fingerprint),
+                      ec.message());
             break;
         }
     }
 
     if (ctx.saw_certificate)
     {
-        LOG_WARN("{} server finished not observed before fetch stopped", mux::log_event::kCert);
+        LOG_WARN("event {} target {}:{} sni {} fingerprint {} server finished not observed before fetch stopped",
+                 mux::log_event::kCert,
+                 ctx.host,
+                 ctx.port,
+                 cert_log_sni(ctx),
+                 fingerprint_name(ctx.fingerprint));
     }
     else
     {
-        LOG_WARN("{} certificate not found", mux::log_event::kCert);
+        LOG_WARN("event {} target {}:{} sni {} fingerprint {} certificate not found",
+                 mux::log_event::kCert,
+                 ctx.host,
+                 ctx.port,
+                 cert_log_sni(ctx),
+                 fingerprint_name(ctx.fingerprint));
     }
     return false;
 }
@@ -630,7 +877,12 @@ site_material fetch_once(std::string host, uint16_t port, std::string sni, const
     ctx.sni = std::move(sni);
     ctx.fingerprint = fingerprint;
 
-    LOG_INFO("{} starting fetch fingerprint {}", mux::log_event::kCert, fingerprint_name(ctx.fingerprint));
+    LOG_INFO("event {} target {}:{} sni {} fingerprint {} starting fetch",
+             mux::log_event::kCert,
+             ctx.host,
+             ctx.port,
+             cert_log_sni(ctx),
+             fingerprint_name(ctx.fingerprint));
 
     connect(ctx, ec);
     if (ec)

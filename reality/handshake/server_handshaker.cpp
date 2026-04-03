@@ -47,6 +47,37 @@ namespace reality
 namespace
 {
 
+struct server_log_context
+{
+    uint32_t conn_id = 0;
+    std::string local_addr;
+    uint16_t local_port = 0;
+    std::string remote_addr;
+    uint16_t remote_port = 0;
+    std::string sni;
+};
+
+const char* server_log_sni(const server_log_context& log_context)
+{
+    if (!log_context.sni.empty())
+    {
+        return log_context.sni.c_str();
+    }
+    return "unknown";
+}
+
+server_log_context make_server_log_context(const server_handshake_context& handshake_ctx)
+{
+    return server_log_context{
+        .conn_id = handshake_ctx.conn_id,
+        .local_addr = handshake_ctx.local_addr,
+        .local_port = handshake_ctx.local_port,
+        .remote_addr = handshake_ctx.remote_addr,
+        .remote_port = handshake_ctx.remote_port,
+        .sni = handshake_ctx.sni,
+    };
+}
+
 bool equal_server_name_ascii(const std::string& lhs, const std::string& rhs)
 {
     if (lhs.size() != rhs.size())
@@ -85,6 +116,7 @@ bool verify_client_hello_sni(const tls::client_hello_info& client_hello, const m
 
 struct server_handshake_state
 {
+    server_log_context log_context;
     std::vector<uint8_t> client_hello_record;
     std::vector<uint8_t> client_hello_handshake;
     tls::client_hello_info client_hello;
@@ -159,11 +191,21 @@ boost::asio::awaitable<void> read_tls_record_body(boost::asio::ip::tcp::socket& 
     co_return;
 }
 
-const char* validate_client_hello_record_header(const std::vector<uint8_t>& record_buf, boost::system::error_code& ec)
+const char* validate_client_hello_record_header(
+    const std::vector<uint8_t>& record_buf, const server_log_context& log_context, boost::system::error_code& ec)
 {
     if (record_buf[1] != 0x03 || record_buf[2] != 0x03)
     {
-        LOG_ERROR("{} invalid tls record version {} {}", mux::log_event::kHandshake, record_buf[1], record_buf[2]);
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} invalid tls record version {} {}",
+                  mux::log_event::kHandshake,
+                  log_context.conn_id,
+                  log_context.local_addr,
+                  log_context.local_port,
+                  log_context.remote_addr,
+                  log_context.remote_port,
+                  server_log_sni(log_context),
+                  record_buf[1],
+                  record_buf[2]);
         ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
         return "invalid_tls_record_version";
     }
@@ -174,11 +216,20 @@ const char* validate_client_hello_record_header(const std::vector<uint8_t>& reco
 const char* validate_client_hello_ccs_record(const std::vector<uint8_t>& record_buf,
                                              uint16_t record_len,
                                              uint32_t& ccs_count,
+                                             const server_log_context& log_context,
                                              boost::system::error_code& ec)
 {
     if (ccs_count >= constants::tls_limits::kMaxCompatCcsRecords)
     {
-        LOG_ERROR("{} too many ccs records {}", mux::log_event::kHandshake, ccs_count);
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} too many ccs records {}",
+                  mux::log_event::kHandshake,
+                  log_context.conn_id,
+                  log_context.local_addr,
+                  log_context.local_port,
+                  log_context.remote_addr,
+                  log_context.remote_port,
+                  server_log_sni(log_context),
+                  ccs_count);
         ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
         return "tls13_ccs_too_many";
     }
@@ -186,7 +237,15 @@ const char* validate_client_hello_ccs_record(const std::vector<uint8_t>& record_
     ccs_count++;
     if (record_len != 1)
     {
-        LOG_ERROR("{} invalid ccs length {}", mux::log_event::kHandshake, record_len);
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} invalid ccs length {}",
+                  mux::log_event::kHandshake,
+                  log_context.conn_id,
+                  log_context.local_addr,
+                  log_context.local_port,
+                  log_context.remote_addr,
+                  log_context.remote_port,
+                  server_log_sni(log_context),
+                  record_len);
         ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
         return "tls13_ccs_len_invalid";
     }
@@ -195,7 +254,15 @@ const char* validate_client_hello_ccs_record(const std::vector<uint8_t>& record_
     const auto ccs_body = record_buf[tls::kTlsRecordHeaderSize];
     if (!tls::is_valid_tls13_compat_ccs(header, ccs_body))
     {
-        LOG_ERROR("{} invalid ccs body {}", mux::log_event::kHandshake, ccs_body);
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} invalid ccs body {}",
+                  mux::log_event::kHandshake,
+                  log_context.conn_id,
+                  log_context.local_addr,
+                  log_context.local_port,
+                  log_context.remote_addr,
+                  log_context.remote_port,
+                  server_log_sni(log_context),
+                  ccs_body);
         ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
         return "tls13_ccs_body_invalid";
     }
@@ -204,29 +271,65 @@ const char* validate_client_hello_ccs_record(const std::vector<uint8_t>& record_
 }
 
 const char* validate_client_hello_handshake_record(
-    const std::vector<uint8_t>& record_buf, uint16_t record_len, std::size_t record_count, std::size_t max_records, boost::system::error_code& ec)
+    const std::vector<uint8_t>& record_buf,
+    uint16_t record_len,
+    std::size_t record_count,
+    std::size_t max_records,
+    const server_log_context& log_context,
+    boost::system::error_code& ec)
 {
     if (record_buf[0] != 0x16)
     {
-        LOG_ERROR("{} unexpected tls record type {}", mux::log_event::kHandshake, record_buf[0]);
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} unexpected tls record type {}",
+                  mux::log_event::kHandshake,
+                  log_context.conn_id,
+                  log_context.local_addr,
+                  log_context.local_port,
+                  log_context.remote_addr,
+                  log_context.remote_port,
+                  server_log_sni(log_context),
+                  record_buf[0]);
         ec = boost::asio::error::invalid_argument;
         return "unexpected_tls_record_type";
     }
     if (record_len > tls::kMaxTlsPlaintextLen)
     {
-        LOG_ERROR("{} client hello record too large {}", mux::log_event::kHandshake, record_len);
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} client hello record too large {}",
+                  mux::log_event::kHandshake,
+                  log_context.conn_id,
+                  log_context.local_addr,
+                  log_context.local_port,
+                  log_context.remote_addr,
+                  log_context.remote_port,
+                  server_log_sni(log_context),
+                  record_len);
         ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
         return "client_hello_record_too_large";
     }
     if (record_len == 0)
     {
-        LOG_ERROR("{} client hello record empty", mux::log_event::kHandshake);
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} client hello record empty",
+                  mux::log_event::kHandshake,
+                  log_context.conn_id,
+                  log_context.local_addr,
+                  log_context.local_port,
+                  log_context.remote_addr,
+                  log_context.remote_port,
+                  server_log_sni(log_context));
         ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
         return "client_hello_record_empty";
     }
     if (record_count >= max_records)
     {
-        LOG_ERROR("{} client hello record too many {}", mux::log_event::kHandshake, record_count);
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} client hello record too many {}",
+                  mux::log_event::kHandshake,
+                  log_context.conn_id,
+                  log_context.local_addr,
+                  log_context.local_port,
+                  log_context.remote_addr,
+                  log_context.remote_port,
+                  server_log_sni(log_context),
+                  record_count);
         ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
         return "client_hello_record_too_many";
     }
@@ -240,12 +343,21 @@ const char* append_client_hello_record(const std::vector<uint8_t>& record_buf,
                                        std::size_t max_wire_len,
                                        std::size_t max_handshake_len,
                                        bool& handshake_complete,
+                                       const server_log_context& log_context,
                                        boost::system::error_code& ec)
 {
     handshake_complete = false;
     if (record_buf.size() > max_wire_len - wire_buf.size())
     {
-        LOG_ERROR("{} client hello wire too large {}", mux::log_event::kHandshake, wire_buf.size() + record_buf.size());
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} client hello wire too large {}",
+                  mux::log_event::kHandshake,
+                  log_context.conn_id,
+                  log_context.local_addr,
+                  log_context.local_port,
+                  log_context.remote_addr,
+                  log_context.remote_port,
+                  server_log_sni(log_context),
+                  wire_buf.size() + record_buf.size());
         ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
         return "client_hello_wire_too_large";
     }
@@ -258,7 +370,15 @@ const char* append_client_hello_record(const std::vector<uint8_t>& record_buf,
     }
     if (handshake_buf[0] != 0x01)
     {
-        LOG_ERROR("{} unexpected client hello type {}", mux::log_event::kHandshake, handshake_buf[0]);
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} unexpected client hello type {}",
+                  mux::log_event::kHandshake,
+                  log_context.conn_id,
+                  log_context.local_addr,
+                  log_context.local_port,
+                  log_context.remote_addr,
+                  log_context.remote_port,
+                  server_log_sni(log_context),
+                  handshake_buf[0]);
         ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
         return "unexpected_client_hello_type";
     }
@@ -268,7 +388,15 @@ const char* append_client_hello_record(const std::vector<uint8_t>& record_buf,
     const auto total_len = static_cast<std::size_t>(hello_msg_len) + 4;
     if (total_len > max_handshake_len)
     {
-        LOG_ERROR("{} client hello message too large {}", mux::log_event::kHandshake, total_len);
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} client hello message too large {}",
+                  mux::log_event::kHandshake,
+                  log_context.conn_id,
+                  log_context.local_addr,
+                  log_context.local_port,
+                  log_context.remote_addr,
+                  log_context.remote_port,
+                  server_log_sni(log_context),
+                  total_len);
         ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
         return "client_hello_message_too_large";
     }
@@ -278,7 +406,15 @@ const char* append_client_hello_record(const std::vector<uint8_t>& record_buf,
     }
     if (handshake_buf.size() != total_len)
     {
-        LOG_ERROR("{} client hello message has trailing data {}", mux::log_event::kHandshake, handshake_buf.size() - total_len);
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} client hello message has trailing data {}",
+                  mux::log_event::kHandshake,
+                  log_context.conn_id,
+                  log_context.local_addr,
+                  log_context.local_port,
+                  log_context.remote_addr,
+                  log_context.remote_port,
+                  server_log_sni(log_context),
+                  handshake_buf.size() - total_len);
         ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
         return "client_hello_message_has_trailing_data";
     }
@@ -292,6 +428,7 @@ boost::asio::awaitable<const char*> read_client_hello_handshake(boost::asio::ip:
                                                                 std::vector<uint8_t>& handshake_buf,
                                                                 uint32_t timeout,
                                                                 std::size_t max_handshake_len,
+                                                                const server_log_context& log_context,
                                                                 boost::system::error_code& ec)
 {
     ec.clear();
@@ -310,10 +447,30 @@ boost::asio::awaitable<const char*> read_client_hello_handshake(boost::asio::ip:
         co_await read_tls_record_header(socket, record_buf, handshake_start_ms, timeout, ec);
         if (ec)
         {
-            LOG_ERROR("{} read tls record header failed {}", mux::log_event::kHandshake, ec.message());
+            if (ec == boost::asio::error::eof && record_count == 0 && handshake_buf.empty())
+            {
+                LOG_INFO("event {} conn_id {} local {}:{} remote {}:{} sni {} peer closed before tls record header",
+                         mux::log_event::kConnClose,
+                         log_context.conn_id,
+                         log_context.local_addr,
+                         log_context.local_port,
+                         log_context.remote_addr,
+                         log_context.remote_port,
+                         server_log_sni(log_context));
+                co_return "read_tls_record_header_failed";
+            }
+            LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} read tls record header failed {}",
+                      mux::log_event::kHandshake,
+                      log_context.conn_id,
+                      log_context.local_addr,
+                      log_context.local_port,
+                      log_context.remote_addr,
+                      log_context.remote_port,
+                      server_log_sni(log_context),
+                      ec.message());
             co_return "read_tls_record_header_failed";
         }
-        if (const auto* error_reason = validate_client_hello_record_header(record_buf, ec); error_reason != nullptr)
+        if (const auto* error_reason = validate_client_hello_record_header(record_buf, log_context, ec); error_reason != nullptr)
         {
             co_return error_reason;
         }
@@ -324,17 +481,27 @@ boost::asio::awaitable<const char*> read_client_hello_handshake(boost::asio::ip:
             co_await read_tls_record_body(socket, record_buf, record_len, handshake_start_ms, timeout, ec);
             if (ec)
             {
-                LOG_ERROR("{} read tls record body failed {}", mux::log_event::kHandshake, ec.message());
+                LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} read tls record body failed {}",
+                          mux::log_event::kHandshake,
+                          log_context.conn_id,
+                          log_context.local_addr,
+                          log_context.local_port,
+                          log_context.remote_addr,
+                          log_context.remote_port,
+                          server_log_sni(log_context),
+                          ec.message());
                 co_return "read_tls_record_body_failed";
             }
-            if (const auto* error_reason = validate_client_hello_ccs_record(record_buf, record_len, ccs_count, ec); error_reason != nullptr)
+            if (const auto* error_reason = validate_client_hello_ccs_record(record_buf, record_len, ccs_count, log_context, ec);
+                error_reason != nullptr)
             {
                 co_return error_reason;
             }
             continue;
         }
 
-        if (const auto* error_reason = validate_client_hello_handshake_record(record_buf, record_len, record_count, max_records, ec);
+        if (const auto* error_reason =
+                validate_client_hello_handshake_record(record_buf, record_len, record_count, max_records, log_context, ec);
             error_reason != nullptr)
         {
             co_return error_reason;
@@ -344,13 +511,21 @@ boost::asio::awaitable<const char*> read_client_hello_handshake(boost::asio::ip:
         co_await read_tls_record_body(socket, record_buf, record_len, handshake_start_ms, timeout, ec);
         if (ec)
         {
-            LOG_ERROR("{} read tls record body failed {}", mux::log_event::kHandshake, ec.message());
+            LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} read tls record body failed {}",
+                      mux::log_event::kHandshake,
+                      log_context.conn_id,
+                      log_context.local_addr,
+                      log_context.local_port,
+                      log_context.remote_addr,
+                      log_context.remote_port,
+                      server_log_sni(log_context),
+                      ec.message());
             co_return "read_tls_record_body_failed";
         }
 
         bool handshake_complete = false;
         if (const auto* error_reason =
-                append_client_hello_record(record_buf, wire_buf, handshake_buf, max_wire_len, max_handshake_len, handshake_complete, ec);
+                append_client_hello_record(record_buf, wire_buf, handshake_buf, max_wire_len, max_handshake_len, handshake_complete, log_context, ec);
             error_reason != nullptr)
         {
             co_return error_reason;
@@ -377,14 +552,29 @@ auth_inputs build_auth_decrypt_inputs(const server_handshake_state& state,
     auto shared = tls::crypto_util::x25519_derive(server_private_key, state.x25519_peer_pub, ec);
     if (ec)
     {
-        LOG_ERROR("{} auth fail x25519 derive failed {}", mux::log_event::kAuth, ec.message());
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} auth fail x25519 derive failed {}",
+                  mux::log_event::kAuth,
+                  state.log_context.conn_id,
+                  state.log_context.local_addr,
+                  state.log_context.local_port,
+                  state.log_context.remote_addr,
+                  state.log_context.remote_port,
+                  server_log_sni(state.log_context),
+                  ec.message());
         return {};
     }
 
     if (state.client_hello.random.size() != 32 || state.client_hello.session_id.size() != constants::auth::kSessionIdLen ||
         state.client_hello.sid_offset == 0 || state.client_hello.sid_offset + constants::auth::kSessionIdLen > state.client_hello_handshake.size())
     {
-        LOG_ERROR("{} auth fail invalid client hello fields", mux::log_event::kAuth);
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} auth fail invalid client hello fields",
+                  mux::log_event::kAuth,
+                  state.log_context.conn_id,
+                  state.log_context.local_addr,
+                  state.log_context.local_port,
+                  state.log_context.remote_addr,
+                  state.log_context.remote_port,
+                  server_log_sni(state.log_context));
         ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
         return {};
     }
@@ -405,11 +595,26 @@ auth_inputs build_auth_decrypt_inputs(const server_handshake_state& state,
     auth_inputs out;
     out.auth_key = std::move(auth_key);
     out.nonce.assign(state.client_hello.random.begin() + 20, state.client_hello.random.end());
-    LOG_DEBUG("auth key derived");
+    LOG_DEBUG("event {} conn_id {} local {}:{} remote {}:{} sni {} auth key derived",
+              mux::log_event::kAuth,
+              state.log_context.conn_id,
+              state.log_context.local_addr,
+              state.log_context.local_port,
+              state.log_context.remote_addr,
+              state.log_context.remote_port,
+              server_log_sni(state.log_context));
 
     if (state.client_hello.sid_offset == 0)
     {
-        LOG_ERROR("{} auth fail invalid sid offset {}", mux::log_event::kAuth, state.client_hello.sid_offset);
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} auth fail invalid sid offset {}",
+                  mux::log_event::kAuth,
+                  state.log_context.conn_id,
+                  state.log_context.local_addr,
+                  state.log_context.local_port,
+                  state.log_context.remote_addr,
+                  state.log_context.remote_port,
+                  server_log_sni(state.log_context),
+                  state.client_hello.sid_offset);
         ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
         return {};
     }
@@ -418,7 +623,14 @@ auth_inputs build_auth_decrypt_inputs(const server_handshake_state& state,
     const uint32_t aad_sid_offset = state.client_hello.sid_offset;
     if (aad_sid_offset + constants::auth::kSessionIdLen > out.aad.size())
     {
-        LOG_ERROR("{} auth fail aad size mismatch", mux::log_event::kAuth);
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} auth fail aad size mismatch",
+                  mux::log_event::kAuth,
+                  state.log_context.conn_id,
+                  state.log_context.local_addr,
+                  state.log_context.local_port,
+                  state.log_context.remote_addr,
+                  state.log_context.remote_port,
+                  server_log_sni(state.log_context));
         ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
         return {};
     }
@@ -439,7 +651,15 @@ reality::auth_payload decrypt_auth_payload(server_handshake_state& state, const 
     auto plaintext = tls::crypto_util::aead_decrypt(auth_cipher, inputs.auth_key, inputs.nonce, state.client_hello.session_id, inputs.aad, ec);
     if (ec || plaintext.size() != 16)
     {
-        LOG_ERROR("{} auth fail decrypt failed tag mismatch pt size {}", mux::log_event::kAuth, plaintext.size());
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} auth fail decrypt failed tag mismatch pt size {}",
+                  mux::log_event::kAuth,
+                  state.log_context.conn_id,
+                  state.log_context.local_addr,
+                  state.log_context.local_port,
+                  state.log_context.remote_addr,
+                  state.log_context.remote_port,
+                  server_log_sni(state.log_context),
+                  plaintext.size());
         ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
         return {};
     }
@@ -458,7 +678,17 @@ bool verify_auth_payload_fields(const auth_payload& auth, const std::vector<uint
     (void)state;
     if (auth.version_x != 1 || auth.version_y != 0 || auth.version_z != 0)
     {
-        LOG_WARN("{} auth fail version mismatch {}.{}.{}", mux::log_event::kAuth, auth.version_x, auth.version_y, auth.version_z);
+        LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} sni {} auth fail version mismatch {}.{}.{}",
+                 mux::log_event::kAuth,
+                 state.log_context.conn_id,
+                 state.log_context.local_addr,
+                 state.log_context.local_port,
+                 state.log_context.remote_addr,
+                 state.log_context.remote_port,
+                 server_log_sni(state.log_context),
+                 auth.version_x,
+                 auth.version_y,
+                 auth.version_z);
         return false;
     }
 
@@ -469,7 +699,15 @@ bool verify_auth_payload_fields(const auth_payload& auth, const std::vector<uint
 
     if (short_id_bytes.size() > kShortIdMaxLen)
     {
-        LOG_ERROR("{} auth fail short id length invalid {}", mux::log_event::kAuth, short_id_bytes.size());
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} auth fail short id length invalid {}",
+                  mux::log_event::kAuth,
+                  state.log_context.conn_id,
+                  state.log_context.local_addr,
+                  state.log_context.local_port,
+                  state.log_context.remote_addr,
+                  state.log_context.remote_port,
+                  server_log_sni(state.log_context),
+                  short_id_bytes.size());
         return false;
     }
 
@@ -477,7 +715,14 @@ bool verify_auth_payload_fields(const auth_payload& auth, const std::vector<uint
     std::ranges::copy(short_id_bytes, expected_short_id.begin());
     if (CRYPTO_memcmp(auth.short_id.data(), expected_short_id.data(), expected_short_id.size()) != 0)
     {
-        LOG_WARN("{} auth fail short id mismatch", mux::log_event::kAuth);
+        LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} sni {} auth fail short id mismatch",
+                 mux::log_event::kAuth,
+                 state.log_context.conn_id,
+                 state.log_context.local_addr,
+                 state.log_context.local_port,
+                 state.log_context.remote_addr,
+                 state.log_context.remote_port,
+                 server_log_sni(state.log_context));
         return false;
     }
     return true;
@@ -493,7 +738,15 @@ bool verify_auth_timestamp(uint32_t timestamp, const server_handshake_state& sta
     const auto max_diff = std::chrono::seconds(constants::auth::kMaxClockSkewSec);
     if (diff > max_diff)
     {
-        LOG_WARN("{} clock skew too large diff {}s", mux::log_event::kAuth, diff_sec);
+        LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} sni {} clock skew too large diff {}s",
+                 mux::log_event::kAuth,
+                 state.log_context.conn_id,
+                 state.log_context.local_addr,
+                 state.log_context.local_port,
+                 state.log_context.remote_addr,
+                 state.log_context.remote_port,
+                 server_log_sni(state.log_context),
+                 diff_sec);
         return false;
     }
     return true;
@@ -503,7 +756,14 @@ bool verify_replay_guard(mux::replay_cache& replay_cache, const server_handshake
 {
     if (!replay_cache.check_and_insert(state.client_hello.session_id))
     {
-        LOG_WARN("{} replay attack detected sni {}", mux::log_event::kAuth, state.client_hello.sni);
+        LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} sni {} replay attack detected",
+                 mux::log_event::kAuth,
+                 state.log_context.conn_id,
+                 state.log_context.local_addr,
+                 state.log_context.local_port,
+                 state.log_context.remote_addr,
+                 state.log_context.remote_port,
+                 server_log_sni(state.log_context));
         return false;
     }
     return true;
@@ -544,7 +804,15 @@ handshake_crypto_result build_handshake_crypto(server_handshake_state& state,
     const auto suite = tls::select_tls13_suite(cipher_suite);
     if (!suite.has_value())
     {
-        LOG_ERROR("{} unsupported tls13 cipher suite 0x{:04x}", mux::log_event::kHandshake, cipher_suite);
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} unsupported tls13 cipher suite 0x{:04x}",
+                  mux::log_event::kHandshake,
+                  state.log_context.conn_id,
+                  state.log_context.local_addr,
+                  state.log_context.local_port,
+                  state.log_context.remote_addr,
+                  state.log_context.remote_port,
+                  server_log_sni(state.log_context),
+                  cipher_suite);
         ec = boost::asio::error::no_protocol_option;
         return {};
     }
@@ -586,7 +854,14 @@ handshake_crypto_result build_handshake_crypto(server_handshake_state& state,
     const tls::openssl_ptrs::evp_pkey_ptr sign_key(EVP_PKEY_new_raw_private_key(EVP_PKEY_ED25519, nullptr, sign_key_bytes.data(), 32));
     if (sign_key == nullptr)
     {
-        LOG_ERROR("{} failed to load private key", mux::log_event::kHandshake);
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} failed to load private key",
+                  mux::log_event::kHandshake,
+                  state.log_context.conn_id,
+                  state.log_context.local_addr,
+                  state.log_context.local_port,
+                  state.log_context.remote_addr,
+                  state.log_context.remote_port,
+                  server_log_sni(state.log_context));
         ec = boost::asio::error::fault;
         return {};
     }
@@ -594,7 +869,14 @@ handshake_crypto_result build_handshake_crypto(server_handshake_state& state,
     const auto cv = tls::construct_certificate_verify(sign_key.get(), state.transcript.finish());
     if (cv.empty())
     {
-        LOG_ERROR("{} certificate verify construct failed", mux::log_event::kHandshake);
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} certificate verify construct failed",
+                  mux::log_event::kHandshake,
+                  state.log_context.conn_id,
+                  state.log_context.local_addr,
+                  state.log_context.local_port,
+                  state.log_context.remote_addr,
+                  state.log_context.remote_port,
+                  server_log_sni(state.log_context));
         ec = boost::asio::error::fault;
         return {};
     }
@@ -604,13 +886,28 @@ handshake_crypto_result build_handshake_crypto(server_handshake_state& state,
         tls::key_schedule::compute_finished_verify_data(out.hs_keys.server_handshake_traffic_secret, state.transcript.finish(), out.md, ec);
     if (ec)
     {
-        LOG_ERROR("{} compute server finished failed {}", mux::log_event::kHandshake, ec.message());
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} compute server finished failed {}",
+                  mux::log_event::kHandshake,
+                  state.log_context.conn_id,
+                  state.log_context.local_addr,
+                  state.log_context.local_port,
+                  state.log_context.remote_addr,
+                  state.log_context.remote_port,
+                  server_log_sni(state.log_context),
+                  ec.message());
         return {};
     }
     const auto s_fin = tls::construct_finished(s_fin_verify);
     if (s_fin.empty())
     {
-        LOG_ERROR("{} server finished construct failed", mux::log_event::kHandshake);
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} server finished construct failed",
+                  mux::log_event::kHandshake,
+                  state.log_context.conn_id,
+                  state.log_context.local_addr,
+                  state.log_context.local_port,
+                  state.log_context.remote_addr,
+                  state.log_context.remote_port,
+                  server_log_sni(state.log_context));
         ec = boost::asio::error::fault;
         return {};
     }
@@ -829,6 +1126,7 @@ std::size_t select_reality_certificate_chain_size(const site_material* site_mate
 boost::asio::awaitable<void> consume_tls13_compat_ccs(boost::asio::ip::tcp::socket& socket,
                                                       const std::array<uint8_t, 5>& header,
                                                       uint32_t timeout_sec,
+                                                      const server_log_context& log_context,
                                                       boost::system::error_code& ec)
 {
     std::array<uint8_t, 1> ccs_body = {0};
@@ -839,7 +1137,15 @@ boost::asio::awaitable<void> consume_tls13_compat_ccs(boost::asio::ip::tcp::sock
     }
     if (!tls::is_valid_tls13_compat_ccs(header, ccs_body[0]))
     {
-        LOG_ERROR("{} invalid ccs body {}", mux::log_event::kHandshake, ccs_body[0]);
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} invalid ccs body {}",
+                  mux::log_event::kHandshake,
+                  log_context.conn_id,
+                  log_context.local_addr,
+                  log_context.local_port,
+                  log_context.remote_addr,
+                  log_context.remote_port,
+                  server_log_sni(log_context),
+                  ccs_body[0]);
         ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
         co_return;
     }
@@ -849,6 +1155,7 @@ boost::asio::awaitable<void> consume_tls13_compat_ccs(boost::asio::ip::tcp::sock
 boost::asio::awaitable<void> read_tls_record_header_allow_ccs(boost::asio::ip::tcp::socket& socket,
                                                               std::array<uint8_t, 5>& header,
                                                               uint32_t timeout_sec,
+                                                              const server_log_context& log_context,
                                                               boost::system::error_code& ec)
 {
     co_await mux::net::wait_read_with_timeout(socket, boost::asio::buffer(header), timeout_sec, ec);
@@ -858,7 +1165,16 @@ boost::asio::awaitable<void> read_tls_record_header_allow_ccs(boost::asio::ip::t
     }
     if (header[1] != 0x03 || header[2] != 0x03)
     {
-        LOG_ERROR("{} invalid tls record version {} {}", mux::log_event::kHandshake, header[1], header[2]);
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} invalid tls record version {} {}",
+                  mux::log_event::kHandshake,
+                  log_context.conn_id,
+                  log_context.local_addr,
+                  log_context.local_port,
+                  log_context.remote_addr,
+                  log_context.remote_port,
+                  server_log_sni(log_context),
+                  header[1],
+                  header[2]);
         ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
         co_return;
     }
@@ -868,7 +1184,15 @@ boost::asio::awaitable<void> read_tls_record_header_allow_ccs(boost::asio::ip::t
     {
         if (ccs_count >= constants::tls_limits::kMaxCompatCcsRecords)
         {
-            LOG_ERROR("{} too many ccs records {}", mux::log_event::kHandshake, ccs_count);
+            LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} too many ccs records {}",
+                      mux::log_event::kHandshake,
+                      log_context.conn_id,
+                      log_context.local_addr,
+                      log_context.local_port,
+                      log_context.remote_addr,
+                      log_context.remote_port,
+                      server_log_sni(log_context),
+                      ccs_count);
             ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
             co_return;
         }
@@ -877,11 +1201,19 @@ boost::asio::awaitable<void> read_tls_record_header_allow_ccs(boost::asio::ip::t
         const auto ccs_len = static_cast<uint16_t>((header[3] << 8) | header[4]);
         if (ccs_len != 1)
         {
-            LOG_ERROR("{} invalid ccs length {}", mux::log_event::kHandshake, ccs_len);
+            LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} invalid ccs length {}",
+                      mux::log_event::kHandshake,
+                      log_context.conn_id,
+                      log_context.local_addr,
+                      log_context.local_port,
+                      log_context.remote_addr,
+                      log_context.remote_port,
+                      server_log_sni(log_context),
+                      ccs_len);
             ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
             co_return;
         }
-        co_await consume_tls13_compat_ccs(socket, header, timeout_sec, ec);
+        co_await consume_tls13_compat_ccs(socket, header, timeout_sec, log_context, ec);
         if (ec)
         {
             co_return;
@@ -894,7 +1226,16 @@ boost::asio::awaitable<void> read_tls_record_header_allow_ccs(boost::asio::ip::t
         }
         if (header[1] != 0x03 || header[2] != 0x03)
         {
-            LOG_ERROR("{} invalid tls record version {} {}", mux::log_event::kHandshake, header[1], header[2]);
+            LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} invalid tls record version {} {}",
+                      mux::log_event::kHandshake,
+                      log_context.conn_id,
+                      log_context.local_addr,
+                      log_context.local_port,
+                      log_context.remote_addr,
+                      log_context.remote_port,
+                      server_log_sni(log_context),
+                      header[1],
+                      header[2]);
             ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
             co_return;
         }
@@ -911,11 +1252,20 @@ std::vector<uint8_t> compose_tls_record(const std::array<uint8_t, 5>& header, co
     return out;
 }
 
-bool verify_client_finished_plaintext(const std::vector<uint8_t>& plaintext, uint8_t content_type, const std::vector<uint8_t>& expected_verify)
+bool verify_client_finished_plaintext(
+    const std::vector<uint8_t>& plaintext, uint8_t content_type, const std::vector<uint8_t>& expected_verify, const server_log_context& log_context)
 {
     if (content_type != tls::kContentTypeHandshake || plaintext.size() < 4 || plaintext[0] != 0x14)
     {
-        LOG_ERROR("{} client finished verification failed type {}", mux::log_event::kHandshake, static_cast<int>(content_type));
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} client finished verification failed type {}",
+                  mux::log_event::kHandshake,
+                  log_context.conn_id,
+                  log_context.local_addr,
+                  log_context.local_port,
+                  log_context.remote_addr,
+                  log_context.remote_port,
+                  server_log_sni(log_context),
+                  static_cast<int>(content_type));
         return false;
     }
 
@@ -923,12 +1273,27 @@ bool verify_client_finished_plaintext(const std::vector<uint8_t>& plaintext, uin
         (static_cast<uint32_t>(plaintext[1]) << 16) | (static_cast<uint32_t>(plaintext[2]) << 8) | static_cast<uint32_t>(plaintext[3]);
     if (msg_len != expected_verify.size() || plaintext.size() != 4 + msg_len)
     {
-        LOG_ERROR("{} client finished length invalid {}", mux::log_event::kHandshake, plaintext.size());
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} client finished length invalid {}",
+                  mux::log_event::kHandshake,
+                  log_context.conn_id,
+                  log_context.local_addr,
+                  log_context.local_port,
+                  log_context.remote_addr,
+                  log_context.remote_port,
+                  server_log_sni(log_context),
+                  plaintext.size());
         return false;
     }
     if (CRYPTO_memcmp(plaintext.data() + 4, expected_verify.data(), expected_verify.size()) != 0)
     {
-        LOG_ERROR("{} client finished hmac verification failed", mux::log_event::kHandshake);
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} client finished hmac verification failed",
+                  mux::log_event::kHandshake,
+                  log_context.conn_id,
+                  log_context.local_addr,
+                  log_context.local_port,
+                  log_context.remote_addr,
+                  log_context.remote_port,
+                  server_log_sni(log_context));
         return false;
     }
     return true;
@@ -1031,6 +1396,7 @@ boost::asio::awaitable<bool> read_client_hello_or_decide(const server_handshake_
                                                                            state.client_hello_handshake,
                                                                            cfg.timeout.read,
                                                                            constants::tls_limits::kMaxUnauthenticatedClientHelloLen,
+                                                                           state.log_context,
                                                                            ec);
     if (read_failure_reason != nullptr)
     {
@@ -1039,8 +1405,14 @@ boost::asio::awaitable<bool> read_client_hello_or_decide(const server_handshake_
         co_return false;
     }
 
-    LOG_DEBUG("{} received client hello wire size {} handshake size {}",
+    LOG_DEBUG("event {} conn_id {} local {}:{} remote {}:{} sni {} received client hello wire size {} handshake size {}",
               mux::log_event::kHandshake,
+              state.log_context.conn_id,
+              state.log_context.local_addr,
+              state.log_context.local_port,
+              state.log_context.remote_addr,
+              state.log_context.remote_port,
+              server_log_sni(state.log_context),
               state.client_hello_record.size(),
               state.client_hello_handshake.size());
     state.client_hello = tls::client_hello_parser::parse(state.client_hello_handshake);
@@ -1053,37 +1425,81 @@ std::optional<server_accept_result> validate_client_hello_sni_and_extensions(ser
 {
     if (state.client_hello.malformed_sni)
     {
-        LOG_WARN("{} auth fail malformed sni extension drop", mux::log_event::kAuth);
+        LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} sni {} auth fail malformed sni extension drop",
+                 mux::log_event::kAuth,
+                 state.log_context.conn_id,
+                 state.log_context.local_addr,
+                 state.log_context.local_port,
+                 state.log_context.remote_addr,
+                 state.log_context.remote_port,
+                 server_log_sni(state.log_context));
         return make_decision_result(accept_mode::kReject, "malformed_sni", state);
     }
     if (is_invalid_sni(state.client_hello.sni))
     {
-        LOG_WARN("{} auth fail invalid sni drop", mux::log_event::kAuth);
+        LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} sni {} auth fail invalid sni drop",
+                 mux::log_event::kAuth,
+                 state.log_context.conn_id,
+                 state.log_context.local_addr,
+                 state.log_context.local_port,
+                 state.log_context.remote_addr,
+                 state.log_context.remote_port,
+                 server_log_sni(state.log_context));
         return make_decision_result(accept_mode::kReject, "invalid_sni", state);
     }
 
     handshake_ctx.sni = state.client_hello.sni;
+    state.log_context.sni = handshake_ctx.sni;
     if (state.client_hello.malformed_extensions)
     {
-        LOG_ERROR("{} auth fail malformed extensions block", mux::log_event::kAuth);
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} auth fail malformed extensions block",
+                  mux::log_event::kAuth,
+                  state.log_context.conn_id,
+                  state.log_context.local_addr,
+                  state.log_context.local_port,
+                  state.log_context.remote_addr,
+                  state.log_context.remote_port,
+                  server_log_sni(state.log_context));
         return make_decision_result(accept_mode::kFallbackToTarget, "malformed_extensions", state);
     }
     if (!verify_client_hello_sni(state.client_hello, cfg))
     {
         const auto client_sni = state.client_hello.sni.empty() ? std::string("empty") : state.client_hello.sni;
-        LOG_WARN("{} auth fail server name mismatch client {} expected {}", mux::log_event::kAuth, client_sni, cfg.reality.sni);
+        LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} sni {} auth fail server name mismatch client {} expected {}",
+                 mux::log_event::kAuth,
+                 state.log_context.conn_id,
+                 state.log_context.local_addr,
+                 state.log_context.local_port,
+                 state.log_context.remote_addr,
+                 state.log_context.remote_port,
+                 server_log_sni(state.log_context),
+                 client_sni,
+                 cfg.reality.sni);
         return make_decision_result(accept_mode::kFallbackToTarget, "server_name_mismatch", state);
     }
     if (state.client_hello.malformed_key_share)
     {
-        LOG_ERROR("{} auth fail malformed key share extension", mux::log_event::kAuth);
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} auth fail malformed key share extension",
+                  mux::log_event::kAuth,
+                  state.log_context.conn_id,
+                  state.log_context.local_addr,
+                  state.log_context.local_port,
+                  state.log_context.remote_addr,
+                  state.log_context.remote_port,
+                  server_log_sni(state.log_context));
         return make_decision_result(accept_mode::kFallbackToTarget, "malformed_key_share", state);
     }
     if (state.client_hello.malformed_supported_groups || state.client_hello.malformed_supported_versions ||
         state.client_hello.malformed_renegotiation_info)
     {
-        LOG_ERROR("{} auth fail malformed tls13 extensions supported groups {} supported versions {} renegotiation info {}",
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} auth fail malformed tls13 extensions supported groups {} supported versions {} renegotiation info {}",
                   mux::log_event::kAuth,
+                  state.log_context.conn_id,
+                  state.log_context.local_addr,
+                  state.log_context.local_port,
+                  state.log_context.remote_addr,
+                  state.log_context.remote_port,
+                  server_log_sni(state.log_context),
                   state.client_hello.malformed_supported_groups,
                   state.client_hello.malformed_supported_versions,
                   state.client_hello.malformed_renegotiation_info);
@@ -1091,7 +1507,14 @@ std::optional<server_accept_result> validate_client_hello_sni_and_extensions(ser
     }
     if (state.client_hello.malformed_signature_algorithms)
     {
-        LOG_ERROR("{} auth fail malformed signature algorithms extension", mux::log_event::kAuth);
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} auth fail malformed signature algorithms extension",
+                  mux::log_event::kAuth,
+                  state.log_context.conn_id,
+                  state.log_context.local_addr,
+                  state.log_context.local_port,
+                  state.log_context.remote_addr,
+                  state.log_context.remote_port,
+                  server_log_sni(state.log_context));
         return make_decision_result(accept_mode::kFallbackToTarget, "malformed_signature_algorithms", state);
     }
 
@@ -1102,42 +1525,104 @@ std::optional<server_accept_result> validate_client_hello_tls13_requirements(ser
 {
     if (state.client_hello.signature_algorithms.empty())
     {
-        LOG_ERROR("{} auth fail missing signature algorithms extension", mux::log_event::kAuth);
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} auth fail missing signature algorithms extension",
+                  mux::log_event::kAuth,
+                  state.log_context.conn_id,
+                  state.log_context.local_addr,
+                  state.log_context.local_port,
+                  state.log_context.remote_addr,
+                  state.log_context.remote_port,
+                  server_log_sni(state.log_context));
         return make_decision_result(accept_mode::kFallbackToTarget, "missing_signature_algorithms", state);
     }
     if (!client_offers_signature_scheme(state.client_hello, tls::consts::sig_alg::kEd25519))
     {
-        LOG_WARN("{} auth fail missing ed25519 signature algorithm", mux::log_event::kAuth);
+        LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} sni {} auth fail missing ed25519 signature algorithm",
+                 mux::log_event::kAuth,
+                 state.log_context.conn_id,
+                 state.log_context.local_addr,
+                 state.log_context.local_port,
+                 state.log_context.remote_addr,
+                 state.log_context.remote_port,
+                 server_log_sni(state.log_context));
         return make_decision_result(accept_mode::kFallbackToTarget, "missing_ed25519_signature_algorithm", state);
     }
     if (!state.client_hello.is_tls13 || state.client_hello.session_id.size() != constants::auth::kSessionIdLen)
     {
-        LOG_ERROR("{} auth fail is tls13 {} sid len {}", mux::log_event::kAuth, state.client_hello.is_tls13, state.client_hello.session_id.size());
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} auth fail is tls13 {} sid len {}",
+                  mux::log_event::kAuth,
+                  state.log_context.conn_id,
+                  state.log_context.local_addr,
+                  state.log_context.local_port,
+                  state.log_context.remote_addr,
+                  state.log_context.remote_port,
+                  server_log_sni(state.log_context),
+                  state.client_hello.is_tls13,
+                  state.client_hello.session_id.size());
         return make_decision_result(accept_mode::kFallbackToTarget, "invalid_tls13_client_hello", state);
     }
     if (state.client_hello.random.size() != 32)
     {
-        LOG_ERROR("{} auth fail random len {}", mux::log_event::kAuth, state.client_hello.random.size());
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} auth fail random len {}",
+                  mux::log_event::kAuth,
+                  state.log_context.conn_id,
+                  state.log_context.local_addr,
+                  state.log_context.local_port,
+                  state.log_context.remote_addr,
+                  state.log_context.remote_port,
+                  server_log_sni(state.log_context),
+                  state.client_hello.random.size());
         return make_decision_result(accept_mode::kFallbackToTarget, "invalid_client_random", state);
     }
     if (client_offers_cipher_suite(state.client_hello, tls::consts::cipher::kTlsFallbackScsv))
     {
-        LOG_WARN("{} auth fail unexpected tls fallback scsv", mux::log_event::kAuth);
+        LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} sni {} auth fail unexpected tls fallback scsv",
+                 mux::log_event::kAuth,
+                 state.log_context.conn_id,
+                 state.log_context.local_addr,
+                 state.log_context.local_port,
+                 state.log_context.remote_addr,
+                 state.log_context.remote_port,
+                 server_log_sni(state.log_context));
         return make_decision_result(accept_mode::kFallbackToTarget, "unexpected_tls_fallback_scsv", state);
     }
     if (state.client_hello.compression_methods.size() != 1)
     {
-        LOG_ERROR("{} auth fail illegal tls13 compression method count {}", mux::log_event::kAuth, state.client_hello.compression_methods.size());
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} auth fail illegal tls13 compression method count {}",
+                  mux::log_event::kAuth,
+                  state.log_context.conn_id,
+                  state.log_context.local_addr,
+                  state.log_context.local_port,
+                  state.log_context.remote_addr,
+                  state.log_context.remote_port,
+                  server_log_sni(state.log_context),
+                  state.client_hello.compression_methods.size());
         return make_decision_result(accept_mode::kFallbackToTarget, "illegal_tls13_compression_methods", state);
     }
     if (state.client_hello.compression_methods[0] != 0x00)
     {
-        LOG_ERROR("{} auth fail illegal tls13 compression method {:02x}", mux::log_event::kAuth, state.client_hello.compression_methods[0]);
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} auth fail illegal tls13 compression method {:02x}",
+                  mux::log_event::kAuth,
+                  state.log_context.conn_id,
+                  state.log_context.local_addr,
+                  state.log_context.local_port,
+                  state.log_context.remote_addr,
+                  state.log_context.remote_port,
+                  server_log_sni(state.log_context),
+                  state.client_hello.compression_methods[0]);
         return make_decision_result(accept_mode::kFallbackToTarget, "illegal_tls13_compression_methods", state);
     }
     if (!state.client_hello.secure_renegotiation.empty())
     {
-        LOG_WARN("{} auth fail non-empty renegotiation info len {}", mux::log_event::kAuth, state.client_hello.secure_renegotiation.size());
+        LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} sni {} auth fail non-empty renegotiation info len {}",
+                 mux::log_event::kAuth,
+                 state.log_context.conn_id,
+                 state.log_context.local_addr,
+                 state.log_context.local_port,
+                 state.log_context.remote_addr,
+                 state.log_context.remote_port,
+                 server_log_sni(state.log_context),
+                 state.client_hello.secure_renegotiation.size());
         return make_decision_result(accept_mode::kFallbackToTarget, "non_empty_renegotiation_info", state);
     }
 
@@ -1162,7 +1647,14 @@ std::optional<server_accept_result> extract_client_key_share(server_handshake_st
 
     if (state.x25519_peer_pub.size() != 32)
     {
-        LOG_ERROR("{} auth fail missing valid x25519 key share", mux::log_event::kAuth);
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} auth fail missing valid x25519 key share",
+                  mux::log_event::kAuth,
+                  state.log_context.conn_id,
+                  state.log_context.local_addr,
+                  state.log_context.local_port,
+                  state.log_context.remote_addr,
+                  state.log_context.remote_port,
+                  server_log_sni(state.log_context));
         return make_decision_result(accept_mode::kFallbackToTarget, "missing_x25519_share", state);
     }
 
@@ -1194,15 +1686,28 @@ std::optional<server_accept_result> authenticate_client_hello(server_handshake_s
 
 std::optional<server_accept_result> finalize_client_hello_authentication(server_handshake_state& state, mux::replay_cache& replay_cache)
 {
-    LOG_INFO("{} client hello selected key share group 0x{:04x} {} client hybrid {} client x25519 {}",
+    LOG_INFO("event {} conn_id {} local {}:{} remote {}:{} sni {} client hello selected key share group 0x{:04x} {} client hybrid {} client x25519 {}",
              mux::log_event::kHandshake,
+             state.log_context.conn_id,
+             state.log_context.local_addr,
+             state.log_context.local_port,
+             state.log_context.remote_addr,
+             state.log_context.remote_port,
+             server_log_sni(state.log_context),
              state.key_share_group,
              tls::named_group_name(state.key_share_group),
              state.client_hello.has_x25519_mlkem768_share,
              state.client_hello.has_x25519_share);
     if (state.client_hello_handshake.size() < 4)
     {
-        LOG_ERROR("{} buffer too short", mux::log_event::kHandshake);
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} buffer too short",
+                  mux::log_event::kHandshake,
+                  state.log_context.conn_id,
+                  state.log_context.local_addr,
+                  state.log_context.local_port,
+                  state.log_context.remote_addr,
+                  state.log_context.remote_port,
+                  server_log_sni(state.log_context));
         return make_decision_result(accept_mode::kFallbackToTarget, "client_hello_message_too_short", state);
     }
     if (!verify_replay_guard(replay_cache, state))
@@ -1262,7 +1767,14 @@ authenticated_handshake_plan prepare_authenticated_handshake(server_handshake_st
 
     if (!tls::crypto_util::generate_x25519_keypair(ephemeral_public_key.data(), ephemeral_private_key.data()))
     {
-        LOG_ERROR("{} generate ephemeral x25519 key failed", mux::log_event::kHandshake);
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} generate ephemeral x25519 key failed",
+                  mux::log_event::kHandshake,
+                  state.log_context.conn_id,
+                  state.log_context.local_addr,
+                  state.log_context.local_port,
+                  state.log_context.remote_addr,
+                  state.log_context.remote_port,
+                  server_log_sni(state.log_context));
         ec = boost::asio::error::fault;
         return {};
     }
@@ -1273,15 +1785,28 @@ authenticated_handshake_plan prepare_authenticated_handshake(server_handshake_st
         return {};
     }
 
-    LOG_TRACE("{} generated ephemeral key {}",
+    LOG_TRACE("event {} conn_id {} local {}:{} remote {}:{} sni {} generated ephemeral key {}",
               mux::log_event::kHandshake,
+              state.log_context.conn_id,
+              state.log_context.local_addr,
+              state.log_context.local_port,
+              state.log_context.remote_addr,
+              state.log_context.remote_port,
+              server_log_sni(state.log_context),
               tls::crypto_util::bytes_to_hex(std::vector<uint8_t>(ephemeral_public_key.begin(), ephemeral_public_key.end())));
 
     auto x25519_shared =
         tls::crypto_util::x25519_derive(std::vector<uint8_t>(ephemeral_private_key.begin(), ephemeral_private_key.end()), state.x25519_peer_pub, ec);
     if (ec)
     {
-        LOG_ERROR("{} x25519 derive failed", mux::log_event::kHandshake);
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} x25519 derive failed",
+                  mux::log_event::kHandshake,
+                  state.log_context.conn_id,
+                  state.log_context.local_addr,
+                  state.log_context.local_port,
+                  state.log_context.remote_addr,
+                  state.log_context.remote_port,
+                  server_log_sni(state.log_context));
         return {};
     }
 
@@ -1291,7 +1816,15 @@ authenticated_handshake_plan prepare_authenticated_handshake(server_handshake_st
         auto ciphertext = tls::crypto_util::mlkem768_encapsulate(state.mlkem768_peer_pub, mlkem768_shared, ec);
         if (ec)
         {
-            LOG_ERROR("{} mlkem768 encapsulate failed {}", mux::log_event::kHandshake, ec.message());
+            LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} mlkem768 encapsulate failed {}",
+                      mux::log_event::kHandshake,
+                      state.log_context.conn_id,
+                      state.log_context.local_addr,
+                      state.log_context.local_port,
+                      state.log_context.remote_addr,
+                      state.log_context.remote_port,
+                      server_log_sni(state.log_context),
+                      ec.message());
             return {};
         }
         state.server_shared_secret = std::move(mlkem768_shared);
@@ -1307,7 +1840,14 @@ authenticated_handshake_plan prepare_authenticated_handshake(server_handshake_st
 
     if (state.auth_key.empty() || reality_cert_public_key.size() != 32 || reality_cert_template.empty())
     {
-        LOG_ERROR("{} REALITY certificate identity unavailable", mux::log_event::kHandshake);
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} reality certificate identity unavailable",
+                  mux::log_event::kHandshake,
+                  state.log_context.conn_id,
+                  state.log_context.local_addr,
+                  state.log_context.local_port,
+                  state.log_context.remote_addr,
+                  state.log_context.remote_port,
+                  server_log_sni(state.log_context));
         ec = boost::asio::error::fault;
         return {};
     }
@@ -1315,7 +1855,15 @@ authenticated_handshake_plan prepare_authenticated_handshake(server_handshake_st
     auto cert_der = build_reality_bound_certificate(reality_cert_template, state.auth_key, reality_cert_public_key, ec);
     if (ec)
     {
-        LOG_ERROR("{} build REALITY certificate failed {}", mux::log_event::kHandshake, ec.message());
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} build reality certificate failed {}",
+                  mux::log_event::kHandshake,
+                  state.log_context.conn_id,
+                  state.log_context.local_addr,
+                  state.log_context.local_port,
+                  state.log_context.remote_addr,
+                  state.log_context.remote_port,
+                  server_log_sni(state.log_context),
+                  ec.message());
         return {};
     }
 
@@ -1326,7 +1874,14 @@ authenticated_handshake_plan prepare_authenticated_handshake(server_handshake_st
     const auto cipher_suite = select_reality_cipher_suite(state.client_hello, site_material);
     if (!cipher_suite.has_value())
     {
-        LOG_ERROR("{} no mutual tls13 cipher suite", mux::log_event::kHandshake);
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} no mutual tls13 cipher suite",
+                  mux::log_event::kHandshake,
+                  state.log_context.conn_id,
+                  state.log_context.local_addr,
+                  state.log_context.local_port,
+                  state.log_context.remote_addr,
+                  state.log_context.remote_port,
+                  server_log_sni(state.log_context));
         ec = boost::asio::error::no_protocol_option;
         return {};
     }
@@ -1340,23 +1895,27 @@ authenticated_handshake_plan prepare_authenticated_handshake(server_handshake_st
     plan.encrypted_handshake_record_sizes = select_encrypted_handshake_record_sizes(site_material);
     plan.cert_chain_size = select_reality_certificate_chain_size(site_material);
 
-    LOG_INFO(
-        "{} success path material cache {} certs {} group 0x{:04x} {} key share len {} cipher 0x{:04x} alpn '{}' sh exts {} ee exts {} "
-        "ee padding {} ee padding len {} ccs {} hs records {}",
-        mux::log_event::kHandshake,
-        plan.has_cached_material,
-        plan.cert_chain_size,
-        state.key_share_group,
-        tls::named_group_name(state.key_share_group),
-        state.server_key_share_data.size(),
-        plan.cipher_suite,
-        plan.selected_alpn,
-        server_hello_extension_order.size(),
-        encrypted_extension_order.size(),
-        include_ee_padding,
-        encrypted_extensions_padding_len.value_or(0),
-        plan.send_change_cipher_spec,
-        plan.encrypted_handshake_record_sizes.size());
+    LOG_INFO("event {} conn_id {} local {}:{} remote {}:{} sni {} success path material cache {} certs {} group 0x{:04x} {} key share len {} cipher 0x{:04x} alpn '{}' sh exts {} ee exts {} ee padding {} ee padding len {} ccs {} hs records {}",
+             mux::log_event::kHandshake,
+             state.log_context.conn_id,
+             state.log_context.local_addr,
+             state.log_context.local_port,
+             state.log_context.remote_addr,
+             state.log_context.remote_port,
+             server_log_sni(state.log_context),
+             plan.has_cached_material,
+             plan.cert_chain_size,
+             state.key_share_group,
+             tls::named_group_name(state.key_share_group),
+             state.server_key_share_data.size(),
+             plan.cipher_suite,
+             plan.selected_alpn,
+             server_hello_extension_order.size(),
+             encrypted_extension_order.size(),
+             include_ee_padding,
+             encrypted_extensions_padding_len.value_or(0),
+             plan.send_change_cipher_spec,
+             plan.encrypted_handshake_record_sizes.size());
 
     plan.crypto = build_handshake_crypto(state,
                                          plan.cipher_suite,
@@ -1387,20 +1946,44 @@ boost::asio::awaitable<bool> complete_authenticated_handshake(const server_hands
                                                     ec);
     if (ec)
     {
-        LOG_ERROR("{} compose server hello flight failed {}", mux::log_event::kHandshake, ec.message());
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} compose server hello flight failed {}",
+                  mux::log_event::kHandshake,
+                  state.log_context.conn_id,
+                  state.log_context.local_addr,
+                  state.log_context.local_port,
+                  state.log_context.remote_addr,
+                  state.log_context.remote_port,
+                  server_log_sni(state.log_context),
+                  ec.message());
         co_return false;
     }
 
-    LOG_DEBUG("{} sending server hello flight size {}", mux::log_event::kHandshake, out_sh.size());
+    LOG_DEBUG("event {} conn_id {} local {}:{} remote {}:{} sni {} sending server hello flight size {}",
+              mux::log_event::kHandshake,
+              state.log_context.conn_id,
+              state.log_context.local_addr,
+              state.log_context.local_port,
+              state.log_context.remote_addr,
+              state.log_context.remote_port,
+              server_log_sni(state.log_context),
+              out_sh.size());
     co_await mux::net::wait_write_with_timeout(*handshake_ctx.socket, boost::asio::buffer(out_sh), cfg.timeout.write, ec);
     if (ec)
     {
-        LOG_ERROR("{} write server hello failed {}", mux::log_event::kHandshake, ec.message());
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} write server hello failed {}",
+                  mux::log_event::kHandshake,
+                  state.log_context.conn_id,
+                  state.log_context.local_addr,
+                  state.log_context.local_port,
+                  state.log_context.remote_addr,
+                  state.log_context.remote_port,
+                  server_log_sni(state.log_context),
+                  ec.message());
         co_return false;
     }
 
     std::array<uint8_t, 5> header = {0};
-    co_await read_tls_record_header_allow_ccs(*handshake_ctx.socket, header, cfg.timeout.read, ec);
+    co_await read_tls_record_header_allow_ccs(*handshake_ctx.socket, header, cfg.timeout.read, state.log_context, ec);
     if (ec)
     {
         co_return false;
@@ -1409,7 +1992,15 @@ boost::asio::awaitable<bool> complete_authenticated_handshake(const server_hands
     const auto body_len = static_cast<uint16_t>((header[3] << 8) | header[4]);
     if (body_len > constants::tls_limits::kMaxCiphertextRecordLen)
     {
-        LOG_ERROR("{} client finished record too large {}", mux::log_event::kHandshake, body_len);
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} client finished record too large {}",
+                  mux::log_event::kHandshake,
+                  state.log_context.conn_id,
+                  state.log_context.local_addr,
+                  state.log_context.local_port,
+                  state.log_context.remote_addr,
+                  state.log_context.remote_port,
+                  server_log_sni(state.log_context),
+                  body_len);
         ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
         co_return false;
     }
@@ -1427,7 +2018,15 @@ boost::asio::awaitable<bool> complete_authenticated_handshake(const server_hands
         tls::record_layer::decrypt_record(plan.crypto.cipher, plan.crypto.c_hs_keys.first, plan.crypto.c_hs_keys.second, 0, record, content_type, ec);
     if (ec)
     {
-        LOG_ERROR("{} client finished decrypt failed {}", mux::log_event::kHandshake, ec.message());
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} client finished decrypt failed {}",
+                  mux::log_event::kHandshake,
+                  state.log_context.conn_id,
+                  state.log_context.local_addr,
+                  state.log_context.local_port,
+                  state.log_context.remote_addr,
+                  state.log_context.remote_port,
+                  server_log_sni(state.log_context),
+                  ec.message());
         co_return false;
     }
 
@@ -1435,11 +2034,19 @@ boost::asio::awaitable<bool> complete_authenticated_handshake(const server_hands
         plan.crypto.hs_keys.client_handshake_traffic_secret, state.transcript.finish(), plan.crypto.md, ec);
     if (ec)
     {
-        LOG_ERROR("{} client finished verify data failed {}", mux::log_event::kHandshake, ec.message());
+        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} client finished verify data failed {}",
+                  mux::log_event::kHandshake,
+                  state.log_context.conn_id,
+                  state.log_context.local_addr,
+                  state.log_context.local_port,
+                  state.log_context.remote_addr,
+                  state.log_context.remote_port,
+                  server_log_sni(state.log_context),
+                  ec.message());
         co_return false;
     }
 
-    if (!verify_client_finished_plaintext(plaintext, content_type, expected_fin_verify))
+    if (!verify_client_finished_plaintext(plaintext, content_type, expected_fin_verify, state.log_context))
     {
         ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
         co_return false;
@@ -1484,6 +2091,7 @@ boost::asio::awaitable<server_accept_result> server_handshaker::accept(server_ha
     ec.clear();
     server_accept_result result;
     server_handshake_state state;
+    state.log_context = make_server_log_context(handshake_ctx);
 
     if (!(co_await read_client_hello_or_decide(handshake_ctx, state, cfg_, result, ec)))
     {

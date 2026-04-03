@@ -3,6 +3,8 @@
 
 #include <memory>
 #include <string>
+#include <cstddef>
+#include <string_view>
 #include <vector>
 #include <utility>
 
@@ -20,7 +22,7 @@ class ip_matcher
 
     [[nodiscard]] bool match(const boost::asio::ip::address& addr) const;
 
-    void add_rule(const std::string& cidr);
+    void add_rule(const std::string& cidr, std::string_view source_name = {}, std::size_t line_number = 0);
 
     void optimize() const;
 

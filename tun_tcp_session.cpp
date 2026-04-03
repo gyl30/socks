@@ -101,14 +101,23 @@ boost::asio::awaitable<void> tun_tcp_session::run()
         co_return;
     }
 
-    LOG_INFO("event {} conn_id {} target {}:{} route {}", log_event::kRoute, conn_id_, target_addr_, target_port_, mux::to_string(route));
+    LOG_INFO("event {} conn_id {} client {}:{} target {}:{} route {}",
+             log_event::kRoute,
+             conn_id_,
+             client_addr_,
+             client_port_,
+             target_addr_,
+             target_port_,
+             mux::to_string(route));
 
     const auto connect_result = co_await backend->connect(target_addr_, target_port_);
     if (connect_result.ec)
     {
-        LOG_WARN("event {} conn_id {} target {}:{} route {} connect failed {}",
+        LOG_WARN("event {} conn_id {} client {}:{} target {}:{} route {} connect failed {}",
                  log_event::kConnInit,
                  conn_id_,
+                 client_addr_,
+                 client_port_,
                  target_addr_,
                  target_port_,
                  mux::to_string(route),
@@ -118,9 +127,11 @@ boost::asio::awaitable<void> tun_tcp_session::run()
         co_return;
     }
 
-    LOG_INFO("event {} conn_id {} target {}:{} route {} connected",
+    LOG_INFO("event {} conn_id {} client {}:{} target {}:{} route {} connected",
              log_event::kConnEstablished,
              conn_id_,
+             client_addr_,
+             client_port_,
              target_addr_,
              target_port_,
              mux::to_string(route));
@@ -158,7 +169,13 @@ boost::asio::awaitable<std::pair<route_type, std::shared_ptr<upstream>>> tun_tcp
     const auto route = co_await router_->decide_ip(target_ip);
     if (route == route_type::kBlock)
     {
-        LOG_WARN("event {} conn_id {} blocked target {}", log_event::kRoute, conn_id_, target_addr_);
+        LOG_WARN("event {} conn_id {} client {}:{} target {}:{} blocked",
+                 log_event::kRoute,
+                 conn_id_,
+                 client_addr_,
+                 client_port_,
+                 target_addr_,
+                 target_port_);
         co_return std::make_pair(route, std::shared_ptr<upstream>(nullptr));
     }
     if (route == route_type::kDirect)
@@ -168,6 +185,16 @@ boost::asio::awaitable<std::pair<route_type, std::shared_ptr<upstream>>> tun_tcp
     if (route == route_type::kProxy && tunnel_pool_ != nullptr)
     {
         co_return std::make_pair(route, make_proxy_upstream(tunnel_pool_, conn_id_, cfg_));
+    }
+    if (route == route_type::kProxy)
+    {
+        LOG_WARN("event {} conn_id {} client {}:{} target {}:{} route proxy tunnel pool unavailable",
+                 log_event::kRoute,
+                 conn_id_,
+                 client_addr_,
+                 client_port_,
+                 target_addr_,
+                 target_port_);
     }
     co_return std::make_pair(route_type::kBlock, std::shared_ptr<upstream>(nullptr));
 }
@@ -194,7 +221,14 @@ boost::asio::awaitable<void> tun_tcp_session::client_to_upstream(const std::shar
                 co_await backend->write(payload, ec);
                 if (ec)
                 {
-                    LOG_WARN("event {} conn_id {} write backend failed {}", log_event::kDataSend, conn_id_, ec.message());
+                    LOG_WARN("event {} conn_id {} client {}:{} target {}:{} stage client_to_upstream write backend failed {}",
+                             log_event::kDataSend,
+                             conn_id_,
+                             client_addr_,
+                             client_port_,
+                             target_addr_,
+                             target_port_,
+                             ec.message());
                     close_client_connection(true);
                     co_return;
                 }
@@ -235,7 +269,14 @@ boost::asio::awaitable<void> tun_tcp_session::upstream_to_client(const std::shar
             }
             else
             {
-                LOG_WARN("event {} conn_id {} read backend failed {}", log_event::kDataRecv, conn_id_, ec.message());
+                LOG_WARN("event {} conn_id {} client {}:{} target {}:{} stage upstream_to_client read backend failed {}",
+                         log_event::kDataRecv,
+                         conn_id_,
+                         client_addr_,
+                         client_port_,
+                         target_addr_,
+                         target_port_,
+                         ec.message());
                 close_client_connection(true);
             }
             co_return;
@@ -266,7 +307,14 @@ boost::asio::awaitable<void> tun_tcp_session::upstream_to_client(const std::shar
             }
             if (write_err != ERR_OK)
             {
-                LOG_WARN("event {} conn_id {} tcp_write failed {}", log_event::kDataRecv, conn_id_, tun::lwip_error_message(write_err));
+                LOG_WARN("event {} conn_id {} client {}:{} target {}:{} stage upstream_to_client tcp_write failed {}",
+                         log_event::kDataRecv,
+                         conn_id_,
+                         client_addr_,
+                         client_port_,
+                         target_addr_,
+                         target_port_,
+                         tun::lwip_error_message(write_err));
                 close_client_connection(true);
                 co_return;
             }
@@ -274,7 +322,14 @@ boost::asio::awaitable<void> tun_tcp_session::upstream_to_client(const std::shar
             const auto output_err = tcp_output(pcb_);
             if (output_err != ERR_OK && output_err != ERR_MEM)
             {
-                LOG_WARN("event {} conn_id {} tcp_output failed {}", log_event::kDataRecv, conn_id_, tun::lwip_error_message(output_err));
+                LOG_WARN("event {} conn_id {} client {}:{} target {}:{} stage upstream_to_client tcp_output failed {}",
+                         log_event::kDataRecv,
+                         conn_id_,
+                         client_addr_,
+                         client_port_,
+                         target_addr_,
+                         target_port_,
+                         tun::lwip_error_message(output_err));
                 close_client_connection(true);
                 co_return;
             }
@@ -391,7 +446,14 @@ void tun_tcp_session::graceful_shutdown_to_client()
     const auto shutdown_err = tcp_shutdown(pcb_, 0, 1);
     if (shutdown_err != ERR_OK && shutdown_err != ERR_CLSD)
     {
-        LOG_WARN("event {} conn_id {} tcp shutdown failed {}", log_event::kConnClose, conn_id_, tun::lwip_error_message(shutdown_err));
+        LOG_WARN("event {} conn_id {} client {}:{} target {}:{} tcp shutdown failed {}",
+                 log_event::kConnClose,
+                 conn_id_,
+                 client_addr_,
+                 client_port_,
+                 target_addr_,
+                 target_port_,
+                 tun::lwip_error_message(shutdown_err));
     }
 }
 
@@ -477,7 +539,14 @@ void tun_tcp_session::on_err(void* arg, const err_t err)
     self->peer_eof_ = true;
     self->stopped_ = true;
     self->signal_all_events();
-    LOG_INFO("event {} conn_id {} lwip tcp error {}", log_event::kConnClose, self->conn_id_, tun::lwip_error_message(err));
+    LOG_INFO("event {} conn_id {} client {}:{} target {}:{} lwip tcp error {}",
+             log_event::kConnClose,
+             self->conn_id_,
+             self->client_addr_,
+             self->client_port_,
+             self->target_addr_,
+             self->target_port_,
+             tun::lwip_error_message(err));
 }
 
 err_t tun_tcp_session::on_poll(void* arg, tcp_pcb* pcb)

@@ -48,7 +48,12 @@ class tproxy_client : public std::enable_shared_from_this<tproxy_client>
                                                                        const boost::asio::ip::udp::endpoint& target_endpoint,
                                                                        route_type route,
                                                                        uint32_t conn_id);
-    [[nodiscard]] bool register_udp_session(const std::string& key, const std::shared_ptr<tproxy_udp_session>& session);
+    [[nodiscard]] bool register_udp_session(const std::string& key,
+                                            const std::shared_ptr<tproxy_udp_session>& session,
+                                            uint32_t conn_id,
+                                            const boost::asio::ip::udp::endpoint& client_endpoint,
+                                            const boost::asio::ip::udp::endpoint& target_endpoint,
+                                            route_type route);
     void touch_udp_session(const std::string& key);
     void evict_udp_sessions_if_needed();
     void erase_udp_session(const std::string& key);
