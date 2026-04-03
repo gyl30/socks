@@ -11,6 +11,7 @@
 #include <boost/system/errc.hpp>
 #include <boost/system/error_code.hpp>
 
+#include "constants.h"
 #include "log.h"
 #include "mux_codec.h"
 #include "mux_protocol.h"
@@ -54,7 +55,11 @@ bool encode_addr_payload(uint8_t first_byte, std::string_view addr, uint16_t por
         const auto warn_total = next_decode_warn_total();
         if (should_log_decode_warn(warn_total))
         {
-            LOG_WARN("{} payload encode invalid addr len {} warn_total {}", payload_name, addr.size(), warn_total);
+            LOG_WARN("event {} stage encode_addr_payload payload {} invalid_addr len {} warn_total {}",
+                     log_event::kMuxFrame,
+                     payload_name,
+                     addr.size(),
+                     warn_total);
         }
         return false;
     }
@@ -96,7 +101,10 @@ std::vector<uint8_t> mux_codec::encode_frame(const frame_header& h, std::span<co
 {
     if (payload.size() > mux::kMaxPayload)
     {
-        LOG_ERROR("mux frame encode payload too large {} max {}", payload.size(), mux::kMaxPayload);
+        LOG_ERROR("event {} stage encode_frame payload_too_large size {} max {}",
+                  log_event::kMuxFrame,
+                  payload.size(),
+                  mux::kMaxPayload);
         return {};
     }
 
@@ -127,6 +135,11 @@ void mux_codec::decode_frames(std::vector<uint8_t>& pending,
 
     if (max_buffer > 0 && pending.size() + data.size() > max_buffer)
     {
+        LOG_WARN("event {} stage decode_frames buffer_limit exceeded pending {} input {} max {}",
+                 log_event::kMuxFrame,
+                 pending.size(),
+                 data.size(),
+                 max_buffer);
         pending.clear();
         ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
         return;
@@ -141,6 +154,10 @@ void mux_codec::decode_frames(std::vector<uint8_t>& pending,
         decode_header(pending.data() + static_cast<std::ptrdiff_t>(offset), header);
         if (header.length > mux::kMaxPayload)
         {
+            LOG_WARN("event {} stage decode_frames invalid_header_len {} max {}",
+                     log_event::kMuxFrame,
+                     header.length,
+                     mux::kMaxPayload);
             pending.clear();
             ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
             return;
@@ -189,7 +206,10 @@ bool mux_codec::decode_syn(const uint8_t* data, std::size_t len, syn_payload& ou
         const auto warn_total = next_decode_warn_total();
         if (should_log_decode_warn(warn_total))
         {
-            LOG_WARN("syn payload too short size {} warn_total {}", len, warn_total);
+            LOG_WARN("event {} stage decode_syn payload_too_short size {} warn_total {}",
+                     log_event::kMuxFrame,
+                     len,
+                     warn_total);
         }
         return false;
     }
@@ -200,7 +220,11 @@ bool mux_codec::decode_syn(const uint8_t* data, std::size_t len, syn_payload& ou
         const auto warn_total = next_decode_warn_total();
         if (should_log_decode_warn(warn_total))
         {
-            LOG_WARN("syn payload length invalid for addr len {} got {} warn_total {}", addr_len, len, warn_total);
+            LOG_WARN("event {} stage decode_syn invalid_len addr_len {} size {} warn_total {}",
+                     log_event::kMuxFrame,
+                     addr_len,
+                     len,
+                     warn_total);
         }
         return false;
     }
@@ -210,7 +234,7 @@ bool mux_codec::decode_syn(const uint8_t* data, std::size_t len, syn_payload& ou
         const auto warn_total = next_decode_warn_total();
         if (should_log_decode_warn(warn_total))
         {
-            LOG_WARN("syn payload contains invalid chars in addr warn_total {}", warn_total);
+            LOG_WARN("event {} stage decode_syn invalid_addr_chars warn_total {}", log_event::kMuxFrame, warn_total);
         }
         return false;
     }
@@ -231,7 +255,10 @@ bool mux_codec::decode_ack(const uint8_t* data, std::size_t len, ack_payload& ou
         const auto warn_total = next_decode_warn_total();
         if (should_log_decode_warn(warn_total))
         {
-            LOG_WARN("ack payload too short size {} warn_total {}", len, warn_total);
+            LOG_WARN("event {} stage decode_ack payload_too_short size {} warn_total {}",
+                     log_event::kMuxFrame,
+                     len,
+                     warn_total);
         }
         return false;
     }
@@ -243,7 +270,11 @@ bool mux_codec::decode_ack(const uint8_t* data, std::size_t len, ack_payload& ou
         const auto warn_total = next_decode_warn_total();
         if (should_log_decode_warn(warn_total))
         {
-            LOG_WARN("ack payload length invalid expected {} got {} warn_total {}", expected_len, len, warn_total);
+            LOG_WARN("event {} stage decode_ack invalid_len expected {} size {} warn_total {}",
+                     log_event::kMuxFrame,
+                     expected_len,
+                     len,
+                     warn_total);
         }
         return false;
     }
@@ -253,7 +284,7 @@ bool mux_codec::decode_ack(const uint8_t* data, std::size_t len, ack_payload& ou
         const auto warn_total = next_decode_warn_total();
         if (should_log_decode_warn(warn_total))
         {
-            LOG_WARN("ack payload contains invalid chars in addr warn_total {}", warn_total);
+            LOG_WARN("event {} stage decode_ack invalid_addr_chars warn_total {}", log_event::kMuxFrame, warn_total);
         }
         return false;
     }

@@ -10,6 +10,7 @@
 
 #include <boost/asio.hpp>
 
+#include "constants.h"
 #include "log.h"
 #include "ip_matcher.h"
 #include "rule_file_utils.h"
@@ -189,18 +190,21 @@ bool ip_matcher::load(const std::string& filename)
     std::ifstream ip_file(filename);
     if (!ip_file.is_open())
     {
-        LOG_WARN("failed to open direct ip file {}", filename);
+        LOG_WARN("event {} stage load_ip_rule file {} error open_failed", log_event::kRoute, filename);
         return false;
     }
 
     std::string line;
-    while (rule_file_util::read_rule_line(ip_file, line))
+    std::size_t line_number = 0;
+    while (std::getline(ip_file, line))
     {
+        ++line_number;
+        line = rule_file_util::sanitize_rule_line(line);
         if (line.empty())
         {
             continue;
         }
-        add_rule(line);
+        add_rule(line, filename, line_number);
     }
     optimize();
     return true;
@@ -252,26 +256,87 @@ bool parse_prefix_length(const std::string_view len_part, int& prefix_len)
 }
 }    // namespace
 
-void ip_matcher::add_rule(const std::string& cidr)
+void ip_matcher::add_rule(const std::string& cidr, const std::string_view source_name, const std::size_t line_number)
 {
+    const auto log_invalid_rule = [&](const std::string_view reason)
+    {
+        if (source_name.empty())
+        {
+            LOG_WARN("event {} stage load_ip_rule error {} value {}", log_event::kRoute, reason, cidr);
+            return;
+        }
+        LOG_WARN("event {} stage load_ip_rule file {} line {} error {} value {}",
+                 log_event::kRoute,
+                 source_name,
+                 line_number,
+                 reason,
+                 cidr);
+    };
+
     std::string_view ip_part;
     std::string_view len_part;
     if (!split_cidr_line(cidr, ip_part, len_part))
     {
+        log_invalid_rule("format");
         return;
     }
 
     int prefix_len = 0;
     if (!parse_prefix_length(len_part, prefix_len))
     {
-        LOG_WARN("invalid prefix length {}", len_part);
+        if (source_name.empty())
+        {
+            LOG_WARN("event {} stage load_ip_rule error invalid_prefix value {}", log_event::kRoute, len_part);
+        }
+        else
+        {
+            LOG_WARN("event {} stage load_ip_rule file {} line {} error invalid_prefix value {}",
+                     log_event::kRoute,
+                     source_name,
+                     line_number,
+                     len_part);
+        }
         return;
     }
     boost::system::error_code ec;
     const auto addr = boost::asio::ip::make_address(ip_part, ec);
     if (ec)
     {
-        LOG_ERROR("{} parse address failed {}", ip_part, ec.message());
+        if (source_name.empty())
+        {
+            LOG_ERROR("event {} stage load_ip_rule addr {} error {}", log_event::kRoute, ip_part, ec.message());
+        }
+        else
+        {
+            LOG_ERROR("event {} stage load_ip_rule file {} line {} addr {} error {}",
+                      log_event::kRoute,
+                      source_name,
+                      line_number,
+                      ip_part,
+                      ec.message());
+        }
+        return;
+    }
+
+    const int max_prefix_len = addr.is_v4() ? 32 : 128;
+    if (!is_valid_prefix_length(prefix_len, max_prefix_len))
+    {
+        if (source_name.empty())
+        {
+            LOG_WARN("event {} stage load_ip_rule error invalid_prefix_range prefix {} max {}",
+                     log_event::kRoute,
+                     prefix_len,
+                     max_prefix_len);
+        }
+        else
+        {
+            LOG_WARN("event {} stage load_ip_rule file {} line {} error invalid_prefix_range prefix {} max {}",
+                     log_event::kRoute,
+                     source_name,
+                     line_number,
+                     prefix_len,
+                     max_prefix_len);
+        }
         return;
     }
 

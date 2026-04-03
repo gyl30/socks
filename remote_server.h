@@ -15,6 +15,14 @@
 #include "site_material.h"
 #include "reality/policy/fallback_gate.h"
 #include "reality/policy/fallback_executor.h"
+
+namespace reality
+{
+
+struct server_handshake_context;
+
+}    // namespace reality
+
 namespace mux
 {
 
@@ -38,7 +46,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
 
     boost::asio::awaitable<void> process_stream_request(io_worker& worker,
                                                         std::shared_ptr<mux_connection> connection,
-                                                        uint32_t conn_id,
+                                                        const reality::server_handshake_context& reality_ctx,
                                                         mux_frame frame) const;
 
    private:

@@ -6,6 +6,7 @@
 #include <atomic>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <cstdint>
 #include <unordered_map>
@@ -77,6 +78,9 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     boost::asio::awaitable<void> send_heartbeat_frame(boost::system::error_code& ec);
     [[nodiscard]] uint32_t acquire_next_id();
     [[nodiscard]] bool is_stream_limit_reached();
+    [[nodiscard]] std::string_view local_host() const;
+    [[nodiscard]] std::string_view remote_host() const;
+    [[nodiscard]] std::size_t stream_count();
 
     friend struct run_loop_spawner;
 

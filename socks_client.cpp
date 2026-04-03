@@ -1,6 +1,7 @@
 #include <chrono>
 #include <memory>
 #include <string>
+#include <tuple>
 #include <cstdlib>
 #include <utility>
 
@@ -22,6 +23,46 @@ namespace mux
 
 namespace
 {
+
+std::pair<std::string, uint16_t> endpoint_parts(const boost::asio::ip::tcp::endpoint& endpoint)
+{
+    return {endpoint.address().to_string(), endpoint.port()};
+}
+
+void load_socket_endpoints(boost::asio::ip::tcp::socket& socket,
+                           uint32_t conn_id,
+                           std::string& local_host,
+                           uint16_t& local_port,
+                           std::string& remote_host,
+                           uint16_t& remote_port)
+{
+    local_host = "unknown";
+    local_port = 0;
+    remote_host = "unknown";
+    remote_port = 0;
+
+    boost::system::error_code local_ec;
+    const auto local_endpoint = socket.local_endpoint(local_ec);
+    if (local_ec)
+    {
+        LOG_WARN("event {} conn_id {} stage query_local_endpoint error {}", log_event::kConnInit, conn_id, local_ec.message());
+    }
+    else
+    {
+        std::tie(local_host, local_port) = endpoint_parts(local_endpoint);
+    }
+
+    boost::system::error_code remote_ec;
+    const auto remote_endpoint = socket.remote_endpoint(remote_ec);
+    if (remote_ec)
+    {
+        LOG_WARN("event {} conn_id {} stage query_remote_endpoint error {}", log_event::kConnInit, conn_id, remote_ec.message());
+    }
+    else
+    {
+        std::tie(remote_host, remote_port) = endpoint_parts(remote_endpoint);
+    }
+}
 
 void setup_acceptor(boost::asio::ip::tcp::acceptor& acceptor, const std::string& host, uint16_t port, boost::system::error_code& ec)
 {
@@ -77,17 +118,20 @@ void socks_client::start()
 {
     if (!router_->load())
     {
-        LOG_ERROR("failed to load router data");
+        LOG_ERROR("event {} stage start load router data failed", log_event::kConnInit);
         std::exit(EXIT_FAILURE);
     }
     if (!cfg_.socks.enabled)
     {
-        LOG_INFO("socks client disabled");
+        LOG_INFO("event {} stage start socks client disabled", log_event::kConnInit);
         return;
     }
 
     tunnel_pool_->start();
-    LOG_INFO("local socks5 starting listener on {}:{}", cfg_.socks.host, cfg_.socks.port);
+    LOG_INFO("event {} listen {}:{} socks client starting listener",
+             log_event::kConnInit,
+             cfg_.socks.host,
+             cfg_.socks.port);
 
     owner_worker_.group.spawn([self = shared_from_this()]() { return self->start_acceptor(); });
 }
@@ -98,11 +142,15 @@ boost::asio::awaitable<void> socks_client::start_acceptor()
     setup_acceptor(acceptor_, cfg_.socks.host, cfg_.socks.port, ec);
     if (ec)
     {
-        LOG_ERROR("socks5 setup {}:{} failed {}", cfg_.socks.host, cfg_.socks.port, ec.message());
+        LOG_ERROR("event {} stage start listen {}:{} setup failed {}",
+                  log_event::kConnInit,
+                  cfg_.socks.host,
+                  cfg_.socks.port,
+                  ec.message());
         std::exit(EXIT_FAILURE);
     }
 
-    LOG_INFO("local socks5 listening on {}:{}", cfg_.socks.host, cfg_.socks.port);
+    LOG_INFO("event {} listen {}:{} socks listening", log_event::kConnInit, cfg_.socks.host, cfg_.socks.port);
     co_await accept_loop();
     co_return;
 }
@@ -117,30 +165,61 @@ boost::asio::awaitable<void> socks_client::accept_loop()
         co_await acceptor_.async_accept(socket, boost::asio::redirect_error(boost::asio::use_awaitable, ec));
         if (ec == boost::asio::error::operation_aborted)
         {
-            LOG_WARN("socks5 accept cancelled {}", ec.message());
+            LOG_INFO("event {} listen {}:{} accept loop stopped {}",
+                     log_event::kConnClose,
+                     cfg_.socks.host,
+                     cfg_.socks.port,
+                     ec.message());
             break;
         }
         if (ec)
         {
-            LOG_ERROR("socks5 accept failed {} retry", ec.message());
+            LOG_ERROR("event {} listen {}:{} stage accept error {} retry",
+                      log_event::kConnInit,
+                      cfg_.socks.host,
+                      cfg_.socks.port,
+                      ec.message());
             ec = co_await net::wait_for(owner_worker_.io_context, std::chrono::seconds(3));
             if (ec)
             {
-                LOG_ERROR("accept retry timer error {}", ec.message());
+                LOG_ERROR("event {} listen {}:{} stage accept_retry_wait error {}",
+                          log_event::kConnInit,
+                          cfg_.socks.host,
+                          cfg_.socks.port,
+                          ec.message());
                 break;
             }
             continue;
         }
 
+        const uint32_t sid = next_session_id_.fetch_add(1, std::memory_order_relaxed);
+        std::string local_host;
+        std::string remote_host;
+        uint16_t local_port = 0;
+        uint16_t remote_port = 0;
+        load_socket_endpoints(socket, sid, local_host, local_port, remote_host, remote_port);
+        LOG_INFO("event {} conn_id {} local {}:{} remote {}:{} accepted",
+                 log_event::kConnInit,
+                 sid,
+                 local_host,
+                 local_port,
+                 remote_host,
+                 remote_port);
         ec = socket.set_option(boost::asio::ip::tcp::no_delay(true), ec);
         if (ec)
         {
-            LOG_WARN("failed to set no delay on local socket {}", ec.message());
+            LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} stage set_no_delay error {}",
+                     log_event::kSocks,
+                     sid,
+                     local_host,
+                     local_port,
+                     remote_host,
+                     remote_port,
+                     ec.message());
         }
-        const uint32_t sid = next_session_id_.fetch_add(1, std::memory_order_relaxed);
         std::make_shared<socks_session>(std::move(socket), socket_worker, tunnel_pool_, router_, sid, cfg_)->start();
     }
-    LOG_INFO("local socks5 acceptor stopped");
+    LOG_INFO("event {} listen {}:{} accept loop exited", log_event::kConnClose, cfg_.socks.host, cfg_.socks.port);
 }
 
 void socks_client::stop()
@@ -157,7 +236,11 @@ void socks_client::stop()
                           ec = self->acceptor_.close(ec);
                           if (ec && ec != boost::asio::error::bad_descriptor)
                           {
-                              LOG_ERROR("acceptor close error {}", ec.message());
+                              LOG_ERROR("event {} listen {}:{} acceptor close failed {}",
+                                        log_event::kConnClose,
+                                        self->cfg_.socks.host,
+                                        self->cfg_.socks.port,
+                                        ec.message());
                           }
                           if (self->tunnel_pool_ != nullptr)
                           {

@@ -22,6 +22,7 @@
 
 #include "log.h"
 #include "constants.h"
+#include "net_utils.h"
 #include "tun_client.h"
 namespace mux
 {
@@ -38,12 +39,12 @@ void tun_client::start()
 {
     if (!cfg_.tun.enabled)
     {
-        LOG_INFO("tun client disabled");
+        LOG_INFO("event {} stage start tun client disabled", log_event::kConnInit);
         return;
     }
     if (!router_->load())
     {
-        LOG_ERROR("failed to load router data for tun client");
+        LOG_ERROR("event {} stage start load router data for tun client failed", log_event::kConnInit);
         std::exit(EXIT_FAILURE);
     }
 
@@ -52,7 +53,11 @@ void tun_client::start()
     boost::system::error_code ec;
     if (!device_.open(cfg_.tun, ec))
     {
-        LOG_ERROR("open tun device failed {}", ec.message());
+        LOG_ERROR("event {} stage start open tun device name {} mtu {} failed {}",
+                  log_event::kConnInit,
+                  cfg_.tun.name.empty() ? "auto" : cfg_.tun.name,
+                  cfg_.tun.mtu,
+                  ec.message());
         std::exit(EXIT_FAILURE);
     }
 
@@ -60,7 +65,7 @@ void tun_client::start()
     auto* read_handle = static_cast<HANDLE>(device_.read_wait_handle());
     if (read_handle == nullptr)
     {
-        LOG_ERROR("get wintun read event failed");
+        LOG_ERROR("event {} device {} index {} get wintun read event failed", log_event::kConnInit, device_.name(), device_.index());
         std::exit(EXIT_FAILURE);
     }
 
@@ -73,39 +78,89 @@ void tun_client::start()
                          FALSE,
                          DUPLICATE_SAME_ACCESS))
     {
-        LOG_ERROR("duplicate wintun read event failed {}", GetLastError());
+        LOG_ERROR("event {} device {} index {} duplicate wintun read event failed {}",
+                  log_event::kConnInit,
+                  device_.name(),
+                  device_.index(),
+                  GetLastError());
         std::exit(EXIT_FAILURE);
     }
     tun_wait_handle_.assign(duplicated, ec);
     if (ec)
     {
-        LOG_ERROR("assign wintun wait handle failed {}", ec.message());
+        LOG_ERROR("event {} device {} index {} assign wintun wait handle failed {}",
+                  log_event::kConnInit,
+                  device_.name(),
+                  device_.index(),
+                  ec.message());
         std::exit(EXIT_FAILURE);
     }
 #else
     const int wait_fd = ::dup(device_.native_handle());
     if (wait_fd < 0)
     {
-        LOG_ERROR("dup tun fd failed {}", errno);
+        LOG_ERROR("event {} device {} index {} dup tun fd failed errno {}",
+                  log_event::kConnInit,
+                  device_.name(),
+                  device_.index(),
+                  errno);
         std::exit(EXIT_FAILURE);
     }
     tun_stream_.assign(wait_fd, ec);
     if (ec)
     {
-        LOG_ERROR("assign tun fd failed {}", ec.message());
+        LOG_ERROR("event {} device {} index {} assign tun fd failed {}",
+                  log_event::kConnInit,
+                  device_.name(),
+                  device_.index(),
+                  ec.message());
         std::exit(EXIT_FAILURE);
     }
 #endif
 
     if (!init_stack())
     {
-        LOG_ERROR("initialize tun lwip stack failed");
+        LOG_ERROR("event {} device {} index {} initialize tun lwip stack failed",
+                  log_event::kConnInit,
+                  device_.name(),
+                  device_.index());
         std::exit(EXIT_FAILURE);
     }
 
-    LOG_INFO("tun client started name {} index {}", device_.name(), device_.index());
+    LOG_INFO("event {} device {} index {} active_tunnels {} total_slots {} tun stack ready",
+             log_event::kConnInit,
+             device_.name(),
+             device_.index(),
+             tunnel_pool_ != nullptr ? tunnel_pool_->active_tunnels() : 0U,
+             cfg_.limits.max_connections);
     owner_worker_.group.spawn([self = shared_from_this()]() { return self->read_loop(); });
     owner_worker_.group.spawn([self = shared_from_this()]() { return self->timer_loop(); });
+    owner_worker_.group.spawn(
+        [self = shared_from_this()]() -> boost::asio::awaitable<void>
+        {
+            while (!self->stopping_.load(std::memory_order_relaxed))
+            {
+                const auto active_tunnels = self->tunnel_pool_ != nullptr ? self->tunnel_pool_->active_tunnels() : 0U;
+                if (active_tunnels > 0U || self->cfg_.limits.max_connections == 0)
+                {
+                    LOG_INFO("event {} device {} index {} active_tunnels {} total_slots {} tun client started name {} index {}",
+                             log_event::kConnEstablished,
+                             self->device_.name(),
+                             self->device_.index(),
+                             active_tunnels,
+                             self->cfg_.limits.max_connections,
+                             self->device_.name(),
+                             self->device_.index());
+                    co_return;
+                }
+
+                const auto wait_ec = co_await net::wait_for(self->owner_worker_.io_context, std::chrono::milliseconds(100));
+                if (wait_ec == boost::asio::error::operation_aborted || wait_ec == boost::asio::error::bad_descriptor)
+                {
+                    co_return;
+                }
+            }
+        });
 }
 
 void tun_client::stop()
@@ -118,6 +173,7 @@ void tun_client::stop()
     boost::asio::post(owner_worker_.io_context,
                       [self = shared_from_this()]()
                       {
+                          LOG_INFO("event {} device {} index {} tun client stopping", log_event::kConnClose, self->device_.name(), self->device_.index());
                           boost::system::error_code ec;
 #ifdef _WIN32
                           self->tun_wait_handle_.close(ec);
@@ -263,7 +319,11 @@ boost::asio::awaitable<void> tun_client::read_loop()
         }
         if (ec)
         {
-            LOG_ERROR("tun read wait failed {}", ec.message());
+            LOG_ERROR("event {} device {} index {} tun read wait failed {}",
+                      log_event::kConnInit,
+                      device_.name(),
+                      device_.index(),
+                      ec.message());
             break;
         }
 
@@ -272,7 +332,9 @@ boost::asio::awaitable<void> tun_client::read_loop()
             const auto bytes_read = device_.read_packet(buffer.data(), buffer.size(), ec);
             if (ec)
             {
-                if (ec == boost::system::errc::make_error_code(boost::system::errc::resource_unavailable_try_again))
+                if (ec == boost::system::errc::make_error_code(boost::system::errc::resource_unavailable_try_again) ||
+                    ec == boost::asio::error::would_block ||
+                    ec == boost::asio::error::try_again)
                 {
                     ec.clear();
                     break;
@@ -281,7 +343,11 @@ boost::asio::awaitable<void> tun_client::read_loop()
                 {
                     co_return;
                 }
-                LOG_WARN("read tun packet failed {}", ec.message());
+                LOG_WARN("event {} device {} index {} read tun packet failed {}",
+                         log_event::kConnInit,
+                         device_.name(),
+                         device_.index(),
+                         ec.message());
                 break;
             }
             if (bytes_read <= 0)
@@ -292,7 +358,11 @@ boost::asio::awaitable<void> tun_client::read_loop()
             auto* packet = pbuf_alloc(PBUF_RAW, static_cast<u16_t>(bytes_read), PBUF_RAM);
             if (packet == nullptr)
             {
-                LOG_WARN("alloc lwip pbuf failed size {}", bytes_read);
+                LOG_WARN("event {} device {} index {} alloc lwip pbuf failed size {}",
+                         log_event::kMux,
+                         device_.name(),
+                         device_.index(),
+                         bytes_read);
                 continue;
             }
 
@@ -357,7 +427,11 @@ err_t tun_client::write_packet_to_tun(const pbuf* packet)
         {
             return ERR_WOULDBLOCK;
         }
-        LOG_WARN("write tun packet failed {}", ec.message());
+        LOG_WARN("event {} device {} index {} write tun packet failed {}",
+                 log_event::kMux,
+                 device_.name(),
+                 device_.index(),
+                 ec.message());
         return ERR_IF;
     }
     if (written != static_cast<std::ptrdiff_t>(payload.size()))

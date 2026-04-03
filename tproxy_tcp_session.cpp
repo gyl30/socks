@@ -67,12 +67,26 @@ void tproxy_tcp_session::stop()
     ec = socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
     if (ec && ec != boost::asio::error::not_connected)
     {
-        LOG_WARN("event {} conn_id {} shutdown client failed {}", log_event::kSocks, conn_id_, ec.message());
+        LOG_WARN("event {} conn_id {} client {}:{} target {}:{} shutdown client failed {}",
+                 log_event::kSocks,
+                 conn_id_,
+                 client_addr_.empty() ? "unknown" : client_addr_,
+                 client_port_,
+                 target_addr_.empty() ? "unknown" : target_addr_,
+                 target_port_,
+                 ec.message());
     }
     ec = socket_.close(ec);
     if (ec && ec != boost::asio::error::bad_descriptor)
     {
-        LOG_WARN("event {} conn_id {} close client failed {}", log_event::kSocks, conn_id_, ec.message());
+        LOG_WARN("event {} conn_id {} client {}:{} target {}:{} close client failed {}",
+                 log_event::kSocks,
+                 conn_id_,
+                 client_addr_.empty() ? "unknown" : client_addr_,
+                 client_port_,
+                 target_addr_.empty() ? "unknown" : target_addr_,
+                 target_port_,
+                 ec.message());
     }
 }
 
@@ -183,7 +197,14 @@ boost::asio::awaitable<void> tproxy_tcp_session::run()
     ec = socket_.close(ec);
     if (ec)
     {
-        LOG_WARN("event {} conn_id {} close client failed {}", log_event::kSocks, conn_id_, ec.message());
+        LOG_WARN("event {} conn_id {} client {}:{} target {}:{} close client failed {}",
+                 log_event::kSocks,
+                 conn_id_,
+                 client_addr_.empty() ? "unknown" : client_addr_,
+                 client_port_,
+                 target_addr_.empty() ? "unknown" : target_addr_,
+                 target_port_,
+                 ec.message());
     }
     const auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time_).count();
     LOG_INFO("event {} conn_id {} client {}:{} target {}:{} tx_bytes {} rx_bytes {} duration_ms {}",
@@ -202,14 +223,14 @@ boost::asio::awaitable<std::pair<route_type, std::shared_ptr<upstream>>> tproxy_
 {
     if (router_ == nullptr)
     {
-        LOG_WARN("event {} conn_id {} router unavailable", log_event::kRoute, conn_id_);
+        LOG_WARN("event {} conn_id {} target {}:{} router unavailable", log_event::kRoute, conn_id_, target_addr_, target_port_);
         co_return std::make_pair(route_type::kBlock, std::shared_ptr<upstream>(nullptr));
     }
 
     const auto route = co_await router_->decide_ip(addr);
     if (route == route_type::kBlock)
     {
-        LOG_WARN("event {} conn_id {} blocked target {}", log_event::kRoute, conn_id_, addr.to_string());
+        LOG_WARN("event {} conn_id {} target {}:{} blocked", log_event::kRoute, conn_id_, addr.to_string(), target_port_);
         co_return std::make_pair(route, std::shared_ptr<upstream>(nullptr));
     }
     if (route == route_type::kDirect)
@@ -221,7 +242,11 @@ boost::asio::awaitable<std::pair<route_type, std::shared_ptr<upstream>>> tproxy_
     {
         if (tunnel_pool_ == nullptr)
         {
-            LOG_WARN("event {} conn_id {} tunnel pool unavailable for proxy route", log_event::kRoute, conn_id_);
+            LOG_WARN("event {} conn_id {} target {}:{} tunnel pool unavailable for proxy route",
+                     log_event::kRoute,
+                     conn_id_,
+                     target_addr_,
+                     target_port_);
             co_return std::make_pair(route_type::kBlock, std::shared_ptr<upstream>(nullptr));
         }
         const std::shared_ptr<upstream> backend = make_proxy_upstream(tunnel_pool_, conn_id_, cfg_);
@@ -245,12 +270,26 @@ boost::asio::awaitable<void> tproxy_tcp_session::client_to_upstream(std::shared_
                 co_await backend->shutdown_send(shutdown_ec);
                 if (shutdown_ec)
                 {
-                    LOG_WARN("event {} conn_id {} shutdown backend send failed {}", log_event::kSocks, conn_id_, shutdown_ec.message());
+                    LOG_WARN("event {} conn_id {} client {}:{} target {}:{} stage client_to_upstream shutdown backend send failed {}",
+                             log_event::kSocks,
+                             conn_id_,
+                             client_addr_.empty() ? "unknown" : client_addr_,
+                             client_port_,
+                             target_addr_.empty() ? "unknown" : target_addr_,
+                             target_port_,
+                             shutdown_ec.message());
                 }
             }
             else
             {
-                LOG_INFO("event {} conn_id {} client read finished {}", log_event::kSocks, conn_id_, ec.message());
+                LOG_INFO("event {} conn_id {} client {}:{} target {}:{} stage client_to_upstream client read finished {}",
+                         log_event::kSocks,
+                         conn_id_,
+                         client_addr_.empty() ? "unknown" : client_addr_,
+                         client_port_,
+                         target_addr_.empty() ? "unknown" : target_addr_,
+                         target_port_,
+                         ec.message());
                 co_await backend->close();
             }
             break;
@@ -259,14 +298,28 @@ boost::asio::awaitable<void> tproxy_tcp_session::client_to_upstream(std::shared_
         co_await backend->write(data_buf, ec);
         if (ec)
         {
-            LOG_WARN("event {} conn_id {} failed to write to backend {}", log_event::kSocks, conn_id_, ec.message());
+            LOG_WARN("event {} conn_id {} client {}:{} target {}:{} stage client_to_upstream failed to write to backend {}",
+                     log_event::kSocks,
+                     conn_id_,
+                     client_addr_.empty() ? "unknown" : client_addr_,
+                     client_port_,
+                     target_addr_.empty() ? "unknown" : target_addr_,
+                     target_port_,
+                     ec.message());
             co_await backend->close();
             break;
         }
         tx_bytes_ += n;
         last_activity_time_ms_ = net::now_ms();
     }
-    LOG_INFO("event {} conn_id {} client_to_upstream finished", log_event::kSocks, conn_id_);
+    LOG_INFO("event {} conn_id {} client {}:{} target {}:{} stage client_to_upstream finished tx_bytes {}",
+             log_event::kSocks,
+             conn_id_,
+             client_addr_.empty() ? "unknown" : client_addr_,
+             client_port_,
+             target_addr_.empty() ? "unknown" : target_addr_,
+             target_port_,
+             tx_bytes_);
 }
 
 boost::asio::awaitable<void> tproxy_tcp_session::upstream_to_client(std::shared_ptr<upstream> backend)
@@ -284,23 +337,53 @@ boost::asio::awaitable<void> tproxy_tcp_session::upstream_to_client(std::shared_
                 shutdown_ec = socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_send, shutdown_ec);
                 if (shutdown_ec && shutdown_ec != boost::asio::error::not_connected)
                 {
-                    LOG_WARN("event {} conn_id {} shutdown client send failed {}", log_event::kSocks, conn_id_, shutdown_ec.message());
+                    LOG_WARN("event {} conn_id {} client {}:{} target {}:{} stage upstream_to_client shutdown client send failed {}",
+                             log_event::kSocks,
+                             conn_id_,
+                             client_addr_.empty() ? "unknown" : client_addr_,
+                             client_port_,
+                             target_addr_.empty() ? "unknown" : target_addr_,
+                             target_port_,
+                             shutdown_ec.message());
                 }
             }
             else
             {
                 if (is_expected_upstream_shutdown_error(ec))
                 {
-                    LOG_INFO("event {} conn_id {} backend read stopped {} code {}", log_event::kSocks, conn_id_, ec.message(), ec.value());
+                    LOG_INFO("event {} conn_id {} client {}:{} target {}:{} stage upstream_to_client backend read stopped {} code {}",
+                             log_event::kSocks,
+                             conn_id_,
+                             client_addr_.empty() ? "unknown" : client_addr_,
+                             client_port_,
+                             target_addr_.empty() ? "unknown" : target_addr_,
+                             target_port_,
+                             ec.message(),
+                             ec.value());
                 }
                 else
                 {
-                    LOG_WARN("event {} conn_id {} failed to read from backend {} code {}", log_event::kSocks, conn_id_, ec.message(), ec.value());
+                    LOG_WARN("event {} conn_id {} client {}:{} target {}:{} stage upstream_to_client failed to read from backend {} code {}",
+                             log_event::kSocks,
+                             conn_id_,
+                             client_addr_.empty() ? "unknown" : client_addr_,
+                             client_port_,
+                             target_addr_.empty() ? "unknown" : target_addr_,
+                             target_port_,
+                             ec.message(),
+                             ec.value());
                 }
                 ec = socket_.close(ec);
                 if (ec)
                 {
-                    LOG_WARN("event {} conn_id {} close client failed {}", log_event::kSocks, conn_id_, ec.message());
+                    LOG_WARN("event {} conn_id {} client {}:{} target {}:{} close client failed {}",
+                             log_event::kSocks,
+                             conn_id_,
+                             client_addr_.empty() ? "unknown" : client_addr_,
+                             client_port_,
+                             target_addr_.empty() ? "unknown" : target_addr_,
+                             target_port_,
+                             ec.message());
                 }
             }
             break;
@@ -309,9 +392,13 @@ boost::asio::awaitable<void> tproxy_tcp_session::upstream_to_client(std::shared_
         auto write_size = co_await net::wait_write_with_timeout(socket_, boost::asio::buffer(buf.data(), n), cfg_.timeout.write, write_ec);
         if (write_ec)
         {
-            LOG_WARN("event {} conn_id {} failed to write to client bytes {} code {} error {}",
+            LOG_WARN("event {} conn_id {} client {}:{} target {}:{} stage upstream_to_client failed to write to client bytes {} code {} error {}",
                      log_event::kSocks,
                      conn_id_,
+                     client_addr_.empty() ? "unknown" : client_addr_,
+                     client_port_,
+                     target_addr_.empty() ? "unknown" : target_addr_,
+                     target_port_,
                      n,
                      write_ec.value(),
                      write_ec.message());
@@ -321,7 +408,14 @@ boost::asio::awaitable<void> tproxy_tcp_session::upstream_to_client(std::shared_
         rx_bytes_ += write_size;
         last_activity_time_ms_ = net::now_ms();
     }
-    LOG_INFO("event {} conn_id {} upstream_to_client finished", log_event::kSocks, conn_id_);
+    LOG_INFO("event {} conn_id {} client {}:{} target {}:{} stage upstream_to_client finished rx_bytes {}",
+             log_event::kSocks,
+             conn_id_,
+             client_addr_.empty() ? "unknown" : client_addr_,
+             client_port_,
+             target_addr_.empty() ? "unknown" : target_addr_,
+             target_port_,
+             rx_bytes_);
 }
 
 boost::asio::awaitable<void> tproxy_tcp_session::idle_watchdog()
@@ -344,24 +438,29 @@ boost::asio::awaitable<void> tproxy_tcp_session::idle_watchdog()
         const auto elapsed_ms = net::now_ms() - last_activity_time_ms_;
         if (elapsed_ms > idle_timeout_ms)
         {
+            LOG_WARN("event {} conn_id {} client {}:{} target {}:{} idle_timeout_sec {} tcp session idle closing",
+                     log_event::kTimeout,
+                     conn_id_,
+                     client_addr_.empty() ? "unknown" : client_addr_,
+                     client_port_,
+                     target_addr_.empty() ? "unknown" : target_addr_,
+                     target_port_,
+                     cfg_.timeout.idle);
             break;
         }
     }
     boost::system::error_code ec;
     ec = socket_.close(ec);
-    if (ec)
+    if (ec && ec != boost::asio::error::bad_descriptor)
     {
-        LOG_WARN("event {} conn_id {} close client failed {}", log_event::kSocks, conn_id_, ec.message());
-    }
-    else
-    {
-        LOG_WARN("event {} conn_id {} tcp session idle closing client {}:{} target {}:{}",
+        LOG_WARN("event {} conn_id {} client {}:{} target {}:{} stage idle_watchdog close client failed {}",
                  log_event::kSocks,
                  conn_id_,
                  client_addr_.empty() ? "unknown" : client_addr_,
                  client_port_,
                  target_addr_.empty() ? "unknown" : target_addr_,
-                 target_port_);
+                 target_port_,
+                 ec.message());
     }
 }
 
