@@ -9,6 +9,10 @@ package "Client Process" {
     [TPROXY TCP Session] as TproxySession
     [TPROXY UDP Listener] as TproxyUdpListener
     [TPROXY UDP Session] as TproxyUdpSession
+    [TUN Device] as TunDevice
+    [tun_client] as TunClient
+    [tun_tcp_session] as TunTcpSession
+    [tun_udp_session] as TunUdpSession
 
     [Router] as Router
     [direct_upstream] as DirectUpstream
@@ -43,14 +47,22 @@ TproxyListener --> TproxySession : create
 App --> TproxyUdpListener : redirected UDP (Linux)
 TproxyUdpListener --> TproxyUdpSession : create
 
+App --> TunDevice : routed L3 packets
+TunDevice --> TunClient : read/write packets
+TunClient --> TunTcpSession : TCP accept via lwIP
+TunClient --> TunUdpSession : UDP recv via lwIP
+
 SocksSession --> Router : decide_ip / decide_domain
 TproxySession --> Router : decide_ip
 TproxyUdpSession --> Router : decide_ip
+TunTcpSession --> Router : decide_ip / decide_domain
+TunUdpSession --> Router : decide_ip
 
 Router --> DirectUpstream : route=direct
 Router --> ProxyUpstream : route=proxy
 
 DirectUpstream --> Target : direct TCP
+TunUdpSession --> Target : direct UDP
 
 ProxyUpstream --> TunnelPool : select_tunnel
 TunnelPool --> ClientMux : create/use tunnel
@@ -85,6 +97,11 @@ end note
 
 note bottom of TproxyListener
   TPROXY TCP/UDP 均已实现。
+end note
+
+note bottom of TunClient
+  TUN 入口依赖 tun_device + lwIP。
+  当前系统级自动化验证以 Linux 为主。
 end note
 
 @enduml
