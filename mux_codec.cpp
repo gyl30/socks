@@ -22,6 +22,7 @@ namespace
 {
 
 std::atomic<uint64_t> g_decode_warn_total{0};
+constexpr std::size_t kSynTraceIdSize = sizeof(uint64_t);
 
 [[nodiscard]] uint64_t next_decode_warn_total() { return g_decode_warn_total.fetch_add(1, std::memory_order_relaxed) + 1; }
 
@@ -71,6 +72,25 @@ bool encode_addr_payload(uint8_t first_byte, std::string_view addr, uint16_t por
     buf.push_back(static_cast<uint8_t>((port >> 8) & 0xFF));
     buf.push_back(static_cast<uint8_t>(port & 0xFF));
     return true;
+}
+
+void encode_u64_be(const uint64_t value, std::vector<uint8_t>& buf)
+{
+    buf.push_back(static_cast<uint8_t>((value >> 56) & 0xFF));
+    buf.push_back(static_cast<uint8_t>((value >> 48) & 0xFF));
+    buf.push_back(static_cast<uint8_t>((value >> 40) & 0xFF));
+    buf.push_back(static_cast<uint8_t>((value >> 32) & 0xFF));
+    buf.push_back(static_cast<uint8_t>((value >> 24) & 0xFF));
+    buf.push_back(static_cast<uint8_t>((value >> 16) & 0xFF));
+    buf.push_back(static_cast<uint8_t>((value >> 8) & 0xFF));
+    buf.push_back(static_cast<uint8_t>(value & 0xFF));
+}
+
+[[nodiscard]] uint64_t decode_u64_be(const uint8_t* data)
+{
+    return (static_cast<uint64_t>(data[0]) << 56) | (static_cast<uint64_t>(data[1]) << 48) | (static_cast<uint64_t>(data[2]) << 40) |
+           (static_cast<uint64_t>(data[3]) << 32) | (static_cast<uint64_t>(data[4]) << 24) | (static_cast<uint64_t>(data[5]) << 16) |
+           (static_cast<uint64_t>(data[6]) << 8) | static_cast<uint64_t>(data[7]);
 }
 
 }    // namespace
@@ -196,12 +216,33 @@ void mux_codec::decode_frames(std::vector<uint8_t>& pending,
 
 bool mux_codec::encode_syn(const syn_payload& p, std::vector<uint8_t>& buf)
 {
-    return encode_addr_payload(p.socks_cmd, p.addr, p.port, "syn", buf);
+    if (!is_printable_ascii_text(p.addr))
+    {
+        const auto warn_total = next_decode_warn_total();
+        if (should_log_decode_warn(warn_total))
+        {
+            LOG_WARN("event {} stage encode_addr_payload payload {} invalid_addr len {} warn_total {}",
+                     log_event::kMuxFrame,
+                     "syn",
+                     p.addr.size(),
+                     warn_total);
+        }
+        return false;
+    }
+
+    buf.push_back(p.socks_cmd);
+    encode_u64_be(p.trace_id, buf);
+    const auto addr_len = static_cast<uint8_t>(p.addr.size());
+    buf.push_back(addr_len);
+    buf.insert(buf.end(), p.addr.begin(), p.addr.begin() + addr_len);
+    buf.push_back(static_cast<uint8_t>((p.port >> 8) & 0xFF));
+    buf.push_back(static_cast<uint8_t>(p.port & 0xFF));
+    return true;
 }
 
 bool mux_codec::decode_syn(const uint8_t* data, std::size_t len, syn_payload& out)
 {
-    if (len < 4)
+    if (len < 1 + kSynTraceIdSize + 1 + 2)
     {
         const auto warn_total = next_decode_warn_total();
         if (should_log_decode_warn(warn_total))
@@ -214,8 +255,9 @@ bool mux_codec::decode_syn(const uint8_t* data, std::size_t len, syn_payload& ou
         return false;
     }
     out.socks_cmd = data[0];
-    const uint8_t addr_len = data[1];
-    if (len != 2 + static_cast<std::size_t>(addr_len) + 2)
+    out.trace_id = decode_u64_be(data + 1);
+    const uint8_t addr_len = data[1 + static_cast<std::ptrdiff_t>(kSynTraceIdSize)];
+    if (len != 1 + kSynTraceIdSize + 1 + static_cast<std::size_t>(addr_len) + 2)
     {
         const auto warn_total = next_decode_warn_total();
         if (should_log_decode_warn(warn_total))
@@ -228,7 +270,8 @@ bool mux_codec::decode_syn(const uint8_t* data, std::size_t len, syn_payload& ou
         }
         return false;
     }
-    out.addr = std::string(reinterpret_cast<const char*>(&data[2]), addr_len);
+    const auto addr_offset = 1 + static_cast<std::ptrdiff_t>(kSynTraceIdSize) + 1;
+    out.addr = std::string(reinterpret_cast<const char*>(data + addr_offset), addr_len);
     if (!is_printable_ascii_text(out.addr))
     {
         const auto warn_total = next_decode_warn_total();
@@ -238,7 +281,7 @@ bool mux_codec::decode_syn(const uint8_t* data, std::size_t len, syn_payload& ou
         }
         return false;
     }
-    const uint8_t* port_ptr = &data[2 + addr_len];
+    const uint8_t* port_ptr = data + addr_offset + static_cast<std::ptrdiff_t>(addr_len);
     out.port = static_cast<uint16_t>((static_cast<uint16_t>(port_ptr[0]) << 8) | static_cast<uint16_t>(port_ptr[1]));
     return true;
 }
