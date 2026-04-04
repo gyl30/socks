@@ -61,6 +61,28 @@ package "Client Inbound" {
         - idle_watchdog()
     }
 
+    class tun_client {
+        + start()
+        + stop()
+        - read_loop()
+        - timer_loop()
+        - init_stack()
+    }
+
+    class tun_device
+
+    class tun_tcp_session {
+        + start()
+        - run()
+        - idle_watchdog()
+    }
+
+    class tun_udp_session {
+        + start()
+        - run()
+        - idle_watchdog()
+    }
+
     class router {
         + load()
         + decide_ip()
@@ -167,6 +189,16 @@ tproxy_client ..> tproxy_udp_session : creates
 tproxy_tcp_session ..> router
 tproxy_tcp_session ..> upstream : select_backend
 
+tun_client o-- tun_device
+tun_client *-- router
+tun_client *-- client_tunnel_pool
+tun_client ..> tun_tcp_session : creates
+tun_client ..> tun_udp_session : creates
+
+tun_tcp_session ..> router
+tun_tcp_session ..> upstream : create_backend
+tun_udp_session ..> mux_connection
+
 client_tunnel_pool o-- io_context_pool
 client_tunnel_pool *-- mux_connection : pool items
 mux_connection *-- reality_engine
@@ -187,6 +219,11 @@ remote_udp_session ..> mux_connection
 note right of tproxy_client
   TPROXY TCP/UDP 均已实现。
   UDP 会话按 client/target endpoint 维护。
+end note
+
+note right of tun_client
+  TUN 入口通过 lwIP 将三层报文提升为
+  TCP/UDP 会话，再复用统一路由与隧道逻辑。
 end note
 
 @enduml

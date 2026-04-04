@@ -10,11 +10,13 @@ flowchart TD
   Inbound -->|SOCKS5 UDP| SocksUdpAssoc["socks_session -> udp_socks_session"]
   Inbound -->|TPROXY TCP| TproxyTcpListener["tproxy_client -> tproxy_tcp_session"]
   Inbound -->|TPROXY UDP| TproxyUdpListener["tproxy_client -> tproxy_udp_session"]
+  Inbound -->|TUN TCP/UDP| TunInbound["tun_client -> tun_tcp_session / tun_udp_session"]
 
   SocksListener --> Router[router]
   SocksUdpAssoc --> Router
   TproxyTcpListener --> Router
   TproxyUdpListener --> Router
+  TunInbound --> Router
 
   Router -->|direct| DirectUp[direct_upstream]
   Router -->|proxy| ProxyUp[proxy_upstream]
@@ -229,4 +231,35 @@ flowchart TD
 
   Proxy -->|packet 队列满| Drop8[丢弃并统计]
   Proxy -->|reply socket 超限| Drop9[回收最旧/拒绝新建]
+```
+
+## 6. TUN 正常流程（Linux 实测）
+
+```mermaid
+flowchart TD
+  App[客户端应用] --> Route[内核路由]
+  Route --> TunDev[TUN 设备]
+  TunDev --> TunClient["tun_client.read_loop"]
+  TunClient --> Lwip["tun_lwip / lwIP TCP/IP 栈"]
+
+  Lwip -->|TCP accept| TunTcp["tun_tcp_session"]
+  Lwip -->|UDP recv| TunUdp["tun_udp_session"]
+
+  TunTcp --> Router[router]
+  TunUdp --> Router
+
+  Router -->|direct| Direct[direct_upstream / 直连 UDP socket]
+  Router -->|proxy| Proxy["client_tunnel_pool -> mux_connection"]
+  Router -->|block| Block[丢弃 / RST / ICMP 不可达]
+
+  Direct --> Target[目标服务]
+  Proxy --> Target
+
+  Target --> Direct
+  Target --> Proxy
+  Direct --> Lwip
+  Proxy --> Lwip
+  Lwip --> TunClient
+  TunClient --> TunDev
+  TunDev --> App
 ```
