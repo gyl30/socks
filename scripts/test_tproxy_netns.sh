@@ -15,7 +15,12 @@ if [[ "${EUID}" -ne 0 ]]; then
     exit 1
 fi
 
-for cmd in awk ip iptables python3; do
+ip link set lo up
+mkdir -p /run/netns
+mount -t tmpfs tmpfs /run >/dev/null 2>&1 || true
+mkdir -p /run/netns
+
+for cmd in awk ip iptables python3 openssl; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
         echo "missing dependency: $cmd" >&2
         exit 1
@@ -27,31 +32,35 @@ keep_artifacts="${KEEP_TEST_ARTIFACTS:-1}"
 artifact_uid="${SUDO_UID:-$(stat -c '%u' "$repo_root")}"
 artifact_gid="${SUDO_GID:-$(stat -c '%g' "$repo_root")}"
 tag="$(printf '%04x' "$(( $$ % 65536 ))")"
-uplink_if="${TPROXY_UPLINK_IF:-$(ip route show default 0.0.0.0/0 | awk '/default/ {print $5; exit}')}"
-sni="${REALITY_SNI:-www.example.com}"
+sni="${REALITY_SNI:-localhost}"
+uplink_if=""
 
 source "$repo_root/scripts/runtime_env.sh"
 init_runtime_ld_library_path "$binary"
 
-if [[ -z "$uplink_if" ]]; then
-    echo "failed to detect host uplink interface; set TPROXY_UPLINK_IF explicitly" >&2
-    exit 1
-fi
+resolv_source=""
+if [[ "$sni" != "localhost" ]]; then
+    uplink_if="${TPROXY_UPLINK_IF:-$(ip route show default 0.0.0.0/0 | awk '/default/ {print $5; exit}')}"
+    if [[ -z "$uplink_if" ]]; then
+        echo "failed to detect host uplink interface; set TPROXY_UPLINK_IF explicitly" >&2
+        exit 1
+    fi
 
-if grep -Eq '^[[:space:]]*nameserver[[:space:]]+(127\.0\.0\.(1|53)|::1)[[:space:]]*$' /etc/resolv.conf; then
-    resolv_source="/run/systemd/resolve/resolv.conf"
-else
-    resolv_source="/etc/resolv.conf"
-fi
+    if grep -Eq '^[[:space:]]*nameserver[[:space:]]+(127\.0\.0\.(1|53)|::1)[[:space:]]*$' /etc/resolv.conf; then
+        resolv_source="/run/systemd/resolve/resolv.conf"
+    else
+        resolv_source="/etc/resolv.conf"
+    fi
 
-if [[ ! -f "$resolv_source" ]]; then
-    echo "dns resolver source not found: $resolv_source" >&2
-    exit 1
-fi
+    if [[ ! -f "$resolv_source" ]]; then
+        echo "dns resolver source not found: $resolv_source" >&2
+        exit 1
+    fi
 
-if ! grep -Eq '^[[:space:]]*nameserver[[:space:]]+([^[:space:]]+)' "$resolv_source"; then
-    echo "dns resolver source has no nameserver entries: $resolv_source" >&2
-    exit 1
+    if ! grep -Eq '^[[:space:]]*nameserver[[:space:]]+([^[:space:]]+)' "$resolv_source"; then
+        echo "dns resolver source has no nameserver entries: $resolv_source" >&2
+        exit 1
+    fi
 fi
 
 host_ip_forward_before="$(sysctl -n net.ipv4.ip_forward 2>/dev/null || echo 0)"
@@ -173,10 +182,12 @@ cleanup() {
         fi
     done
 
-    iptables -t nat -D POSTROUTING -s "$routed_subnet" -o "$uplink_if" -j MASQUERADE >/dev/null 2>&1 || true
-    iptables -D FORWARD -i "$host_if" -o "$uplink_if" -j ACCEPT >/dev/null 2>&1 || true
-    iptables -D FORWARD -i "$uplink_if" -o "$host_if" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT >/dev/null 2>&1 || true
-    ip route del "$routed_subnet" via "$mid_host_ip" dev "$host_if" >/dev/null 2>&1 || true
+    if [[ -n "$uplink_if" ]]; then
+        iptables -t nat -D POSTROUTING -s "$routed_subnet" -o "$uplink_if" -j MASQUERADE >/dev/null 2>&1 || true
+        iptables -D FORWARD -i "$host_if" -o "$uplink_if" -j ACCEPT >/dev/null 2>&1 || true
+        iptables -D FORWARD -i "$uplink_if" -o "$host_if" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT >/dev/null 2>&1 || true
+        ip route del "$routed_subnet" via "$mid_host_ip" dev "$host_if" >/dev/null 2>&1 || true
+    fi
     ip link delete "$host_if" >/dev/null 2>&1 || true
     sysctl -q -w net.ipv4.ip_forward="$host_ip_forward_before" >/dev/null 2>&1 || true
 
@@ -363,22 +374,26 @@ ip link set "$mid_wan_if" netns "$ns_mid"
 ip link set "$wan_if" netns "$ns_wan"
 ip link set "$mid_host_if" netns "$ns_mid"
 
-prepare_namespace_resolv_conf "$ns_wan"
+if [[ "$sni" != "localhost" ]]; then
+    prepare_namespace_resolv_conf "$ns_wan"
+fi
 
 ns_exec "$ns_app" ip link set lo up
 ns_exec "$ns_app" ip addr add "${app_ip}/24" dev "$app_if"
 ns_exec "$ns_app" ip link set "$app_if" up
 ns_exec "$ns_app" ip route add default via "$mid_app_ip"
 
-echo "[setup] attach host uplink $uplink_if to isolated topology"
 ip addr add "${host_ip}/24" dev "$host_if"
 ip link set "$host_if" up
 sysctl -q -w net.ipv4.ip_forward=1
 sysctl -q -w "net.ipv4.conf.${host_if}.rp_filter=0"
-ip route add "$routed_subnet" via "$mid_host_ip" dev "$host_if"
-iptables -A FORWARD -i "$host_if" -o "$uplink_if" -j ACCEPT
-iptables -A FORWARD -i "$uplink_if" -o "$host_if" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
-iptables -t nat -A POSTROUTING -s "$routed_subnet" -o "$uplink_if" -j MASQUERADE
+if [[ -n "$uplink_if" ]]; then
+    echo "[setup] attach host uplink $uplink_if to isolated topology"
+    ip route add "$routed_subnet" via "$mid_host_ip" dev "$host_if"
+    iptables -A FORWARD -i "$host_if" -o "$uplink_if" -j ACCEPT
+    iptables -A FORWARD -i "$uplink_if" -o "$host_if" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+    iptables -t nat -A POSTROUTING -s "$routed_subnet" -o "$uplink_if" -j MASQUERADE
+fi
 
 ns_exec "$ns_mid" ip link set lo up
 ns_exec "$ns_mid" ip addr add "${mid_app_ip}/24" dev "$mid_app_if"
@@ -394,7 +409,9 @@ ns_exec "$ns_mid" ip route add "${direct_udp_blackhole_ip}/32" via "$wan_ip"
 ns_exec "$ns_mid" ip route add "${proxy_tcp_ip}/32" via "$wan_ip"
 ns_exec "$ns_mid" ip route add "${proxy_tcp_drop_ip}/32" via "$wan_ip"
 ns_exec "$ns_mid" ip route add "${proxy_udp_blackhole_ip}/32" via "$wan_ip"
-ns_exec "$ns_mid" ip route add default via "$host_ip"
+if [[ -n "$uplink_if" ]]; then
+    ns_exec "$ns_mid" ip route add default via "$host_ip"
+fi
 ns_exec "$ns_mid" ip rule add pref 100 fwmark 0x11 iif "$mid_app_if" lookup 100
 ns_exec "$ns_mid" ip route add local 0.0.0.0/0 dev lo table 100
 
@@ -409,7 +426,29 @@ ns_exec "$ns_wan" ip addr add "${proxy_tcp_drop_ip}/32" dev lo
 ns_exec "$ns_wan" ip addr add "${proxy_udp_blackhole_ip}/32" dev lo
 ns_exec "$ns_wan" ip route add default via "$mid_wan_ip"
 
-echo "[setup] verify external dns/tcp reachability from $ns_wan to $sni:443"
+if [[ "$sni" == "localhost" ]]; then
+    cat >"$tmp_dir/origin-openssl.cnf" <<'EOF'
+[req]
+distinguished_name=req_dn
+x509_extensions=v3_req
+prompt=no
+
+[req_dn]
+CN=localhost
+
+[v3_req]
+subjectAltName=@alt_names
+
+[alt_names]
+DNS.1=localhost
+EOF
+
+    openssl req -x509 -newkey rsa:2048 -nodes -days 1 -keyout "$tmp_dir/origin.key" -out "$tmp_dir/origin.crt" -config "$tmp_dir/origin-openssl.cnf" -extensions v3_req >"$tmp_dir/openssl-req.log" 2>&1
+    start_in_ns "$ns_wan" "$tmp_dir/origin.stdout.log" openssl s_server -accept 127.0.0.1:443 -www -tls1_3 -cert "$tmp_dir/origin.crt" -key "$tmp_dir/origin.key"
+    wait_tcp_port "$ns_wan" 127.0.0.1 443 "origin_tls"
+fi
+
+echo "[setup] verify tls reachability from $ns_wan to $sni:443"
 verify_external_tls_reachability "$ns_wan" "$sni"
 
 echo "[setup] install TPROXY rules inside $ns_mid"
