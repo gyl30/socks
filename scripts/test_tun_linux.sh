@@ -17,7 +17,12 @@ if [[ "${EUID}" -ne 0 ]]; then
     exit 1
 fi
 
-for cmd in ip python3 curl awk; do
+ip link set lo up
+mkdir -p /run/netns
+mount -t tmpfs tmpfs /run >/dev/null 2>&1 || true
+mkdir -p /run/netns
+
+for cmd in ip python3 curl awk openssl; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
         echo "missing dependency: $cmd" >&2
         exit 1
@@ -56,7 +61,7 @@ cleanup_stale_tests() {
             fi
         done < <(ip netns pids "$ns_name" 2>/dev/null || true)
         ip netns delete "$ns_name" >/dev/null 2>&1 || true
-    done < <(ip netns list | awk '/^socks_tun_(app|target)_/ {print $1}')
+    done < <(ip netns list | awk '/^socks_tun_(app|client|target)_/ {print $1}')
 
     while read -r link_name; do
         if [[ -n "$link_name" ]]; then
@@ -84,17 +89,24 @@ artifact_gid="${SUDO_GID:-$(stat -c '%g' "$repo_root")}"
 tag="$(printf '%04x' "$(( $$ % 65536 ))")"
 net_id="$(( (16#$tag % 200) + 20 ))"
 ns_app="socks_tun_app_${tag}"
+ns_client="socks_tun_client_${tag}"
 ns_target="socks_tun_target_${tag}"
 host_if="th${tag}"
+client_host_if="tc${tag}"
+client_app_if="ca${tag}"
 app_if="ta${tag}"
 host_ip="10.213.${net_id}.1"
-app_ip="10.213.${net_id}.2"
+client_host_ip="10.213.${net_id}.2"
+client_app_ip="10.212.${net_id}.1"
+app_ip="10.212.${net_id}.2"
+app_cidr="${app_ip}/32"
 target_host_if="xh${tag}"
 target_if="xt${tag}"
 target_host_ip="10.214.${net_id}.1"
 target_ip="10.214.${net_id}.2"
 target_cidr="${target_ip}/32"
 tun_name="tun${tag}"
+host_ip_forward_before="$(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null || echo 0)"
 declare -a pids=()
 
 read -r server_port http_port udp_port < <(
@@ -144,7 +156,7 @@ cleanup() {
         fi
     done
 
-    for ns_name in "$ns_app" "$ns_target"; do
+    for ns_name in "$ns_app" "$ns_client" "$ns_target"; do
         if ip netns list | awk '{print $1}' | grep -Fxq "$ns_name"; then
             while read -r ns_pid; do
                 if [[ -n "$ns_pid" ]] && kill -0 "$ns_pid" >/dev/null 2>&1; then
@@ -158,6 +170,9 @@ cleanup() {
     ip link delete "$host_if" >/dev/null 2>&1 || true
     ip link delete "$target_host_if" >/dev/null 2>&1 || true
     ip addr del "$target_ip/32" dev lo >/dev/null 2>&1 || true
+    if [[ -w /proc/sys/net/ipv4/ip_forward ]]; then
+        printf '%s\n' "$host_ip_forward_before" >/proc/sys/net/ipv4/ip_forward 2>/dev/null || true
+    fi
 
     if [[ -d "$tmp_dir" ]]; then
         chown -R "$artifact_uid:$artifact_gid" "$tmp_dir" >/dev/null 2>&1 || true
@@ -294,7 +309,7 @@ key_output="$(env LD_LIBRARY_PATH="$runtime_ld_library_path" "$binary" x25519)"
 private_key="$(awk '/private key:/{print $3}' <<<"$key_output")"
 public_key="$(awk '/public key:/{print $3}' <<<"$key_output")"
 short_id="0102030405060708"
-sni="${REALITY_SNI:-www.example.com}"
+sni="${REALITY_SNI:-localhost}"
 
 cat >"$tmp_dir/server.json" <<EOF
 {
@@ -391,14 +406,28 @@ cat >"$tmp_dir/client.json" <<EOF
 EOF
 
 ip netns add "$ns_app"
-ip link add "$host_if" type veth peer name "$app_if"
-ip link set "$app_if" netns "$ns_app"
+ip netns add "$ns_client"
+ip link add "$host_if" type veth peer name "$client_host_if"
+ip link set "$client_host_if" netns "$ns_client"
 ip addr add "$host_ip/24" dev "$host_if"
 ip link set "$host_if" up
+ip netns exec "$ns_client" ip addr add "$client_host_ip/24" dev "$client_host_if"
+ip netns exec "$ns_client" ip link set lo up
+ip netns exec "$ns_client" ip link set "$client_host_if" up
+ip netns exec "$ns_client" ip route replace default via "$host_ip" dev "$client_host_if"
+
+ip link add "$client_app_if" type veth peer name "$app_if"
+ip link set "$client_app_if" netns "$ns_client"
+ip link set "$app_if" netns "$ns_app"
+ip netns exec "$ns_client" ip addr add "$client_app_ip/24" dev "$client_app_if"
+ip netns exec "$ns_client" ip link set "$client_app_if" up
 ip netns exec "$ns_app" ip addr add "$app_ip/24" dev "$app_if"
 ip netns exec "$ns_app" ip link set lo up
 ip netns exec "$ns_app" ip link set "$app_if" up
-ip netns exec "$ns_app" ip route replace default via "$host_ip" dev "$app_if"
+ip netns exec "$ns_app" ip route replace default via "$client_app_ip" dev "$app_if"
+
+printf '1\n' >/proc/sys/net/ipv4/ip_forward
+ip netns exec "$ns_client" sh -c 'printf "1\n" >/proc/sys/net/ipv4/ip_forward'
 
 if [[ "$target_mode" == "netns" ]]; then
     ip netns add "$ns_target"
@@ -428,6 +457,29 @@ else
 
     python3 "$repo_root/scripts/socks5_udp_echo_server.py" --host "$target_ip" --port "$udp_port" >"$tmp_dir/udp-echo.log" 2>&1 &
     pids+=("$!")
+fi
+
+if [[ "$sni" == "localhost" ]]; then
+    cat >"$tmp_dir/origin-openssl.cnf" <<'EOF'
+[req]
+distinguished_name=req_dn
+x509_extensions=v3_req
+prompt=no
+
+[req_dn]
+CN=localhost
+
+[v3_req]
+subjectAltName=@alt_names
+
+[alt_names]
+DNS.1=localhost
+EOF
+
+    openssl req -x509 -newkey rsa:2048 -nodes -days 1 -keyout "$tmp_dir/origin.key" -out "$tmp_dir/origin.crt" -config "$tmp_dir/origin-openssl.cnf" -extensions v3_req >"$tmp_dir/openssl-req.log" 2>&1
+    openssl s_server -accept 127.0.0.1:443 -www -tls1_3 -cert "$tmp_dir/origin.crt" -key "$tmp_dir/origin.key" >"$tmp_dir/origin.log" 2>&1 &
+    pids+=("$!")
+    wait_for_port 127.0.0.1 443 "origin_tls"
 fi
 
 assert_target_route "$target_mode"
@@ -460,7 +512,7 @@ else
 fi
 pids+=("$server_pid")
 
-ip netns exec "$ns_app" env LD_LIBRARY_PATH="$runtime_ld_library_path" SOCKS_CONFIG_DIR="$tmp_dir/rules" "$binary" -c "$tmp_dir/client.json" >"$tmp_dir/client.stdout.log" 2>&1 &
+ip netns exec "$ns_client" env LD_LIBRARY_PATH="$runtime_ld_library_path" SOCKS_CONFIG_DIR="$tmp_dir/rules" "$binary" -c "$tmp_dir/client.json" >"$tmp_dir/client.stdout.log" 2>&1 &
 client_pid=$!
 pids+=("$client_pid")
 
@@ -472,8 +524,10 @@ if [[ "$host_netns_id" != "$server_netns_id" ]]; then
     echo "server netns mismatch: host=$host_netns_id server=$server_netns_id" >&2
     exit 1
 fi
-ip netns exec "$ns_app" ip link show "$tun_name" >/dev/null
-/usr/bin/bash "$repo_root/scripts/tun_linux_route.sh" --netns "$ns_app" up "$tun_name" "$target_cidr" >/dev/null
+ip netns exec "$ns_client" ip link show "$tun_name" >/dev/null
+/usr/bin/bash "$repo_root/scripts/tun_linux_route.sh" --netns "$ns_client" --from "$app_cidr" --table 100 up "$tun_name" "$target_cidr" >/dev/null
+ip netns exec "$ns_client" ip rule show >"$tmp_dir/client-policy-rule.log" 2>&1 || true
+ip netns exec "$ns_client" ip route show table 100 >"$tmp_dir/client-policy-route.log" 2>&1 || true
 
 run_step "host tcp target ready after tunnel start" \
     python3 "$repo_root/scripts/tproxy_tcp_client.py" \
