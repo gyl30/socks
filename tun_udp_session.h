@@ -66,6 +66,7 @@ class tun_udp_session : public std::enable_shared_from_this<tun_udp_session>
     void notify_closed();
 
    private:
+    uint64_t trace_id_ = 0;
     uint32_t conn_id_ = 0;
     const config& cfg_;
     io_worker& worker_;

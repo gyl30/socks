@@ -103,6 +103,7 @@ class socks_session : public std::enable_shared_from_this<socks_session>
     friend struct run_loop_spawner;
 
     uint32_t sid_;
+    uint64_t trace_id_ = 0;
     uint32_t conn_id_ = 0;
     std::string local_host_ = "unknown";
     uint16_t local_port_ = 0;

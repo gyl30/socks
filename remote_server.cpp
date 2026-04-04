@@ -541,14 +541,15 @@ boost::asio::awaitable<void> remote_server::process_stream_request(io_worker& wo
 
     if (syn.socks_cmd == socks::kCmdConnect)
     {
-        LOG_INFO("event {} conn_id {} stream_id {} type tcp connect target {}:{} payload_size {}",
+        LOG_INFO("event {} trace_id {:016x} conn_id {} stream_id {} type tcp connect target {}:{} payload_size {}",
                  log_event::kMux,
+                 syn.trace_id,
                  reality_ctx.conn_id,
                  frame.h.stream_id,
                  syn.addr,
                  syn.port,
                  frame.payload.size());
-        const auto sess = std::make_shared<remote_tcp_session>(worker.io_context, connection, frame.h.stream_id, reality_ctx.conn_id, cfg_);
+        const auto sess = std::make_shared<remote_tcp_session>(worker.io_context, connection, frame.h.stream_id, reality_ctx.conn_id, syn.trace_id, cfg_);
         if (!sess->has_stream())
         {
             LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} sni {} stream_id {} target {}:{} create incoming tcp stream failed",
@@ -570,8 +571,9 @@ boost::asio::awaitable<void> remote_server::process_stream_request(io_worker& wo
     }
     if (syn.socks_cmd == socks::kCmdUdpAssociate)
     {
-        LOG_INFO("event {} conn_id {} local {}:{} remote {}:{} sni {} stream_id {} type udp associate payload_size {}",
+        LOG_INFO("event {} trace_id {:016x} conn_id {} local {}:{} remote {}:{} sni {} stream_id {} type udp associate payload_size {}",
                  log_event::kMux,
+                 syn.trace_id,
                  reality_ctx.conn_id,
                  reality_ctx.local_addr,
                  reality_ctx.local_port,
@@ -580,7 +582,8 @@ boost::asio::awaitable<void> remote_server::process_stream_request(io_worker& wo
                  reality_ctx.sni.empty() ? "unknown" : reality_ctx.sni,
                  frame.h.stream_id,
                  frame.payload.size());
-        const auto sess = std::make_shared<remote_udp_session>(worker.io_context, connection, frame.h.stream_id, reality_ctx.conn_id, cfg_);
+        const auto sess =
+            std::make_shared<remote_udp_session>(worker.io_context, connection, frame.h.stream_id, reality_ctx.conn_id, syn.trace_id, cfg_);
         if (!sess->has_stream())
         {
             LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} sni {} stream_id {} create incoming udp stream failed",

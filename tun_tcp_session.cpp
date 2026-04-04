@@ -18,6 +18,7 @@
 #include "tun_tcp_session.h"
 #include "client_tunnel_pool.h"
 #include "connection_tracker.h"
+#include "trace_id.h"
 namespace mux
 {
 
@@ -43,7 +44,8 @@ tun_tcp_session::tun_tcp_session(const boost::asio::any_io_executor& executor,
                                  const uint32_t sid,
                                  const config& cfg,
                                  std::function<void()> on_close)
-    : conn_id_(sid),
+    : trace_id_(generate_trace_id()),
+      conn_id_(sid),
       cfg_(cfg),
       tunnel_pool_(std::move(tunnel_pool)),
       router_(std::move(router)),
@@ -87,8 +89,9 @@ void tun_tcp_session::stop()
 
 boost::asio::awaitable<void> tun_tcp_session::run()
 {
-    LOG_INFO("event {} conn_id {} client {}:{} target {}:{} tun tcp accepted",
+    LOG_INFO("event {} trace_id {:016x} conn_id {} client {}:{} target {}:{} tun tcp accepted",
              log_event::kConnInit,
+             trace_id_,
              conn_id_,
              client_addr_,
              client_port_,
@@ -101,8 +104,9 @@ boost::asio::awaitable<void> tun_tcp_session::run()
         co_return;
     }
 
-    LOG_INFO("event {} conn_id {} client {}:{} target {}:{} route {}",
+    LOG_INFO("event {} trace_id {:016x} conn_id {} client {}:{} target {}:{} route {}",
              log_event::kRoute,
+             trace_id_,
              conn_id_,
              client_addr_,
              client_port_,
@@ -113,8 +117,9 @@ boost::asio::awaitable<void> tun_tcp_session::run()
     const auto connect_result = co_await backend->connect(target_addr_, target_port_);
     if (connect_result.ec)
     {
-        LOG_WARN("event {} conn_id {} client {}:{} target {}:{} route {} connect failed {}",
+        LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} target {}:{} route {} connect failed {}",
                  log_event::kConnInit,
+                 trace_id_,
                  conn_id_,
                  client_addr_,
                  client_port_,
@@ -127,8 +132,9 @@ boost::asio::awaitable<void> tun_tcp_session::run()
         co_return;
     }
 
-    LOG_INFO("event {} conn_id {} client {}:{} target {}:{} route {} connected",
+    LOG_INFO("event {} trace_id {:016x} conn_id {} client {}:{} target {}:{} route {} connected",
              log_event::kConnEstablished,
+             trace_id_,
              conn_id_,
              client_addr_,
              client_port_,
@@ -151,8 +157,9 @@ boost::asio::awaitable<void> tun_tcp_session::run()
     close_client_connection(false);
 
     const auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time_).count();
-    LOG_INFO("event {} conn_id {} client {}:{} target {}:{} tx_bytes {} rx_bytes {} duration_ms {}",
+    LOG_INFO("event {} trace_id {:016x} conn_id {} client {}:{} target {}:{} tx_bytes {} rx_bytes {} duration_ms {}",
              log_event::kConnClose,
+             trace_id_,
              conn_id_,
              client_addr_,
              client_port_,
@@ -169,8 +176,9 @@ boost::asio::awaitable<std::pair<route_type, std::shared_ptr<upstream>>> tun_tcp
     const auto route = co_await router_->decide_ip(target_ip);
     if (route == route_type::kBlock)
     {
-        LOG_WARN("event {} conn_id {} client {}:{} target {}:{} blocked",
+        LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} target {}:{} blocked",
                  log_event::kRoute,
+                 trace_id_,
                  conn_id_,
                  client_addr_,
                  client_port_,
@@ -180,16 +188,17 @@ boost::asio::awaitable<std::pair<route_type, std::shared_ptr<upstream>>> tun_tcp
     }
     if (route == route_type::kDirect)
     {
-        co_return std::make_pair(route, make_direct_upstream(idle_timer_.get_executor(), conn_id_, cfg_));
+        co_return std::make_pair(route, make_direct_upstream(idle_timer_.get_executor(), conn_id_, trace_id_, cfg_));
     }
     if (route == route_type::kProxy && tunnel_pool_ != nullptr)
     {
-        co_return std::make_pair(route, make_proxy_upstream(tunnel_pool_, conn_id_, cfg_));
+        co_return std::make_pair(route, make_proxy_upstream(tunnel_pool_, conn_id_, trace_id_, cfg_));
     }
     if (route == route_type::kProxy)
     {
-        LOG_WARN("event {} conn_id {} client {}:{} target {}:{} route proxy tunnel pool unavailable",
+        LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} target {}:{} route proxy tunnel pool unavailable",
                  log_event::kRoute,
+                 trace_id_,
                  conn_id_,
                  client_addr_,
                  client_port_,
@@ -221,8 +230,9 @@ boost::asio::awaitable<void> tun_tcp_session::client_to_upstream(const std::shar
                 co_await backend->write(payload, ec);
                 if (ec)
                 {
-                    LOG_WARN("event {} conn_id {} client {}:{} target {}:{} stage client_to_upstream write backend failed {}",
+                    LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} target {}:{} stage client_to_upstream write backend failed {}",
                              log_event::kDataSend,
+                             trace_id_,
                              conn_id_,
                              client_addr_,
                              client_port_,
@@ -269,8 +279,9 @@ boost::asio::awaitable<void> tun_tcp_session::upstream_to_client(const std::shar
             }
             else
             {
-                LOG_WARN("event {} conn_id {} client {}:{} target {}:{} stage upstream_to_client read backend failed {}",
+                LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} target {}:{} stage upstream_to_client read backend failed {}",
                          log_event::kDataRecv,
+                         trace_id_,
                          conn_id_,
                          client_addr_,
                          client_port_,
@@ -307,8 +318,9 @@ boost::asio::awaitable<void> tun_tcp_session::upstream_to_client(const std::shar
             }
             if (write_err != ERR_OK)
             {
-                LOG_WARN("event {} conn_id {} client {}:{} target {}:{} stage upstream_to_client tcp_write failed {}",
+                LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} target {}:{} stage upstream_to_client tcp_write failed {}",
                          log_event::kDataRecv,
+                         trace_id_,
                          conn_id_,
                          client_addr_,
                          client_port_,
@@ -322,8 +334,9 @@ boost::asio::awaitable<void> tun_tcp_session::upstream_to_client(const std::shar
             const auto output_err = tcp_output(pcb_);
             if (output_err != ERR_OK && output_err != ERR_MEM)
             {
-                LOG_WARN("event {} conn_id {} client {}:{} target {}:{} stage upstream_to_client tcp_output failed {}",
+                LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} target {}:{} stage upstream_to_client tcp_output failed {}",
                          log_event::kDataRecv,
+                         trace_id_,
                          conn_id_,
                          client_addr_,
                          client_port_,
@@ -355,8 +368,9 @@ boost::asio::awaitable<void> tun_tcp_session::idle_watchdog()
 
         if (net::now_ms() - last_activity_time_ms_ > idle_timeout_ms)
         {
-            LOG_INFO("event {} conn_id {} tun tcp idle timeout client {}:{} target {}:{}",
+            LOG_INFO("event {} trace_id {:016x} conn_id {} tun tcp idle timeout client {}:{} target {}:{}",
                      log_event::kTimeout,
+                     trace_id_,
                      conn_id_,
                      client_addr_,
                      client_port_,
@@ -446,8 +460,9 @@ void tun_tcp_session::graceful_shutdown_to_client()
     const auto shutdown_err = tcp_shutdown(pcb_, 0, 1);
     if (shutdown_err != ERR_OK && shutdown_err != ERR_CLSD)
     {
-        LOG_WARN("event {} conn_id {} client {}:{} target {}:{} tcp shutdown failed {}",
+        LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} target {}:{} tcp shutdown failed {}",
                  log_event::kConnClose,
+                 trace_id_,
                  conn_id_,
                  client_addr_,
                  client_port_,
@@ -539,8 +554,9 @@ void tun_tcp_session::on_err(void* arg, const err_t err)
     self->peer_eof_ = true;
     self->stopped_ = true;
     self->signal_all_events();
-    LOG_INFO("event {} conn_id {} client {}:{} target {}:{} lwip tcp error {}",
+    LOG_INFO("event {} trace_id {:016x} conn_id {} client {}:{} target {}:{} lwip tcp error {}",
              log_event::kConnClose,
+             self->trace_id_,
              self->conn_id_,
              self->client_addr_,
              self->client_port_,
