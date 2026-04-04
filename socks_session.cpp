@@ -26,6 +26,7 @@
 #include "tcp_socks_session.h"
 #include "udp_socks_session.h"
 #include "connection_tracker.h"
+#include "trace_id.h"
 namespace mux
 {
 
@@ -80,6 +81,7 @@ socks_session::socks_session(boost::asio::ip::tcp::socket socket,
                              const config& cfg,
                              std::shared_ptr<void> active_connection_guard)
     : sid_(sid),
+      trace_id_(generate_trace_id()),
       conn_id_(sid),
       username_(cfg.socks.username),
       password_(cfg.socks.password),
@@ -136,6 +138,14 @@ void socks_session::stop()
 
 boost::asio::awaitable<void> socks_session::run_loop()
 {
+    LOG_INFO("event {} trace_id {:016x} conn_id {} local {}:{} remote {}:{} socks session started",
+             log_event::kConnInit,
+             trace_id_,
+             conn_id_,
+             local_host_,
+             local_port_,
+             client_host_,
+             client_port_);
     if (!co_await handshake())
     {
         if (!peer_closed_before_greeting_)
@@ -168,13 +178,14 @@ boost::asio::awaitable<void> socks_session::run_loop()
 
     if (cmd == socks::kCmdConnect)
     {
-        const auto tcp_sess = std::make_shared<tcp_socks_session>(std::move(socket_), tunnel_pool_, router_, sid_, cfg_, std::move(active_guard_));
+        const auto tcp_sess =
+            std::make_shared<tcp_socks_session>(std::move(socket_), tunnel_pool_, router_, sid_, trace_id_, cfg_, std::move(active_guard_));
         worker_.group.spawn([tcp_sess, host, port]() -> boost::asio::awaitable<void> { co_await tcp_sess->start(host, port); });
     }
     else if (cmd == socks::kCmdUdpAssociate)
     {
-        const auto udp_sess =
-            std::make_shared<udp_socks_session>(std::move(socket_), worker_, tunnel_pool_, router_, sid_, cfg_, std::move(active_guard_));
+        const auto udp_sess = std::make_shared<udp_socks_session>(
+            std::move(socket_), worker_, tunnel_pool_, router_, sid_, trace_id_, cfg_, std::move(active_guard_));
         udp_sess->start(host, port);
     }
     else
@@ -789,8 +800,9 @@ boost::asio::awaitable<socks_session::request_info> socks_session::read_request_
         co_return co_await reject_request(cmd, socks::kRepGenFail);
     }
 
-    LOG_INFO("event {} conn_id {} local {}:{} remote {}:{} cmd {} request {} {}",
+    LOG_INFO("event {} trace_id {:016x} conn_id {} local {}:{} remote {}:{} cmd {} request {} {}",
              log_event::kSocks,
+             trace_id_,
              conn_id_,
              local_host_,
              local_port_,

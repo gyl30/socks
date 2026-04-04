@@ -30,6 +30,7 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
                       std::shared_ptr<client_tunnel_pool> tunnel_pool,
                       std::shared_ptr<router> router,
                       uint32_t sid,
+                      uint64_t trace_id,
                       const config& cfg,
                       std::shared_ptr<void> active_connection_guard = nullptr);
 
@@ -86,6 +87,7 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
 
     using proxy_stream_channel_type = boost::asio::experimental::concurrent_channel<void(boost::system::error_code, std::shared_ptr<mux_stream>)>;
 
+    uint64_t trace_id_ = 0;
     uint32_t conn_id_ = 0;
     uint64_t tx_bytes_ = 0;
     uint64_t rx_bytes_ = 0;

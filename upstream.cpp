@@ -52,8 +52,8 @@ namespace
 class direct_upstream final : public upstream
 {
    public:
-    explicit direct_upstream(const boost::asio::any_io_executor& executor, uint32_t conn_id, const config& cfg)
-        : cfg_(cfg), conn_id_(conn_id), socket_(executor), resolver_(executor)
+    explicit direct_upstream(const boost::asio::any_io_executor& executor, uint32_t conn_id, uint64_t trace_id, const config& cfg)
+        : cfg_(cfg), conn_id_(conn_id), trace_id_(trace_id), socket_(executor), resolver_(executor)
     {
     }
 
@@ -66,6 +66,7 @@ class direct_upstream final : public upstream
    private:
     const config& cfg_;
     uint32_t conn_id_ = 0;
+    uint64_t trace_id_ = 0;
     std::string target_host_ = "unknown";
     uint16_t target_port_ = 0;
     std::string bind_host_ = "unknown";
@@ -77,8 +78,8 @@ class direct_upstream final : public upstream
 class proxy_upstream final : public upstream
 {
    public:
-    explicit proxy_upstream(std::shared_ptr<mux_connection> tunnel, uint32_t conn_id, const config& cfg);
-    explicit proxy_upstream(std::shared_ptr<client_tunnel_pool> tunnel_pool, uint32_t conn_id, const config& cfg);
+    explicit proxy_upstream(std::shared_ptr<mux_connection> tunnel, uint32_t conn_id, uint64_t trace_id, const config& cfg);
+    explicit proxy_upstream(std::shared_ptr<client_tunnel_pool> tunnel_pool, uint32_t conn_id, uint64_t trace_id, const config& cfg);
 
     boost::asio::awaitable<void> close() override;
     boost::asio::awaitable<void> shutdown_send(boost::system::error_code& ec) override;
@@ -100,6 +101,7 @@ class proxy_upstream final : public upstream
    private:
     const config& cfg_;
     uint32_t conn_id_ = 0;
+    uint64_t trace_id_ = 0;
     std::string target_host_ = "unknown";
     uint16_t target_port_ = 0;
     std::string bind_host_ = "unknown";
@@ -149,7 +151,13 @@ boost::asio::awaitable<upstream_connect_result> direct_upstream::connect(const s
     auto endpoints = co_await net::wait_resolve_with_timeout(resolver_, host, std::to_string(port), cfg_.timeout.connect, ec);
     if (ec)
     {
-        LOG_WARN("event {} conn_id {} stage resolve target {}:{} error {}", log_event::kRoute, conn_id_, host, port, ec.message());
+        LOG_WARN("event {} trace_id {:016x} conn_id {} stage resolve target {}:{} error {}",
+                 log_event::kRoute,
+                 trace_id_,
+                 conn_id_,
+                 host,
+                 port,
+                 ec.message());
         result.ec = ec;
         result.socks_rep = socks::map_connect_error_to_socks_rep(ec);
         co_return result;
@@ -190,8 +198,9 @@ boost::asio::awaitable<upstream_connect_result> direct_upstream::connect(const s
         op_ec = socket_.set_option(boost::asio::ip::tcp::no_delay(true), op_ec);
         if (op_ec)
         {
-            LOG_WARN("event {} conn_id {} stage set_no_delay target {}:{} error {}",
+            LOG_WARN("event {} trace_id {:016x} conn_id {} stage set_no_delay target {}:{} error {}",
                      log_event::kRoute,
+                     trace_id_,
                      conn_id_,
                      host,
                      port,
@@ -200,8 +209,9 @@ boost::asio::awaitable<upstream_connect_result> direct_upstream::connect(const s
         const auto local_ep = socket_.local_endpoint(op_ec);
         if (op_ec)
         {
-            LOG_WARN("event {} conn_id {} stage query_bind_endpoint target {}:{} error {}",
+            LOG_WARN("event {} trace_id {:016x} conn_id {} stage query_bind_endpoint target {}:{} error {}",
                      log_event::kRoute,
+                     trace_id_,
                      conn_id_,
                      host,
                      port,
@@ -215,6 +225,14 @@ boost::asio::awaitable<upstream_connect_result> direct_upstream::connect(const s
             bind_host_ = result.bind_addr.to_string();
             bind_port_ = result.bind_port;
         }
+        LOG_INFO("event {} trace_id {:016x} conn_id {} route direct connected target {}:{} bind {}:{}",
+                 log_event::kRoute,
+                 trace_id_,
+                 conn_id_,
+                 host,
+                 port,
+                 bind_host_,
+                 bind_port_);
         co_return result;
     }
     result.ec = last_ec;
@@ -239,8 +257,9 @@ boost::asio::awaitable<void> direct_upstream::close()
     ec = socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
     if (ec && !is_expected_direct_close_error(ec))
     {
-        LOG_WARN("event {} conn_id {} stage close target {}:{} bind {}:{} shutdown failed {}",
+        LOG_WARN("event {} trace_id {:016x} conn_id {} stage close target {}:{} bind {}:{} shutdown failed {}",
                  log_event::kRoute,
+                 trace_id_,
                  conn_id_,
                  target_host_,
                  target_port_,
@@ -251,8 +270,9 @@ boost::asio::awaitable<void> direct_upstream::close()
     ec = socket_.close(ec);
     if (ec && !is_expected_direct_close_error(ec))
     {
-        LOG_WARN("event {} conn_id {} stage close target {}:{} bind {}:{} socket failed {}",
+        LOG_WARN("event {} trace_id {:016x} conn_id {} stage close target {}:{} bind {}:{} socket failed {}",
                  log_event::kRoute,
+                 trace_id_,
                  conn_id_,
                  target_host_,
                  target_port_,
@@ -274,29 +294,35 @@ boost::asio::awaitable<void> direct_upstream::shutdown_send(boost::system::error
     co_return;
 }
 
-std::shared_ptr<upstream> make_direct_upstream(const boost::asio::any_io_executor& executor, uint32_t conn_id, const config& cfg)
+std::shared_ptr<upstream> make_direct_upstream(const boost::asio::any_io_executor& executor,
+                                               uint32_t conn_id,
+                                               uint64_t trace_id,
+                                               const config& cfg)
 {
-    return std::make_shared<direct_upstream>(executor, conn_id, cfg);
+    return std::make_shared<direct_upstream>(executor, conn_id, trace_id, cfg);
 }
 
-proxy_upstream::proxy_upstream(std::shared_ptr<mux_connection> tunnel, uint32_t conn_id, const config& cfg)
-    : cfg_(cfg), conn_id_(conn_id), tunnel_(std::move(tunnel))
+proxy_upstream::proxy_upstream(std::shared_ptr<mux_connection> tunnel, uint32_t conn_id, uint64_t trace_id, const config& cfg)
+    : cfg_(cfg), conn_id_(conn_id), trace_id_(trace_id), tunnel_(std::move(tunnel))
 {
 }
 
-proxy_upstream::proxy_upstream(std::shared_ptr<client_tunnel_pool> tunnel_pool, uint32_t conn_id, const config& cfg)
-    : cfg_(cfg), conn_id_(conn_id), tunnel_pool_(std::move(tunnel_pool))
+proxy_upstream::proxy_upstream(std::shared_ptr<client_tunnel_pool> tunnel_pool, uint32_t conn_id, uint64_t trace_id, const config& cfg)
+    : cfg_(cfg), conn_id_(conn_id), trace_id_(trace_id), tunnel_pool_(std::move(tunnel_pool))
 {
 }
 
-std::shared_ptr<upstream> make_proxy_upstream(std::shared_ptr<mux_connection> tunnel, uint32_t conn_id, const config& cfg)
+std::shared_ptr<upstream> make_proxy_upstream(std::shared_ptr<mux_connection> tunnel, uint32_t conn_id, uint64_t trace_id, const config& cfg)
 {
-    return std::make_shared<proxy_upstream>(std::move(tunnel), conn_id, cfg);
+    return std::make_shared<proxy_upstream>(std::move(tunnel), conn_id, trace_id, cfg);
 }
 
-std::shared_ptr<upstream> make_proxy_upstream(std::shared_ptr<client_tunnel_pool> tunnel_pool, uint32_t conn_id, const config& cfg)
+std::shared_ptr<upstream> make_proxy_upstream(std::shared_ptr<client_tunnel_pool> tunnel_pool,
+                                              uint32_t conn_id,
+                                              uint64_t trace_id,
+                                              const config& cfg)
 {
-    return std::make_shared<proxy_upstream>(std::move(tunnel_pool), conn_id, cfg);
+    return std::make_shared<proxy_upstream>(std::move(tunnel_pool), conn_id, trace_id, cfg);
 }
 
 uint32_t proxy_upstream::connect_ack_timeout() const
@@ -314,13 +340,14 @@ boost::asio::awaitable<void> proxy_upstream::send_syn_request(const std::shared_
                                                               uint16_t port,
                                                               boost::system::error_code& ec) const
 {
-    const syn_payload syn{.socks_cmd = socks::kCmdConnect, .addr = host, .port = port};
+    const syn_payload syn{.socks_cmd = socks::kCmdConnect, .addr = host, .port = port, .trace_id = trace_id_};
     std::vector<uint8_t> syn_data;
     if (!mux_codec::encode_syn(syn, syn_data))
     {
         ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
-        LOG_ERROR("event {} conn_id {} stream_id {} stage send_syn target {}:{} encode failed",
+        LOG_ERROR("event {} trace_id {:016x} conn_id {} stream_id {} stage send_syn target {}:{} encode failed",
                   log_event::kRoute,
+                  trace_id_,
                   conn_id_,
                   stream->id(),
                   host,
@@ -331,18 +358,20 @@ boost::asio::awaitable<void> proxy_upstream::send_syn_request(const std::shared_
     syn_frame.h.stream_id = stream->id();
     syn_frame.h.command = kCmdSyn;
     syn_frame.payload = std::move(syn_data);
-    LOG_DEBUG("event {} conn_id {} stream_id {} stage send_syn target {}:{} payload_size {}",
-              log_event::kRoute,
-              conn_id_,
-              stream->id(),
-              host,
-              port,
-              syn_frame.payload.size());
+    LOG_INFO("event {} trace_id {:016x} conn_id {} stream_id {} stage send_syn target {}:{} payload_size {}",
+             log_event::kRoute,
+             trace_id_,
+             conn_id_,
+             stream->id(),
+             host,
+             port,
+             syn_frame.payload.size());
     co_await stream->async_write(syn_frame, ec);
     if (ec)
     {
-        LOG_ERROR("event {} conn_id {} stream_id {} stage send_syn target {}:{} error {}",
+        LOG_ERROR("event {} trace_id {:016x} conn_id {} stream_id {} stage send_syn target {}:{} error {}",
                   log_event::kRoute,
+                  trace_id_,
                   conn_id_,
                   stream->id(),
                   host,
@@ -361,8 +390,9 @@ boost::asio::awaitable<void> proxy_upstream::wait_connect_ack(const std::shared_
     auto ack_frame = co_await stream->async_read(connect_ack_timeout(), ack_ec);
     if (ack_ec)
     {
-        LOG_ERROR("event {} conn_id {} stream_id {} stage wait_ack target {}:{} error {}",
+        LOG_ERROR("event {} trace_id {:016x} conn_id {} stream_id {} stage wait_ack target {}:{} error {}",
                   log_event::kRoute,
+                  trace_id_,
                   conn_id_,
                   stream->id(),
                   host,
@@ -375,8 +405,9 @@ boost::asio::awaitable<void> proxy_upstream::wait_connect_ack(const std::shared_
     }
     if (ack_frame.h.command != kCmdAck)
     {
-        LOG_WARN("event {} conn_id {} stream_id {} stage wait_ack target {}:{} unexpected_cmd {}({}) payload_size {}",
+        LOG_WARN("event {} trace_id {:016x} conn_id {} stream_id {} stage wait_ack target {}:{} unexpected_cmd {} cmd_name {} payload_size {}",
                  log_event::kRoute,
+                 trace_id_,
                  conn_id_,
                  stream->id(),
                  host,
@@ -393,8 +424,9 @@ boost::asio::awaitable<void> proxy_upstream::wait_connect_ack(const std::shared_
     ack_payload ack{};
     if (!mux_codec::decode_ack(ack_frame.payload.data(), ack_frame.payload.size(), ack))
     {
-        LOG_WARN("event {} conn_id {} stream_id {} stage decode_ack target {}:{} error invalid_ack_payload",
+        LOG_WARN("event {} trace_id {:016x} conn_id {} stream_id {} stage decode_ack target {}:{} error invalid_ack_payload",
                  log_event::kRoute,
+                 trace_id_,
                  conn_id_,
                  stream->id(),
                  host,
@@ -407,8 +439,9 @@ boost::asio::awaitable<void> proxy_upstream::wait_connect_ack(const std::shared_
     result.socks_rep = ack.socks_rep;
     if (ack.socks_rep != socks::kRepSuccess)
     {
-        LOG_WARN("event {} conn_id {} stream_id {} stage wait_ack target {}:{} remote_rep {}",
+        LOG_WARN("event {} trace_id {:016x} conn_id {} stream_id {} stage wait_ack target {}:{} remote_rep {}",
                  log_event::kRoute,
+                 trace_id_,
                  conn_id_,
                  stream->id(),
                  host,
@@ -422,8 +455,9 @@ boost::asio::awaitable<void> proxy_upstream::wait_connect_ack(const std::shared_
     const auto bind_addr = boost::asio::ip::make_address(ack.bnd_addr, bind_ec);
     if (bind_ec)
     {
-        LOG_WARN("event {} conn_id {} stream_id {} stage wait_ack target {}:{} invalid_bind_addr {}",
+        LOG_WARN("event {} trace_id {:016x} conn_id {} stream_id {} stage wait_ack target {}:{} invalid_bind_addr {}",
                  log_event::kRoute,
+                 trace_id_,
                  conn_id_,
                  stream->id(),
                  host,
@@ -437,8 +471,9 @@ boost::asio::awaitable<void> proxy_upstream::wait_connect_ack(const std::shared_
         result.has_bind_endpoint = true;
     }
 
-    LOG_INFO("event {} conn_id {} stream_id {} stage wait_ack target {}:{} bind {}:{}",
+    LOG_INFO("event {} trace_id {:016x} conn_id {} stream_id {} stage wait_ack target {}:{} bind {}:{}",
              log_event::kRoute,
+             trace_id_,
              conn_id_,
              stream->id(),
              host,
@@ -466,8 +501,9 @@ boost::asio::awaitable<upstream_connect_result> proxy_upstream::connect(const st
         if (tunnel_ == nullptr)
         {
             ec = boost::asio::error::not_connected;
-            LOG_ERROR("event {} conn_id {} target {}:{} route proxy wait tunnel failed active_tunnels {} total_slots {}",
+            LOG_ERROR("event {} trace_id {:016x} conn_id {} target {}:{} route proxy wait tunnel failed active_tunnels {} total_slots {}",
                       log_event::kRoute,
+                      trace_id_,
                       conn_id_,
                       host,
                       port,
@@ -477,20 +513,23 @@ boost::asio::awaitable<upstream_connect_result> proxy_upstream::connect(const st
             result.socks_rep = socks::map_connect_error_to_socks_rep(ec);
             co_return result;
         }
-        LOG_DEBUG("event {} conn_id {} target {}:{} route proxy selected tunnel ptr {} active_tunnels {} total_slots {}",
-                  log_event::kRoute,
-                  conn_id_,
-                  host,
-                  port,
-                  static_cast<const void*>(tunnel_.get()),
-                  tunnel_pool_->active_tunnels(),
-                  cfg_.limits.max_connections);
+        LOG_INFO("event {} trace_id {:016x} conn_id {} target {}:{} route proxy selected tunnel_conn_id {} tunnel_ptr {} active_tunnels {} total_slots {}",
+                 log_event::kRoute,
+                 trace_id_,
+                 conn_id_,
+                 host,
+                 port,
+                 tunnel_->conn_id(),
+                 static_cast<const void*>(tunnel_.get()),
+                 tunnel_pool_->active_tunnels(),
+                 cfg_.limits.max_connections);
     }
     else if (tunnel_ == nullptr)
     {
         ec = boost::asio::error::not_connected;
-        LOG_ERROR("event {} conn_id {} target {}:{} route proxy create stream failed no tunnel",
+        LOG_ERROR("event {} trace_id {:016x} conn_id {} target {}:{} route proxy create stream failed no tunnel",
                   log_event::kRoute,
+                  trace_id_,
                   conn_id_,
                   host,
                   port);
@@ -503,8 +542,9 @@ boost::asio::awaitable<upstream_connect_result> proxy_upstream::connect(const st
     if (stream == nullptr)
     {
         ec = boost::asio::error::connection_aborted;
-        LOG_ERROR("event {} conn_id {} target {}:{} route proxy create stream failed tunnel_ptr {}",
+        LOG_ERROR("event {} trace_id {:016x} conn_id {} target {}:{} route proxy create stream failed tunnel_ptr {}",
                   log_event::kRoute,
+                  trace_id_,
                   conn_id_,
                   host,
                   port,
@@ -513,13 +553,15 @@ boost::asio::awaitable<upstream_connect_result> proxy_upstream::connect(const st
         result.socks_rep = socks::map_connect_error_to_socks_rep(ec);
         co_return result;
     }
-    LOG_DEBUG("event {} conn_id {} stream_id {} target {}:{} route proxy created stream tunnel_ptr {}",
-              log_event::kRoute,
-              conn_id_,
-              stream->id(),
-              host,
-              port,
-              static_cast<const void*>(tunnel_.get()));
+    LOG_INFO("event {} trace_id {:016x} conn_id {} stream_id {} target {}:{} route proxy mapped tunnel_conn_id {} tunnel_ptr {}",
+             log_event::kRoute,
+             trace_id_,
+             conn_id_,
+             stream->id(),
+             host,
+             port,
+             tunnel_->conn_id(),
+             static_cast<const void*>(tunnel_.get()));
     co_await send_syn_request(stream, host, port, ec);
     if (ec)
     {
@@ -561,27 +603,31 @@ boost::asio::awaitable<std::size_t> proxy_upstream::read(std::vector<uint8_t>& b
     {
         if (is_expected_proxy_stream_read_shutdown(ec))
         {
-            LOG_INFO("event {} conn_id {} stream_id {} target {}:{} bind {}:{} tunnel_ptr {} stage read_frame stopped {}",
+            LOG_INFO("event {} trace_id {:016x} conn_id {} stream_id {} target {}:{} bind {}:{} tunnel_conn_id {} tunnel_ptr {} stage read_frame stopped {}",
                      log_event::kRoute,
+                     trace_id_,
                      conn_id_,
                      stream->id(),
                      target_host_,
                      target_port_,
                      bind_host_,
                      bind_port_,
+                     tunnel_ != nullptr ? tunnel_->conn_id() : 0,
                      static_cast<const void*>(tunnel_.get()),
                      ec.message());
         }
         else
         {
-            LOG_WARN("event {} conn_id {} stream_id {} target {}:{} bind {}:{} tunnel_ptr {} stage read_frame error {}",
+            LOG_WARN("event {} trace_id {:016x} conn_id {} stream_id {} target {}:{} bind {}:{} tunnel_conn_id {} tunnel_ptr {} stage read_frame error {}",
                      log_event::kRoute,
+                     trace_id_,
                      conn_id_,
                      stream->id(),
                      target_host_,
                      target_port_,
                      bind_host_,
                      bind_port_,
+                     tunnel_ != nullptr ? tunnel_->conn_id() : 0,
                      static_cast<const void*>(tunnel_.get()),
                      ec.message());
         }
@@ -589,14 +635,16 @@ boost::asio::awaitable<std::size_t> proxy_upstream::read(std::vector<uint8_t>& b
     }
     if (data_frame.h.command == mux::kCmdRst || data_frame.h.command == mux::kCmdFin)
     {
-        LOG_INFO("event {} conn_id {} stream_id {} target {}:{} bind {}:{} tunnel_ptr {} stage read_frame recv_control cmd {}({}) payload_size {}",
+        LOG_INFO("event {} trace_id {:016x} conn_id {} stream_id {} target {}:{} bind {}:{} tunnel_conn_id {} tunnel_ptr {} stage read_frame recv_control cmd {} cmd_name {} payload_size {}",
                  log_event::kRoute,
+                 trace_id_,
                  conn_id_,
                  stream->id(),
                  target_host_,
                  target_port_,
                  bind_host_,
                  bind_port_,
+                 tunnel_ != nullptr ? tunnel_->conn_id() : 0,
                  static_cast<const void*>(tunnel_.get()),
                  data_frame.h.command,
                  session_util::mux_command_name(data_frame.h.command),
@@ -614,14 +662,16 @@ boost::asio::awaitable<std::size_t> proxy_upstream::read(std::vector<uint8_t>& b
     }
     if (data_frame.h.command != mux::kCmdDat)
     {
-        LOG_WARN("event {} conn_id {} stream_id {} target {}:{} bind {}:{} tunnel_ptr {} stage read_frame unexpected_cmd {}({}) payload_size {}",
+        LOG_WARN("event {} trace_id {:016x} conn_id {} stream_id {} target {}:{} bind {}:{} tunnel_conn_id {} tunnel_ptr {} stage read_frame unexpected_cmd {} cmd_name {} payload_size {}",
                  log_event::kRoute,
+                 trace_id_,
                  conn_id_,
                  stream->id(),
                  target_host_,
                  target_port_,
                  bind_host_,
                  bind_port_,
+                 tunnel_ != nullptr ? tunnel_->conn_id() : 0,
                  static_cast<const void*>(tunnel_.get()),
                  data_frame.h.command,
                  session_util::mux_command_name(data_frame.h.command),
@@ -693,14 +743,16 @@ boost::asio::awaitable<void> proxy_upstream::close()
             co_await stream->async_write(std::move(rst_frame), rst_ec);
             if (rst_ec && !is_expected_proxy_stream_write_shutdown(rst_ec))
             {
-                LOG_WARN("event {} conn_id {} stream_id {} target {}:{} bind {}:{} tunnel_ptr {} stage send_rst error {}",
+                LOG_WARN("event {} trace_id {:016x} conn_id {} stream_id {} target {}:{} bind {}:{} tunnel_conn_id {} tunnel_ptr {} stage send_rst error {}",
                          log_event::kRoute,
+                         trace_id_,
                          conn_id_,
                          stream->id(),
                          target_host_,
                          target_port_,
                          bind_host_,
                          bind_port_,
+                         tunnel != nullptr ? tunnel->conn_id() : 0,
                          static_cast<const void*>(tunnel.get()),
                          rst_ec.message());
             }
@@ -711,14 +763,16 @@ boost::asio::awaitable<void> proxy_upstream::close()
             co_await shutdown_send(fin_ec);
             if (fin_ec && !is_expected_proxy_stream_write_shutdown(fin_ec))
             {
-                LOG_WARN("event {} conn_id {} stream_id {} target {}:{} bind {}:{} tunnel_ptr {} stage send_fin error {}",
+                LOG_WARN("event {} trace_id {:016x} conn_id {} stream_id {} target {}:{} bind {}:{} tunnel_conn_id {} tunnel_ptr {} stage send_fin error {}",
                          log_event::kRoute,
+                         trace_id_,
                          conn_id_,
                          stream->id(),
                          target_host_,
                          target_port_,
                          bind_host_,
                          bind_port_,
+                         tunnel != nullptr ? tunnel->conn_id() : 0,
                          static_cast<const void*>(tunnel.get()),
                          fin_ec.message());
             }

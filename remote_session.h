@@ -23,6 +23,7 @@ class remote_tcp_session : public std::enable_shared_from_this<remote_tcp_sessio
                        const std::shared_ptr<mux_connection>& connection,
                        uint32_t id,
                        uint32_t conn_id,
+                       uint64_t trace_id,
                        const config& cfg);
 
     [[nodiscard]] bool has_stream() const;
@@ -38,6 +39,7 @@ class remote_tcp_session : public std::enable_shared_from_this<remote_tcp_sessio
 
    private:
     uint32_t id_;
+    uint64_t trace_id_ = 0;
     uint32_t conn_id_ = 0;
     const config& cfg_;
     std::string target_host_ = "unknown";

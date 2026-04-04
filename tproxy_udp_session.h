@@ -64,6 +64,7 @@ class tproxy_udp_session : public std::enable_shared_from_this<tproxy_udp_sessio
     void close_impl();
 
    private:
+    uint64_t trace_id_ = 0;
     uint32_t conn_id_ = 0;
     const config& cfg_;
     io_worker& worker_;

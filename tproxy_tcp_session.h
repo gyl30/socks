@@ -36,6 +36,7 @@ class tproxy_tcp_session : public std::enable_shared_from_this<tproxy_tcp_sessio
     [[nodiscard]] boost::asio::awaitable<void> idle_watchdog();
 
    private:
+    uint64_t trace_id_ = 0;
     uint32_t conn_id_ = 0;
     std::string client_addr_;
     uint16_t client_port_ = 0;

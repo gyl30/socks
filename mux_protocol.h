@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include <cstddef>
+#include <cstdint>
 
 #include "tls/core.h"
 namespace mux
@@ -40,6 +41,7 @@ struct syn_payload
     uint8_t socks_cmd = 0;
     std::string addr;
     uint16_t port = 0;
+    uint64_t trace_id = 0;
 };
 
 struct ack_payload

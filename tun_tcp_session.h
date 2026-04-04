@@ -57,6 +57,7 @@ class tun_tcp_session : public std::enable_shared_from_this<tun_tcp_session>
     static err_t on_poll(void* arg, tcp_pcb* pcb);
 
    private:
+    uint64_t trace_id_ = 0;
     uint32_t conn_id_ = 0;
     const config& cfg_;
     std::shared_ptr<client_tunnel_pool> tunnel_pool_;
