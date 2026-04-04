@@ -1,7 +1,6 @@
 #ifndef TUN_UDP_SESSION_H
 #define TUN_UDP_SESSION_H
 
-#include <deque>
 #include <atomic>
 #include <chrono>
 #include <memory>
@@ -13,6 +12,7 @@
 #include <boost/asio/ip/udp.hpp>
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/steady_timer.hpp>
+#include <boost/asio/experimental/concurrent_channel.hpp>
 
 #include "config.h"
 #include "router.h"
@@ -27,6 +27,8 @@ class mux_stream;
 class tun_udp_session : public std::enable_shared_from_this<tun_udp_session>
 {
    public:
+    using packet_channel_type = boost::asio::experimental::concurrent_channel<void(boost::system::error_code, std::vector<uint8_t>)>;
+
     tun_udp_session(io_worker& worker,
                     std::shared_ptr<client_tunnel_pool> tunnel_pool,
                     std::shared_ptr<router> router,
@@ -56,12 +58,9 @@ class tun_udp_session : public std::enable_shared_from_this<tun_udp_session>
     [[nodiscard]] boost::asio::awaitable<void> packets_to_proxy();
     [[nodiscard]] boost::asio::awaitable<void> proxy_to_client();
     [[nodiscard]] boost::asio::awaitable<void> idle_watchdog();
-    [[nodiscard]] boost::asio::awaitable<void> wait_for_packet();
     [[nodiscard]] boost::asio::awaitable<bool> send_to_client(const boost::asio::ip::udp::endpoint& source,
                                                               const uint8_t* payload,
                                                               std::size_t payload_len);
-    bool pop_packet(std::vector<uint8_t>& payload);
-    void signal_packet_event();
     void close_impl();
     void notify_closed();
 
@@ -78,7 +77,6 @@ class tun_udp_session : public std::enable_shared_from_this<tun_udp_session>
     std::atomic<bool> stopped_{false};
     uint64_t last_activity_time_ms_ = 0;
     boost::asio::steady_timer idle_timer_;
-    boost::asio::steady_timer packet_wait_timer_;
     boost::asio::ip::udp::socket upstream_socket_;
     std::shared_ptr<mux_connection> tunnel_;
     std::shared_ptr<mux_stream> stream_;
@@ -88,8 +86,8 @@ class tun_udp_session : public std::enable_shared_from_this<tun_udp_session>
     std::chrono::steady_clock::time_point start_time_ = std::chrono::steady_clock::now();
     boost::asio::ip::udp::endpoint client_endpoint_;
     boost::asio::ip::udp::endpoint target_endpoint_;
-    std::deque<std::vector<uint8_t>> packet_queue_;
     std::function<void()> on_close_;
+    packet_channel_type packet_channel_;
 };
 
 }    // namespace mux

@@ -187,11 +187,11 @@ tun_udp_session::tun_udp_session(io_worker& worker,
       pcb_(pcb),
       last_activity_time_ms_(net::now_ms()),
       idle_timer_(worker.io_context),
-      packet_wait_timer_(worker.io_context),
       upstream_socket_(worker.io_context),
       client_endpoint_(net::normalize_endpoint(client_endpoint)),
       target_endpoint_(net::normalize_endpoint(target_endpoint)),
-      on_close_(std::move(on_close))
+      on_close_(std::move(on_close)),
+      packet_channel_(worker.io_context, constants::udp::kPacketChannelCapacity)
 {
     stream_close_command_.store(mux::kCmdFin, std::memory_order_relaxed);
     udp_recv(pcb_, &tun_udp_session::on_recv, this);
@@ -253,13 +253,32 @@ void tun_udp_session::enqueue_packet(pbuf* packet)
         return;
     }
 
-    if (packet_queue_.size() >= constants::udp::kPacketChannelCapacity)
-    {
-        packet_queue_.pop_front();
-    }
-    packet_queue_.push_back(std::move(payload));
     last_activity_time_ms_ = net::now_ms();
-    signal_packet_event();
+    packet_channel_.async_send(
+        boost::system::error_code{},
+        std::move(payload),
+        [self = shared_from_this()](const boost::system::error_code& ec)
+        {
+            if (!ec)
+            {
+                return;
+            }
+            if (self->stopped_.load(std::memory_order_relaxed) || ec == boost::asio::error::operation_aborted ||
+                ec == boost::asio::error::bad_descriptor || ec == boost::asio::experimental::error::channel_errors::channel_closed)
+            {
+                return;
+            }
+
+            LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} target {}:{} enqueue tun udp packet failed {}",
+                     log_event::kMux,
+                     self->trace_id_,
+                     self->conn_id_,
+                     self->client_endpoint_.address().to_string(),
+                     self->client_endpoint_.port(),
+                     self->target_endpoint_.address().to_string(),
+                     self->target_endpoint_.port(),
+                     ec.message());
+        });
 }
 
 void tun_udp_session::on_recv(void* arg, udp_pcb* pcb, pbuf* packet, const ip_addr_t* addr, u16_t port)
@@ -543,14 +562,10 @@ boost::asio::awaitable<std::shared_ptr<mux_connection>> tun_udp_session::wait_fo
 boost::asio::awaitable<void> tun_udp_session::packets_to_direct()
 {
     boost::system::error_code ec;
-    std::vector<uint8_t> payload;
     for (;;)
     {
-        while (!pop_packet(payload) && !stopped_.load(std::memory_order_relaxed))
-        {
-            co_await wait_for_packet();
-        }
-        if (stopped_.load(std::memory_order_relaxed))
+        auto payload = co_await packet_channel_.async_receive(boost::asio::redirect_error(boost::asio::use_awaitable, ec));
+        if (ec)
         {
             co_return;
         }
@@ -601,14 +616,10 @@ boost::asio::awaitable<void> tun_udp_session::direct_to_client()
 boost::asio::awaitable<void> tun_udp_session::packets_to_proxy()
 {
     boost::system::error_code ec;
-    std::vector<uint8_t> payload;
     for (;;)
     {
-        while (!pop_packet(payload) && !stopped_.load(std::memory_order_relaxed))
-        {
-            co_await wait_for_packet();
-        }
-        if (stopped_.load(std::memory_order_relaxed))
+        auto payload = co_await packet_channel_.async_receive(boost::asio::redirect_error(boost::asio::use_awaitable, ec));
+        if (ec)
         {
             co_return;
         }
@@ -816,13 +827,6 @@ boost::asio::awaitable<void> tun_udp_session::idle_watchdog()
     }
 }
 
-boost::asio::awaitable<void> tun_udp_session::wait_for_packet()
-{
-    packet_wait_timer_.expires_at(std::chrono::steady_clock::time_point::max());
-    const auto [ec] = co_await packet_wait_timer_.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
-    (void)ec;
-}
-
 boost::asio::awaitable<bool> tun_udp_session::send_to_client(const boost::asio::ip::udp::endpoint& source,
                                                              const uint8_t* payload,
                                                              const std::size_t payload_len)
@@ -883,23 +887,6 @@ boost::asio::awaitable<bool> tun_udp_session::send_to_client(const boost::asio::
     co_return true;
 }
 
-bool tun_udp_session::pop_packet(std::vector<uint8_t>& payload)
-{
-    if (packet_queue_.empty())
-    {
-        return false;
-    }
-
-    payload = std::move(packet_queue_.front());
-    packet_queue_.pop_front();
-    return true;
-}
-
-void tun_udp_session::signal_packet_event()
-{
-    packet_wait_timer_.cancel();
-}
-
 void tun_udp_session::close_impl()
 {
     if (stopped_.exchange(true, std::memory_order_relaxed))
@@ -909,7 +896,7 @@ void tun_udp_session::close_impl()
 
     boost::system::error_code ec;
     idle_timer_.cancel();
-    packet_wait_timer_.cancel();
+    packet_channel_.close();
     if (stream_ != nullptr)
     {
         stream_->close();
