@@ -521,15 +521,9 @@ fingerprint_template build_chrome120_mlkem768_template()
 
 }    // namespace
 
-bool fingerprint_has_key_share_group(const fingerprint_template& spec, uint16_t group)
-{
-    return has_key_share_group(spec, group);
-}
+bool fingerprint_has_key_share_group(const fingerprint_template& spec, uint16_t group) { return has_key_share_group(spec, group); }
 
-bool fingerprint_has_key_share_group(const fingerprint_instance& spec, uint16_t group)
-{
-    return has_key_share_group(spec, group);
-}
+bool fingerprint_has_key_share_group(const fingerprint_instance& spec, uint16_t group) { return has_key_share_group(spec, group); }
 
 void fingerprint_append_key_share_group(fingerprint_template& spec, uint16_t group)
 {

@@ -37,7 +37,8 @@ site_material load_site_material(const mux::config& cfg, boost::system::error_co
     }
 
     LOG_INFO(
-        "event {} target {}:{} sni {} certs {} cert_msg {} alpn '{}' cipher 0x{:04x} sh_exts {} ee_exts {} ee_padding {} ccs {} hs_records {} groups {}",
+        "event {} target {}:{} sni {} certs {} cert_msg {} alpn '{}' cipher 0x{:04x} sh_exts {} ee_exts {} ee_padding {} ccs {} hs_records {} groups "
+        "{}",
         mux::log_event::kCert,
         target_host,
         constants::reality_limits::kDefaultTlsPort,

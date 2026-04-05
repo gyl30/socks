@@ -127,10 +127,7 @@ void socks_client::start()
         return;
     }
 
-    LOG_INFO("event {} listen {}:{} socks client starting listener",
-             log_event::kConnInit,
-             cfg_.socks.host,
-             cfg_.socks.port);
+    LOG_INFO("event {} listen {}:{} socks client starting listener", log_event::kConnInit, cfg_.socks.host, cfg_.socks.port);
 
     owner_worker_.group.spawn([self = shared_from_this()]() { return self->start_acceptor(); });
 }
@@ -141,11 +138,7 @@ boost::asio::awaitable<void> socks_client::start_acceptor()
     setup_acceptor(acceptor_, cfg_.socks.host, cfg_.socks.port, ec);
     if (ec)
     {
-        LOG_ERROR("event {} stage start listen {}:{} setup failed {}",
-                  log_event::kConnInit,
-                  cfg_.socks.host,
-                  cfg_.socks.port,
-                  ec.message());
+        LOG_ERROR("event {} stage start listen {}:{} setup failed {}", log_event::kConnInit, cfg_.socks.host, cfg_.socks.port, ec.message());
         std::exit(EXIT_FAILURE);
     }
 
@@ -164,28 +157,17 @@ boost::asio::awaitable<void> socks_client::accept_loop()
         co_await acceptor_.async_accept(socket, boost::asio::redirect_error(boost::asio::use_awaitable, ec));
         if (ec == boost::asio::error::operation_aborted)
         {
-            LOG_INFO("event {} listen {}:{} accept loop stopped {}",
-                     log_event::kConnClose,
-                     cfg_.socks.host,
-                     cfg_.socks.port,
-                     ec.message());
+            LOG_INFO("event {} listen {}:{} accept loop stopped {}", log_event::kConnClose, cfg_.socks.host, cfg_.socks.port, ec.message());
             break;
         }
         if (ec)
         {
-            LOG_ERROR("event {} listen {}:{} stage accept error {} retry",
-                      log_event::kConnInit,
-                      cfg_.socks.host,
-                      cfg_.socks.port,
-                      ec.message());
+            LOG_ERROR("event {} listen {}:{} stage accept error {} retry", log_event::kConnInit, cfg_.socks.host, cfg_.socks.port, ec.message());
             ec = co_await net::wait_for(owner_worker_.io_context, std::chrono::seconds(3));
             if (ec)
             {
-                LOG_ERROR("event {} listen {}:{} stage accept_retry_wait error {}",
-                          log_event::kConnInit,
-                          cfg_.socks.host,
-                          cfg_.socks.port,
-                          ec.message());
+                LOG_ERROR(
+                    "event {} listen {}:{} stage accept_retry_wait error {}", log_event::kConnInit, cfg_.socks.host, cfg_.socks.port, ec.message());
                 break;
             }
             continue;
@@ -197,13 +179,8 @@ boost::asio::awaitable<void> socks_client::accept_loop()
         uint16_t local_port = 0;
         uint16_t remote_port = 0;
         load_socket_endpoints(socket, sid, local_host, local_port, remote_host, remote_port);
-        LOG_INFO("event {} conn_id {} local {}:{} remote {}:{} accepted",
-                 log_event::kConnInit,
-                 sid,
-                 local_host,
-                 local_port,
-                 remote_host,
-                 remote_port);
+        LOG_INFO(
+            "event {} conn_id {} local {}:{} remote {}:{} accepted", log_event::kConnInit, sid, local_host, local_port, remote_host, remote_port);
         ec = socket.set_option(boost::asio::ip::tcp::no_delay(true), ec);
         if (ec)
         {

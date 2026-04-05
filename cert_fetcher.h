@@ -9,8 +9,7 @@
 namespace reality
 {
 
-[[nodiscard]] site_material fetch_site_material(
-    const std::string& host, uint16_t port, const std::string& sni, boost::system::error_code& ec);
+[[nodiscard]] site_material fetch_site_material(const std::string& host, uint16_t port, const std::string& sni, boost::system::error_code& ec);
 
 }    // namespace reality
 

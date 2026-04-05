@@ -254,31 +254,31 @@ void tun_udp_session::enqueue_packet(pbuf* packet)
     }
 
     last_activity_time_ms_ = net::now_ms();
-    packet_channel_.async_send(
-        boost::system::error_code{},
-        std::move(payload),
-        [self = shared_from_this()](const boost::system::error_code& ec)
-        {
-            if (!ec)
-            {
-                return;
-            }
-            if (self->stopped_.load(std::memory_order_relaxed) || ec == boost::asio::error::operation_aborted ||
-                ec == boost::asio::error::bad_descriptor || ec == boost::asio::experimental::error::channel_errors::channel_closed)
-            {
-                return;
-            }
+    packet_channel_.async_send(boost::system::error_code{},
+                               std::move(payload),
+                               [self = shared_from_this()](const boost::system::error_code& ec)
+                               {
+                                   if (!ec)
+                                   {
+                                       return;
+                                   }
+                                   if (self->stopped_.load(std::memory_order_relaxed) || ec == boost::asio::error::operation_aborted ||
+                                       ec == boost::asio::error::bad_descriptor ||
+                                       ec == boost::asio::experimental::error::channel_errors::channel_closed)
+                                   {
+                                       return;
+                                   }
 
-            LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} target {}:{} enqueue tun udp packet failed {}",
-                     log_event::kMux,
-                     self->trace_id_,
-                     self->conn_id_,
-                     self->client_endpoint_.address().to_string(),
-                     self->client_endpoint_.port(),
-                     self->target_endpoint_.address().to_string(),
-                     self->target_endpoint_.port(),
-                     ec.message());
-        });
+                                   LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} target {}:{} enqueue tun udp packet failed {}",
+                                            log_event::kMux,
+                                            self->trace_id_,
+                                            self->conn_id_,
+                                            self->client_endpoint_.address().to_string(),
+                                            self->client_endpoint_.port(),
+                                            self->target_endpoint_.address().to_string(),
+                                            self->target_endpoint_.port(),
+                                            ec.message());
+                               });
 }
 
 void tun_udp_session::on_recv(void* arg, udp_pcb* pcb, pbuf* packet, const ip_addr_t* addr, u16_t port)
@@ -634,25 +634,15 @@ boost::asio::awaitable<void> tun_udp_session::direct_to_client()
 
 boost::asio::awaitable<void> tun_udp_session::packets_to_proxy()
 {
-    co_await session_util::forward_udp_packets_to_proxy_stream(packet_channel_,
-                                                               stream_,
-                                                               trace_id_,
-                                                               conn_id_,
-                                                               client_endpoint_,
-                                                               target_endpoint_,
-                                                               "tun proxy",
-                                                               tx_bytes_,
-                                                               last_activity_time_ms_);
+    co_await session_util::forward_udp_packets_to_proxy_stream(
+        packet_channel_, stream_, trace_id_, conn_id_, client_endpoint_, target_endpoint_, "tun proxy", tx_bytes_, last_activity_time_ms_);
 }
 
 boost::asio::awaitable<void> tun_udp_session::proxy_to_client()
 {
-    auto send_to_client_fn = [this](const boost::asio::ip::udp::endpoint& source,
-                                    const uint8_t* payload,
-                                    std::size_t payload_len) -> boost::asio::awaitable<bool>
-    {
-        co_return co_await send_to_client(source, payload, payload_len);
-    };
+    auto send_to_client_fn =
+        [this](const boost::asio::ip::udp::endpoint& source, const uint8_t* payload, std::size_t payload_len) -> boost::asio::awaitable<bool>
+    { co_return co_await send_to_client(source, payload, payload_len); };
     co_await session_util::forward_proxy_udp_stream_to_client(stream_,
                                                               cfg_,
                                                               stream_close_command_,

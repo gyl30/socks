@@ -199,11 +199,8 @@ void handle_post_handshake_record(uint32_t cid,
 
 }    // namespace
 
-mux_connection::mux_connection(boost::asio::ip::tcp::socket socket,
-                               io_worker& worker,
-                               reality::reality_record_context record_context,
-                               const config& cfg,
-                               uint32_t conn_id)
+mux_connection::mux_connection(
+    boost::asio::ip::tcp::socket socket, io_worker& worker, reality::reality_record_context record_context, const config& cfg, uint32_t conn_id)
     : cfg_(cfg),
       cid_(conn_id),
       worker_(worker),
@@ -288,16 +285,18 @@ boost::asio::awaitable<void> mux_connection::handle_unknown_stream(mux::frame_he
     {
         if (is_stream_limit_reached())
         {
-            LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} stream_id {} stage handle_unknown_stream drop incoming_syn max_streams {} active_streams {}",
-                     log_event::kMux,
-                     cid_,
-                     local_host(),
-                     local_port_,
-                     remote_host(),
-                     remote_port_,
-                     header.stream_id,
-                     cfg_.limits.max_streams,
-                     stream_count());
+            LOG_WARN(
+                "event {} conn_id {} local {}:{} remote {}:{} stream_id {} stage handle_unknown_stream drop incoming_syn max_streams {} "
+                "active_streams {}",
+                log_event::kMux,
+                cid_,
+                local_host(),
+                local_port_,
+                remote_host(),
+                remote_port_,
+                header.stream_id,
+                cfg_.limits.max_streams,
+                stream_count());
             co_return;
         }
         if (incoming_syn_channel_ == nullptr)
@@ -693,9 +692,7 @@ boost::asio::awaitable<void> mux_connection::read_loop()
               remote_port_);
 }
 
-boost::asio::awaitable<void> mux_connection::on_tls_record(uint8_t type,
-                                                           const std::span<const uint8_t> plaintext,
-                                                           boost::system::error_code& ec)
+boost::asio::awaitable<void> mux_connection::on_tls_record(uint8_t type, const std::span<const uint8_t> plaintext, boost::system::error_code& ec)
 {
     if (type == tls::kContentTypeApplicationData)
     {

@@ -193,8 +193,9 @@ boost::asio::awaitable<void> read_tls_record_body(boost::asio::ip::tcp::socket& 
     co_return;
 }
 
-const char* validate_client_hello_record_header(
-    const std::vector<uint8_t>& record_buf, const server_log_context& log_context, boost::system::error_code& ec)
+const char* validate_client_hello_record_header(const std::vector<uint8_t>& record_buf,
+                                                const server_log_context& log_context,
+                                                boost::system::error_code& ec)
 {
     if (record_buf[1] != 0x03 || record_buf[2] != 0x03)
     {
@@ -272,13 +273,12 @@ const char* validate_client_hello_ccs_record(const std::vector<uint8_t>& record_
     return nullptr;
 }
 
-const char* validate_client_hello_handshake_record(
-    const std::vector<uint8_t>& record_buf,
-    uint16_t record_len,
-    std::size_t record_count,
-    std::size_t max_records,
-    const server_log_context& log_context,
-    boost::system::error_code& ec)
+const char* validate_client_hello_handshake_record(const std::vector<uint8_t>& record_buf,
+                                                   uint16_t record_len,
+                                                   std::size_t record_count,
+                                                   std::size_t max_records,
+                                                   const server_log_context& log_context,
+                                                   boost::system::error_code& ec)
 {
     if (record_buf[0] != 0x16)
     {
@@ -502,8 +502,7 @@ boost::asio::awaitable<const char*> read_client_hello_handshake(boost::asio::ip:
             continue;
         }
 
-        if (const auto* error_reason =
-                validate_client_hello_handshake_record(record_buf, record_len, record_count, max_records, log_context, ec);
+        if (const auto* error_reason = validate_client_hello_handshake_record(record_buf, record_len, record_count, max_records, log_context, ec);
             error_reason != nullptr)
         {
             co_return error_reason;
@@ -1046,7 +1045,7 @@ std::string select_reality_alpn(const tls::client_hello_info& hello, const site_
 
 template <typename Predicate>
 std::vector<uint16_t> select_extension_order(const site_material* site_material,
-                                             const std::vector<uint16_t> site_material::*extension_types_member,
+                                             const std::vector<uint16_t> site_material::* extension_types_member,
                                              Predicate&& should_keep)
 {
     if (site_material == nullptr)
@@ -1066,18 +1065,17 @@ std::vector<uint16_t> select_extension_order(const site_material* site_material,
 
 std::vector<uint16_t> select_server_hello_extension_order(const site_material* site_material)
 {
-    return select_extension_order(
-        site_material,
-        &site_material::server_hello_extension_types,
-        [](uint16_t ext_type) { return ext_type == tls::consts::ext::kSupportedVersions || ext_type == tls::consts::ext::kKeyShare; });
+    return select_extension_order(site_material,
+                                  &site_material::server_hello_extension_types,
+                                  [](uint16_t ext_type)
+                                  { return ext_type == tls::consts::ext::kSupportedVersions || ext_type == tls::consts::ext::kKeyShare; });
 }
 
 std::vector<uint16_t> select_encrypted_extensions_order(const site_material* site_material)
 {
-    return select_extension_order(
-        site_material,
-        &site_material::encrypted_extension_types,
-        [](uint16_t ext_type) { return ext_type == tls::consts::ext::kAlpn || ext_type == tls::consts::ext::kPadding; });
+    return select_extension_order(site_material,
+                                  &site_material::encrypted_extension_types,
+                                  [](uint16_t ext_type) { return ext_type == tls::consts::ext::kAlpn || ext_type == tls::consts::ext::kPadding; });
 }
 
 bool should_include_encrypted_extensions_padding(const site_material* site_material)
@@ -1254,8 +1252,10 @@ std::vector<uint8_t> compose_tls_record(const std::array<uint8_t, 5>& header, co
     return out;
 }
 
-bool verify_client_finished_plaintext(
-    const std::vector<uint8_t>& plaintext, uint8_t content_type, const std::vector<uint8_t>& expected_verify, const server_log_context& log_context)
+bool verify_client_finished_plaintext(const std::vector<uint8_t>& plaintext,
+                                      uint8_t content_type,
+                                      const std::vector<uint8_t>& expected_verify,
+                                      const server_log_context& log_context)
 {
     if (content_type != tls::kContentTypeHandshake || plaintext.size() < 4 || plaintext[0] != 0x14)
     {
@@ -1494,17 +1494,19 @@ std::optional<server_accept_result> validate_client_hello_sni_and_extensions(ser
     if (state.client_hello.malformed_supported_groups || state.client_hello.malformed_supported_versions ||
         state.client_hello.malformed_renegotiation_info)
     {
-        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} auth fail malformed tls13 extensions supported groups {} supported versions {} renegotiation info {}",
-                  mux::log_event::kAuth,
-                  state.log_context.conn_id,
-                  state.log_context.local_addr,
-                  state.log_context.local_port,
-                  state.log_context.remote_addr,
-                  state.log_context.remote_port,
-                  server_log_sni(state.log_context),
-                  state.client_hello.malformed_supported_groups,
-                  state.client_hello.malformed_supported_versions,
-                  state.client_hello.malformed_renegotiation_info);
+        LOG_ERROR(
+            "event {} conn_id {} local {}:{} remote {}:{} sni {} auth fail malformed tls13 extensions supported groups {} supported versions {} "
+            "renegotiation info {}",
+            mux::log_event::kAuth,
+            state.log_context.conn_id,
+            state.log_context.local_addr,
+            state.log_context.local_port,
+            state.log_context.remote_addr,
+            state.log_context.remote_port,
+            server_log_sni(state.log_context),
+            state.client_hello.malformed_supported_groups,
+            state.client_hello.malformed_supported_versions,
+            state.client_hello.malformed_renegotiation_info);
         return make_decision_result(accept_mode::kFallbackToTarget, "malformed_tls13_extensions", state);
     }
     if (state.client_hello.malformed_signature_algorithms)
@@ -1688,18 +1690,19 @@ std::optional<server_accept_result> authenticate_client_hello(server_handshake_s
 
 std::optional<server_accept_result> finalize_client_hello_authentication(server_handshake_state& state, mux::replay_cache& replay_cache)
 {
-    LOG_INFO("event {} conn_id {} local {}:{} remote {}:{} sni {} client hello selected key share group 0x{:04x} {} client hybrid {} client x25519 {}",
-             mux::log_event::kHandshake,
-             state.log_context.conn_id,
-             state.log_context.local_addr,
-             state.log_context.local_port,
-             state.log_context.remote_addr,
-             state.log_context.remote_port,
-             server_log_sni(state.log_context),
-             state.key_share_group,
-             tls::named_group_name(state.key_share_group),
-             state.client_hello.has_x25519_mlkem768_share,
-             state.client_hello.has_x25519_share);
+    LOG_INFO(
+        "event {} conn_id {} local {}:{} remote {}:{} sni {} client hello selected key share group 0x{:04x} {} client hybrid {} client x25519 {}",
+        mux::log_event::kHandshake,
+        state.log_context.conn_id,
+        state.log_context.local_addr,
+        state.log_context.local_port,
+        state.log_context.remote_addr,
+        state.log_context.remote_port,
+        server_log_sni(state.log_context),
+        state.key_share_group,
+        tls::named_group_name(state.key_share_group),
+        state.client_hello.has_x25519_mlkem768_share,
+        state.client_hello.has_x25519_share);
     if (state.client_hello_handshake.size() < 4)
     {
         LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} sni {} buffer too short",
@@ -1897,27 +1900,29 @@ authenticated_handshake_plan prepare_authenticated_handshake(server_handshake_st
     plan.encrypted_handshake_record_sizes = select_encrypted_handshake_record_sizes(site_material);
     plan.cert_chain_size = select_reality_certificate_chain_size(site_material);
 
-    LOG_INFO("event {} conn_id {} local {}:{} remote {}:{} sni {} success path material cache {} certs {} group 0x{:04x} {} key share len {} cipher 0x{:04x} alpn '{}' sh exts {} ee exts {} ee padding {} ee padding len {} ccs {} hs records {}",
-             mux::log_event::kHandshake,
-             state.log_context.conn_id,
-             state.log_context.local_addr,
-             state.log_context.local_port,
-             state.log_context.remote_addr,
-             state.log_context.remote_port,
-             server_log_sni(state.log_context),
-             plan.has_cached_material,
-             plan.cert_chain_size,
-             state.key_share_group,
-             tls::named_group_name(state.key_share_group),
-             state.server_key_share_data.size(),
-             plan.cipher_suite,
-             plan.selected_alpn,
-             server_hello_extension_order.size(),
-             encrypted_extension_order.size(),
-             include_ee_padding,
-             encrypted_extensions_padding_len.value_or(0),
-             plan.send_change_cipher_spec,
-             plan.encrypted_handshake_record_sizes.size());
+    LOG_INFO(
+        "event {} conn_id {} local {}:{} remote {}:{} sni {} success path material cache {} certs {} group 0x{:04x} {} key share len {} cipher "
+        "0x{:04x} alpn '{}' sh exts {} ee exts {} ee padding {} ee padding len {} ccs {} hs records {}",
+        mux::log_event::kHandshake,
+        state.log_context.conn_id,
+        state.log_context.local_addr,
+        state.log_context.local_port,
+        state.log_context.remote_addr,
+        state.log_context.remote_port,
+        server_log_sni(state.log_context),
+        plan.has_cached_material,
+        plan.cert_chain_size,
+        state.key_share_group,
+        tls::named_group_name(state.key_share_group),
+        state.server_key_share_data.size(),
+        plan.cipher_suite,
+        plan.selected_alpn,
+        server_hello_extension_order.size(),
+        encrypted_extension_order.size(),
+        include_ee_padding,
+        encrypted_extensions_padding_len.value_or(0),
+        plan.send_change_cipher_spec,
+        plan.encrypted_handshake_record_sizes.size());
 
     plan.crypto = build_handshake_crypto(state,
                                          plan.cipher_suite,

@@ -121,10 +121,7 @@ std::vector<uint8_t> mux_codec::encode_frame(const frame_header& h, std::span<co
 {
     if (payload.size() > mux::kMaxPayload)
     {
-        LOG_ERROR("event {} stage encode_frame payload_too_large size {} max {}",
-                  log_event::kMuxFrame,
-                  payload.size(),
-                  mux::kMaxPayload);
+        LOG_ERROR("event {} stage encode_frame payload_too_large size {} max {}", log_event::kMuxFrame, payload.size(), mux::kMaxPayload);
         return {};
     }
 
@@ -174,10 +171,7 @@ void mux_codec::decode_frames(std::vector<uint8_t>& pending,
         decode_header(pending.data() + static_cast<std::ptrdiff_t>(offset), header);
         if (header.length > mux::kMaxPayload)
         {
-            LOG_WARN("event {} stage decode_frames invalid_header_len {} max {}",
-                     log_event::kMuxFrame,
-                     header.length,
-                     mux::kMaxPayload);
+            LOG_WARN("event {} stage decode_frames invalid_header_len {} max {}", log_event::kMuxFrame, header.length, mux::kMaxPayload);
             pending.clear();
             ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
             return;
@@ -247,10 +241,7 @@ bool mux_codec::decode_syn(const uint8_t* data, std::size_t len, syn_payload& ou
         const auto warn_total = next_decode_warn_total();
         if (should_log_decode_warn(warn_total))
         {
-            LOG_WARN("event {} stage decode_syn payload_too_short size {} warn_total {}",
-                     log_event::kMuxFrame,
-                     len,
-                     warn_total);
+            LOG_WARN("event {} stage decode_syn payload_too_short size {} warn_total {}", log_event::kMuxFrame, len, warn_total);
         }
         return false;
     }
@@ -262,11 +253,7 @@ bool mux_codec::decode_syn(const uint8_t* data, std::size_t len, syn_payload& ou
         const auto warn_total = next_decode_warn_total();
         if (should_log_decode_warn(warn_total))
         {
-            LOG_WARN("event {} stage decode_syn invalid_len addr_len {} size {} warn_total {}",
-                     log_event::kMuxFrame,
-                     addr_len,
-                     len,
-                     warn_total);
+            LOG_WARN("event {} stage decode_syn invalid_len addr_len {} size {} warn_total {}", log_event::kMuxFrame, addr_len, len, warn_total);
         }
         return false;
     }
@@ -298,10 +285,7 @@ bool mux_codec::decode_ack(const uint8_t* data, std::size_t len, ack_payload& ou
         const auto warn_total = next_decode_warn_total();
         if (should_log_decode_warn(warn_total))
         {
-            LOG_WARN("event {} stage decode_ack payload_too_short size {} warn_total {}",
-                     log_event::kMuxFrame,
-                     len,
-                     warn_total);
+            LOG_WARN("event {} stage decode_ack payload_too_short size {} warn_total {}", log_event::kMuxFrame, len, warn_total);
         }
         return false;
     }
@@ -313,11 +297,7 @@ bool mux_codec::decode_ack(const uint8_t* data, std::size_t len, ack_payload& ou
         const auto warn_total = next_decode_warn_total();
         if (should_log_decode_warn(warn_total))
         {
-            LOG_WARN("event {} stage decode_ack invalid_len expected {} size {} warn_total {}",
-                     log_event::kMuxFrame,
-                     expected_len,
-                     len,
-                     warn_total);
+            LOG_WARN("event {} stage decode_ack invalid_len expected {} size {} warn_total {}", log_event::kMuxFrame, expected_len, len, warn_total);
         }
         return false;
     }

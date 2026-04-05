@@ -1,9 +1,9 @@
-#include <algorithm>
 #include <chrono>
 #include <memory>
-#include <vector>
 #include <string>
+#include <vector>
 #include <utility>
+#include <algorithm>
 
 #include <boost/asio.hpp>
 #include <boost/asio/awaitable.hpp>
@@ -11,24 +11,22 @@
 #include <boost/asio/redirect_error.hpp>
 #include <boost/asio/experimental/awaitable_operators.hpp>
 
-#include "config.h"
 #include "log.h"
-#include "mux_codec.h"
+#include "config.h"
 #include "protocol.h"
+#include "mux_codec.h"
 #include "net_utils.h"
 #include "scoped_exit.h"
-#include "mux_connection.h"
 #include "mux_protocol.h"
-#include "mux_session_utils.h"
+#include "mux_connection.h"
 #include "remote_session.h"
+#include "mux_session_utils.h"
 namespace mux
 {
 
 namespace
 {
-boost::asio::awaitable<void> send_stream_control_frame(const std::shared_ptr<mux_stream>& stream,
-                                                       uint8_t command,
-                                                       boost::system::error_code& ec)
+boost::asio::awaitable<void> send_stream_control_frame(const std::shared_ptr<mux_stream>& stream, uint8_t command, boost::system::error_code& ec)
 {
     ec.clear();
     if (stream == nullptr)
@@ -436,53 +434,56 @@ boost::asio::awaitable<void> remote_tcp_session::upstream()
         }
         if (frame.h.command == mux::kCmdFin)
         {
-            LOG_INFO("event {} trace_id {:016x} conn_id {} stream_id {} target {}:{} bind {}:{} upstream recv control cmd {} cmd_name {} payload_size {}",
-                     log_event::kMux,
-                     trace_id_,
-                     conn_id_,
-                     id_,
-                     target_host_,
-                     target_port_,
-                     bind_host_,
-                     bind_port_,
-                     frame.h.command,
-                     session_util::mux_command_name(frame.h.command),
-                     frame.payload.size());
+            LOG_INFO(
+                "event {} trace_id {:016x} conn_id {} stream_id {} target {}:{} bind {}:{} upstream recv control cmd {} cmd_name {} payload_size {}",
+                log_event::kMux,
+                trace_id_,
+                conn_id_,
+                id_,
+                target_host_,
+                target_port_,
+                bind_host_,
+                bind_port_,
+                frame.h.command,
+                session_util::mux_command_name(frame.h.command),
+                frame.payload.size());
             close_from_fin();
             break;
         }
         if (frame.h.command == mux::kCmdRst)
         {
-            LOG_INFO("event {} trace_id {:016x} conn_id {} stream_id {} target {}:{} bind {}:{} upstream recv control cmd {} cmd_name {} payload_size {}",
-                     log_event::kMux,
-                     trace_id_,
-                     conn_id_,
-                     id_,
-                     target_host_,
-                     target_port_,
-                     bind_host_,
-                     bind_port_,
-                     frame.h.command,
-                     session_util::mux_command_name(frame.h.command),
-                     frame.payload.size());
+            LOG_INFO(
+                "event {} trace_id {:016x} conn_id {} stream_id {} target {}:{} bind {}:{} upstream recv control cmd {} cmd_name {} payload_size {}",
+                log_event::kMux,
+                trace_id_,
+                conn_id_,
+                id_,
+                target_host_,
+                target_port_,
+                bind_host_,
+                bind_port_,
+                frame.h.command,
+                session_util::mux_command_name(frame.h.command),
+                frame.payload.size());
             stream_->close();
             close_from_reset();
             break;
         }
         if (frame.h.command != mux::kCmdDat)
         {
-            LOG_WARN("event {} trace_id {:016x} conn_id {} stream_id {} target {}:{} bind {}:{} upstream unexpected cmd {} cmd_name {} payload_size {}",
-                     log_event::kMux,
-                     trace_id_,
-                     conn_id_,
-                     id_,
-                     target_host_,
-                     target_port_,
-                     bind_host_,
-                     bind_port_,
-                     frame.h.command,
-                     session_util::mux_command_name(frame.h.command),
-                     frame.payload.size());
+            LOG_WARN(
+                "event {} trace_id {:016x} conn_id {} stream_id {} target {}:{} bind {}:{} upstream unexpected cmd {} cmd_name {} payload_size {}",
+                log_event::kMux,
+                trace_id_,
+                conn_id_,
+                id_,
+                target_host_,
+                target_port_,
+                bind_host_,
+                bind_port_,
+                frame.h.command,
+                session_util::mux_command_name(frame.h.command),
+                frame.payload.size());
             boost::system::error_code rst_ec;
             co_await send_stream_control_frame(stream_, mux::kCmdRst, rst_ec);
             if (rst_ec)

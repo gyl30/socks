@@ -74,9 +74,7 @@ void transcript::set_protocol_hash(const EVP_MD* new_md)
     }
     if (!buffer_.empty() && EVP_DigestUpdate(new_ctx.get(), buffer_.data(), buffer_.size()) != 1)
     {
-        LOG_ERROR("event {} stage set_protocol_hash buffer_size {} error digest_replay_failed",
-                  mux::log_event::kHandshake,
-                  buffer_.size());
+        LOG_ERROR("event {} stage set_protocol_hash buffer_size {} error digest_replay_failed", mux::log_event::kHandshake, buffer_.size());
         valid_ = false;
         return;
     }
@@ -123,10 +121,8 @@ std::vector<uint8_t> transcript::finish() const
     unsigned int l = 0;
     if (EVP_DigestFinal_ex(c.get(), h.data(), &l) != 1 || l != h.size())
     {
-        LOG_ERROR("event {} stage transcript_finish expected_len {} actual_len {} error digest_final_failed",
-                  mux::log_event::kHandshake,
-                  h.size(),
-                  l);
+        LOG_ERROR(
+            "event {} stage transcript_finish expected_len {} actual_len {} error digest_final_failed", mux::log_event::kHandshake, h.size(), l);
         return {};
     }
     return h;
