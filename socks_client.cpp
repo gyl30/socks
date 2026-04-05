@@ -1,7 +1,7 @@
+#include <tuple>
 #include <chrono>
 #include <memory>
 #include <string>
-#include <tuple>
 #include <cstdlib>
 #include <utility>
 
@@ -105,12 +105,12 @@ void setup_acceptor(boost::asio::ip::tcp::acceptor& acceptor, const std::string&
 
 }    // namespace
 
-socks_client::socks_client(io_context_pool& pool, const config& cfg)
+socks_client::socks_client(io_context_pool& pool, const config& cfg, std::shared_ptr<client_tunnel_pool> tunnel_pool)
     : cfg_(cfg),
       pool_(pool),
       owner_worker_(pool.get_io_worker()),
       router_(std::make_shared<mux::router>()),
-      tunnel_pool_(std::make_shared<client_tunnel_pool>(pool, cfg))
+      tunnel_pool_(tunnel_pool != nullptr ? std::move(tunnel_pool) : std::make_shared<client_tunnel_pool>(pool, cfg))
 {
 }
 
@@ -127,7 +127,6 @@ void socks_client::start()
         return;
     }
 
-    tunnel_pool_->start();
     LOG_INFO("event {} listen {}:{} socks client starting listener",
              log_event::kConnInit,
              cfg_.socks.host,
@@ -241,10 +240,6 @@ void socks_client::stop()
                                         self->cfg_.socks.host,
                                         self->cfg_.socks.port,
                                         ec.message());
-                          }
-                          if (self->tunnel_pool_ != nullptr)
-                          {
-                              self->tunnel_pool_->stop();
                           }
                       });
 }

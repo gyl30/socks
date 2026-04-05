@@ -26,7 +26,7 @@ enum class socks_client_state : uint8_t
 class socks_client : public std::enable_shared_from_this<socks_client>
 {
    public:
-    socks_client(io_context_pool& pool, const config& cfg);
+    socks_client(io_context_pool& pool, const config& cfg, std::shared_ptr<client_tunnel_pool> tunnel_pool = nullptr);
 
     void start();
     void stop();

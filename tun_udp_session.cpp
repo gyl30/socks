@@ -13,6 +13,7 @@
 
 #include "log.h"
 #include "protocol.h"
+#include "trace_id.h"
 #include "constants.h"
 #include "mux_codec.h"
 #include "net_utils.h"
@@ -22,7 +23,6 @@
 #include "tun_udp_session.h"
 #include "mux_session_utils.h"
 #include "connection_tracker.h"
-#include "trace_id.h"
 namespace mux
 {
 
@@ -357,6 +357,25 @@ boost::asio::awaitable<bool> tun_udp_session::open_direct_socket()
                  target_endpoint_.port(),
                  ec.message());
         co_return false;
+    }
+
+    const auto connect_mark = cfg_.tproxy.enabled ? cfg_.tproxy.mark : 0U;
+    if (connect_mark != 0)
+    {
+        net::set_socket_mark(upstream_socket_.native_handle(), connect_mark, ec);
+        if (ec)
+        {
+            LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} target {}:{} set tun direct udp mark failed {}",
+                     log_event::kConnInit,
+                     trace_id_,
+                     conn_id_,
+                     client_endpoint_.address().to_string(),
+                     client_endpoint_.port(),
+                     target_endpoint_.address().to_string(),
+                     target_endpoint_.port(),
+                     ec.message());
+            co_return false;
+        }
     }
 
     upstream_socket_.bind(boost::asio::ip::udp::endpoint(protocol, 0), ec);
