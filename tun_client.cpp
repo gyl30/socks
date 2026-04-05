@@ -27,11 +27,11 @@
 namespace mux
 {
 
-tun_client::tun_client(io_context_pool& pool, const config& cfg)
+tun_client::tun_client(io_context_pool& pool, const config& cfg, std::shared_ptr<client_tunnel_pool> tunnel_pool)
     : cfg_(cfg),
       owner_worker_(pool.get_io_worker()),
       router_(std::make_shared<router>()),
-      tunnel_pool_(std::make_shared<client_tunnel_pool>(pool, cfg))
+      tunnel_pool_(tunnel_pool != nullptr ? std::move(tunnel_pool) : std::make_shared<client_tunnel_pool>(pool, cfg))
 {
 }
 
@@ -47,8 +47,6 @@ void tun_client::start()
         LOG_ERROR("event {} stage start load router data for tun client failed", log_event::kConnInit);
         std::exit(EXIT_FAILURE);
     }
-
-    tunnel_pool_->start();
 
     boost::system::error_code ec;
     if (!device_.open(cfg_.tun, ec))
@@ -182,10 +180,6 @@ void tun_client::stop()
 #endif
                           self->shutdown_stack();
                           self->device_.close();
-                          if (self->tunnel_pool_ != nullptr)
-                          {
-                              self->tunnel_pool_->stop();
-                          }
                       });
 }
 

@@ -122,11 +122,11 @@ void open_udp_listener(boost::asio::ip::udp::socket& socket, const std::string& 
 
 }    // namespace
 
-tproxy_client::tproxy_client(io_context_pool& pool, const config& cfg)
+tproxy_client::tproxy_client(io_context_pool& pool, const config& cfg, std::shared_ptr<client_tunnel_pool> tunnel_pool)
     : cfg_(cfg),
       owner_worker_(pool.get_io_worker()),
       router_(std::make_shared<router>()),
-      tunnel_pool_(std::make_shared<client_tunnel_pool>(pool, cfg)),
+      tunnel_pool_(tunnel_pool != nullptr ? std::move(tunnel_pool) : std::make_shared<client_tunnel_pool>(pool, cfg)),
       tcp_acceptor_(owner_worker_.io_context)
 {
 }
@@ -154,7 +154,6 @@ void tproxy_client::start()
         std::exit(EXIT_FAILURE);
     }
 
-    tunnel_pool_->start();
     LOG_INFO("event {} listen {} tcp_port {} udp_port {} tproxy starting listeners",
              log_event::kConnInit,
              cfg_.tproxy.listen_host,
@@ -265,10 +264,6 @@ void tproxy_client::stop()
                           self->udp_session_lru_.clear();
                           self->udp_session_lru_index_.clear();
 
-                          if (self->tunnel_pool_ != nullptr)
-                          {
-                              self->tunnel_pool_->stop();
-                          }
                       });
 }
 

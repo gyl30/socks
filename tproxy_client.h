@@ -22,7 +22,7 @@ namespace mux
 class tproxy_client : public std::enable_shared_from_this<tproxy_client>
 {
    public:
-    tproxy_client(io_context_pool& pool, const config& cfg);
+    tproxy_client(io_context_pool& pool, const config& cfg, std::shared_ptr<client_tunnel_pool> tunnel_pool = nullptr);
 
    public:
     void start();
