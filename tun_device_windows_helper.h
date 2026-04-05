@@ -7,9 +7,9 @@
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
-#include <winsock2.h>
 #include <windows.h>
 #include <netioapi.h>
+#include <winsock2.h>
 
 #ifdef __cplusplus
 extern "C" {

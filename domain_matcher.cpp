@@ -4,8 +4,8 @@
 #include <fstream>
 #include <algorithm>
 
-#include "constants.h"
 #include "log.h"
+#include "constants.h"
 #include "domain_matcher.h"
 #include "rule_file_utils.h"
 namespace mux

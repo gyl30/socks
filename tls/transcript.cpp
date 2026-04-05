@@ -3,17 +3,17 @@
 #include <cstddef>
 #include <cstdint>
 #include <utility>
+
 extern "C"
 {
 #include <openssl/evp.h>
 #include <openssl/types.h>
 }
 
-#include "constants.h"
 #include "log.h"
+#include "constants.h"
 #include "tls/transcript.h"
 #include "tls/crypto_util.h"
-
 namespace tls
 {
 

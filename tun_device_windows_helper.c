@@ -1,9 +1,9 @@
-#include "tun_device_windows_helper.h"
-
 #ifdef _WIN32
 
 #include <string.h>
 #include <iphlpapi.h>
+
+#include "tun_device_windows_helper.h"
 
 DWORD tun_device_windows_configure_interface(const NET_LUID* luid,
                                              const uint32_t mtu,

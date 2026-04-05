@@ -12,19 +12,22 @@
 #include <algorithm>
 #include <string_view>
 
-#include <boost/asio.hpp>
-#include <boost/asio/awaitable.hpp>
 extern "C"
 {
 #include <openssl/bio.h>
 #include <openssl/evp.h>
+}
+#include <boost/asio.hpp>
+extern "C"
+{
 #include <openssl/rand.h>
-#include <openssl/safestack.h>
 #include <openssl/x509.h>
 #include <openssl/types.h>
 #include <openssl/crypto.h>
 #include <openssl/x509_vfy.h>
+#include <openssl/safestack.h>
 }
+#include <boost/asio/awaitable.hpp>
 
 #include "log.h"
 #include "config.h"
@@ -47,7 +50,6 @@ extern "C"
 #include "reality/handshake/client_handshaker.h"
 #include "reality/handshake/client_hello_builder.h"
 #include "reality/handshake/fingerprint_internal.h"
-
 namespace reality
 {
 

@@ -7,14 +7,13 @@
 #include <cstdint>
 #include <cstring>
 
-#include <boost/system/detail/error_code.hpp>
 extern "C"
 {
 #include <openssl/types.h>
 }
+#include <boost/system/detail/error_code.hpp>
 
 #include "tls/cipher_context.h"
-
 namespace reality
 {
 

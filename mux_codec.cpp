@@ -11,8 +11,8 @@
 #include <boost/system/errc.hpp>
 #include <boost/system/error_code.hpp>
 
-#include "constants.h"
 #include "log.h"
+#include "constants.h"
 #include "mux_codec.h"
 #include "mux_protocol.h"
 namespace mux

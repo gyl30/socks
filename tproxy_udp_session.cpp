@@ -18,6 +18,7 @@
 #include "config.h"
 #include "router.h"
 #include "protocol.h"
+#include "trace_id.h"
 #include "constants.h"
 #include "net_utils.h"
 #include "mux_stream.h"
@@ -28,7 +29,6 @@
 #include "client_tunnel_pool.h"
 #include "connection_tracker.h"
 #include "tproxy_udp_session.h"
-#include "trace_id.h"
 namespace mux
 {
 

@@ -10,8 +10,8 @@
 
 #include <boost/asio.hpp>
 
-#include "constants.h"
 #include "log.h"
+#include "constants.h"
 #include "ip_matcher.h"
 #include "rule_file_utils.h"
 namespace mux
