@@ -5,19 +5,18 @@
 #include <cstddef>
 #include <cstring>
 
-#include <boost/system/error_code.hpp>
 extern "C"
 {
 #include <openssl/rand.h>
 #include <openssl/types.h>
 }
+#include <boost/system/error_code.hpp>
 
 #include "tls/core.h"
-#include "tls/crypto_util.h"
 #include "reality/types.h"
+#include "tls/crypto_util.h"
 #include "tls/record_layer.h"
 #include "tls/cipher_context.h"
-
 namespace tls
 {
 

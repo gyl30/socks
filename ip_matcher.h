@@ -3,10 +3,10 @@
 
 #include <memory>
 #include <string>
-#include <cstddef>
-#include <string_view>
 #include <vector>
+#include <cstddef>
 #include <utility>
+#include <string_view>
 
 #include <boost/asio.hpp>
 namespace mux

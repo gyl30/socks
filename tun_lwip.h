@@ -6,24 +6,23 @@
 #include <cstddef>
 #include <cstdint>
 
-#include <boost/asio/ip/udp.hpp>
-#include <boost/asio/ip/address.hpp>
 extern "C"
 {
-#include "lwip/init.h"
 #include "lwip/ip.h"
 #include "lwip/ip4.h"
 #include "lwip/ip6.h"
-#include "lwip/netif.h"
-#include "lwip/pbuf.h"
+#include "lwip/nd6.h"
 #include "lwip/tcp.h"
 #include "lwip/udp.h"
-#include "lwip/nd6.h"
+#include "lwip/init.h"
+#include "lwip/pbuf.h"
+#include "lwip/netif.h"
 #include "lwip/ip4_frag.h"
 #include "lwip/ip6_frag.h"
 #include "lwip/priv/tcp_priv.h"
 }
-
+#include <boost/asio/ip/udp.hpp>
+#include <boost/asio/ip/address.hpp>
 namespace mux::tun
 {
 

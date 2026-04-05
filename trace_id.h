@@ -1,9 +1,8 @@
 #ifndef TRACE_ID_H
 #define TRACE_ID_H
 
-#include <cstdint>
 #include <random>
-
+#include <cstdint>
 #ifdef __cplusplus
 extern "C"
 {

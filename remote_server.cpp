@@ -9,26 +9,26 @@
 #include <optional>
 
 #include <boost/asio.hpp>
-#include <boost/algorithm/hex.hpp>
-#include <boost/asio/awaitable.hpp>
-#include <boost/asio/use_awaitable.hpp>
-#include <boost/asio/experimental/channel_error.hpp>
 extern "C"
 {
 #include <openssl/crypto.h>
 }
+#include <boost/algorithm/hex.hpp>
+#include <boost/asio/awaitable.hpp>
+#include <boost/asio/use_awaitable.hpp>
+#include <boost/asio/experimental/channel_error.hpp>
 
 #include "log.h"
 #include "config.h"
-#include "constants.h"
 #include "protocol.h"
+#include "constants.h"
 #include "mux_codec.h"
-#include "mux_protocol.h"
-#include "context_pool.h"
 #include "net_utils.h"
+#include "context_pool.h"
+#include "mux_protocol.h"
 #include "replay_cache.h"
-#include "remote_server.h"
 #include "reality/types.h"
+#include "remote_server.h"
 #include "mux_connection.h"
 #include "remote_session.h"
 #include "tls/crypto_util.h"
@@ -39,7 +39,6 @@ extern "C"
 #include "reality/policy/fallback_executor.h"
 #include "reality/material/material_provider.h"
 #include "reality/handshake/server_handshaker.h"
-
 namespace mux
 {
 

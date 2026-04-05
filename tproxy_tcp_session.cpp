@@ -14,13 +14,13 @@
 #include "log.h"
 #include "config.h"
 #include "router.h"
+#include "trace_id.h"
 #include "upstream.h"
 #include "constants.h"
 #include "net_utils.h"
 #include "client_tunnel_pool.h"
 #include "connection_tracker.h"
 #include "tproxy_tcp_session.h"
-#include "trace_id.h"
 namespace mux
 {
 
