@@ -1,23 +1,26 @@
 #ifndef MUX_STREAM_H
 #define MUX_STREAM_H
 
+#include <cstdint>
+#include <functional>
 #include <memory>
 
 #include <boost/asio/awaitable.hpp>
-#include <boost/system/error_code.hpp>
 #include <boost/asio/experimental/concurrent_channel.hpp>
+#include <boost/system/error_code.hpp>
 
+#include "config.h"
 #include "mux_protocol.h"
+
 namespace mux
 {
-
-class mux_connection;
-struct config;
 
 class mux_stream
 {
    public:
-    mux_stream(uint32_t id, const config& cfg, boost::asio::io_context& io_context, const std::shared_ptr<mux_connection>& connection);
+    using frame_sender = std::function<boost::asio::awaitable<void>(mux_frame, uint32_t, boost::system::error_code&)>;
+
+    mux_stream(uint32_t id, const config& cfg, boost::asio::io_context& io_context, frame_sender send_frame);
 
     ~mux_stream();
 
@@ -31,7 +34,7 @@ class mux_stream
    private:
     uint32_t id_ = 0;
     const config& cfg_;
-    std::weak_ptr<mux_connection> connection_;
+    frame_sender send_frame_;
     boost::asio::experimental::concurrent_channel<void(boost::system::error_code, mux_frame)> recv_channel_;
 };
 

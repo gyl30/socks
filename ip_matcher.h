@@ -1,6 +1,7 @@
 #ifndef IP_MATCHER_H
 #define IP_MATCHER_H
 
+#include <array>
 #include <memory>
 #include <string>
 #include <vector>
@@ -27,7 +28,12 @@ class ip_matcher
     void optimize() const;
 
    private:
-    struct trie_node;
+    struct trie_node
+    {
+        std::array<std::unique_ptr<trie_node>, 2> children;
+        bool is_match = false;
+    };
+
     std::unique_ptr<trie_node> root_v4_;
     std::unique_ptr<trie_node> root_v6_;
 

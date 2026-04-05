@@ -8,6 +8,10 @@
 #include <boost/system/error_code.hpp>
 
 #include "config.h"
+#ifdef _WIN32
+#include "tun_device_windows_helper.h"
+#endif
+
 namespace mux
 {
 
@@ -50,8 +54,7 @@ class tun_device
     std::string index_;
 
 #ifdef _WIN32
-    struct windows_state;
-    windows_state* windows_ = nullptr;
+    tun_device_windows_state* windows_ = nullptr;
 #else
     int fd_ = -1;
 #endif

@@ -11,14 +11,14 @@
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/steady_timer.hpp>
 
+#include "client_tunnel_pool.h"
 #include "config.h"
 #include "router.h"
 #include "tun_lwip.h"
 #include "upstream.h"
+
 namespace mux
 {
-
-class client_tunnel_pool;
 
 class tun_tcp_session : public std::enable_shared_from_this<tun_tcp_session>
 {

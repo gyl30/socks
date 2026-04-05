@@ -13,13 +13,8 @@ extern "C"
 }
 #include <boost/system/detail/error_code.hpp>
 
+#include "reality/types.h"
 #include "tls/cipher_context.h"
-namespace reality
-{
-
-struct traffic_key_material;
-
-}    // namespace reality
 
 namespace tls
 {

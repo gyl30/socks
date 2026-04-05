@@ -8,13 +8,13 @@
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/awaitable.hpp>
 
+#include "client_tunnel_pool.h"
+#include "config.h"
 #include "context_pool.h"
+#include "router.h"
+
 namespace mux
 {
-
-struct config;
-class router;
-class client_tunnel_pool;
 
 enum class socks_client_state : uint8_t
 {

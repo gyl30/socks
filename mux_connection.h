@@ -15,23 +15,16 @@
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/experimental/concurrent_channel.hpp>
 
+#include "config.h"
 #include "constants.h"
+#include "context_pool.h"
 #include "mux_protocol.h"
+#include "mux_stream.h"
+#include "run_loop_spawner.h"
 #include "reality/session/engine.h"
-namespace reality
-{
-
-struct reality_record_context;
-
-}    // namespace reality
 
 namespace mux
 {
-
-struct config;
-struct io_worker;
-struct run_loop_spawner;
-class mux_stream;
 
 class mux_connection : public std::enable_shared_from_this<mux_connection>
 {
@@ -74,6 +67,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     boost::asio::awaitable<void> queue_incoming_syn(mux::frame_header header, std::vector<uint8_t> payload);
     boost::asio::awaitable<void> on_tls_record(uint8_t type, std::span<const uint8_t> plaintext, boost::system::error_code& ec);
     boost::asio::awaitable<void> send_heartbeat_frame(boost::system::error_code& ec);
+    [[nodiscard]] mux_stream::frame_sender make_stream_sender();
     [[nodiscard]] uint32_t acquire_next_id();
     [[nodiscard]] bool is_stream_limit_reached();
     [[nodiscard]] std::string_view local_host() const;

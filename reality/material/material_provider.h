@@ -3,13 +3,8 @@
 
 #include <boost/system/error_code.hpp>
 
+#include "config.h"
 #include "site_material.h"
-namespace mux
-{
-
-struct config;
-
-}    // namespace mux
 
 namespace reality
 {

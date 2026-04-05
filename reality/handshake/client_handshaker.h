@@ -10,18 +10,12 @@
 #include <boost/asio.hpp>
 #include <boost/asio/awaitable.hpp>
 
+#include "config.h"
+#include "reality/handshake/fingerprint.h"
 #include "reality/types.h"
-namespace mux
-{
-
-struct config;
-
-}    // namespace mux
 
 namespace reality
 {
-
-enum class fingerprint_type : uint8_t;
 
 class client_handshaker
 {
