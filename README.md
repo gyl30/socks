@@ -119,4 +119,4 @@
 - `inbound.host` 和 `inbound.port`：服务端监听地址和端口。
 - `outbound.host` 和 `outbound.port`：客户端连接到服务端的地址和端口，应与服务端监听地址对应。
 - `socks.host` 和 `socks.port`：客户端本地 SOCKS5 监听地址和端口。
-- `socks`、`tproxy`、`tun` 三种客户端入站按需启用，通常只启用其中一种；未使用的入站保持 `enabled: false`。
+- `socks`、`tproxy`、`tun` 三种客户端入站可以按需单独启用，也可以同时启用；同时启用时建议让不同入口处理不同流量域，并配套独立的策略路由或透明代理规则，未使用的入站保持 `enabled: false`。

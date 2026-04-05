@@ -15,27 +15,29 @@
 #include <boost/asio/signal_set.hpp>
 #include <boost/asio/use_awaitable.hpp>
 
-#include "constants.h"
 #include "log.h"
 #include "config.h"
+#include "constants.h"
 #include "net_utils.h"
+#if SOCKS_HAS_TUN
+#include "tun_client.h"
+#endif
 #include "scoped_exit.h"
 #include "context_pool.h"
 #include "socks_client.h"
 #include "remote_server.h"
-#if SOCKS_HAS_TUN
-#include "tun_client.h"
-#endif
 #if SOCKS_HAS_TPROXY
 #include "tproxy_client.h"
 #endif
 #include "tls/crypto_util.h"
+#include "client_tunnel_pool.h"
 namespace
 {
 
 struct runtime_services
 {
     std::shared_ptr<mux::remote_server> server = nullptr;
+    std::shared_ptr<mux::client_tunnel_pool> tunnel_pool = nullptr;
     std::shared_ptr<mux::socks_client> socks = nullptr;
 #if SOCKS_HAS_TUN
     std::shared_ptr<mux::tun_client> tun = nullptr;
@@ -177,6 +179,7 @@ runtime_services start_services(mux::io_context_pool& pool, const mux::config& c
 {
     runtime_services services;
     const bool is_client_mode = (cfg.mode == "client");
+    bool has_client_inbound = false;
 
     if (cfg.mode == "server")
     {
@@ -186,20 +189,42 @@ runtime_services start_services(mux::io_context_pool& pool, const mux::config& c
 
     if (is_client_mode && cfg.socks.enabled)
     {
-        services.socks = std::make_shared<mux::socks_client>(pool, cfg);
+        has_client_inbound = true;
+    }
+#if SOCKS_HAS_TUN
+    if (is_client_mode && cfg.tun.enabled)
+    {
+        has_client_inbound = true;
+    }
+#endif
+#if SOCKS_HAS_TPROXY
+    if (is_client_mode && cfg.tproxy.enabled)
+    {
+        has_client_inbound = true;
+    }
+#endif
+    if (has_client_inbound)
+    {
+        services.tunnel_pool = std::make_shared<mux::client_tunnel_pool>(pool, cfg);
+        services.tunnel_pool->start();
+    }
+
+    if (is_client_mode && cfg.socks.enabled)
+    {
+        services.socks = std::make_shared<mux::socks_client>(pool, cfg, services.tunnel_pool);
         services.socks->start();
     }
 #if SOCKS_HAS_TUN
     if (is_client_mode && cfg.tun.enabled)
     {
-        services.tun = std::make_shared<mux::tun_client>(pool, cfg);
+        services.tun = std::make_shared<mux::tun_client>(pool, cfg, services.tunnel_pool);
         services.tun->start();
     }
 #endif
 #if SOCKS_HAS_TPROXY
     if (is_client_mode && cfg.tproxy.enabled)
     {
-        services.tproxy = std::make_shared<mux::tproxy_client>(pool, cfg);
+        services.tproxy = std::make_shared<mux::tproxy_client>(pool, cfg, services.tunnel_pool);
         services.tproxy->start();
     }
 #endif
@@ -224,6 +249,10 @@ void stop_services(const runtime_services& services, const mux::io_context_pool&
         services.tproxy->stop();
     }
 #endif
+    if (services.tunnel_pool != nullptr)
+    {
+        services.tunnel_pool->stop();
+    }
     if (services.server != nullptr)
     {
         services.server->stop();
