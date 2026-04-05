@@ -1,18 +1,18 @@
 #ifndef TPROXY_TCP_SESSION_H
 #define TPROXY_TCP_SESSION_H
 
+#include <cstdint>
 #include <atomic>
 #include <chrono>
 #include <memory>
 #include <string>
-#include <cstdint>
 #include <utility>
 
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/steady_timer.hpp>
 
-#include "router.h"
 #include "upstream.h"
+#include "router.h"
 namespace mux
 {
 
@@ -30,10 +30,24 @@ class tproxy_tcp_session : public std::enable_shared_from_this<tproxy_tcp_sessio
 
    private:
     [[nodiscard]] boost::asio::awaitable<void> run();
+    [[nodiscard]] bool resolve_target_endpoint(boost::asio::ip::tcp::endpoint& target_ep);
+    [[nodiscard]] bool detect_routing_loop(const boost::asio::ip::tcp::endpoint& target_ep,
+                                           const boost::system::error_code& local_ec,
+                                           const boost::asio::ip::tcp::endpoint& local_ep) const;
+    void update_session_endpoints(const boost::asio::ip::tcp::endpoint& target_ep,
+                                  const boost::system::error_code& local_ec,
+                                  const boost::asio::ip::tcp::endpoint& local_ep,
+                                  const boost::system::error_code& peer_ec,
+                                  const boost::asio::ip::tcp::endpoint& peer_ep);
+    void log_redirected_connection() const;
     [[nodiscard]] boost::asio::awaitable<std::pair<route_type, std::shared_ptr<upstream>>> select_backend(const boost::asio::ip::address& addr);
+    [[nodiscard]] boost::asio::awaitable<bool> connect_backend(route_type route, const std::shared_ptr<upstream>& backend);
+    [[nodiscard]] boost::asio::awaitable<void> relay_backend(const std::shared_ptr<upstream>& backend);
     [[nodiscard]] boost::asio::awaitable<void> client_to_upstream(std::shared_ptr<upstream> backend);
     [[nodiscard]] boost::asio::awaitable<void> upstream_to_client(std::shared_ptr<upstream> backend);
     [[nodiscard]] boost::asio::awaitable<void> idle_watchdog();
+    void close_client_socket();
+    void log_close_summary() const;
 
    private:
     uint64_t trace_id_ = 0;

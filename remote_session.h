@@ -1,18 +1,18 @@
 #ifndef REMOTE_SESSION_H
 #define REMOTE_SESSION_H
 
+#include <cstdint>
 #include <chrono>
 #include <memory>
 #include <string>
-#include <cstdint>
 
 #include <boost/asio.hpp>
 #include <boost/asio/awaitable.hpp>
 
-#include "config.h"
-#include "mux_stream.h"
 #include "mux_protocol.h"
+#include "mux_stream.h"
 #include "mux_connection.h"
+#include "config.h"
 namespace mux
 {
 
@@ -31,11 +31,19 @@ class remote_tcp_session : public std::enable_shared_from_this<remote_tcp_sessio
 
    private:
     [[nodiscard]] boost::asio::awaitable<void> run(const syn_payload& syn);
+    void initialize_target(const syn_payload& syn);
+    void log_connecting() const;
+    [[nodiscard]] boost::asio::awaitable<bool> resolve_target(boost::asio::ip::tcp::resolver& resolver,
+                                                              boost::asio::ip::tcp::resolver::results_type& resolve_res);
+    [[nodiscard]] boost::asio::awaitable<bool> connect_target(const boost::asio::ip::tcp::resolver::results_type& resolve_res);
+    [[nodiscard]] boost::asio::awaitable<bool> send_success_ack();
+    [[nodiscard]] boost::asio::awaitable<void> relay_target();
     [[nodiscard]] boost::asio::awaitable<void> upstream();
     [[nodiscard]] boost::asio::awaitable<void> downstream();
     [[nodiscard]] boost::asio::awaitable<void> idle_watchdog();
     void close_from_fin();
     void close_from_reset();
+    void log_close_summary() const;
 
    private:
     uint32_t id_;

@@ -1,7 +1,8 @@
+#include <algorithm>
 #include <chrono>
 #include <memory>
-#include <string>
 #include <vector>
+#include <string>
 #include <utility>
 
 #include <boost/asio.hpp>
@@ -10,16 +11,16 @@
 #include <boost/asio/redirect_error.hpp>
 #include <boost/asio/experimental/awaitable_operators.hpp>
 
-#include "log.h"
 #include "config.h"
-#include "protocol.h"
+#include "log.h"
 #include "mux_codec.h"
+#include "protocol.h"
 #include "net_utils.h"
 #include "scoped_exit.h"
-#include "mux_protocol.h"
 #include "mux_connection.h"
-#include "remote_session.h"
+#include "mux_protocol.h"
 #include "mux_session_utils.h"
+#include "remote_session.h"
 namespace mux
 {
 
@@ -122,20 +123,54 @@ boost::asio::awaitable<void> remote_tcp_session::run(const syn_payload& syn)
     DEFER(if (auto connection = connection_.lock(); connection != nullptr && stream_ != nullptr) { connection->close_and_remove_stream(stream_); });
     DEFER(boost::system::error_code ignore; ignore = socket_.close(ignore); (void)ignore;);
 
+    initialize_target(syn);
+    log_connecting();
+
+    boost::asio::ip::tcp::resolver resolver(socket_.get_executor());
+    boost::asio::ip::tcp::resolver::results_type resolve_res;
+    if (!(co_await resolve_target(resolver, resolve_res)))
+    {
+        co_return;
+    }
+
+    if (!(co_await connect_target(resolve_res)))
+    {
+        co_return;
+    }
+
+    if (!(co_await send_success_ack()))
+    {
+        co_return;
+    }
+
+    co_await relay_target();
+    log_close_summary();
+}
+
+void remote_tcp_session::initialize_target(const syn_payload& syn)
+{
     target_host_ = syn.addr;
     target_port_ = syn.port;
     bind_host_ = "unknown";
     bind_port_ = 0;
+}
+
+void remote_tcp_session::log_connecting() const
+{
     LOG_INFO("event {} trace_id {:016x} conn_id {} stream_id {} target {}:{} connecting",
              log_event::kMux,
              trace_id_,
              conn_id_,
              id_,
-             syn.addr,
-             syn.port);
+             target_host_,
+             target_port_);
+}
+
+boost::asio::awaitable<bool> remote_tcp_session::resolve_target(boost::asio::ip::tcp::resolver& resolver,
+                                                                boost::asio::ip::tcp::resolver::results_type& resolve_res)
+{
     boost::system::error_code ec;
-    boost::asio::ip::tcp::resolver resolver(socket_.get_executor());
-    auto resolve_res = co_await net::wait_resolve_with_timeout(resolver, syn.addr, std::to_string(syn.port), cfg_.timeout.connect, ec);
+    resolve_res = co_await net::wait_resolve_with_timeout(resolver, target_host_, std::to_string(target_port_), cfg_.timeout.connect, ec);
     if (ec)
     {
         const auto rep = socks::map_connect_error_to_socks_rep(ec);
@@ -144,12 +179,12 @@ boost::asio::awaitable<void> remote_tcp_session::run(const syn_payload& syn)
                  trace_id_,
                  conn_id_,
                  id_,
-                 syn.addr,
-                 syn.port,
+                 target_host_,
+                 target_port_,
                  ec.message(),
                  rep);
         co_await session_util::send_fail_ack(stream_, id_, rep);
-        co_return;
+        co_return false;
     }
     if (resolve_res.begin() == resolve_res.end())
     {
@@ -158,12 +193,17 @@ boost::asio::awaitable<void> remote_tcp_session::run(const syn_payload& syn)
                  trace_id_,
                  conn_id_,
                  id_,
-                 syn.addr,
-                 syn.port,
+                 target_host_,
+                 target_port_,
                  socks::kRepHostUnreach);
         co_await session_util::send_fail_ack(stream_, id_, socks::kRepHostUnreach);
-        co_return;
+        co_return false;
     }
+    co_return true;
+}
+
+boost::asio::awaitable<bool> remote_tcp_session::connect_target(const boost::asio::ip::tcp::resolver::results_type& resolve_res)
+{
     boost::system::error_code connect_ec = boost::asio::error::host_unreachable;
     for (const auto& entry : resolve_res)
     {
@@ -183,8 +223,8 @@ boost::asio::awaitable<void> remote_tcp_session::run(const syn_payload& syn)
                       trace_id_,
                       conn_id_,
                       id_,
-                      syn.addr,
-                      syn.port,
+                      target_host_,
+                      target_port_,
                       endpoint_text,
                       connect_ec.message());
             continue;
@@ -194,14 +234,15 @@ boost::asio::awaitable<void> remote_tcp_session::run(const syn_payload& syn)
                   trace_id_,
                   conn_id_,
                   id_,
-                  syn.addr,
-                  syn.port,
+                  target_host_,
+                  target_port_,
                   endpoint_text);
         co_await net::wait_connect_with_timeout(socket_, endpoint, cfg_.timeout.connect, connect_ec);
         if (!connect_ec)
         {
             break;
         }
+
         boost::system::error_code local_ep_ec;
         const auto local_ep = socket_.local_endpoint(local_ep_ec);
         if (local_ep_ec)
@@ -211,25 +252,24 @@ boost::asio::awaitable<void> remote_tcp_session::run(const syn_payload& syn)
                       trace_id_,
                       conn_id_,
                       id_,
-                      syn.addr,
-                      syn.port,
+                      target_host_,
+                      target_port_,
                       endpoint_text,
                       connect_ec.message(),
                       local_ep_ec.message());
+            continue;
         }
-        else
-        {
-            LOG_DEBUG("event {} trace_id {:016x} conn_id {} stream_id {} target {}:{} connect try endpoint {} failed {} local_ep {}",
-                      log_event::kMux,
-                      trace_id_,
-                      conn_id_,
-                      id_,
-                      syn.addr,
-                      syn.port,
-                      endpoint_text,
-                      connect_ec.message(),
-                      local_ep.address().to_string() + ":" + std::to_string(local_ep.port()));
-        }
+
+        LOG_DEBUG("event {} trace_id {:016x} conn_id {} stream_id {} target {}:{} connect try endpoint {} failed {} local_ep {}",
+                  log_event::kMux,
+                  trace_id_,
+                  conn_id_,
+                  id_,
+                  target_host_,
+                  target_port_,
+                  endpoint_text,
+                  connect_ec.message(),
+                  local_ep.address().to_string() + ":" + std::to_string(local_ep.port()));
     }
     if (connect_ec)
     {
@@ -239,17 +279,17 @@ boost::asio::awaitable<void> remote_tcp_session::run(const syn_payload& syn)
                  trace_id_,
                  conn_id_,
                  id_,
-                 syn.addr,
-                 syn.port,
+                 target_host_,
+                 target_port_,
                  connect_ec.message(),
                  rep);
         co_await session_util::send_fail_ack(stream_, id_, rep);
-        co_return;
+        co_return false;
     }
-    ec.clear();
 
-    ec = socket_.set_option(boost::asio::ip::tcp::no_delay(true), ec);
-    if (ec)
+    connect_ec.clear();
+    connect_ec = socket_.set_option(boost::asio::ip::tcp::no_delay(true), connect_ec);
+    if (connect_ec)
     {
         LOG_WARN("event {} trace_id {:016x} conn_id {} stream_id {} target {}:{} stage set_no_delay error {}",
                  log_event::kMux,
@@ -258,19 +298,23 @@ boost::asio::awaitable<void> remote_tcp_session::run(const syn_payload& syn)
                  id_,
                  target_host_,
                  target_port_,
-                 ec.message());
+                 connect_ec.message());
     }
     LOG_INFO("event {} trace_id {:016x} conn_id {} stream_id {} target {}:{} connected",
              log_event::kConnEstablished,
              trace_id_,
              conn_id_,
              id_,
-             syn.addr,
-             syn.port);
+             target_host_,
+             target_port_);
+    co_return true;
+}
 
-    boost::system::error_code local_ep_ec;
-    const auto local_ep = socket_.local_endpoint(local_ep_ec);
-    if (local_ep_ec)
+boost::asio::awaitable<bool> remote_tcp_session::send_success_ack()
+{
+    boost::system::error_code ec;
+    const auto local_ep = socket_.local_endpoint(ec);
+    if (ec)
     {
         LOG_WARN("event {} trace_id {:016x} conn_id {} stream_id {} target {}:{} stage query_bind_endpoint error {}",
                  log_event::kMux,
@@ -279,16 +323,14 @@ boost::asio::awaitable<void> remote_tcp_session::run(const syn_payload& syn)
                  id_,
                  target_host_,
                  target_port_,
-                 local_ep_ec.message());
+                 ec.message());
         co_await session_util::send_fail_ack(stream_, id_, socks::kRepGenFail);
-        co_return;
+        co_return false;
     }
-    std::string bind_addr = local_ep.address().to_string();
-    uint16_t bind_port = local_ep.port();
-    bind_host_ = bind_addr;
-    bind_port_ = bind_port;
 
-    const ack_payload ack{.socks_rep = socks::kRepSuccess, .bnd_addr = bind_addr, .bnd_port = bind_port};
+    bind_host_ = local_ep.address().to_string();
+    bind_port_ = local_ep.port();
+    const ack_payload ack{.socks_rep = socks::kRepSuccess, .bnd_addr = bind_host_, .bnd_port = bind_port_};
     std::vector<uint8_t> ack_data;
     if (!mux_codec::encode_ack(ack, ack_data))
     {
@@ -301,8 +343,9 @@ boost::asio::awaitable<void> remote_tcp_session::run(const syn_payload& syn)
                  target_port_,
                  bind_host_,
                  bind_port_);
-        co_return;
+        co_return false;
     }
+
     mux_frame ack_frame;
     ack_frame.h.stream_id = id_;
     ack_frame.h.command = mux::kCmdAck;
@@ -320,8 +363,9 @@ boost::asio::awaitable<void> remote_tcp_session::run(const syn_payload& syn)
                  bind_host_,
                  bind_port_,
                  ec.message());
-        co_return;
+        co_return false;
     }
+
     LOG_INFO("event {} trace_id {:016x} conn_id {} stream_id {} target {}:{} ack sent bind {}:{}",
              log_event::kMux,
              trace_id_,
@@ -329,20 +373,27 @@ boost::asio::awaitable<void> remote_tcp_session::run(const syn_payload& syn)
              id_,
              target_host_,
              target_port_,
-             bind_addr,
-             bind_port);
+             bind_host_,
+             bind_port_);
+    co_return true;
+}
 
+boost::asio::awaitable<void> remote_tcp_session::relay_target()
+{
     using boost::asio::experimental::awaitable_operators::operator&&;
     using boost::asio::experimental::awaitable_operators::operator||;
+
     if (cfg_.timeout.idle == 0)
     {
         co_await (upstream() && downstream());
-    }
-    else
-    {
-        co_await ((upstream() && downstream()) || idle_watchdog());
+        co_return;
     }
 
+    co_await ((upstream() && downstream()) || idle_watchdog());
+}
+
+void remote_tcp_session::log_close_summary() const
+{
     const auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time_).count();
     LOG_INFO("event {} trace_id {:016x} conn_id {} stream_id {} target {}:{} bind {}:{} tx_bytes {} rx_bytes {} duration_ms {}",
              log_event::kConnClose,
