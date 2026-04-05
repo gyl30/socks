@@ -8,27 +8,12 @@
 #include <boost/asio.hpp>
 #include <boost/asio/awaitable.hpp>
 #include <boost/system/error_code.hpp>
-namespace mux
-{
 
-struct config;
-
-}    // namespace mux
+#include "config.h"
+#include "reality/policy/fallback_request.h"
 
 namespace reality
 {
-
-struct fallback_request
-{
-    boost::asio::ip::tcp::socket* client_socket = nullptr;
-    uint32_t conn_id = 0;
-    std::string local_addr;
-    uint16_t local_port = 0;
-    std::string remote_addr;
-    uint16_t remote_port = 0;
-    std::string sni;
-    std::vector<uint8_t> client_hello_record;
-};
 
 class fallback_executor
 {

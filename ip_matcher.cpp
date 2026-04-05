@@ -17,12 +17,6 @@
 namespace mux
 {
 
-struct ip_matcher::trie_node
-{
-    std::array<std::unique_ptr<trie_node>, 2> children;
-    bool is_match = false;
-};
-
 namespace
 {
 constexpr std::size_t to_index(bool bit) { return bit ? 1U : 0U; }

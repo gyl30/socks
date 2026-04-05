@@ -9,25 +9,18 @@
 
 #include <boost/asio/awaitable.hpp>
 
+#include "config.h"
 #include "context_pool.h"
+#include "mux_connection.h"
 #include "mux_protocol.h"
 #include "replay_cache.h"
 #include "site_material.h"
+#include "reality/handshake/server_handshake_context.h"
 #include "reality/policy/fallback_gate.h"
 #include "reality/policy/fallback_executor.h"
 
-namespace reality
-{
-
-struct server_handshake_context;
-
-}    // namespace reality
-
 namespace mux
 {
-
-struct config;
-class mux_connection;
 
 class remote_server : public std::enable_shared_from_this<remote_server>
 {

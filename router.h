@@ -1,16 +1,18 @@
 #ifndef ROUTER_H
 #define ROUTER_H
 
+#include <cstdint>
 #include <memory>
 #include <string>
 
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/ip/address.hpp>
+
+#include "ip_matcher.h"
+#include "domain_matcher.h"
+
 namespace mux
 {
-
-class ip_matcher;
-class domain_matcher;
 
 enum class route_type : uint8_t
 {

@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <memory>
 #include <vector>
 #include <utility>
@@ -9,14 +10,14 @@
 #include "config.h"
 #include "constants.h"
 #include "net_utils.h"
-#include "mux_stream.h"
 #include "mux_protocol.h"
-#include "mux_connection.h"
+#include "mux_stream.h"
+
 namespace mux
 {
 
-mux_stream::mux_stream(uint32_t id, const config& cfg, boost::asio::io_context& io_context, const std::shared_ptr<mux_connection>& connection)
-    : id_(id), cfg_(cfg), connection_(connection), recv_channel_(io_context, constants::mux::kStreamRecvChannelCapacity)
+mux_stream::mux_stream(uint32_t id, const config& cfg, boost::asio::io_context& io_context, frame_sender send_frame)
+    : id_(id), cfg_(cfg), send_frame_(std::move(send_frame)), recv_channel_(io_context, constants::mux::kStreamRecvChannelCapacity)
 {
 }
 
@@ -44,8 +45,7 @@ boost::asio::awaitable<mux_frame> mux_stream::async_read(uint32_t timeout_sec, b
 
 boost::asio::awaitable<void> mux_stream::async_write(mux_frame frame, boost::system::error_code& ec) const
 {
-    const auto connection = connection_.lock();
-    if (!connection)
+    if (!send_frame_)
     {
         ec = boost::asio::error::connection_aborted;
         co_return;
@@ -54,11 +54,11 @@ boost::asio::awaitable<void> mux_stream::async_write(mux_frame frame, boost::sys
     frame.h.stream_id = id_;
     if (frame.h.command == mux::kCmdFin || frame.h.command == mux::kCmdRst)
     {
-        co_await connection->send_async_with_timeout(std::move(frame), constants::mux::kControlFrameSendTimeoutSec, ec);
+        co_await send_frame_(std::move(frame), constants::mux::kControlFrameSendTimeoutSec, ec);
     }
     else
     {
-        co_await connection->send_async(std::move(frame), ec);
+        co_await send_frame_(std::move(frame), 0, ec);
     }
     if (ec)
     {

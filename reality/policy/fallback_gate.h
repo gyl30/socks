@@ -9,10 +9,10 @@
 #include <functional>
 #include <unordered_map>
 
+#include "reality/policy/fallback_request.h"
+
 namespace reality
 {
-
-struct fallback_request;
 
 class fallback_gate
 {

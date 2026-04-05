@@ -17,7 +17,6 @@ extern "C"
 #include "reality/handshake/fingerprint_patch.h"
 #include "reality/handshake/fingerprint_internal.h"
 #include "reality/handshake/fingerprint_blueprint.h"
-#include "reality/handshake/fingerprint_mutation_internal.h"
 
 namespace reality
 {
@@ -27,19 +26,22 @@ namespace
 
 void set_fingerprint_client_version(fingerprint_template& spec, uint16_t client_version)
 {
-    fingerprint_template_mutation::set_client_version(spec, client_version);
+    fingerprint_template_storage::set_client_version(spec, client_version);
 }
 
-std::vector<uint16_t>& mutable_fingerprint_cipher_suites(fingerprint_template& spec) { return fingerprint_template_mutation::cipher_suites(spec); }
+std::vector<uint16_t>& mutable_fingerprint_cipher_suites(fingerprint_template& spec)
+{
+    return fingerprint_template_storage::mutable_cipher_suites(spec);
+}
 
 std::vector<std::shared_ptr<extension_blueprint>>& mutable_fingerprint_extensions(fingerprint_template& spec)
 {
-    return fingerprint_template_mutation::extensions(spec);
+    return fingerprint_template_storage::mutable_extensions(spec);
 }
 
 void set_fingerprint_shuffle_extensions(fingerprint_template& spec, bool enabled)
 {
-    fingerprint_template_mutation::set_shuffle_extensions(spec, enabled);
+    fingerprint_template_storage::set_shuffle_extensions(spec, enabled);
 }
 
 key_share_blueprint* find_key_share_blueprint(fingerprint_template& spec)
