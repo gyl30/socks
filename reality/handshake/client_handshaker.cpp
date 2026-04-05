@@ -156,6 +156,41 @@ struct client_ephemeral_keys
 using x509_store_ptr = std::unique_ptr<X509_STORE, decltype(&X509_STORE_free)>;
 using x509_store_ctx_ptr = std::unique_ptr<X509_STORE_CTX, decltype(&X509_STORE_CTX_free)>;
 
+constexpr uint8_t kHandshakeTypeEncryptedExtensions = 0x08;
+constexpr uint8_t kHandshakeTypeCertificate = 0x0b;
+constexpr uint8_t kHandshakeTypeCertificateVerify = 0x0f;
+constexpr uint8_t kHandshakeTypeFinished = 0x14;
+constexpr uint8_t kHandshakeTypeCompressedCertificate = 0x19;
+
+enum class server_handshake_message_type
+{
+    kEncryptedExtensions,
+    kCertificate,
+    kCompressedCertificate,
+    kCertificateVerify,
+    kFinished,
+    kUnknown,
+};
+
+server_handshake_message_type classify_server_handshake_message(const uint8_t msg_type)
+{
+    switch (msg_type)
+    {
+    case kHandshakeTypeEncryptedExtensions:
+        return server_handshake_message_type::kEncryptedExtensions;
+    case kHandshakeTypeCertificate:
+        return server_handshake_message_type::kCertificate;
+    case kHandshakeTypeCompressedCertificate:
+        return server_handshake_message_type::kCompressedCertificate;
+    case kHandshakeTypeCertificateVerify:
+        return server_handshake_message_type::kCertificateVerify;
+    case kHandshakeTypeFinished:
+        return server_handshake_message_type::kFinished;
+    default:
+        return server_handshake_message_type::kUnknown;
+    }
+}
+
 class x509_stack_deleter
 {
    public:
@@ -696,6 +731,217 @@ boost::asio::awaitable<encrypted_record> read_encrypted_record(boost::asio::ip::
     co_return encrypted_record{.content_type = record_header[0], .ciphertext = std::move(ciphertext)};
 }
 
+void reject_unexpected_handshake_message(const handshake_validation_state& validation_state, const char* reason, boost::system::error_code& ec)
+{
+    LOG_ERROR("event {} conn_id {} sni {} {}",
+              mux::log_event::kHandshake,
+              validation_state.log_context.conn_id,
+              handshake_log_sni(validation_state.log_context),
+              reason);
+    ec = boost::asio::error::invalid_argument;
+}
+
+bool validate_encrypted_extensions_order(const handshake_validation_state& validation_state, const bool handshake_fin, boost::system::error_code& ec)
+{
+    if (validation_state.encrypted_extensions_checked || validation_state.cert_checked || validation_state.cert_verify_checked || handshake_fin)
+    {
+        reject_unexpected_handshake_message(validation_state, "unexpected encrypted extensions order", ec);
+        return false;
+    }
+    if (validation_state.client_hello == nullptr)
+    {
+        LOG_ERROR("event {} conn_id {} sni {} missing client hello for encrypted extensions",
+                  mux::log_event::kHandshake,
+                  validation_state.log_context.conn_id,
+                  handshake_log_sni(validation_state.log_context));
+        ec = boost::asio::error::fault;
+        return false;
+    }
+    return true;
+}
+
+bool validate_certificate_message_order(const handshake_validation_state& validation_state,
+                                        const bool handshake_fin,
+                                        const char* before_reason,
+                                        const char* duplicate_reason,
+                                        boost::system::error_code& ec)
+{
+    if (!validation_state.encrypted_extensions_checked)
+    {
+        reject_unexpected_handshake_message(validation_state, before_reason, ec);
+        return false;
+    }
+    if (validation_state.cert_checked || validation_state.cert_verify_checked || handshake_fin)
+    {
+        reject_unexpected_handshake_message(validation_state, duplicate_reason, ec);
+        return false;
+    }
+    return true;
+}
+
+bool validate_certificate_verify_order(const handshake_validation_state& validation_state, const bool handshake_fin, boost::system::error_code& ec)
+{
+    if (validation_state.cert_verify_checked || handshake_fin)
+    {
+        reject_unexpected_handshake_message(validation_state, "unexpected certificate verify message order", ec);
+        return false;
+    }
+    return true;
+}
+
+bool validate_finished_order(const handshake_validation_state& validation_state, const bool handshake_fin, boost::system::error_code& ec)
+{
+    if (handshake_fin)
+    {
+        reject_unexpected_handshake_message(validation_state, "duplicate server finished", ec);
+        return false;
+    }
+    if (!validation_state.cert_verify_checked)
+    {
+        reject_unexpected_handshake_message(validation_state, "server finished before certificate verify", ec);
+        return false;
+    }
+    return true;
+}
+
+bool validate_handshake_message_order(const server_handshake_message_type message_type,
+                                      const handshake_validation_state& validation_state,
+                                      const bool handshake_fin,
+                                      boost::system::error_code& ec)
+{
+    switch (message_type)
+    {
+    case server_handshake_message_type::kEncryptedExtensions:
+        return validate_encrypted_extensions_order(validation_state, handshake_fin, ec);
+    case server_handshake_message_type::kCertificate:
+        return validate_certificate_message_order(validation_state,
+                                                  handshake_fin,
+                                                  "certificate received before encrypted extensions",
+                                                  "unexpected certificate message order",
+                                                  ec);
+    case server_handshake_message_type::kCompressedCertificate:
+        return validate_certificate_message_order(validation_state,
+                                                  handshake_fin,
+                                                  "compressed certificate received before encrypted extensions",
+                                                  "unexpected compressed certificate message order",
+                                                  ec);
+    case server_handshake_message_type::kCertificateVerify:
+        return validate_certificate_verify_order(validation_state, handshake_fin, ec);
+    case server_handshake_message_type::kFinished:
+        return validate_finished_order(validation_state, handshake_fin, ec);
+    case server_handshake_message_type::kUnknown:
+        return true;
+    }
+    return true;
+}
+
+void handle_encrypted_extensions_message(const std::vector<uint8_t>& msg_data,
+                                         handshake_validation_state& validation_state,
+                                         boost::system::error_code& ec)
+{
+    validate_encrypted_extensions_message(
+        msg_data, *validation_state.client_hello, validation_state.log_context, validation_state.negotiated_alpn, ec);
+    if (ec)
+    {
+        return;
+    }
+    validation_state.encrypted_extensions_checked = true;
+}
+
+void handle_certificate_message(const std::vector<uint8_t>& msg_data,
+                                const std::vector<uint8_t>& auth_key,
+                                handshake_validation_state& validation_state,
+                                boost::system::error_code& ec)
+{
+    load_server_public_key_from_certificate(msg_data, auth_key, validation_state, ec);
+}
+
+void handle_compressed_certificate_message(const std::vector<uint8_t>& msg_data,
+                                           const std::vector<uint8_t>& auth_key,
+                                           handshake_validation_state& validation_state,
+                                           boost::system::error_code& ec)
+{
+    std::vector<uint8_t> certificate_msg;
+    if (!tls::decompress_certificate_message(msg_data, constants::reality_limits::kMaxHandshakeMessageSize, certificate_msg, ec))
+    {
+        LOG_ERROR("event {} conn_id {} sni {} compressed certificate decode failed {}",
+                  mux::log_event::kHandshake,
+                  validation_state.log_context.conn_id,
+                  handshake_log_sni(validation_state.log_context),
+                  ec.message());
+        return;
+    }
+    load_server_public_key_from_certificate(certificate_msg, auth_key, validation_state, ec);
+}
+
+void handle_certificate_verify_message(const std::vector<uint8_t>& msg_data,
+                                       handshake_validation_state& validation_state,
+                                       const tls::transcript& trans,
+                                       boost::system::error_code& ec)
+{
+    verify_server_certificate_verify_message(msg_data, trans, validation_state, ec);
+}
+
+void handle_finished_message(const std::vector<uint8_t>& msg_data,
+                             const tls::handshake_keys& hs_keys,
+                             const EVP_MD* md,
+                             const handshake_log_context& log_context,
+                             const tls::transcript& trans,
+                             bool& handshake_fin,
+                             boost::system::error_code& ec)
+{
+    verify_server_finished_message(msg_data, hs_keys, md, trans, log_context, ec);
+    if (ec)
+    {
+        return;
+    }
+    handshake_fin = true;
+}
+
+void handle_unknown_handshake_message(const uint8_t msg_type, const handshake_validation_state& validation_state, boost::system::error_code& ec)
+{
+    LOG_ERROR("event {} conn_id {} sni {} unexpected handshake message type {}",
+              mux::log_event::kHandshake,
+              validation_state.log_context.conn_id,
+              handshake_log_sni(validation_state.log_context),
+              msg_type);
+    ec = boost::asio::error::invalid_argument;
+}
+
+void dispatch_handshake_message(const server_handshake_message_type message_type,
+                                const uint8_t raw_msg_type,
+                                const std::vector<uint8_t>& msg_data,
+                                const std::vector<uint8_t>& auth_key,
+                                handshake_validation_state& validation_state,
+                                bool& handshake_fin,
+                                const tls::handshake_keys& hs_keys,
+                                const EVP_MD* md,
+                                const tls::transcript& trans,
+                                boost::system::error_code& ec)
+{
+    switch (message_type)
+    {
+    case server_handshake_message_type::kEncryptedExtensions:
+        handle_encrypted_extensions_message(msg_data, validation_state, ec);
+        return;
+    case server_handshake_message_type::kCertificate:
+        handle_certificate_message(msg_data, auth_key, validation_state, ec);
+        return;
+    case server_handshake_message_type::kCompressedCertificate:
+        handle_compressed_certificate_message(msg_data, auth_key, validation_state, ec);
+        return;
+    case server_handshake_message_type::kCertificateVerify:
+        handle_certificate_verify_message(msg_data, validation_state, trans, ec);
+        return;
+    case server_handshake_message_type::kFinished:
+        handle_finished_message(msg_data, hs_keys, md, validation_state.log_context, trans, handshake_fin, ec);
+        return;
+    case server_handshake_message_type::kUnknown:
+        handle_unknown_handshake_message(raw_msg_type, validation_state, ec);
+        return;
+    }
+}
+
 void handle_handshake_message(uint8_t msg_type,
                               const std::vector<uint8_t>& msg_data,
                               const std::vector<uint8_t>& auth_key,
@@ -706,139 +952,12 @@ void handle_handshake_message(uint8_t msg_type,
                               const tls::transcript& trans,
                               boost::system::error_code& ec)
 {
-    if (msg_type == 0x08)
+    const auto message_type = classify_server_handshake_message(msg_type);
+    if (!validate_handshake_message_order(message_type, validation_state, handshake_fin, ec))
     {
-        if (validation_state.encrypted_extensions_checked || validation_state.cert_checked || validation_state.cert_verify_checked || handshake_fin)
-        {
-            LOG_ERROR("event {} conn_id {} sni {} unexpected encrypted extensions order",
-                      mux::log_event::kHandshake,
-                      validation_state.log_context.conn_id,
-                      handshake_log_sni(validation_state.log_context));
-            ec = boost::asio::error::invalid_argument;
-            return;
-        }
-        if (validation_state.client_hello == nullptr)
-        {
-            LOG_ERROR("event {} conn_id {} sni {} missing client hello for encrypted extensions",
-                      mux::log_event::kHandshake,
-                      validation_state.log_context.conn_id,
-                      handshake_log_sni(validation_state.log_context));
-            ec = boost::asio::error::fault;
-            return;
-        }
-        validate_encrypted_extensions_message(msg_data, *validation_state.client_hello, validation_state.log_context, validation_state.negotiated_alpn, ec);
-        if (ec)
-        {
-            return;
-        }
-        validation_state.encrypted_extensions_checked = true;
         return;
     }
-    if (msg_type == 0x0b)
-    {
-        if (!validation_state.encrypted_extensions_checked)
-        {
-            LOG_ERROR("event {} conn_id {} sni {} certificate received before encrypted extensions",
-                      mux::log_event::kHandshake,
-                      validation_state.log_context.conn_id,
-                      handshake_log_sni(validation_state.log_context));
-            ec = boost::asio::error::invalid_argument;
-            return;
-        }
-        if (validation_state.cert_checked || validation_state.cert_verify_checked || handshake_fin)
-        {
-            LOG_ERROR("event {} conn_id {} sni {} unexpected certificate message order",
-                      mux::log_event::kHandshake,
-                      validation_state.log_context.conn_id,
-                      handshake_log_sni(validation_state.log_context));
-            ec = boost::asio::error::invalid_argument;
-            return;
-        }
-        load_server_public_key_from_certificate(msg_data, auth_key, validation_state, ec);
-        return;
-    }
-    if (msg_type == 0x19)
-    {
-        if (!validation_state.encrypted_extensions_checked)
-        {
-            LOG_ERROR("event {} conn_id {} sni {} compressed certificate received before encrypted extensions",
-                      mux::log_event::kHandshake,
-                      validation_state.log_context.conn_id,
-                      handshake_log_sni(validation_state.log_context));
-            ec = boost::asio::error::invalid_argument;
-            return;
-        }
-        if (validation_state.cert_checked || validation_state.cert_verify_checked || handshake_fin)
-        {
-            LOG_ERROR("event {} conn_id {} sni {} unexpected compressed certificate message order",
-                      mux::log_event::kHandshake,
-                      validation_state.log_context.conn_id,
-                      handshake_log_sni(validation_state.log_context));
-            ec = boost::asio::error::invalid_argument;
-            return;
-        }
-
-        std::vector<uint8_t> certificate_msg;
-        if (!tls::decompress_certificate_message(msg_data, constants::reality_limits::kMaxHandshakeMessageSize, certificate_msg, ec))
-        {
-            LOG_ERROR("event {} conn_id {} sni {} compressed certificate decode failed {}",
-                      mux::log_event::kHandshake,
-                      validation_state.log_context.conn_id,
-                      handshake_log_sni(validation_state.log_context),
-                      ec.message());
-            return;
-        }
-        load_server_public_key_from_certificate(certificate_msg, auth_key, validation_state, ec);
-        return;
-    }
-    if (msg_type == 0x0f)
-    {
-        if (validation_state.cert_verify_checked || handshake_fin)
-        {
-            LOG_ERROR("event {} conn_id {} sni {} unexpected certificate verify message order",
-                      mux::log_event::kHandshake,
-                      validation_state.log_context.conn_id,
-                      handshake_log_sni(validation_state.log_context));
-            ec = boost::asio::error::invalid_argument;
-            return;
-        }
-        verify_server_certificate_verify_message(msg_data, trans, validation_state, ec);
-        return;
-    }
-    if (msg_type == 0x14)
-    {
-        if (handshake_fin)
-        {
-            LOG_ERROR("event {} conn_id {} sni {} duplicate server finished",
-                      mux::log_event::kHandshake,
-                      validation_state.log_context.conn_id,
-                      handshake_log_sni(validation_state.log_context));
-            ec = boost::asio::error::invalid_argument;
-            return;
-        }
-        if (!validation_state.cert_verify_checked)
-        {
-            LOG_ERROR("event {} conn_id {} sni {} server finished before certificate verify",
-                      mux::log_event::kHandshake,
-                      validation_state.log_context.conn_id,
-                      handshake_log_sni(validation_state.log_context));
-            ec = boost::asio::error::invalid_argument;
-            return;
-        }
-        verify_server_finished_message(msg_data, hs_keys, md, trans, validation_state.log_context, ec);
-        if (ec)
-        {
-            return;
-        }
-        handshake_fin = true;
-        return;
-    }
-    LOG_ERROR("event {} conn_id {} sni {} unexpected handshake message type {}",
-              mux::log_event::kHandshake,
-              validation_state.log_context.conn_id,
-              handshake_log_sni(validation_state.log_context),
-              msg_type);
-    ec = boost::asio::error::invalid_argument;
+    dispatch_handshake_message(message_type, msg_type, msg_data, auth_key, validation_state, handshake_fin, hs_keys, md, trans, ec);
 }
 
 void consume_handshake_buffer(std::vector<uint8_t>& handshake_buffer,
