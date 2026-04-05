@@ -7,17 +7,16 @@
 #include <cstring>
 #include <utility>
 
-#include <boost/system/error_code.hpp>
 extern "C"
 {
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
 #include <openssl/types.h>
 }
+#include <boost/system/error_code.hpp>
 
 #include "tls/core.h"
 #include "tls/crypto_util.h"
-
 namespace tls
 {
 

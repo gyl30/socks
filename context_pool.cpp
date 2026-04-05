@@ -9,8 +9,8 @@
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/asio/executor_work_guard.hpp>
 
-#include "constants.h"
 #include "log.h"
+#include "constants.h"
 #include "context_pool.h"
 namespace mux
 {

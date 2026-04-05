@@ -9,7 +9,6 @@
 #include <cstddef>
 #include <utility>
 
-#include <boost/system/errc.hpp>
 extern "C"
 {
 #include <openssl/bio.h>
@@ -23,10 +22,11 @@ extern "C"
 #include <openssl/types.h>
 #include <openssl/crypto.h>
 }
+#include <boost/system/errc.hpp>
 
-#include "constants.h"
 #include "log.h"
 #include "tls/core.h"
+#include "constants.h"
 #include "tls/crypto_util.h"
 #include "tls/cipher_context.h"
 namespace tls

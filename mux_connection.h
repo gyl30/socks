@@ -6,9 +6,9 @@
 #include <atomic>
 #include <memory>
 #include <string>
-#include <string_view>
 #include <vector>
 #include <cstdint>
+#include <string_view>
 #include <unordered_map>
 
 #include <boost/asio.hpp>

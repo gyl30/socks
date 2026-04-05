@@ -5,17 +5,17 @@
 #include <utility>
 #include <optional>
 #include <algorithm>
+
+#include <boost/asio.hpp>
 extern "C"
 {
 #include <openssl/types.h>
 }
 
-#include <boost/asio.hpp>
-#include "constants.h"
 #include "tls/core.h"
+#include "constants.h"
 #include "tls/record_layer.h"
 #include "reality/session/engine.h"
-
 namespace mux
 {
 

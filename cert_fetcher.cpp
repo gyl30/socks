@@ -10,33 +10,35 @@
 #include <utility>
 #include <system_error>
 
-#include <boost/asio.hpp>
 extern "C"
 {
 #include <openssl/evp.h>
+}
+#include <boost/asio.hpp>
+extern "C"
+{
 #include <openssl/rand.h>
 #include <openssl/types.h>
 #include <openssl/crypto.h>
 }
 
 #include "log.h"
-#include "constants.h"
 #include "tls/core.h"
+#include "constants.h"
 #include "cert_fetcher.h"
 #include "site_material.h"
-#include "tls/cipher_context.h"
 #include "tls/transcript.h"
 #include "tls/crypto_util.h"
 #include "tls/cipher_suite.h"
 #include "tls/key_schedule.h"
 #include "tls/record_layer.h"
+#include "tls/cipher_context.h"
 #include "tls/handshake_builder.h"
 #include "tls/handshake_message.h"
 #include "tls/handshake_reassembler.h"
 #include "tls/certificate_compression.h"
 #include "reality/handshake/fingerprint.h"
 #include "reality/handshake/client_hello_builder.h"
-
 namespace reality
 {
 

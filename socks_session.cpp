@@ -18,6 +18,7 @@
 #include "log.h"
 #include "config.h"
 #include "protocol.h"
+#include "trace_id.h"
 #include "constants.h"
 #include "net_utils.h"
 #include "context_pool.h"
@@ -26,7 +27,6 @@
 #include "tcp_socks_session.h"
 #include "udp_socks_session.h"
 #include "connection_tracker.h"
-#include "trace_id.h"
 namespace mux
 {
 
