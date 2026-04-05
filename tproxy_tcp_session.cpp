@@ -1,9 +1,9 @@
-#include <cstddef>
 #include <chrono>
 #include <memory>
 #include <string>
-#include <utility>
 #include <vector>
+#include <utility>
+#include <cstddef>
 
 #include <boost/asio.hpp>
 #include <boost/asio/awaitable.hpp>
@@ -11,13 +11,13 @@
 #include <boost/asio/experimental/channel_error.hpp>
 #include <boost/asio/experimental/awaitable_operators.hpp>
 
-#include "config.h"
-#include "constants.h"
 #include "log.h"
-#include "net_utils.h"
+#include "config.h"
 #include "router.h"
 #include "upstream.h"
 #include "trace_id.h"
+#include "constants.h"
+#include "net_utils.h"
 #include "client_tunnel_pool.h"
 #include "connection_tracker.h"
 #include "tproxy_tcp_session.h"
@@ -237,12 +237,7 @@ boost::asio::awaitable<std::pair<route_type, std::shared_ptr<upstream>>> tproxy_
     const auto route = co_await router_->decide_ip(addr);
     if (route == route_type::kBlock)
     {
-        LOG_WARN("event {} trace_id {:016x} conn_id {} target {}:{} blocked",
-                 log_event::kRoute,
-                 trace_id_,
-                 conn_id_,
-                 addr.to_string(),
-                 target_port_);
+        LOG_WARN("event {} trace_id {:016x} conn_id {} target {}:{} blocked", log_event::kRoute, trace_id_, conn_id_, addr.to_string(), target_port_);
         co_return std::make_pair(route, std::shared_ptr<upstream>(nullptr));
     }
     if (route == route_type::kDirect)
@@ -325,15 +320,16 @@ boost::asio::awaitable<void> tproxy_tcp_session::client_to_upstream(std::shared_
                 co_await backend->shutdown_send(shutdown_ec);
                 if (shutdown_ec)
                 {
-                    LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} target {}:{} stage client_to_upstream shutdown backend send failed {}",
-                             log_event::kSocks,
-                             trace_id_,
-                             conn_id_,
-                             client_addr_.empty() ? "unknown" : client_addr_,
-                             client_port_,
-                             target_addr_.empty() ? "unknown" : target_addr_,
-                             target_port_,
-                             shutdown_ec.message());
+                    LOG_WARN(
+                        "event {} trace_id {:016x} conn_id {} client {}:{} target {}:{} stage client_to_upstream shutdown backend send failed {}",
+                        log_event::kSocks,
+                        trace_id_,
+                        conn_id_,
+                        client_addr_.empty() ? "unknown" : client_addr_,
+                        client_port_,
+                        target_addr_.empty() ? "unknown" : target_addr_,
+                        target_port_,
+                        shutdown_ec.message());
                 }
             }
             else
@@ -411,29 +407,32 @@ boost::asio::awaitable<void> tproxy_tcp_session::upstream_to_client(std::shared_
             {
                 if (is_expected_upstream_shutdown_error(ec))
                 {
-                    LOG_INFO("event {} trace_id {:016x} conn_id {} client {}:{} target {}:{} stage upstream_to_client backend read stopped {} code {}",
-                             log_event::kSocks,
-                             trace_id_,
-                             conn_id_,
-                             client_addr_.empty() ? "unknown" : client_addr_,
-                             client_port_,
-                             target_addr_.empty() ? "unknown" : target_addr_,
-                             target_port_,
-                             ec.message(),
-                             ec.value());
+                    LOG_INFO(
+                        "event {} trace_id {:016x} conn_id {} client {}:{} target {}:{} stage upstream_to_client backend read stopped {} code {}",
+                        log_event::kSocks,
+                        trace_id_,
+                        conn_id_,
+                        client_addr_.empty() ? "unknown" : client_addr_,
+                        client_port_,
+                        target_addr_.empty() ? "unknown" : target_addr_,
+                        target_port_,
+                        ec.message(),
+                        ec.value());
                 }
                 else
                 {
-                    LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} target {}:{} stage upstream_to_client failed to read from backend {} code {}",
-                             log_event::kSocks,
-                             trace_id_,
-                             conn_id_,
-                             client_addr_.empty() ? "unknown" : client_addr_,
-                             client_port_,
-                             target_addr_.empty() ? "unknown" : target_addr_,
-                             target_port_,
-                             ec.message(),
-                             ec.value());
+                    LOG_WARN(
+                        "event {} trace_id {:016x} conn_id {} client {}:{} target {}:{} stage upstream_to_client failed to read from backend {} code "
+                        "{}",
+                        log_event::kSocks,
+                        trace_id_,
+                        conn_id_,
+                        client_addr_.empty() ? "unknown" : client_addr_,
+                        client_port_,
+                        target_addr_.empty() ? "unknown" : target_addr_,
+                        target_port_,
+                        ec.message(),
+                        ec.value());
                 }
                 ec = socket_.close(ec);
                 if (ec)
@@ -455,17 +454,19 @@ boost::asio::awaitable<void> tproxy_tcp_session::upstream_to_client(std::shared_
         auto write_size = co_await net::wait_write_with_timeout(socket_, boost::asio::buffer(buf.data(), n), cfg_.timeout.write, write_ec);
         if (write_ec)
         {
-            LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} target {}:{} stage upstream_to_client failed to write to client bytes {} code {} error {}",
-                     log_event::kSocks,
-                     trace_id_,
-                     conn_id_,
-                     client_addr_.empty() ? "unknown" : client_addr_,
-                     client_port_,
-                     target_addr_.empty() ? "unknown" : target_addr_,
-                     target_port_,
-                     n,
-                     write_ec.value(),
-                     write_ec.message());
+            LOG_WARN(
+                "event {} trace_id {:016x} conn_id {} client {}:{} target {}:{} stage upstream_to_client failed to write to client bytes {} code {} "
+                "error {}",
+                log_event::kSocks,
+                trace_id_,
+                conn_id_,
+                client_addr_.empty() ? "unknown" : client_addr_,
+                client_port_,
+                target_addr_.empty() ? "unknown" : target_addr_,
+                target_port_,
+                n,
+                write_ec.value(),
+                write_ec.message());
             co_await backend->close();
             break;
         }

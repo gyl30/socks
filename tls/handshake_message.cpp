@@ -191,10 +191,7 @@ bool is_forbidden_tls13_server_hello_extension(uint16_t ext_type)
     }
 }
 
-bool parse_supported_version_extension(const std::span<const uint8_t> server_hello,
-                                       std::size_t pos,
-                                       std::size_t ext_end,
-                                       server_hello_info& info)
+bool parse_supported_version_extension(const std::span<const uint8_t> server_hello, std::size_t pos, std::size_t ext_end, server_hello_info& info)
 {
     if (pos + 2 != ext_end)
     {
@@ -205,10 +202,7 @@ bool parse_supported_version_extension(const std::span<const uint8_t> server_hel
     return true;
 }
 
-bool parse_hrr_key_share_extension(const std::span<const uint8_t> server_hello,
-                                   std::size_t pos,
-                                   std::size_t ext_end,
-                                   server_hello_info& info)
+bool parse_hrr_key_share_extension(const std::span<const uint8_t> server_hello, std::size_t pos, std::size_t ext_end, server_hello_info& info)
 {
     if (pos + 2 != ext_end)
     {
@@ -221,9 +215,7 @@ bool parse_hrr_key_share_extension(const std::span<const uint8_t> server_hello,
     return true;
 }
 
-std::optional<server_key_share_info> parse_server_key_share_entry(const std::span<const uint8_t> server_hello,
-                                                                  std::size_t pos,
-                                                                  std::size_t ext_end)
+std::optional<server_key_share_info> parse_server_key_share_entry(const std::span<const uint8_t> server_hello, std::size_t pos, std::size_t ext_end)
 {
     if (pos + 4 > ext_end)
     {
@@ -243,11 +235,8 @@ std::optional<server_key_share_info> parse_server_key_share_entry(const std::spa
     return info;
 }
 
-bool parse_server_hello_key_share_extension(const std::span<const uint8_t> server_hello,
-                                            std::size_t pos,
-                                            std::size_t ext_end,
-                                            server_hello_info& info,
-                                            bool is_hello_retry_request)
+bool parse_server_hello_key_share_extension(
+    const std::span<const uint8_t> server_hello, std::size_t pos, std::size_t ext_end, server_hello_info& info, bool is_hello_retry_request)
 {
     if (info.has_key_share)
     {

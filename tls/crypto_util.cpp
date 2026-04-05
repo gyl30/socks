@@ -299,7 +299,10 @@ bool validate_mlkem768_ciphertext(const std::vector<uint8_t>& ciphertext, boost:
 }
 
 template <typename Validator, typename Creator>
-openssl_ptrs::evp_pkey_ptr create_mlkem768_key_object(const std::vector<uint8_t>& key, Validator&& validator, Creator&& creator, boost::system::error_code& ec)
+openssl_ptrs::evp_pkey_ptr create_mlkem768_key_object(const std::vector<uint8_t>& key,
+                                                      Validator&& validator,
+                                                      Creator&& creator,
+                                                      boost::system::error_code& ec)
 {
     if (!validator(key, ec))
     {
@@ -320,10 +323,7 @@ openssl_ptrs::evp_pkey_ptr create_mlkem768_private_key_object(const std::vector<
     return create_mlkem768_key_object(
         private_key,
         validate_mlkem768_private_key,
-        [](const std::vector<uint8_t>& key)
-        {
-            return EVP_PKEY_new_raw_private_key_ex(nullptr, "ML-KEM-768", nullptr, key.data(), key.size());
-        },
+        [](const std::vector<uint8_t>& key) { return EVP_PKEY_new_raw_private_key_ex(nullptr, "ML-KEM-768", nullptr, key.data(), key.size()); },
         ec);
 }
 
@@ -332,10 +332,7 @@ openssl_ptrs::evp_pkey_ptr create_mlkem768_public_key_object(const std::vector<u
     return create_mlkem768_key_object(
         public_key,
         validate_mlkem768_public_key,
-        [](const std::vector<uint8_t>& key)
-        {
-            return EVP_PKEY_new_raw_public_key_ex(nullptr, "ML-KEM-768", nullptr, key.data(), key.size());
-        },
+        [](const std::vector<uint8_t>& key) { return EVP_PKEY_new_raw_public_key_ex(nullptr, "ML-KEM-768", nullptr, key.data(), key.size()); },
         ec);
 }
 
@@ -480,10 +477,7 @@ void validate_aead_decrypt_inputs(const EVP_CIPHER* cipher,
     }
 }
 
-void apply_aead_tag(const cipher_context& ctx,
-                    const std::span<const uint8_t> ciphertext,
-                    std::size_t plaintext_len,
-                    boost::system::error_code& ec)
+void apply_aead_tag(const cipher_context& ctx, const std::span<const uint8_t> ciphertext, std::size_t plaintext_len, boost::system::error_code& ec)
 {
     const uint8_t* tag = ciphertext.data() + plaintext_len;
     if (EVP_CIPHER_CTX_ctrl(ctx.get(), EVP_CTRL_GCM_SET_TAG, kAeadTagSize, const_cast<void*>(static_cast<const void*>(tag))) != 1)
@@ -1309,9 +1303,7 @@ void verify_tls13_signature(EVP_PKEY* pub_key,
     }
     if (!tls13_signature_scheme_matches_key(signature_scheme, pub_key))
     {
-        LOG_ERROR("event {} stage verify_tls13_signature scheme 0x{:04x} error key_mismatch",
-                  mux::log_event::kHandshake,
-                  signature_scheme);
+        LOG_ERROR("event {} stage verify_tls13_signature scheme 0x{:04x} error key_mismatch", mux::log_event::kHandshake, signature_scheme);
         ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
         return;
     }
@@ -1337,9 +1329,7 @@ void verify_tls13_signature(EVP_PKEY* pub_key,
     const openssl_ptrs::evp_md_ctx_ptr mctx(EVP_MD_CTX_new());
     if (mctx == nullptr)
     {
-        LOG_ERROR("event {} stage verify_tls13_signature scheme 0x{:04x} error no_memory",
-                  mux::log_event::kHandshake,
-                  signature_scheme);
+        LOG_ERROR("event {} stage verify_tls13_signature scheme 0x{:04x} error no_memory", mux::log_event::kHandshake, signature_scheme);
         ec = boost::system::errc::make_error_code(boost::system::errc::not_enough_memory);
         return;
     }
@@ -1347,9 +1337,7 @@ void verify_tls13_signature(EVP_PKEY* pub_key,
     EVP_PKEY_CTX* pctx = nullptr;
     if (EVP_DigestVerifyInit(mctx.get(), &pctx, md, nullptr, pub_key) <= 0)
     {
-        LOG_ERROR("event {} stage verify_tls13_signature scheme 0x{:04x} error verify_init_failed",
-                  mux::log_event::kHandshake,
-                  signature_scheme);
+        LOG_ERROR("event {} stage verify_tls13_signature scheme 0x{:04x} error verify_init_failed", mux::log_event::kHandshake, signature_scheme);
         ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
         return;
     }
@@ -1357,17 +1345,14 @@ void verify_tls13_signature(EVP_PKEY* pub_key,
     {
         if (pctx == nullptr)
         {
-            LOG_ERROR("event {} stage verify_tls13_signature scheme 0x{:04x} error missing_pkey_ctx",
-                      mux::log_event::kHandshake,
-                      signature_scheme);
+            LOG_ERROR("event {} stage verify_tls13_signature scheme 0x{:04x} error missing_pkey_ctx", mux::log_event::kHandshake, signature_scheme);
             ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
             return;
         }
         if (EVP_PKEY_CTX_set_rsa_padding(pctx, RSA_PKCS1_PSS_PADDING) <= 0)
         {
-            LOG_ERROR("event {} stage verify_tls13_signature scheme 0x{:04x} error set_rsa_padding_failed",
-                      mux::log_event::kHandshake,
-                      signature_scheme);
+            LOG_ERROR(
+                "event {} stage verify_tls13_signature scheme 0x{:04x} error set_rsa_padding_failed", mux::log_event::kHandshake, signature_scheme);
             ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
             return;
         }

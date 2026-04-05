@@ -25,10 +25,7 @@ boost::asio::ip::address lwip_to_address(const ip_addr_t& addr)
     return boost::asio::ip::address_v6(bytes);
 }
 
-boost::asio::ip::udp::endpoint lwip_to_udp_endpoint(const ip_addr_t& addr, uint16_t port)
-{
-    return {lwip_to_address(addr), port};
-}
+boost::asio::ip::udp::endpoint lwip_to_udp_endpoint(const ip_addr_t& addr, uint16_t port) { return {lwip_to_address(addr), port}; }
 
 std::string lwip_ip_to_string(const ip_addr_t& addr) { return lwip_to_address(addr).to_string(); }
 

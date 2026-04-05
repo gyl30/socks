@@ -203,18 +203,17 @@ bool build_supported_groups_ext(const std::shared_ptr<extension_blueprint>& ext_
 {
     ext_type = tls::consts::ext::kSupportedGroups;
     auto bp = std::static_pointer_cast<supported_groups_blueprint>(ext_ptr);
-    push_u16_list_extension(
-        ext_buffer,
-        bp->groups(),
-        false,
-        [&](uint16_t group)
-        {
-            if (group == tls::kGreasePlaceholder)
-            {
-                return ctx.grease_ctx.get_grease(1);
-            }
-            return group;
-        });
+    push_u16_list_extension(ext_buffer,
+                            bp->groups(),
+                            false,
+                            [&](uint16_t group)
+                            {
+                                if (group == tls::kGreasePlaceholder)
+                                {
+                                    return ctx.grease_ctx.get_grease(1);
+                                }
+                                return group;
+                            });
     return true;
 }
 
@@ -318,18 +317,17 @@ bool build_supported_versions_ext(const std::shared_ptr<extension_blueprint>& ex
 {
     ext_type = tls::consts::ext::kSupportedVersions;
     auto bp = std::static_pointer_cast<supported_versions_blueprint>(ext_ptr);
-    push_u16_list_extension(
-        ext_buffer,
-        bp->versions(),
-        true,
-        [&](uint16_t version)
-        {
-            if (version == tls::kGreasePlaceholder)
-            {
-                return ctx.grease_ctx.get_grease(4);
-            }
-            return version;
-        });
+    push_u16_list_extension(ext_buffer,
+                            bp->versions(),
+                            true,
+                            [&](uint16_t version)
+                            {
+                                if (version == tls::kGreasePlaceholder)
+                                {
+                                    return ctx.grease_ctx.get_grease(4);
+                                }
+                                return version;
+                            });
     return true;
 }
 

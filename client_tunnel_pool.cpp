@@ -194,12 +194,8 @@ void client_tunnel_pool::stop()
     std::size_t active_before = 0;
     {
         const std::scoped_lock lock(tunnel_mutex_);
-        active_before = static_cast<std::size_t>(std::count_if(tunnel_pool_.begin(),
-                                                               tunnel_pool_.end(),
-                                                               [](const auto& tunnel)
-                                                               {
-                                                                   return tunnel != nullptr;
-                                                               }));
+        active_before =
+            static_cast<std::size_t>(std::count_if(tunnel_pool_.begin(), tunnel_pool_.end(), [](const auto& tunnel) { return tunnel != nullptr; }));
         for (auto&& tunnel : tunnel_pool_)
         {
             tunnels.push_back(tunnel);
@@ -242,12 +238,8 @@ std::shared_ptr<mux_connection> client_tunnel_pool::select_tunnel()
         {
             continue;
         }
-        const auto active_count = static_cast<std::size_t>(std::count_if(tunnel_pool_.begin(),
-                                                                         tunnel_pool_.end(),
-                                                                         [](const auto& entry)
-                                                                         {
-                                                                             return entry != nullptr;
-                                                                         }));
+        const auto active_count =
+            static_cast<std::size_t>(std::count_if(tunnel_pool_.begin(), tunnel_pool_.end(), [](const auto& entry) { return entry != nullptr; }));
         LOG_DEBUG("event {} sni {} slot {} target {}:{} active_tunnels {} total_slots {} tunnel selected ptr {}",
                   log_event::kRoute,
                   cfg_.reality.sni,
@@ -266,12 +258,7 @@ std::shared_ptr<mux_connection> client_tunnel_pool::select_tunnel()
 std::size_t client_tunnel_pool::active_tunnels() const
 {
     const std::scoped_lock<std::mutex> lock(tunnel_mutex_);
-    return static_cast<std::size_t>(std::count_if(tunnel_pool_.begin(),
-                                                  tunnel_pool_.end(),
-                                                  [](const auto& tunnel)
-                                                  {
-                                                      return tunnel != nullptr;
-                                                  }));
+    return static_cast<std::size_t>(std::count_if(tunnel_pool_.begin(), tunnel_pool_.end(), [](const auto& tunnel) { return tunnel != nullptr; }));
 }
 
 static boost::asio::awaitable<reality::client_handshake_result> perform_reality_handshake_with_timeout(
@@ -336,8 +323,7 @@ static boost::asio::awaitable<void> tcp_connect_remote(
 {
     const auto timeout_sec = cfg.timeout.connect;
     boost::asio::ip::tcp::resolver resolver(socket.get_executor());
-    const auto resolve_endpoints =
-        co_await net::wait_resolve_with_timeout(resolver, options.remote_host, options.remote_port, timeout_sec, ec);
+    const auto resolve_endpoints = co_await net::wait_resolve_with_timeout(resolver, options.remote_host, options.remote_port, timeout_sec, ec);
     if (ec)
     {
         LOG_ERROR("event {} conn_id {} stage resolve target {}:{} error {}",
@@ -384,12 +370,8 @@ static boost::asio::awaitable<void> tcp_connect_remote(
     }
 }
 
-static boost::asio::awaitable<std::shared_ptr<mux_connection>> connect_remote_once(const config& cfg,
-                                                                                   const auto& options,
-                                                                                   uint32_t index,
-                                                                                   io_worker& worker,
-                                                                                   uint32_t cid,
-                                                                                   boost::system::error_code& ec)
+static boost::asio::awaitable<std::shared_ptr<mux_connection>> connect_remote_once(
+    const config& cfg, const auto& options, uint32_t index, io_worker& worker, uint32_t cid, boost::system::error_code& ec)
 {
     LOG_INFO("event {} conn_id {} slot {} sni {} target {}:{} connect remote start {}/{}",
              log_event::kConnInit,
@@ -497,12 +479,8 @@ boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(uint32_t in
         {
             const std::scoped_lock<std::mutex> lock(tunnel_mutex_);
             tunnel_pool_[index] = tunnel;
-            const auto active_after_install = static_cast<std::size_t>(std::count_if(tunnel_pool_.begin(),
-                                                                                     tunnel_pool_.end(),
-                                                                                     [](const auto& entry)
-                                                                                     {
-                                                                                         return entry != nullptr;
-                                                                                     }));
+            const auto active_after_install =
+                static_cast<std::size_t>(std::count_if(tunnel_pool_.begin(), tunnel_pool_.end(), [](const auto& entry) { return entry != nullptr; }));
             LOG_INFO("event {} conn_id {} slot {} target {}:{} active_tunnels {} total_slots {} tunnel installed ptr {}",
                      log_event::kConnEstablished,
                      cid,
@@ -527,12 +505,8 @@ boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(uint32_t in
             const std::scoped_lock<std::mutex> lock(tunnel_mutex_);
             if (tunnel_pool_[index] == tunnel)
             {
-                const auto active_before_remove = static_cast<std::size_t>(std::count_if(tunnel_pool_.begin(),
-                                                                                         tunnel_pool_.end(),
-                                                                                         [](const auto& entry)
-                                                                                         {
-                                                                                             return entry != nullptr;
-                                                                                         }));
+                const auto active_before_remove = static_cast<std::size_t>(
+                    std::count_if(tunnel_pool_.begin(), tunnel_pool_.end(), [](const auto& entry) { return entry != nullptr; }));
                 LOG_INFO("event {} conn_id {} slot {} target {}:{} active_tunnels {} total_slots {} tunnel removing ptr {}",
                          log_event::kConnClose,
                          cid,

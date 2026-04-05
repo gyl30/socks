@@ -213,11 +213,8 @@ void remote_server::start()
     ec = acceptor_.open(ep.protocol(), ec);
     if (ec)
     {
-        LOG_ERROR("event {} stage start listen {}:{} open socket failed {}",
-                  log_event::kConnInit,
-                  cfg_.inbound.host,
-                  cfg_.inbound.port,
-                  ec.message());
+        LOG_ERROR(
+            "event {} stage start listen {}:{} open socket failed {}", log_event::kConnInit, cfg_.inbound.host, cfg_.inbound.port, ec.message());
         std::exit(EXIT_FAILURE);
     }
     ec = acceptor_.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true), ec);
@@ -246,21 +243,13 @@ void remote_server::start()
     ec = acceptor_.bind(ep, ec);
     if (ec)
     {
-        LOG_ERROR("event {} stage start listen {}:{} bind failed {}",
-                  log_event::kConnInit,
-                  cfg_.inbound.host,
-                  cfg_.inbound.port,
-                  ec.message());
+        LOG_ERROR("event {} stage start listen {}:{} bind failed {}", log_event::kConnInit, cfg_.inbound.host, cfg_.inbound.port, ec.message());
         std::exit(EXIT_FAILURE);
     }
     ec = acceptor_.listen(boost::asio::socket_base::max_listen_connections, ec);
     if (ec)
     {
-        LOG_ERROR("event {} stage start listen {}:{} listen failed {}",
-                  log_event::kConnInit,
-                  cfg_.inbound.host,
-                  cfg_.inbound.port,
-                  ec.message());
+        LOG_ERROR("event {} stage start listen {}:{} listen failed {}", log_event::kConnInit, cfg_.inbound.host, cfg_.inbound.port, ec.message());
         std::exit(EXIT_FAILURE);
     }
 
@@ -304,18 +293,12 @@ boost::asio::awaitable<void> remote_server::accept_loop()
         {
             if (accept_ec == boost::asio::error::operation_aborted || accept_ec == boost::asio::error::bad_descriptor)
             {
-                LOG_INFO("event {} listen {}:{} accept loop stopped {}",
-                         log_event::kConnClose,
-                         cfg_.inbound.host,
-                         cfg_.inbound.port,
-                         accept_ec.message());
+                LOG_INFO(
+                    "event {} listen {}:{} accept loop stopped {}", log_event::kConnClose, cfg_.inbound.host, cfg_.inbound.port, accept_ec.message());
                 break;
             }
-            LOG_WARN("event {} listen {}:{} accept error {} retrying",
-                     log_event::kConnInit,
-                     cfg_.inbound.host,
-                     cfg_.inbound.port,
-                     accept_ec.message());
+            LOG_WARN(
+                "event {} listen {}:{} accept error {} retrying", log_event::kConnInit, cfg_.inbound.host, cfg_.inbound.port, accept_ec.message());
             const auto wait_ec = co_await net::wait_for(owner_worker_.io_context, std::chrono::milliseconds(200));
             if (wait_ec && wait_ec != boost::asio::error::operation_aborted)
             {
@@ -548,7 +531,8 @@ boost::asio::awaitable<void> remote_server::process_stream_request(io_worker& wo
                  syn.addr,
                  syn.port,
                  frame.payload.size());
-        const auto sess = std::make_shared<remote_tcp_session>(worker.io_context, connection, frame.h.stream_id, reality_ctx.conn_id, syn.trace_id, cfg_);
+        const auto sess =
+            std::make_shared<remote_tcp_session>(worker.io_context, connection, frame.h.stream_id, reality_ctx.conn_id, syn.trace_id, cfg_);
         if (!sess->has_stream())
         {
             LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} sni {} stream_id {} target {}:{} create incoming tcp stream failed",

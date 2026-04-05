@@ -85,9 +85,7 @@ bool read_handshake_message_header(const std::vector<uint8_t>& handshake_buffer,
     return true;
 }
 
-void compact_handshake_buffer(std::vector<uint8_t>& handshake_buffer,
-                              std::size_t& handshake_buffer_pos,
-                              const handshake_log_context& log_context)
+void compact_handshake_buffer(std::vector<uint8_t>& handshake_buffer, std::size_t& handshake_buffer_pos, const handshake_log_context& log_context)
 {
     if (handshake_buffer_pos == 0)
     {
@@ -176,18 +174,18 @@ server_handshake_message_type classify_server_handshake_message(const uint8_t ms
 {
     switch (msg_type)
     {
-    case kHandshakeTypeEncryptedExtensions:
-        return server_handshake_message_type::kEncryptedExtensions;
-    case kHandshakeTypeCertificate:
-        return server_handshake_message_type::kCertificate;
-    case kHandshakeTypeCompressedCertificate:
-        return server_handshake_message_type::kCompressedCertificate;
-    case kHandshakeTypeCertificateVerify:
-        return server_handshake_message_type::kCertificateVerify;
-    case kHandshakeTypeFinished:
-        return server_handshake_message_type::kFinished;
-    default:
-        return server_handshake_message_type::kUnknown;
+        case kHandshakeTypeEncryptedExtensions:
+            return server_handshake_message_type::kEncryptedExtensions;
+        case kHandshakeTypeCertificate:
+            return server_handshake_message_type::kCertificate;
+        case kHandshakeTypeCompressedCertificate:
+            return server_handshake_message_type::kCompressedCertificate;
+        case kHandshakeTypeCertificateVerify:
+            return server_handshake_message_type::kCertificateVerify;
+        case kHandshakeTypeFinished:
+            return server_handshake_message_type::kFinished;
+        default:
+            return server_handshake_message_type::kUnknown;
     }
 }
 
@@ -811,26 +809,23 @@ bool validate_handshake_message_order(const server_handshake_message_type messag
 {
     switch (message_type)
     {
-    case server_handshake_message_type::kEncryptedExtensions:
-        return validate_encrypted_extensions_order(validation_state, handshake_fin, ec);
-    case server_handshake_message_type::kCertificate:
-        return validate_certificate_message_order(validation_state,
-                                                  handshake_fin,
-                                                  "certificate received before encrypted extensions",
-                                                  "unexpected certificate message order",
-                                                  ec);
-    case server_handshake_message_type::kCompressedCertificate:
-        return validate_certificate_message_order(validation_state,
-                                                  handshake_fin,
-                                                  "compressed certificate received before encrypted extensions",
-                                                  "unexpected compressed certificate message order",
-                                                  ec);
-    case server_handshake_message_type::kCertificateVerify:
-        return validate_certificate_verify_order(validation_state, handshake_fin, ec);
-    case server_handshake_message_type::kFinished:
-        return validate_finished_order(validation_state, handshake_fin, ec);
-    case server_handshake_message_type::kUnknown:
-        return true;
+        case server_handshake_message_type::kEncryptedExtensions:
+            return validate_encrypted_extensions_order(validation_state, handshake_fin, ec);
+        case server_handshake_message_type::kCertificate:
+            return validate_certificate_message_order(
+                validation_state, handshake_fin, "certificate received before encrypted extensions", "unexpected certificate message order", ec);
+        case server_handshake_message_type::kCompressedCertificate:
+            return validate_certificate_message_order(validation_state,
+                                                      handshake_fin,
+                                                      "compressed certificate received before encrypted extensions",
+                                                      "unexpected compressed certificate message order",
+                                                      ec);
+        case server_handshake_message_type::kCertificateVerify:
+            return validate_certificate_verify_order(validation_state, handshake_fin, ec);
+        case server_handshake_message_type::kFinished:
+            return validate_finished_order(validation_state, handshake_fin, ec);
+        case server_handshake_message_type::kUnknown:
+            return true;
     }
     return true;
 }
@@ -921,24 +916,24 @@ void dispatch_handshake_message(const server_handshake_message_type message_type
 {
     switch (message_type)
     {
-    case server_handshake_message_type::kEncryptedExtensions:
-        handle_encrypted_extensions_message(msg_data, validation_state, ec);
-        return;
-    case server_handshake_message_type::kCertificate:
-        handle_certificate_message(msg_data, auth_key, validation_state, ec);
-        return;
-    case server_handshake_message_type::kCompressedCertificate:
-        handle_compressed_certificate_message(msg_data, auth_key, validation_state, ec);
-        return;
-    case server_handshake_message_type::kCertificateVerify:
-        handle_certificate_verify_message(msg_data, validation_state, trans, ec);
-        return;
-    case server_handshake_message_type::kFinished:
-        handle_finished_message(msg_data, hs_keys, md, validation_state.log_context, trans, handshake_fin, ec);
-        return;
-    case server_handshake_message_type::kUnknown:
-        handle_unknown_handshake_message(raw_msg_type, validation_state, ec);
-        return;
+        case server_handshake_message_type::kEncryptedExtensions:
+            handle_encrypted_extensions_message(msg_data, validation_state, ec);
+            return;
+        case server_handshake_message_type::kCertificate:
+            handle_certificate_message(msg_data, auth_key, validation_state, ec);
+            return;
+        case server_handshake_message_type::kCompressedCertificate:
+            handle_compressed_certificate_message(msg_data, auth_key, validation_state, ec);
+            return;
+        case server_handshake_message_type::kCertificateVerify:
+            handle_certificate_verify_message(msg_data, validation_state, trans, ec);
+            return;
+        case server_handshake_message_type::kFinished:
+            handle_finished_message(msg_data, hs_keys, md, validation_state.log_context, trans, handshake_fin, ec);
+            return;
+        case server_handshake_message_type::kUnknown:
+            handle_unknown_handshake_message(raw_msg_type, validation_state, ec);
+            return;
     }
 }
 
@@ -1643,21 +1638,20 @@ void log_selected_client_key_share(uint32_t conn_id, const std::string_view sni,
 {
     if (keys.use_hybrid)
     {
-        LOG_INFO("event {} conn_id {} sni {} client hello keep fingerprint hybrid key share group 0x{:04x} {} hybrid share len {} mlkem768 pub len {}",
-                 mux::log_event::kHandshake,
-                 conn_id,
-                 sni,
-                 tls::consts::group::kX25519MLKEM768,
-                 tls::named_group_name(tls::consts::group::kX25519MLKEM768),
-                 keys.hybrid_key_share.size(),
-                 keys.mlkem768_public_key.size());
+        LOG_INFO(
+            "event {} conn_id {} sni {} client hello keep fingerprint hybrid key share group 0x{:04x} {} hybrid share len {} mlkem768 pub len {}",
+            mux::log_event::kHandshake,
+            conn_id,
+            sni,
+            tls::consts::group::kX25519MLKEM768,
+            tls::named_group_name(tls::consts::group::kX25519MLKEM768),
+            keys.hybrid_key_share.size(),
+            keys.mlkem768_public_key.size());
         return;
     }
 
-    LOG_INFO("event {} conn_id {} sni {} client hello preserve fingerprint without forced hybrid key share",
-             mux::log_event::kHandshake,
-             conn_id,
-             sni);
+    LOG_INFO(
+        "event {} conn_id {} sni {} client hello preserve fingerprint without forced hybrid key share", mux::log_event::kHandshake, conn_id, sni);
 }
 
 struct handshake_traffic_keys
@@ -1707,10 +1701,7 @@ void prepare_server_hello_crypto(const std::vector<uint8_t>& sh_data,
     const auto parsed_server_hello = tls::parse_server_hello(sh_data);
     if (!parsed_server_hello.has_value())
     {
-        LOG_ERROR("event {} conn_id {} sni {} bad server hello",
-                  mux::log_event::kHandshake,
-                  log_context.conn_id,
-                  handshake_log_sni(log_context));
+        LOG_ERROR("event {} conn_id {} sni {} bad server hello", mux::log_event::kHandshake, log_context.conn_id, handshake_log_sni(log_context));
         ec = boost::asio::error::invalid_argument;
         return;
     }
@@ -1783,10 +1774,8 @@ void prepare_server_hello_crypto(const std::vector<uint8_t>& sh_data,
     }
     if (!server_hello.has_key_share)
     {
-        LOG_ERROR("event {} conn_id {} sni {} bad server hello key share",
-                  mux::log_event::kHandshake,
-                  log_context.conn_id,
-                  handshake_log_sni(log_context));
+        LOG_ERROR(
+            "event {} conn_id {} sni {} bad server hello key share", mux::log_event::kHandshake, log_context.conn_id, handshake_log_sni(log_context));
         ec = boost::asio::error::invalid_argument;
         return;
     }
@@ -2032,8 +2021,7 @@ boost::asio::awaitable<void> generate_and_send_client_hello(boost::asio::ip::tcp
 
     auto client_hello_record = tls::write_record_header(tls::kContentTypeHandshake, static_cast<uint16_t>(hello_body.size()));
     client_hello_record.insert(client_hello_record.end(), hello_body.begin(), hello_body.end());
-    const auto write_size =
-        co_await mux::net::wait_write_with_timeout(socket, boost::asio::buffer(client_hello_record), write_timeout_sec, ec);
+    const auto write_size = co_await mux::net::wait_write_with_timeout(socket, boost::asio::buffer(client_hello_record), write_timeout_sec, ec);
     if (ec)
     {
         LOG_ERROR("event {} conn_id {} sni {} error sending client hello {}",
@@ -2097,9 +2085,8 @@ boost::asio::awaitable<server_hello_res> process_server_hello(boost::asio::ip::t
         co_return server_hello_res{};
     }
 
-    auto handshake_shared_secret =
-        derive_server_hello_shared_secret(
-            private_key, mlkem768_private_key, server_hello.key_share.group, server_hello.key_share.data, log_context, ec);
+    auto handshake_shared_secret = derive_server_hello_shared_secret(
+        private_key, mlkem768_private_key, server_hello.key_share.group, server_hello.key_share.data, log_context, ec);
     if (ec)
     {
         co_return server_hello_res{};

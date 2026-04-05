@@ -39,11 +39,8 @@ struct proxy_udp_stream
     std::shared_ptr<mux_stream> stream;
 };
 
-boost::asio::awaitable<void> write_socks_error_reply(boost::asio::ip::tcp::socket& socket,
-                                                     uint8_t rep,
-                                                     uint64_t trace_id,
-                                                     uint32_t conn_id,
-                                                     uint32_t timeout_sec)
+boost::asio::awaitable<void> write_socks_error_reply(
+    boost::asio::ip::tcp::socket& socket, uint8_t rep, uint64_t trace_id, uint32_t conn_id, uint32_t timeout_sec)
 {
     uint8_t err[] = {socks::kVer, rep, 0, socks::kAtypIpv4, 0, 0, 0, 0, 0, 0};
     boost::system::error_code ec;
@@ -117,11 +114,7 @@ void bind_local_udp_address(const boost::asio::ip::tcp::socket& tcp_socket,
     const auto tcp_local_ep = tcp_socket.local_endpoint(ec);
     if (ec)
     {
-        LOG_ERROR("event {} trace_id {:016x} conn_id {} stage query_tcp_local_endpoint error {}",
-                  log_event::kSocks,
-                  trace_id,
-                  conn_id,
-                  ec.message());
+        LOG_ERROR("event {} trace_id {:016x} conn_id {} stage query_tcp_local_endpoint error {}", log_event::kSocks, trace_id, conn_id, ec.message());
         return;
     }
 
@@ -1112,12 +1105,8 @@ boost::asio::awaitable<bool> udp_socks_session::ensure_proxy_stream(boost::syste
         co_return true;
     }
 
-    const auto proxy_stream = co_await connect_remote_address(tunnel_pool_,
-                                                              conn_id_,
-                                                              trace_id_,
-                                                              has_last_target_ ? last_target_addr_ : "unknown",
-                                                              has_last_target_ ? last_target_port_ : 0,
-                                                              ec);
+    const auto proxy_stream = co_await connect_remote_address(
+        tunnel_pool_, conn_id_, trace_id_, has_last_target_ ? last_target_addr_ : "unknown", has_last_target_ ? last_target_port_ : 0, ec);
     if (ec || proxy_stream.stream == nullptr || proxy_stream.tunnel == nullptr)
     {
         if (!ec)

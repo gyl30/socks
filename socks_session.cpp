@@ -50,11 +50,8 @@ std::pair<std::string, uint16_t> endpoint_parts(const boost::asio::ip::tcp::endp
     return {endpoint.address().to_string(), endpoint.port()};
 }
 
-void load_socket_endpoints(boost::asio::ip::tcp::socket& socket,
-                           std::string& local_host,
-                           uint16_t& local_port,
-                           std::string& remote_host,
-                           uint16_t& remote_port)
+void load_socket_endpoints(
+    boost::asio::ip::tcp::socket& socket, std::string& local_host, uint16_t& local_port, std::string& remote_host, uint16_t& remote_port)
 {
     boost::system::error_code ec;
     const auto local_endpoint = socket.local_endpoint(ec);
@@ -102,10 +99,7 @@ socks_session::socks_session(boost::asio::ip::tcp::socket socket,
 
 socks_session::~socks_session() = default;
 
-void socks_session::start()
-{
-    run_loop_spawner::spawn(worker_, shared_from_this());
-}
+void socks_session::start() { run_loop_spawner::spawn(worker_, shared_from_this()); }
 
 void socks_session::stop()
 {
@@ -184,8 +178,8 @@ boost::asio::awaitable<void> socks_session::run_loop()
     }
     else if (cmd == socks::kCmdUdpAssociate)
     {
-        const auto udp_sess = std::make_shared<udp_socks_session>(
-            std::move(socket_), worker_, tunnel_pool_, router_, sid_, trace_id_, cfg_, std::move(active_guard_));
+        const auto udp_sess =
+            std::make_shared<udp_socks_session>(std::move(socket_), worker_, tunnel_pool_, router_, sid_, trace_id_, cfg_, std::move(active_guard_));
         udp_sess->start(host, port);
     }
     else
@@ -663,10 +657,7 @@ boost::asio::awaitable<bool> socks_session::read_request_host(uint8_t atyp, uint
     co_return false;
 }
 
-socks_session::request_info socks_session::make_invalid_request(uint8_t cmd)
-{
-    return request_info{.ok = false, .host = "", .port = 0, .cmd = cmd};
-}
+socks_session::request_info socks_session::make_invalid_request(uint8_t cmd) { return request_info{.ok = false, .host = "", .port = 0, .cmd = cmd}; }
 
 boost::asio::awaitable<socks_session::request_info> socks_session::reject_request(uint8_t cmd, uint8_t rep)
 {

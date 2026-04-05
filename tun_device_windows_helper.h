@@ -12,15 +12,12 @@
 #include <winsock2.h>
 
 #ifdef __cplusplus
-extern "C" {
+extern "C"
+{
 #endif
 
-DWORD tun_device_windows_configure_interface(const NET_LUID* luid,
-                                             uint32_t mtu,
-                                             const void* ipv4_addr,
-                                             uint8_t ipv4_prefix,
-                                             const void* ipv6_addr,
-                                             uint8_t ipv6_prefix);
+    DWORD tun_device_windows_configure_interface(
+        const NET_LUID* luid, uint32_t mtu, const void* ipv4_addr, uint8_t ipv4_prefix, const void* ipv6_addr, uint8_t ipv6_prefix);
 
 #ifdef __cplusplus
 }

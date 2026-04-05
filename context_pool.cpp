@@ -19,10 +19,7 @@ io_context_pool::io_context_pool(std::size_t pool_size) : next_io_context_(0)
 {
     if (pool_size == 0)
     {
-        LOG_WARN("event {} stage io_context_pool requested_threads {} clamped_threads {}",
-                 log_event::kConnInit,
-                 0,
-                 1);
+        LOG_WARN("event {} stage io_context_pool requested_threads {} clamped_threads {}", log_event::kConnInit, 0, 1);
         pool_size = 1;
     }
 

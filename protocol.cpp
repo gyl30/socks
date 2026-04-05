@@ -136,13 +136,8 @@ bool parse_port(const uint8_t* data, std::size_t len, std::size_t& pos, uint16_t
     return true;
 }
 
-bool parse_address_and_port(const uint8_t* data,
-                            std::size_t len,
-                            uint8_t atyp,
-                            std::size_t start_pos,
-                            std::string& addr,
-                            uint16_t& port,
-                            std::size_t& next_pos)
+bool parse_address_and_port(
+    const uint8_t* data, std::size_t len, uint8_t atyp, std::size_t start_pos, std::string& addr, uint16_t& port, std::size_t& next_pos)
 {
     std::size_t pos = start_pos;
     bool ok = false;

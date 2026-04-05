@@ -129,9 +129,8 @@ int run_probe_connect(const char* host, const char* port_str, const char* timeou
 
     boost::asio::io_context io_context;
     int rc = 1;
-    boost::asio::co_spawn(io_context,
-                          run_probe_connect_task(host, static_cast<uint16_t>(port_raw), static_cast<uint32_t>(timeout_raw), rc),
-                          boost::asio::detached);
+    boost::asio::co_spawn(
+        io_context, run_probe_connect_task(host, static_cast<uint16_t>(port_raw), static_cast<uint32_t>(timeout_raw), rc), boost::asio::detached);
     io_context.run();
     return rc;
 }
@@ -139,11 +138,7 @@ int run_probe_connect(const char* host, const char* port_str, const char* timeou
 int run_probe_connect_thread(const char* host, const char* port_str, const char* timeout_str)
 {
     int rc = 1;
-    std::thread worker(
-        [&]()
-        {
-            rc = run_probe_connect(host, port_str, timeout_str);
-        });
+    std::thread worker([&]() { rc = run_probe_connect(host, port_str, timeout_str); });
     worker.join();
     return rc;
 }

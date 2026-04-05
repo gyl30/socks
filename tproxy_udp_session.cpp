@@ -608,25 +608,15 @@ boost::asio::awaitable<void> tproxy_udp_session::direct_to_client()
 
 boost::asio::awaitable<void> tproxy_udp_session::packets_to_proxy()
 {
-    co_await session_util::forward_udp_packets_to_proxy_stream(packet_channel_,
-                                                               stream_,
-                                                               trace_id_,
-                                                               conn_id_,
-                                                               client_endpoint_,
-                                                               target_endpoint_,
-                                                               "proxy",
-                                                               tx_bytes_,
-                                                               last_activity_time_ms_);
+    co_await session_util::forward_udp_packets_to_proxy_stream(
+        packet_channel_, stream_, trace_id_, conn_id_, client_endpoint_, target_endpoint_, "proxy", tx_bytes_, last_activity_time_ms_);
 }
 
 boost::asio::awaitable<void> tproxy_udp_session::proxy_to_client()
 {
-    auto send_to_client_fn = [this](const boost::asio::ip::udp::endpoint& source,
-                                    const uint8_t* payload,
-                                    std::size_t payload_len) -> boost::asio::awaitable<bool>
-    {
-        co_return co_await send_to_client(source, payload, payload_len);
-    };
+    auto send_to_client_fn =
+        [this](const boost::asio::ip::udp::endpoint& source, const uint8_t* payload, std::size_t payload_len) -> boost::asio::awaitable<bool>
+    { co_return co_await send_to_client(source, payload, payload_len); };
     co_await session_util::forward_proxy_udp_stream_to_client(stream_,
                                                               cfg_,
                                                               stream_close_command_,

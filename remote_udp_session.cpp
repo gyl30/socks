@@ -401,17 +401,19 @@ boost::asio::awaitable<void> remote_udp_session::on_frame(const mux_frame& frame
     if (header.header_len > frame.payload.size())
     {
         ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
-        LOG_WARN("event {} trace_id {:016x} conn_id {} stream_id {} bind {}:{} stage decode_header error invalid_header_len target {}:{} header_len {} packet_len {}",
-                 log_event::kMux,
-                 trace_id_,
-                 conn_id_,
-                 id_,
-                 bind_host_,
-                 bind_port_,
-                 header.addr,
-                 header.port,
-                 header.header_len,
-                 frame.payload.size());
+        LOG_WARN(
+            "event {} trace_id {:016x} conn_id {} stream_id {} bind {}:{} stage decode_header error invalid_header_len target {}:{} header_len {} "
+            "packet_len {}",
+            log_event::kMux,
+            trace_id_,
+            conn_id_,
+            id_,
+            bind_host_,
+            bind_port_,
+            header.addr,
+            header.port,
+            header.header_len,
+            frame.payload.size());
         co_return;
     }
 
