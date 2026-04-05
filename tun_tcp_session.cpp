@@ -396,15 +396,9 @@ boost::asio::awaitable<void> tun_tcp_session::wait_send_event()
     (void)ec;
 }
 
-void tun_tcp_session::signal_client_event()
-{
-    client_wait_timer_.cancel();
-}
+void tun_tcp_session::signal_client_event() { client_wait_timer_.cancel(); }
 
-void tun_tcp_session::signal_send_event()
-{
-    send_wait_timer_.cancel();
-}
+void tun_tcp_session::signal_send_event() { send_wait_timer_.cancel(); }
 
 void tun_tcp_session::signal_all_events()
 {

@@ -36,11 +36,8 @@ class mux_stream;
 class mux_connection : public std::enable_shared_from_this<mux_connection>
 {
    public:
-    mux_connection(boost::asio::ip::tcp::socket socket,
-                   io_worker& worker,
-                   reality::reality_record_context record_context,
-                   const config& cfg,
-                   uint32_t conn_id);
+    mux_connection(
+        boost::asio::ip::tcp::socket socket, io_worker& worker, reality::reality_record_context record_context, const config& cfg, uint32_t conn_id);
 
     virtual ~mux_connection();
 
@@ -57,10 +54,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     void close_and_remove_stream(const std::shared_ptr<mux_stream>& stream);
     void remove_stream(const std::shared_ptr<mux_stream>& stream);
     [[nodiscard]] std::shared_ptr<mux_stream> find_stream(uint32_t stream_id);
-    [[nodiscard]] uint32_t conn_id() const
-    {
-        return cid_;
-    }
+    [[nodiscard]] uint32_t conn_id() const { return cid_; }
     boost::asio::awaitable<void> send_async(mux_frame msg, boost::system::error_code& ec);
     boost::asio::awaitable<void> send_async_with_timeout(mux_frame msg, uint32_t timeout_sec, boost::system::error_code& ec);
 

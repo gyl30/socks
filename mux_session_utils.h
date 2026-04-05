@@ -5,17 +5,17 @@
 #include <memory>
 #include <string>
 #include <vector>
-#include <algorithm>
-#include <cstdint>
 #include <utility>
+#include <cstdint>
+#include <algorithm>
 
-#include <boost/asio/ip/udp.hpp>
 #include <boost/asio/error.hpp>
+#include <boost/asio/ip/udp.hpp>
 #include <boost/asio/awaitable.hpp>
 #include <boost/system/error_code.hpp>
 
-#include "config.h"
 #include "log.h"
+#include "config.h"
 #include "protocol.h"
 #include "mux_codec.h"
 #include "net_utils.h"

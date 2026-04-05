@@ -1,22 +1,27 @@
 #include <array>
 #include <atomic>
 #include <cerrno>
+#ifndef _WIN32
+#include <netdb.h>
+#endif
 #include <cstdint>
 #include <cstring>
 #include <optional>
-#include <string_view>
+#ifdef __linux__
+#include <linux/in.h>
+#endif
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
-#else
-#include <netdb.h>
+#endif
+#include <string_view>
+#ifdef __linux__
+#include <linux/in6.h>
+#endif
+#ifndef _WIN32
 #include <netinet/in.h>
 #include <sys/socket.h>
-#endif
-
 #ifdef __linux__
-#include <linux/in.h>
-#include <linux/in6.h>
 #include <asm-generic/socket.h>
 #ifndef SO_ORIGINAL_DST
 #define SO_ORIGINAL_DST 80
@@ -25,7 +30,7 @@
 #ifndef IP6T_SO_ORIGINAL_DST
 #define IP6T_SO_ORIGINAL_DST 80
 #endif
-
+#endif
 #endif
 
 #include <boost/asio/ip/tcp.hpp>
@@ -40,8 +45,8 @@
 #include <boost/system/detail/system_category.hpp>
 
 #include "log.h"
-#include "constants.h"
 #include "net_utils.h"
+#include "constants.h"
 namespace mux::net
 {
 
@@ -95,9 +100,7 @@ void log_original_dst_getsockopt_failure(int level, int option, const boost::sys
         "get original tcp dst getsockopt failed level {} opt {} errno {} error {} suppressed {}", level, option, ec.value(), ec.message(), dropped);
 }
 
-boost::system::error_code select_original_dst_error(bool prefer_ipv6,
-                                                    const boost::system::error_code& v4_ec,
-                                                    const boost::system::error_code& v6_ec)
+boost::system::error_code select_original_dst_error(bool prefer_ipv6, const boost::system::error_code& v4_ec, const boost::system::error_code& v6_ec)
 {
     if (prefer_ipv6)
     {

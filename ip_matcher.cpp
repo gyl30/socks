@@ -265,12 +265,7 @@ void ip_matcher::add_rule(const std::string& cidr, const std::string_view source
             LOG_WARN("event {} stage load_ip_rule error {} value {}", log_event::kRoute, reason, cidr);
             return;
         }
-        LOG_WARN("event {} stage load_ip_rule file {} line {} error {} value {}",
-                 log_event::kRoute,
-                 source_name,
-                 line_number,
-                 reason,
-                 cidr);
+        LOG_WARN("event {} stage load_ip_rule file {} line {} error {} value {}", log_event::kRoute, source_name, line_number, reason, cidr);
     };
 
     std::string_view ip_part;
@@ -290,11 +285,8 @@ void ip_matcher::add_rule(const std::string& cidr, const std::string_view source
         }
         else
         {
-            LOG_WARN("event {} stage load_ip_rule file {} line {} error invalid_prefix value {}",
-                     log_event::kRoute,
-                     source_name,
-                     line_number,
-                     len_part);
+            LOG_WARN(
+                "event {} stage load_ip_rule file {} line {} error invalid_prefix value {}", log_event::kRoute, source_name, line_number, len_part);
         }
         return;
     }
@@ -308,12 +300,8 @@ void ip_matcher::add_rule(const std::string& cidr, const std::string_view source
         }
         else
         {
-            LOG_ERROR("event {} stage load_ip_rule file {} line {} addr {} error {}",
-                      log_event::kRoute,
-                      source_name,
-                      line_number,
-                      ip_part,
-                      ec.message());
+            LOG_ERROR(
+                "event {} stage load_ip_rule file {} line {} addr {} error {}", log_event::kRoute, source_name, line_number, ip_part, ec.message());
         }
         return;
     }
@@ -323,10 +311,7 @@ void ip_matcher::add_rule(const std::string& cidr, const std::string_view source
     {
         if (source_name.empty())
         {
-            LOG_WARN("event {} stage load_ip_rule error invalid_prefix_range prefix {} max {}",
-                     log_event::kRoute,
-                     prefix_len,
-                     max_prefix_len);
+            LOG_WARN("event {} stage load_ip_rule error invalid_prefix_range prefix {} max {}", log_event::kRoute, prefix_len, max_prefix_len);
         }
         else
         {

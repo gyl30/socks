@@ -234,9 +234,7 @@ inline boost::asio::awaitable<std::size_t> wait_read_with_timeout(boost::asio::i
                                                                   boost::system::error_code& ec)
 {
     co_return co_await detail::wait_size_op_with_timeout(
-        timeout_sec,
-        [&]() { return boost::asio::async_read(socket, buffer, boost::asio::as_tuple(boost::asio::use_awaitable)); },
-        ec);
+        timeout_sec, [&]() { return boost::asio::async_read(socket, buffer, boost::asio::as_tuple(boost::asio::use_awaitable)); }, ec);
 }
 
 template <typename ConstBufferSequence>
@@ -246,9 +244,7 @@ inline boost::asio::awaitable<std::size_t> wait_write_with_timeout(boost::asio::
                                                                    boost::system::error_code& ec)
 {
     co_return co_await detail::wait_size_op_with_timeout(
-        timeout_sec,
-        [&]() { return boost::asio::async_write(socket, buffers, boost::asio::as_tuple(boost::asio::use_awaitable)); },
-        ec);
+        timeout_sec, [&]() { return boost::asio::async_write(socket, buffers, boost::asio::as_tuple(boost::asio::use_awaitable)); }, ec);
 }
 
 template <typename MutableBufferSequence>
@@ -258,9 +254,7 @@ inline boost::asio::awaitable<std::size_t> wait_read_some_with_timeout(boost::as
                                                                        boost::system::error_code& ec)
 {
     co_return co_await detail::wait_size_op_with_timeout(
-        timeout_sec,
-        [&]() { return socket.async_read_some(buffers, boost::asio::as_tuple(boost::asio::use_awaitable)); },
-        ec);
+        timeout_sec, [&]() { return socket.async_read_some(buffers, boost::asio::as_tuple(boost::asio::use_awaitable)); }, ec);
 }
 
 template <typename ConstBufferSequence>
@@ -270,9 +264,7 @@ inline boost::asio::awaitable<std::size_t> wait_write_some_with_timeout(boost::a
                                                                         boost::system::error_code& ec)
 {
     co_return co_await detail::wait_size_op_with_timeout(
-        timeout_sec,
-        [&]() { return socket.async_write_some(buffers, boost::asio::as_tuple(boost::asio::use_awaitable)); },
-        ec);
+        timeout_sec, [&]() { return socket.async_write_some(buffers, boost::asio::as_tuple(boost::asio::use_awaitable)); }, ec);
 }
 
 template <typename InternetProtocol>

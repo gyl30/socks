@@ -58,15 +58,9 @@ namespace
 boost::system::error_code errno_ec() { return {errno, boost::system::system_category()}; }
 
 #ifdef _WIN32
-boost::system::error_code win32_ec()
-{
-    return {static_cast<int>(GetLastError()), boost::system::system_category()};
-}
+boost::system::error_code win32_ec() { return {static_cast<int>(GetLastError()), boost::system::system_category()}; }
 
-boost::system::error_code win32_result_ec(const DWORD result)
-{
-    return {static_cast<int>(result), boost::system::system_category()};
-}
+boost::system::error_code win32_result_ec(const DWORD result) { return {static_cast<int>(result), boost::system::system_category()}; }
 
 std::wstring utf8_to_wstring(const std::string& text)
 {
@@ -347,8 +341,7 @@ bool tun_device::configure(const config::tun_t& cfg, boost::system::error_code& 
         raw_addr6 = &addr6;
     }
 
-    const DWORD configure_result = tun_device_windows_configure_interface(
-        &luid, cfg.mtu, raw_addr4, cfg.ipv4_prefix, raw_addr6, cfg.ipv6_prefix);
+    const DWORD configure_result = tun_device_windows_configure_interface(&luid, cfg.mtu, raw_addr4, cfg.ipv4_prefix, raw_addr6, cfg.ipv6_prefix);
     if (configure_result != NO_ERROR)
     {
         ec = win32_result_ec(configure_result);
