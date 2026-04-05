@@ -11,13 +11,13 @@
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/awaitable.hpp>
 
-#include "router.h"
-#include "constants.h"
 #include "client_tunnel_pool.h"
+#include "constants.h"
+#include "router.h"
+#include "run_loop_spawner.h"
+
 namespace mux
 {
-
-struct run_loop_spawner;
 
 class socks_session : public std::enable_shared_from_this<socks_session>
 {

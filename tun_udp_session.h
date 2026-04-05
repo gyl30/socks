@@ -14,15 +14,14 @@
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/experimental/concurrent_channel.hpp>
 
+#include "mux_connection.h"
+#include "client_tunnel_pool.h"
 #include "config.h"
 #include "router.h"
 #include "tun_lwip.h"
-#include "client_tunnel_pool.h"
+
 namespace mux
 {
-
-class mux_connection;
-class mux_stream;
 
 class tun_udp_session : public std::enable_shared_from_this<tun_udp_session>
 {

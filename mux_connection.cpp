@@ -1018,7 +1018,7 @@ std::shared_ptr<mux_stream> mux_connection::create_stream()
         stream_id = acquire_next_id();
         if (stream_id != mux::kStreamIdHeartbeat)
         {
-            stream = std::make_shared<mux_stream>(stream_id, cfg_, worker_.io_context, shared_from_this());
+            stream = std::make_shared<mux_stream>(stream_id, cfg_, worker_.io_context, make_stream_sender());
             streams_.emplace(stream_id, stream);
         }
     }
@@ -1035,6 +1035,29 @@ std::shared_ptr<mux_stream> mux_connection::create_stream()
         return nullptr;
     }
     return stream;
+}
+
+mux_stream::frame_sender mux_connection::make_stream_sender()
+{
+    const std::weak_ptr<mux_connection> weak_self = shared_from_this();
+    return [weak_self](mux_frame frame, uint32_t timeout_sec, boost::system::error_code& ec) -> boost::asio::awaitable<void>
+    {
+        ec.clear();
+        const auto self = weak_self.lock();
+        if (!self)
+        {
+            ec = boost::asio::error::connection_aborted;
+            co_return;
+        }
+
+        if (timeout_sec > 0)
+        {
+            co_await self->send_async_with_timeout(std::move(frame), timeout_sec, ec);
+            co_return;
+        }
+
+        co_await self->send_async(std::move(frame), ec);
+    };
 }
 
 std::shared_ptr<mux_stream> mux_connection::create_incoming_stream(uint32_t stream_id)
@@ -1066,7 +1089,7 @@ std::shared_ptr<mux_stream> mux_connection::create_incoming_stream(uint32_t stre
         return nullptr;
     }
 
-    auto stream = std::make_shared<mux_stream>(stream_id, cfg_, worker_.io_context, shared_from_this());
+    auto stream = std::make_shared<mux_stream>(stream_id, cfg_, worker_.io_context, make_stream_sender());
     streams_.emplace(stream_id, stream);
     return stream;
 }

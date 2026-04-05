@@ -103,25 +103,6 @@ uint32_t prefix_mask_v4(uint8_t prefix)
 
 }    // namespace
 
-#ifdef _WIN32
-struct tun_device::windows_state
-{
-    HMODULE module = nullptr;
-    WINTUN_ADAPTER_HANDLE adapter = nullptr;
-    WINTUN_SESSION_HANDLE session = nullptr;
-    WINTUN_CREATE_ADAPTER_FUNC* create_adapter = nullptr;
-    WINTUN_CLOSE_ADAPTER_FUNC* close_adapter = nullptr;
-    WINTUN_GET_ADAPTER_LUID_FUNC* get_adapter_luid = nullptr;
-    WINTUN_START_SESSION_FUNC* start_session = nullptr;
-    WINTUN_END_SESSION_FUNC* end_session = nullptr;
-    WINTUN_GET_READ_WAIT_EVENT_FUNC* get_read_wait_event = nullptr;
-    WINTUN_RECEIVE_PACKET_FUNC* receive_packet = nullptr;
-    WINTUN_RELEASE_RECEIVE_PACKET_FUNC* release_receive_packet = nullptr;
-    WINTUN_ALLOCATE_SEND_PACKET_FUNC* allocate_send_packet = nullptr;
-    WINTUN_SEND_PACKET_FUNC* send_packet = nullptr;
-};
-#endif
-
 tun_device::~tun_device() { close(); }
 
 bool tun_device::open(const config::tun_t& cfg, boost::system::error_code& ec)
@@ -130,7 +111,7 @@ bool tun_device::open(const config::tun_t& cfg, boost::system::error_code& ec)
     close();
 
 #ifdef _WIN32
-    auto state = std::make_unique<windows_state>();
+    auto state = std::make_unique<tun_device_windows_state>();
     state->module = LoadLibraryExW(L"wintun.dll", nullptr, LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
     if (state->module == nullptr)
     {
