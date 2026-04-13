@@ -54,9 +54,7 @@ tcp_path="/fast-large?body_bytes=${tcp_body_bytes}&chunk_size=${tcp_chunk_size}&
 warmup_path="/fast-large?body_bytes=${warmup_body_bytes}&chunk_size=${warmup_chunk_size}&chunk_interval_ms=0"
 
 ip link set lo up
-mkdir -p /run/netns
-mount -t tmpfs tmpfs /run >/dev/null 2>&1 || true
-mkdir -p /run/netns
+ensure_netns_mountpoint /run/netns
 
 declare -a pids=()
 

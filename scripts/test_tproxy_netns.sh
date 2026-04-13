@@ -15,10 +15,10 @@ if [[ "${EUID}" -ne 0 ]]; then
     exit 1
 fi
 
+source "$repo_root/scripts/runtime_env.sh"
+
 ip link set lo up
-mkdir -p /run/netns
-mount -t tmpfs tmpfs /run >/dev/null 2>&1 || true
-mkdir -p /run/netns
+ensure_netns_mountpoint /run/netns
 
 for cmd in awk ip iptables python3 openssl; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
@@ -35,7 +35,6 @@ tag="$(printf '%04x' "$(( $$ % 65536 ))")"
 sni="${REALITY_SNI:-localhost}"
 uplink_if=""
 
-source "$repo_root/scripts/runtime_env.sh"
 init_runtime_ld_library_path "$binary"
 
 resolv_source=""

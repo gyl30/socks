@@ -46,6 +46,38 @@ read_binary_runpath() {
     readelf -d "$binary" 2>/dev/null | awk -F'[][]' '/(RUNPATH|RPATH)/ {print $2; exit}'
 }
 
+is_mountpoint() {
+    local target="$1"
+    awk -v target="$target" '
+        $5 == target { found = 1; exit }
+        END { exit(found ? 0 : 1) }
+    ' /proc/self/mountinfo
+}
+
+ensure_netns_mountpoint() {
+    local netns_dir="${1:-/run/netns}"
+
+    mkdir -p "$netns_dir"
+
+    if ! is_mountpoint "$netns_dir"; then
+        mount --bind "$netns_dir" "$netns_dir"
+    fi
+
+    if ! awk -v target="$netns_dir" '
+        $5 == target {
+            found = 1
+            for (i = 7; i <= NF && $i != "-"; ++i) {
+                if ($i ~ /^shared:/) {
+                    shared = 1
+                }
+            }
+        }
+        END { exit(found && shared ? 0 : 1) }
+    ' /proc/self/mountinfo; then
+        mount --make-shared "$netns_dir"
+    fi
+}
+
 init_runtime_ld_library_path() {
     local binary="$1"
     runtime_ld_library_path=""

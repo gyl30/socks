@@ -145,12 +145,39 @@ def count_log_occurrences(path, keyword):
         return sum(1 for line in handle if keyword in line)
 
 
+def count_any_log_occurrences(path, keywords):
+    with open(path, "r", encoding="utf-8") as handle:
+        return sum(1 for line in handle if any(keyword in line for keyword in keywords))
+
+
 def count_idle_events(tmp_dir):
     return (
-        count_log_occurrences(tmp_dir / "client.log", "upstream_to_client read failed Connection timed out")
-        + count_log_occurrences(tmp_dir / "client.log", "tcp session idle closing")
-        + count_log_occurrences(tmp_dir / "server.log", "mux upstream stream read finished Connection timed out")
-        + count_log_occurrences(tmp_dir / "server.log", "timeout idle timeout")
+        count_any_log_occurrences(
+            tmp_dir / "client.log",
+            (
+                "upstream_to_client read failed Connection timed out",
+                "tcp session idle closing",
+            ),
+        )
+        + count_any_log_occurrences(
+            tmp_dir / "server.log",
+            (
+                "mux upstream stream read finished Connection timed out",
+                " idle timeout ",
+            ),
+        )
+    )
+
+
+def count_handshake_timeout_events(tmp_dir):
+    return count_any_log_occurrences(
+        tmp_dir / "client.log",
+        (
+            "read greeting failed Connection timed out",
+            "read methods failed Connection timed out",
+            "read auth version failed Connection timed out",
+            "read field length failed Connection timed out",
+        ),
     )
 
 
@@ -520,10 +547,10 @@ def run_churn_mode(repo_root, binary, keep_artifacts):
         )
         print(load_output.strip())
 
-        before_handshake_timeout = count_log_occurrences(tmp_dir / "client.log", "handshake failed Connection timed out")
+        before_handshake_timeout = count_handshake_timeout_events(tmp_dir)
         print(run_handshake_stall(repo_root, env, 64, "greeting-header", 3).strip())
         time.sleep(1.0)
-        after_handshake_timeout = count_log_occurrences(tmp_dir / "client.log", "handshake failed Connection timed out")
+        after_handshake_timeout = count_handshake_timeout_events(tmp_dir)
         handshake_timeout_hits = after_handshake_timeout - before_handshake_timeout
         if handshake_timeout_hits < 32:
             raise RuntimeError(f"expected at least 32 handshake timeouts got {handshake_timeout_hits}")
