@@ -8,7 +8,6 @@
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/awaitable.hpp>
 
-#include "client_tunnel_pool.h"
 #include "config.h"
 #include "context_pool.h"
 #include "router.h"
@@ -26,7 +25,7 @@ enum class socks_client_state : uint8_t
 class socks_client : public std::enable_shared_from_this<socks_client>
 {
    public:
-    socks_client(io_context_pool& pool, const config& cfg, std::shared_ptr<client_tunnel_pool> tunnel_pool = nullptr);
+    socks_client(io_context_pool& pool, const config& cfg);
 
     void start();
     void stop();
@@ -41,7 +40,6 @@ class socks_client : public std::enable_shared_from_this<socks_client>
     io_worker& owner_worker_;
     boost::asio::ip::tcp::acceptor acceptor_{owner_worker_.io_context};
     std::shared_ptr<mux::router> router_;
-    std::shared_ptr<client_tunnel_pool> tunnel_pool_;
     std::atomic<uint32_t> next_session_id_{1};
     std::atomic<bool> stopping_{false};
 };

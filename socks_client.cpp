@@ -17,7 +17,6 @@
 #include "context_pool.h"
 #include "socks_client.h"
 #include "socks_session.h"
-#include "client_tunnel_pool.h"
 namespace mux
 {
 
@@ -105,12 +104,8 @@ void setup_acceptor(boost::asio::ip::tcp::acceptor& acceptor, const std::string&
 
 }    // namespace
 
-socks_client::socks_client(io_context_pool& pool, const config& cfg, std::shared_ptr<client_tunnel_pool> tunnel_pool)
-    : cfg_(cfg),
-      pool_(pool),
-      owner_worker_(pool.get_io_worker()),
-      router_(std::make_shared<mux::router>()),
-      tunnel_pool_(tunnel_pool != nullptr ? std::move(tunnel_pool) : std::make_shared<client_tunnel_pool>(pool, cfg))
+socks_client::socks_client(io_context_pool& pool, const config& cfg)
+    : cfg_(cfg), pool_(pool), owner_worker_(pool.get_io_worker()), router_(std::make_shared<mux::router>())
 {
 }
 
@@ -193,7 +188,7 @@ boost::asio::awaitable<void> socks_client::accept_loop()
                      remote_port,
                      ec.message());
         }
-        std::make_shared<socks_session>(std::move(socket), socket_worker, tunnel_pool_, router_, sid, cfg_)->start();
+        std::make_shared<socks_session>(std::move(socket), socket_worker, router_, sid, cfg_)->start();
     }
     LOG_INFO("event {} listen {}:{} accept loop exited", log_event::kConnClose, cfg_.socks.host, cfg_.socks.port);
 }

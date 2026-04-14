@@ -13,7 +13,7 @@
 #include <boost/asio/experimental/concurrent_channel.hpp>
 
 #include "lru_cache.h"
-#include "client_tunnel_pool.h"
+#include "proxy_udp_upstream.h"
 namespace mux
 {
 
@@ -28,7 +28,6 @@ class tproxy_udp_session : public std::enable_shared_from_this<tproxy_udp_sessio
 {
    public:
     tproxy_udp_session(io_worker& worker,
-                       std::shared_ptr<client_tunnel_pool> tunnel_pool,
                        const boost::asio::ip::udp::endpoint& client_endpoint,
                        const boost::asio::ip::udp::endpoint& target_endpoint,
                        route_type route,
@@ -45,10 +44,9 @@ class tproxy_udp_session : public std::enable_shared_from_this<tproxy_udp_sessio
 
     [[nodiscard]] boost::asio::awaitable<void> run();
     [[nodiscard]] boost::asio::awaitable<bool> open_direct_socket();
-    [[nodiscard]] boost::asio::awaitable<bool> open_proxy_stream();
+    [[nodiscard]] boost::asio::awaitable<bool> open_proxy_upstream();
     [[nodiscard]] boost::asio::awaitable<bool> run_direct_mode();
     [[nodiscard]] boost::asio::awaitable<bool> run_proxy_mode();
-    [[nodiscard]] boost::asio::awaitable<std::shared_ptr<mux_connection>> wait_for_proxy_tunnel(boost::system::error_code& ec) const;
     [[nodiscard]] boost::asio::awaitable<void> packets_to_direct();
     [[nodiscard]] boost::asio::awaitable<void> direct_to_client();
     [[nodiscard]] boost::asio::awaitable<void> packets_to_proxy();
@@ -74,10 +72,7 @@ class tproxy_udp_session : public std::enable_shared_from_this<tproxy_udp_sessio
     uint64_t last_activity_time_ms_ = 0;
     boost::asio::steady_timer idle_timer_;
     boost::asio::ip::udp::socket upstream_socket_;
-    std::shared_ptr<client_tunnel_pool> tunnel_pool_;
-    std::shared_ptr<mux_connection> tunnel_;
-    std::shared_ptr<mux_stream> stream_;
-    std::atomic<uint8_t> stream_close_command_{0};
+    std::shared_ptr<proxy_udp_upstream> proxy_upstream_;
     uint64_t tx_bytes_ = 0;
     uint64_t rx_bytes_ = 0;
     std::chrono::steady_clock::time_point start_time_ = std::chrono::steady_clock::now();

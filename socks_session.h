@@ -11,7 +11,6 @@
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/awaitable.hpp>
 
-#include "client_tunnel_pool.h"
 #include "constants.h"
 #include "router.h"
 #include "run_loop_spawner.h"
@@ -24,7 +23,6 @@ class socks_session : public std::enable_shared_from_this<socks_session>
    public:
     socks_session(boost::asio::ip::tcp::socket socket,
                   io_worker& worker,
-                  std::shared_ptr<client_tunnel_pool> tunnel_pool,
                   std::shared_ptr<router> router,
                   uint32_t sid,
                   const config& cfg,
@@ -118,7 +116,6 @@ class socks_session : public std::enable_shared_from_this<socks_session>
     boost::asio::ip::tcp::socket socket_;
     std::shared_ptr<router> router_;
     std::shared_ptr<void> active_guard_;
-    std::shared_ptr<client_tunnel_pool> tunnel_pool_;
 };
 
 }    // namespace mux

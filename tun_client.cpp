@@ -27,11 +27,8 @@
 namespace mux
 {
 
-tun_client::tun_client(io_context_pool& pool, const config& cfg, std::shared_ptr<client_tunnel_pool> tunnel_pool)
-    : cfg_(cfg),
-      owner_worker_(pool.get_io_worker()),
-      router_(std::make_shared<router>()),
-      tunnel_pool_(tunnel_pool != nullptr ? std::move(tunnel_pool) : std::make_shared<client_tunnel_pool>(pool, cfg))
+tun_client::tun_client(io_context_pool& pool, const config& cfg)
+    : cfg_(cfg), owner_worker_(pool.get_io_worker()), router_(std::make_shared<router>())
 {
 }
 
@@ -105,40 +102,10 @@ void tun_client::start()
         std::exit(EXIT_FAILURE);
     }
 
-    LOG_INFO("event {} device {} index {} active_tunnels {} total_slots {} tun stack ready",
-             log_event::kConnInit,
-             device_.name(),
-             device_.index(),
-             tunnel_pool_ != nullptr ? tunnel_pool_->active_tunnels() : 0U,
-             cfg_.limits.max_connections);
+    LOG_INFO("event {} device {} index {} tun stack ready", log_event::kConnInit, device_.name(), device_.index());
     owner_worker_.group.spawn([self = shared_from_this()]() { return self->read_loop(); });
     owner_worker_.group.spawn([self = shared_from_this()]() { return self->timer_loop(); });
-    owner_worker_.group.spawn(
-        [self = shared_from_this()]() -> boost::asio::awaitable<void>
-        {
-            while (!self->stopping_.load(std::memory_order_relaxed))
-            {
-                const auto active_tunnels = self->tunnel_pool_ != nullptr ? self->tunnel_pool_->active_tunnels() : 0U;
-                if (active_tunnels > 0U || self->cfg_.limits.max_connections == 0)
-                {
-                    LOG_INFO("event {} device {} index {} active_tunnels {} total_slots {} tun client started name {} index {}",
-                             log_event::kConnEstablished,
-                             self->device_.name(),
-                             self->device_.index(),
-                             active_tunnels,
-                             self->cfg_.limits.max_connections,
-                             self->device_.name(),
-                             self->device_.index());
-                    co_return;
-                }
-
-                const auto wait_ec = co_await net::wait_for(self->owner_worker_.io_context, std::chrono::milliseconds(100));
-                if (wait_ec == boost::asio::error::operation_aborted || wait_ec == boost::asio::error::bad_descriptor)
-                {
-                    co_return;
-                }
-            }
-        });
+    LOG_INFO("event {} device {} index {} tun client started", log_event::kConnEstablished, device_.name(), device_.index());
 }
 
 void tun_client::stop()
@@ -404,7 +371,6 @@ void tun_client::on_tcp_accept(tcp_pcb* pcb)
     const auto conn_id = next_session_id_.fetch_add(1, std::memory_order_relaxed);
     std::weak_ptr<tun_client> weak_self = shared_from_this();
     auto session = std::make_shared<tun_tcp_session>(owner_worker_.io_context.get_executor(),
-                                                     tunnel_pool_,
                                                      router_,
                                                      pcb,
                                                      conn_id,
@@ -447,7 +413,6 @@ void tun_client::on_udp_accept(udp_pcb* pcb, pbuf* packet, const ip_addr_t* addr
     const auto conn_id = next_session_id_.fetch_add(1, std::memory_order_relaxed);
     std::weak_ptr<tun_client> weak_self = shared_from_this();
     auto session = std::make_shared<tun_udp_session>(owner_worker_,
-                                                     tunnel_pool_,
                                                      router_,
                                                      pcb,
                                                      client_endpoint,

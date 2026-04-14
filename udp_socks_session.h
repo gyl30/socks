@@ -11,9 +11,12 @@
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/experimental/concurrent_channel.hpp>
 
+#include "config.h"
+#include "router.h"
+#include "protocol.h"
 #include "lru_cache.h"
 #include "net_utils.h"
-#include "client_tunnel_pool.h"
+#include "proxy_udp_upstream.h"
 namespace mux
 {
 
@@ -27,7 +30,6 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
    public:
     udp_socks_session(boost::asio::ip::tcp::socket socket,
                       io_worker& worker,
-                      std::shared_ptr<client_tunnel_pool> tunnel_pool,
                       std::shared_ptr<router> router,
                       uint32_t sid,
                       uint64_t trace_id,
@@ -44,7 +46,7 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
     [[nodiscard]] std::string current_client_host() const;
     [[nodiscard]] uint16_t current_client_port() const;
     [[nodiscard]] boost::asio::awaitable<route_type> decide_udp_route(const socks_udp_header& header) const;
-    [[nodiscard]] boost::asio::awaitable<bool> ensure_proxy_stream(boost::system::error_code& ec);
+    [[nodiscard]] boost::asio::awaitable<bool> ensure_proxy_upstream(boost::system::error_code& ec);
     [[nodiscard]] boost::asio::awaitable<boost::asio::ip::udp::endpoint> resolve_target_endpoint(const std::string& host,
                                                                                                  uint16_t port,
                                                                                                  boost::system::error_code& ec);
@@ -64,9 +66,9 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
                                 const char* family,
                                 boost::system::error_code& ec) const;
     [[nodiscard]] boost::asio::ip::udp::socket* select_direct_udp_socket(const boost::asio::ip::udp::endpoint& target);
-    void clear_proxy_stream_if_current(const std::shared_ptr<mux_stream>& stream);
-    boost::asio::awaitable<void> wait_and_stream_to_udp_sock();
-    boost::asio::awaitable<void> stream_to_udp_sock(std::shared_ptr<mux_stream> stream);
+    void clear_proxy_upstream_if_current(const std::shared_ptr<proxy_udp_upstream>& upstream);
+    boost::asio::awaitable<void> wait_and_proxy_to_udp_sock();
+    boost::asio::awaitable<void> proxy_to_udp_sock(std::shared_ptr<proxy_udp_upstream> upstream);
     boost::asio::awaitable<void> keep_tcp_alive();
     boost::asio::awaitable<void> idle_watchdog();
     void close_impl();
@@ -85,7 +87,8 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
         uint64_t expires_at = 0;
     };
 
-    using proxy_stream_channel_type = boost::asio::experimental::concurrent_channel<void(boost::system::error_code, std::shared_ptr<mux_stream>)>;
+    using proxy_upstream_channel_type =
+        boost::asio::experimental::concurrent_channel<void(boost::system::error_code, std::shared_ptr<proxy_udp_upstream>)>;
 
     uint64_t trace_id_ = 0;
     uint32_t conn_id_ = 0;
@@ -101,13 +104,10 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
     boost::asio::ip::udp::socket direct_udp_socket_v4_;
     boost::asio::ip::udp::socket direct_udp_socket_v6_;
     std::shared_ptr<router> router_;
-    std::shared_ptr<client_tunnel_pool> tunnel_pool_;
-    std::shared_ptr<mux_connection> tunnel_;
-    std::shared_ptr<mux_stream> stream_;
-    std::atomic<uint8_t> stream_close_command_{0};
+    std::shared_ptr<proxy_udp_upstream> proxy_upstream_;
     uint64_t last_activity_time_ms_{0};
     bool stopped_ = false;
-    bool proxy_stream_started_ = false;
+    bool proxy_upstream_started_ = false;
     bool has_client_ip_ = false;
     bool has_client_addr_ = false;
     bool has_last_target_ = false;
@@ -124,7 +124,7 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
     lru_cache<std::string, endpoint_cache_entry> resolved_targets_;
     lru_cache<boost::asio::ip::udp::endpoint, peer_cache_entry, net::udp_endpoint_hash, net::udp_endpoint_equal> direct_peers_;
     std::shared_ptr<void> active_connection_guard_;
-    proxy_stream_channel_type proxy_stream_channel_;
+    proxy_upstream_channel_type proxy_upstream_channel_;
 };
 
 }    // namespace mux

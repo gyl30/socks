@@ -216,7 +216,6 @@ set(SOCKS_SOURCES
     log.cpp
     config.cpp
     net_utils.cpp
-    mux_connection.cpp
     remote_server.cpp
     socks_client.cpp
     router.cpp
@@ -232,14 +231,14 @@ set(SOCKS_SOURCES
     tls/record_layer.cpp
     tls/key_schedule.cpp
     ip_matcher.cpp
-    remote_session.cpp
-    remote_udp_session.cpp
+    remote_tcp_proxy_session.cpp
+    remote_udp_proxy_session.cpp
+    proxy_udp_upstream.cpp
     upstream.cpp
-    mux_codec.cpp
-    mux_stream.cpp
+    proxy_protocol.cpp
+    proxy_reality_connection.cpp
     protocol.cpp
     context_pool.cpp
-    client_tunnel_pool.cpp
     reality/handshake/client_handshaker.cpp
     reality/handshake/server_handshaker.cpp
     reality/policy/fallback_gate.cpp
@@ -340,8 +339,7 @@ if(ENABLE_FUZZ)
     tls/ch_parser.cpp
     tls/server_name.cpp
     reality/handshake/fingerprint.cpp
-    reality/handshake/client_hello_builder.cpp
-    mux_codec.cpp)
+    reality/handshake/client_hello_builder.cpp)
   configure_core_target(fuzz_core)
   target_compile_options(fuzz_core PRIVATE -fsanitize=fuzzer-no-link,address,undefined)
 endif()
@@ -357,11 +355,6 @@ if(ENABLE_FUZZ)
   target_link_libraries(ch_parser_fuzz PRIVATE fuzz_core)
   target_compile_options(ch_parser_fuzz PRIVATE -fsanitize=fuzzer-no-link,address,undefined)
   target_link_options(ch_parser_fuzz PRIVATE -fsanitize=fuzzer,address,undefined)
-
-  add_executable(mux_codec_fuzz fuzz/mux_codec_fuzz.cpp)
-  target_link_libraries(mux_codec_fuzz PRIVATE fuzz_core)
-  target_compile_options(mux_codec_fuzz PRIVATE -fsanitize=fuzzer-no-link,address,undefined)
-  target_link_options(mux_codec_fuzz PRIVATE -fsanitize=fuzzer,address,undefined)
 endif()
 
 set(SOCKS_RUNTIME_DIRS "")

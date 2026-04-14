@@ -11,7 +11,6 @@
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/steady_timer.hpp>
 
-#include "client_tunnel_pool.h"
 #include "config.h"
 #include "router.h"
 #include "tun_lwip.h"
@@ -24,7 +23,6 @@ class tun_tcp_session : public std::enable_shared_from_this<tun_tcp_session>
 {
    public:
     tun_tcp_session(const boost::asio::any_io_executor& executor,
-                    std::shared_ptr<client_tunnel_pool> tunnel_pool,
                     std::shared_ptr<router> router,
                     tcp_pcb* pcb,
                     uint32_t sid,
@@ -60,7 +58,6 @@ class tun_tcp_session : public std::enable_shared_from_this<tun_tcp_session>
     uint64_t trace_id_ = 0;
     uint32_t conn_id_ = 0;
     const config& cfg_;
-    std::shared_ptr<client_tunnel_pool> tunnel_pool_;
     std::shared_ptr<router> router_;
     tcp_pcb* pcb_ = nullptr;
     pbuf* queue_ = nullptr;

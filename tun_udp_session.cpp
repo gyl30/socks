@@ -15,161 +15,20 @@
 #include "protocol.h"
 #include "trace_id.h"
 #include "constants.h"
-#include "mux_codec.h"
 #include "net_utils.h"
+#include "proxy_protocol.h"
+#include "proxy_udp_upstream.h"
 #include "context_pool.h"
-#include "mux_protocol.h"
-#include "mux_connection.h"
 #include "tun_udp_session.h"
-#include "mux_session_utils.h"
 #include "connection_tracker.h"
 namespace mux
 {
 
 namespace
 {
-
-boost::asio::awaitable<std::shared_ptr<mux_stream>> connect_remote_udp_stream(const std::shared_ptr<mux_connection>& tunnel,
-                                                                              const uint32_t conn_id,
-                                                                              const uint64_t trace_id,
-                                                                              const boost::asio::ip::udp::endpoint& target_endpoint,
-                                                                              boost::system::error_code& ec)
-{
-    ec.clear();
-    if (tunnel == nullptr)
-    {
-        ec = boost::asio::error::not_connected;
-        LOG_WARN("event {} trace_id {:016x} conn_id {} target {}:{} no active tunnel for tun udp associate",
-                 log_event::kMux,
-                 trace_id,
-                 conn_id,
-                 target_endpoint.address().to_string(),
-                 target_endpoint.port());
-        co_return nullptr;
-    }
-
-    auto stream = tunnel->create_stream();
-    if (stream == nullptr)
-    {
-        ec = boost::asio::error::operation_aborted;
-        LOG_WARN("event {} trace_id {:016x} conn_id {} target {}:{} create tun udp stream failed tunnel_ptr {}",
-                 log_event::kMux,
-                 trace_id,
-                 conn_id,
-                 target_endpoint.address().to_string(),
-                 target_endpoint.port(),
-                 static_cast<const void*>(tunnel.get()));
-        co_return nullptr;
-    }
-
-    const syn_payload syn{
-        .socks_cmd = socks::kCmdUdpAssociate,
-        .addr = "0.0.0.0",
-        .port = 0,
-        .trace_id = trace_id,
-    };
-    std::vector<uint8_t> syn_data;
-    if (!mux_codec::encode_syn(syn, syn_data))
-    {
-        ec = boost::asio::error::invalid_argument;
-        LOG_WARN("event {} trace_id {:016x} conn_id {} stream_id {} target {}:{} encode tun udp syn failed",
-                 log_event::kMux,
-                 trace_id,
-                 conn_id,
-                 stream->id(),
-                 target_endpoint.address().to_string(),
-                 target_endpoint.port());
-        tunnel->close_and_remove_stream(stream);
-        co_return nullptr;
-    }
-
-    mux_frame syn_frame;
-    syn_frame.h.stream_id = stream->id();
-    syn_frame.h.command = mux::kCmdSyn;
-    syn_frame.payload = std::move(syn_data);
-    co_await stream->async_write(std::move(syn_frame), ec);
-    if (ec)
-    {
-        LOG_WARN("event {} trace_id {:016x} conn_id {} stream_id {} target {}:{} send tun udp syn failed {}",
-                 log_event::kMux,
-                 trace_id,
-                 conn_id,
-                 stream->id(),
-                 target_endpoint.address().to_string(),
-                 target_endpoint.port(),
-                 ec.message());
-        tunnel->close_and_remove_stream(stream);
-        co_return nullptr;
-    }
-
-    const auto ack_frame = co_await stream->async_read(ec);
-    if (ec)
-    {
-        LOG_WARN("event {} trace_id {:016x} conn_id {} stream_id {} target {}:{} read tun udp ack failed {}",
-                 log_event::kMux,
-                 trace_id,
-                 conn_id,
-                 stream->id(),
-                 target_endpoint.address().to_string(),
-                 target_endpoint.port(),
-                 ec.message());
-        co_await session_util::send_stream_reset(stream, log_event::kMux, conn_id, "read_udp_ack");
-        tunnel->close_and_remove_stream(stream);
-        co_return nullptr;
-    }
-    if (ack_frame.h.command != mux::kCmdAck)
-    {
-        ec = boost::asio::error::invalid_argument;
-        LOG_WARN("event {} trace_id {:016x} conn_id {} stream_id {} target {}:{} unexpected tun udp ack command {}",
-                 log_event::kMux,
-                 trace_id,
-                 conn_id,
-                 stream->id(),
-                 target_endpoint.address().to_string(),
-                 target_endpoint.port(),
-                 ack_frame.h.command);
-        co_await session_util::send_stream_reset(stream, log_event::kMux, conn_id, "unexpected_udp_ack_command");
-        tunnel->close_and_remove_stream(stream);
-        co_return nullptr;
-    }
-
-    ack_payload ack{};
-    if (!mux_codec::decode_ack(ack_frame.payload.data(), ack_frame.payload.size(), ack))
-    {
-        ec = boost::asio::error::invalid_argument;
-        LOG_WARN("event {} trace_id {:016x} conn_id {} stream_id {} target {}:{} invalid tun udp ack payload",
-                 log_event::kMux,
-                 trace_id,
-                 conn_id,
-                 stream->id(),
-                 target_endpoint.address().to_string(),
-                 target_endpoint.port());
-        co_await session_util::send_stream_reset(stream, log_event::kMux, conn_id, "invalid_udp_ack_payload");
-        tunnel->close_and_remove_stream(stream);
-        co_return nullptr;
-    }
-    if (ack.socks_rep != socks::kRepSuccess)
-    {
-        ec = boost::asio::error::operation_aborted;
-        LOG_WARN("event {} trace_id {:016x} conn_id {} stream_id {} target {}:{} tun udp ack rejected rep {}",
-                 log_event::kMux,
-                 trace_id,
-                 conn_id,
-                 stream->id(),
-                 target_endpoint.address().to_string(),
-                 target_endpoint.port(),
-                 ack.socks_rep);
-        tunnel->close_and_remove_stream(stream);
-        co_return nullptr;
-    }
-
-    co_return stream;
-}
-
 }    // namespace
 
 tun_udp_session::tun_udp_session(io_worker& worker,
-                                 std::shared_ptr<client_tunnel_pool> tunnel_pool,
                                  std::shared_ptr<router> router,
                                  udp_pcb* pcb,
                                  boost::asio::ip::udp::endpoint client_endpoint,
@@ -182,7 +41,6 @@ tun_udp_session::tun_udp_session(io_worker& worker,
       cfg_(cfg),
       worker_(worker),
       active_guard_(acquire_active_connection_guard()),
-      tunnel_pool_(std::move(tunnel_pool)),
       router_(std::move(router)),
       pcb_(pcb),
       last_activity_time_ms_(net::now_ms()),
@@ -193,7 +51,6 @@ tun_udp_session::tun_udp_session(io_worker& worker,
       on_close_(std::move(on_close)),
       packet_channel_(worker.io_context, constants::udp::kPacketChannelCapacity)
 {
-    stream_close_command_.store(mux::kCmdFin, std::memory_order_relaxed);
     udp_recv(pcb_, &tun_udp_session::on_recv, this);
 }
 
@@ -419,47 +276,17 @@ boost::asio::awaitable<bool> tun_udp_session::open_direct_socket()
     co_return true;
 }
 
-boost::asio::awaitable<bool> tun_udp_session::open_proxy_stream()
+boost::asio::awaitable<bool> tun_udp_session::open_proxy_upstream()
 {
-    boost::system::error_code ec;
-    tunnel_ = co_await wait_for_proxy_tunnel(ec);
-    if (ec || tunnel_ == nullptr)
+    const auto connect_result = co_await proxy_udp_upstream::connect(worker_.io_context.get_executor(), conn_id_, trace_id_, cfg_);
+    if (connect_result.ec || connect_result.upstream == nullptr)
     {
-        if (!ec)
-        {
-            ec = boost::asio::error::timed_out;
-        }
-        LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} target {}:{} wait tun udp tunnel failed {} active_tunnels {} total_slots {}",
-                 log_event::kConnInit,
-                 trace_id_,
-                 conn_id_,
-                 client_endpoint_.address().to_string(),
-                 client_endpoint_.port(),
-                 target_endpoint_.address().to_string(),
-                 target_endpoint_.port(),
-                 ec.message(),
-                 tunnel_pool_ != nullptr ? tunnel_pool_->active_tunnels() : 0,
-                 cfg_.limits.max_connections);
-        co_return false;
-    }
-    LOG_DEBUG("event {} trace_id {:016x} conn_id {} client {}:{} target {}:{} selected tun udp tunnel ptr {}",
-              log_event::kConnInit,
-              trace_id_,
-              conn_id_,
-              client_endpoint_.address().to_string(),
-              client_endpoint_.port(),
-              target_endpoint_.address().to_string(),
-              target_endpoint_.port(),
-              static_cast<const void*>(tunnel_.get()));
-
-    stream_ = co_await connect_remote_udp_stream(tunnel_, conn_id_, trace_id_, target_endpoint_, ec);
-    if (ec || stream_ == nullptr)
-    {
+        auto ec = connect_result.ec;
         if (!ec)
         {
             ec = boost::asio::error::operation_aborted;
         }
-        LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} target {}:{} open tun proxy udp stream failed {} tunnel_ptr {}",
+        LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} target {}:{} open tun proxy udp upstream failed {} rep {}",
                  log_event::kConnInit,
                  trace_id_,
                  conn_id_,
@@ -468,12 +295,12 @@ boost::asio::awaitable<bool> tun_udp_session::open_proxy_stream()
                  target_endpoint_.address().to_string(),
                  target_endpoint_.port(),
                  ec.message(),
-                 static_cast<const void*>(tunnel_.get()));
-        tunnel_.reset();
+                 connect_result.socks_rep);
         co_return false;
     }
 
-    LOG_INFO("event {} trace_id {:016x} conn_id {} opened tun proxy udp stream client {}:{} target {}:{} stream_id {}",
+    proxy_upstream_ = connect_result.upstream;
+    LOG_INFO("event {} trace_id {:016x} conn_id {} opened tun proxy udp upstream client {}:{} target {}:{} bind {}:{}",
              log_event::kConnInit,
              trace_id_,
              conn_id_,
@@ -481,7 +308,8 @@ boost::asio::awaitable<bool> tun_udp_session::open_proxy_stream()
              client_endpoint_.port(),
              target_endpoint_.address().to_string(),
              target_endpoint_.port(),
-             stream_->id());
+             proxy_upstream_->bind_host(),
+             proxy_upstream_->bind_port());
     co_return true;
 }
 
@@ -509,7 +337,7 @@ boost::asio::awaitable<bool> tun_udp_session::run_proxy_mode()
 {
     using boost::asio::experimental::awaitable_operators::operator||;
 
-    if (!(co_await open_proxy_stream()))
+    if (!(co_await open_proxy_upstream()))
     {
         co_return false;
     }
@@ -523,59 +351,12 @@ boost::asio::awaitable<bool> tun_udp_session::run_proxy_mode()
         co_await (packets_to_proxy() || proxy_to_client() || idle_watchdog());
     }
 
-    const auto close_command = stream_close_command_.load(std::memory_order_relaxed);
-    if (stream_ != nullptr && close_command != mux::kNoStreamControl)
+    if (proxy_upstream_ != nullptr)
     {
-        mux_frame close_frame;
-        close_frame.h.stream_id = stream_->id();
-        close_frame.h.command = close_command;
-        boost::system::error_code close_ec;
-        co_await stream_->async_write(std::move(close_frame), close_ec);
-        (void)close_ec;
+        co_await proxy_upstream_->close();
+        proxy_upstream_.reset();
     }
-
-    if (tunnel_ != nullptr && stream_ != nullptr)
-    {
-        tunnel_->close_and_remove_stream(stream_);
-    }
-    stream_.reset();
-    tunnel_.reset();
     co_return true;
-}
-
-boost::asio::awaitable<std::shared_ptr<mux_connection>> tun_udp_session::wait_for_proxy_tunnel(boost::system::error_code& ec) const
-{
-    ec.clear();
-    const auto start_ms = net::now_ms();
-    const auto connect_timeout_ms = net::timeout_seconds_to_milliseconds(cfg_.timeout.connect);
-
-    for (;;)
-    {
-        if (stopped_.load(std::memory_order_relaxed))
-        {
-            ec = boost::asio::error::operation_aborted;
-            co_return nullptr;
-        }
-
-        const auto tunnel = tunnel_pool_ != nullptr ? tunnel_pool_->select_tunnel() : nullptr;
-        if (tunnel != nullptr)
-        {
-            co_return tunnel;
-        }
-
-        if (connect_timeout_ms != 0 && net::now_ms() - start_ms >= connect_timeout_ms)
-        {
-            ec = boost::asio::error::timed_out;
-            co_return nullptr;
-        }
-
-        const auto wait_ec = co_await net::wait_for(worker_.io_context, std::chrono::milliseconds(constants::udp::kTunnelPollIntervalMs));
-        if (wait_ec)
-        {
-            ec = wait_ec;
-            co_return nullptr;
-        }
-    }
 }
 
 boost::asio::awaitable<void> tun_udp_session::packets_to_direct()
@@ -634,25 +415,85 @@ boost::asio::awaitable<void> tun_udp_session::direct_to_client()
 
 boost::asio::awaitable<void> tun_udp_session::packets_to_proxy()
 {
-    co_await session_util::forward_udp_packets_to_proxy_stream(
-        packet_channel_, stream_, trace_id_, conn_id_, client_endpoint_, target_endpoint_, "tun proxy", tx_bytes_, last_activity_time_ms_);
+    if (proxy_upstream_ == nullptr)
+    {
+        co_return;
+    }
+
+    boost::system::error_code ec;
+    for (;;)
+    {
+        auto payload = co_await packet_channel_.async_receive(boost::asio::redirect_error(boost::asio::use_awaitable, ec));
+        if (ec)
+        {
+            break;
+        }
+
+        co_await proxy_upstream_->send_datagram(
+            target_endpoint_.address().to_string(), target_endpoint_.port(), payload.data(), payload.size(), ec);
+        if (ec)
+        {
+            LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} target {}:{} send tun proxy udp payload failed {}",
+                     log_event::kRoute,
+                     trace_id_,
+                     conn_id_,
+                     client_endpoint_.address().to_string(),
+                     client_endpoint_.port(),
+                     target_endpoint_.address().to_string(),
+                     target_endpoint_.port(),
+                     ec.message());
+            break;
+        }
+        tx_bytes_ += payload.size();
+        last_activity_time_ms_ = net::now_ms();
+    }
 }
 
 boost::asio::awaitable<void> tun_udp_session::proxy_to_client()
 {
-    auto send_to_client_fn =
-        [this](const boost::asio::ip::udp::endpoint& source, const uint8_t* payload, std::size_t payload_len) -> boost::asio::awaitable<bool>
-    { co_return co_await send_to_client(source, payload, payload_len); };
-    co_await session_util::forward_proxy_udp_stream_to_client(stream_,
-                                                              cfg_,
-                                                              stream_close_command_,
-                                                              trace_id_,
-                                                              conn_id_,
-                                                              client_endpoint_,
-                                                              target_endpoint_,
-                                                              "tun proxy",
-                                                              last_activity_time_ms_,
-                                                              send_to_client_fn);
+    if (proxy_upstream_ == nullptr)
+    {
+        co_return;
+    }
+
+    const auto read_timeout = (cfg_.timeout.idle == 0) ? cfg_.timeout.read : std::max(cfg_.timeout.read, cfg_.timeout.idle + 2);
+    for (;;)
+    {
+        boost::system::error_code ec;
+        const auto datagram = co_await proxy_upstream_->receive_datagram(read_timeout, ec);
+        if (ec)
+        {
+            if (ec == boost::asio::error::timed_out)
+            {
+                continue;
+            }
+            break;
+        }
+
+        boost::system::error_code addr_ec;
+        const auto source_addr = boost::asio::ip::make_address(datagram.target_host, addr_ec);
+        if (addr_ec)
+        {
+            LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} target {}:{} invalid tun proxy udp source {}:{}",
+                     log_event::kRoute,
+                     trace_id_,
+                     conn_id_,
+                     client_endpoint_.address().to_string(),
+                     client_endpoint_.port(),
+                     target_endpoint_.address().to_string(),
+                     target_endpoint_.port(),
+                     datagram.target_host,
+                     datagram.target_port);
+            continue;
+        }
+
+        const auto source_endpoint = boost::asio::ip::udp::endpoint(socks_codec::normalize_ip_address(source_addr), datagram.target_port);
+        if (!(co_await send_to_client(source_endpoint, datagram.payload.data(), datagram.payload.size())))
+        {
+            break;
+        }
+        last_activity_time_ms_ = net::now_ms();
+    }
 }
 
 boost::asio::awaitable<void> tun_udp_session::idle_watchdog()
@@ -752,9 +593,14 @@ void tun_udp_session::close_impl()
     boost::system::error_code ec;
     idle_timer_.cancel();
     packet_channel_.close();
-    if (stream_ != nullptr)
+    if (proxy_upstream_ != nullptr)
     {
-        stream_->close();
+        worker_.group.spawn(
+            [upstream = proxy_upstream_]() -> boost::asio::awaitable<void>
+            {
+                co_await upstream->close();
+            });
+        proxy_upstream_.reset();
     }
     upstream_socket_.close(ec);
 

@@ -11,10 +11,10 @@
 
 #include "config.h"
 #include "context_pool.h"
-#include "mux_connection.h"
-#include "mux_protocol.h"
+#include "proxy_reality_connection.h"
 #include "replay_cache.h"
 #include "site_material.h"
+#include "proxy_protocol.h"
 #include "reality/handshake/server_handshake_context.h"
 #include "reality/policy/fallback_gate.h"
 #include "reality/policy/fallback_executor.h"
@@ -36,11 +36,9 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     boost::asio::awaitable<void> accept_loop();
     boost::asio::awaitable<void> fallback_to_target_site(reality::fallback_request&& request, const char* reason);
     boost::asio::awaitable<void> handle(io_worker& worker, std::shared_ptr<boost::asio::ip::tcp::socket> s, uint32_t conn_id);
-
-    boost::asio::awaitable<void> process_stream_request(io_worker& worker,
-                                                        std::shared_ptr<mux_connection> connection,
-                                                        const reality::server_handshake_context& reality_ctx,
-                                                        mux_frame frame) const;
+    boost::asio::awaitable<void> process_proxy_request(io_worker& worker,
+                                                       std::shared_ptr<proxy_reality_connection> connection,
+                                                       const reality::server_handshake_context& reality_ctx) const;
 
    private:
     const config& cfg_;

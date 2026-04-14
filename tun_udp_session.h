@@ -14,8 +14,7 @@
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/experimental/concurrent_channel.hpp>
 
-#include "mux_connection.h"
-#include "client_tunnel_pool.h"
+#include "proxy_udp_upstream.h"
 #include "config.h"
 #include "router.h"
 #include "tun_lwip.h"
@@ -29,7 +28,6 @@ class tun_udp_session : public std::enable_shared_from_this<tun_udp_session>
     using packet_channel_type = boost::asio::experimental::concurrent_channel<void(boost::system::error_code, std::vector<uint8_t>)>;
 
     tun_udp_session(io_worker& worker,
-                    std::shared_ptr<client_tunnel_pool> tunnel_pool,
                     std::shared_ptr<router> router,
                     udp_pcb* pcb,
                     boost::asio::ip::udp::endpoint client_endpoint,
@@ -48,10 +46,9 @@ class tun_udp_session : public std::enable_shared_from_this<tun_udp_session>
     [[nodiscard]] boost::asio::awaitable<bool> run();
     [[nodiscard]] boost::asio::awaitable<route_type> decide_route() const;
     [[nodiscard]] boost::asio::awaitable<bool> open_direct_socket();
-    [[nodiscard]] boost::asio::awaitable<bool> open_proxy_stream();
+    [[nodiscard]] boost::asio::awaitable<bool> open_proxy_upstream();
     [[nodiscard]] boost::asio::awaitable<bool> run_direct_mode();
     [[nodiscard]] boost::asio::awaitable<bool> run_proxy_mode();
-    [[nodiscard]] boost::asio::awaitable<std::shared_ptr<mux_connection>> wait_for_proxy_tunnel(boost::system::error_code& ec) const;
     [[nodiscard]] boost::asio::awaitable<void> packets_to_direct();
     [[nodiscard]] boost::asio::awaitable<void> direct_to_client();
     [[nodiscard]] boost::asio::awaitable<void> packets_to_proxy();
@@ -69,7 +66,6 @@ class tun_udp_session : public std::enable_shared_from_this<tun_udp_session>
     const config& cfg_;
     io_worker& worker_;
     std::shared_ptr<void> active_guard_;
-    std::shared_ptr<client_tunnel_pool> tunnel_pool_;
     std::shared_ptr<router> router_;
     udp_pcb* pcb_ = nullptr;
     route_type route_ = route_type::kBlock;
@@ -77,9 +73,7 @@ class tun_udp_session : public std::enable_shared_from_this<tun_udp_session>
     uint64_t last_activity_time_ms_ = 0;
     boost::asio::steady_timer idle_timer_;
     boost::asio::ip::udp::socket upstream_socket_;
-    std::shared_ptr<mux_connection> tunnel_;
-    std::shared_ptr<mux_stream> stream_;
-    std::atomic<uint8_t> stream_close_command_{0};
+    std::shared_ptr<proxy_udp_upstream> proxy_upstream_;
     uint64_t tx_bytes_ = 0;
     uint64_t rx_bytes_ = 0;
     std::chrono::steady_clock::time_point start_time_ = std::chrono::steady_clock::now();

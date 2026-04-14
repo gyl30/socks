@@ -9,8 +9,7 @@
 #include <boost/asio.hpp>
 #include <boost/asio/awaitable.hpp>
 
-#include "mux_connection.h"
-#include "client_tunnel_pool.h"
+#include "config.h"
 namespace mux
 {
 
@@ -40,11 +39,7 @@ class upstream
                                                              uint32_t conn_id,
                                                              uint64_t trace_id,
                                                              const config& cfg);
-[[nodiscard]] std::shared_ptr<upstream> make_proxy_upstream(std::shared_ptr<mux_connection> tunnel,
-                                                            uint32_t conn_id,
-                                                            uint64_t trace_id,
-                                                            const config& cfg);
-[[nodiscard]] std::shared_ptr<upstream> make_proxy_upstream(std::shared_ptr<client_tunnel_pool> tunnel_pool,
+[[nodiscard]] std::shared_ptr<upstream> make_proxy_upstream(const boost::asio::any_io_executor& executor,
                                                             uint32_t conn_id,
                                                             uint64_t trace_id,
                                                             const config& cfg);

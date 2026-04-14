@@ -12,9 +12,7 @@
 
 #include "config.h"
 #include "router.h"
-#include "mux_stream.h"
 #include "context_pool.h"
-#include "client_tunnel_pool.h"
 #include "tproxy_udp_session.h"
 namespace mux
 {
@@ -22,7 +20,7 @@ namespace mux
 class tproxy_client : public std::enable_shared_from_this<tproxy_client>
 {
    public:
-    tproxy_client(io_context_pool& pool, const config& cfg, std::shared_ptr<client_tunnel_pool> tunnel_pool = nullptr);
+    tproxy_client(io_context_pool& pool, const config& cfg);
 
    public:
     void start();
@@ -63,7 +61,6 @@ class tproxy_client : public std::enable_shared_from_this<tproxy_client>
     config cfg_;
     io_worker& owner_worker_;
     std::shared_ptr<router> router_;
-    std::shared_ptr<client_tunnel_pool> tunnel_pool_;
     boost::asio::ip::tcp::acceptor tcp_acceptor_{owner_worker_.io_context};
     boost::asio::ip::udp::socket udp_socket_{owner_worker_.io_context};
     std::unordered_map<std::string, std::shared_ptr<tproxy_udp_session>> udp_sessions_;

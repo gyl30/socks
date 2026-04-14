@@ -17,7 +17,6 @@
 #include "constants.h"
 #include "net_utils.h"
 #include "tun_tcp_session.h"
-#include "client_tunnel_pool.h"
 #include "connection_tracker.h"
 namespace mux
 {
@@ -38,7 +37,6 @@ void tcp_recved_all(tcp_pcb* pcb, std::size_t size)
 }    // namespace
 
 tun_tcp_session::tun_tcp_session(const boost::asio::any_io_executor& executor,
-                                 std::shared_ptr<client_tunnel_pool> tunnel_pool,
                                  std::shared_ptr<router> router,
                                  tcp_pcb* pcb,
                                  const uint32_t sid,
@@ -47,7 +45,6 @@ tun_tcp_session::tun_tcp_session(const boost::asio::any_io_executor& executor,
     : trace_id_(generate_trace_id()),
       conn_id_(sid),
       cfg_(cfg),
-      tunnel_pool_(std::move(tunnel_pool)),
       router_(std::move(router)),
       pcb_(pcb),
       on_close_(std::move(on_close)),
@@ -190,20 +187,9 @@ boost::asio::awaitable<std::pair<route_type, std::shared_ptr<upstream>>> tun_tcp
     {
         co_return std::make_pair(route, make_direct_upstream(idle_timer_.get_executor(), conn_id_, trace_id_, cfg_));
     }
-    if (route == route_type::kProxy && tunnel_pool_ != nullptr)
-    {
-        co_return std::make_pair(route, make_proxy_upstream(tunnel_pool_, conn_id_, trace_id_, cfg_));
-    }
     if (route == route_type::kProxy)
     {
-        LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} target {}:{} route proxy tunnel pool unavailable",
-                 log_event::kRoute,
-                 trace_id_,
-                 conn_id_,
-                 client_addr_,
-                 client_port_,
-                 target_addr_,
-                 target_port_);
+        co_return std::make_pair(route, make_proxy_upstream(idle_timer_.get_executor(), conn_id_, trace_id_, cfg_));
     }
     co_return std::make_pair(route_type::kBlock, std::shared_ptr<upstream>(nullptr));
 }
