@@ -49,7 +49,6 @@ boost::asio::awaitable<void> remote_udp_proxy_session::start_impl(const proxy::u
     boost::system::error_code ec;
     const auto close_socket = [&]()
     {
-        ec.clear();
         ec = udp_socket_.close(ec);
         (void)ec;
     };
@@ -215,7 +214,6 @@ boost::asio::awaitable<void> remote_udp_proxy_session::connection_to_udp()
         auto target_ep = co_await resolve_target_endpoint(datagram.target_host, datagram.target_port, ec);
         if (ec)
         {
-            ec.clear();
             continue;
         }
         const auto payload_len = datagram.payload.size();
@@ -335,7 +333,6 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> remote_udp_proxy_session:
                                                                                                           const uint16_t port,
                                                                                                           boost::system::error_code& ec)
 {
-    ec.clear();
     const auto key = host + ":" + std::to_string(port);
     const auto now_ms = net::now_ms();
     resolved_targets_.evict_if([&](const auto&, const auto& entry) { return entry.expires_at <= now_ms; });

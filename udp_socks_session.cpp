@@ -939,7 +939,6 @@ boost::asio::awaitable<void> udp_socks_session::forward_direct_reply_to_client(c
 
 boost::asio::awaitable<bool> udp_socks_session::ensure_proxy_upstream(boost::system::error_code& ec)
 {
-    ec.clear();
     if (proxy_upstream_ == nullptr)
     {
         const auto connect_result = co_await proxy_udp_upstream::connect(worker_.io_context.get_executor(), conn_id_, trace_id_, cfg_);

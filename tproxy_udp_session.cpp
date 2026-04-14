@@ -33,7 +33,6 @@ namespace
 
 void set_socket_reuse_port(int fd, boost::system::error_code& ec)
 {
-    ec.clear();
 #ifdef __linux__
     constexpr int one = 1;
     if (setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof(one)) != 0)
@@ -532,7 +531,6 @@ boost::asio::awaitable<bool> tproxy_udp_session::send_to_client(const boost::asi
 std::shared_ptr<boost::asio::ip::udp::socket> tproxy_udp_session::get_or_create_reply_socket(const boost::asio::ip::udp::endpoint& source,
                                                                                              boost::system::error_code& ec)
 {
-    ec.clear();
     const auto normalized_source = net::normalize_endpoint(source);
     const auto key = endpoint_key(normalized_source);
     if (auto* cached = reply_sockets_.get(key); cached != nullptr)

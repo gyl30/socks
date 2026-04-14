@@ -48,7 +48,6 @@ bool decompress_certificate_message(const std::vector<uint8_t>& compressed_msg,
                                     std::vector<uint8_t>& certificate_msg,
                                     boost::system::error_code& ec)
 {
-    ec.clear();
     certificate_msg.clear();
 
     if (compressed_msg.size() < 4 + kCompressedCertificateFixedPrefixLen || compressed_msg[0] != kHandshakeTypeCompressedCertificate)

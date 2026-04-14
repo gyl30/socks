@@ -269,7 +269,6 @@ bool validate_server_hello_body(fetch_context& ctx, const std::vector<uint8_t>& 
 
 void validate_record_length(uint16_t len, boost::system::error_code& ec)
 {
-    ec.clear();
     if (len <= constants::reality_limits::kMaxEncryptedRecordLen)
     {
         return;
@@ -519,7 +518,6 @@ boost::system::error_code perform_handshake_start(fetch_context& ctx)
 
 void read_record_body(fetch_context& ctx, uint16_t len, std::vector<uint8_t>& record, boost::system::error_code& ec)
 {
-    ec.clear();
     record.assign(len, 0);
     if (len == 0)
     {
@@ -568,7 +566,6 @@ std::pair<uint8_t, std::span<uint8_t>> handle_record_by_content_type(fetch_conte
                                                                      std::vector<uint8_t>& plaintext_buffer,
                                                                      boost::system::error_code& ec)
 {
-    ec.clear();
     switch (header[0])
     {
         case tls::kContentTypeChangeCipherSpec:
@@ -595,7 +592,6 @@ std::pair<uint8_t, std::span<uint8_t>> handle_record_by_content_type(fetch_conte
 
 std::pair<uint8_t, std::span<uint8_t>> read_record(fetch_context& ctx, std::vector<uint8_t>& plaintext_buffer, boost::system::error_code& ec)
 {
-    ec.clear();
     uint8_t header[5] = {0};
     const auto header_size = boost::asio::read(ctx.socket, boost::asio::buffer(header), ec);
     if (ec)
@@ -753,7 +749,6 @@ bool consume_handshake_messages(fetch_context& ctx,
                                 std::vector<uint8_t>& message,
                                 boost::system::error_code& ec)
 {
-    ec.clear();
     while (true)
     {
         const auto next = assembler.next(message, ec);
@@ -779,7 +774,6 @@ void append_next_handshake_record(fetch_context& ctx,
                                   uint32_t record_index,
                                   boost::system::error_code& ec)
 {
-    ec.clear();
     const auto read_result = read_record(ctx, plaintext_buffer, ec);
     if (ec)
     {
@@ -905,7 +899,6 @@ site_material fetch_once(std::string host, uint16_t port, std::string sni, const
     }
 
     ctx.material.fetched_at_unix_seconds = static_cast<uint64_t>(std::time(nullptr));
-    ec.clear();
     return std::move(ctx.material);
 }
 
@@ -913,7 +906,6 @@ site_material fetch_once(std::string host, uint16_t port, std::string sni, const
 
 site_material fetch_site_material(const std::string& host, uint16_t port, const std::string& sni, boost::system::error_code& ec)
 {
-    ec.clear();
     boost::system::error_code last_ec = boost::asio::error::fault;
 
     for (const auto fingerprint : constants::reality_limits::kFetchFingerprints)

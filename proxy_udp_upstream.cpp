@@ -152,7 +152,6 @@ boost::asio::awaitable<void> proxy_udp_upstream::send_datagram(const std::string
                                                                const std::size_t payload_len,
                                                                boost::system::error_code& ec)
 {
-    ec.clear();
     if (connection_ == nullptr)
     {
         ec = boost::asio::error::not_connected;
@@ -176,7 +175,6 @@ boost::asio::awaitable<void> proxy_udp_upstream::send_datagram(const std::string
 
 boost::asio::awaitable<proxy::udp_datagram> proxy_udp_upstream::receive_datagram(const uint32_t timeout_sec, boost::system::error_code& ec)
 {
-    ec.clear();
     if (connection_ == nullptr)
     {
         ec = boost::asio::error::not_connected;

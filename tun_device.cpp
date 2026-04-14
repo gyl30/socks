@@ -107,7 +107,6 @@ tun_device::~tun_device() { close(); }
 
 bool tun_device::open(const config::tun_t& cfg, boost::system::error_code& ec)
 {
-    ec.clear();
     close();
 
 #ifdef _WIN32
@@ -286,8 +285,6 @@ bool tun_device::open(const config::tun_t& cfg, boost::system::error_code& ec)
 
 bool tun_device::configure(const config::tun_t& cfg, boost::system::error_code& ec)
 {
-    ec.clear();
-
 #ifdef _WIN32
     if (windows_ == nullptr)
     {
@@ -380,8 +377,6 @@ void tun_device::close()
 
 std::ptrdiff_t tun_device::read_packet(uint8_t* data, std::size_t capacity, boost::system::error_code& ec)
 {
-    ec.clear();
-
 #ifdef _WIN32
     if (windows_ == nullptr || windows_->session == nullptr)
     {
@@ -448,8 +443,6 @@ std::ptrdiff_t tun_device::read_packet(uint8_t* data, std::size_t capacity, boos
 
 std::ptrdiff_t tun_device::write_packet(const uint8_t* data, std::size_t size, boost::system::error_code& ec)
 {
-    ec.clear();
-
 #ifdef _WIN32
     if (windows_ == nullptr || windows_->session == nullptr)
     {
@@ -514,7 +507,6 @@ void* tun_device::read_wait_handle() const
 #else
 bool tun_device::set_mtu(const uint32_t mtu, boost::system::error_code& ec)
 {
-    ec.clear();
     ifreq ifr{};
     ifr.ifr_mtu = static_cast<int>(mtu);
     std::strncpy(ifr.ifr_name, name_.c_str(), IFNAMSIZ - 1);
@@ -539,7 +531,6 @@ bool tun_device::set_mtu(const uint32_t mtu, boost::system::error_code& ec)
 
 bool tun_device::set_state(const bool up, boost::system::error_code& ec)
 {
-    ec.clear();
     ifreq ifr{};
     std::strncpy(ifr.ifr_name, name_.c_str(), IFNAMSIZ - 1);
 
@@ -579,7 +570,6 @@ bool tun_device::set_state(const bool up, boost::system::error_code& ec)
 
 bool tun_device::set_ipv4(const std::string& address, const uint8_t prefix, boost::system::error_code& ec)
 {
-    ec.clear();
     const int socket_fd = ::socket(AF_INET, SOCK_DGRAM, 0);
     if (socket_fd < 0)
     {
@@ -657,8 +647,6 @@ bool tun_device::set_ipv4(const std::string& address, const uint8_t prefix, boos
 
 bool tun_device::set_ipv6(const std::string& address, const uint8_t prefix, boost::system::error_code& ec)
 {
-    ec.clear();
-
 #if defined(__linux__)
     const int socket_fd = ::socket(AF_INET6, SOCK_DGRAM, 0);
     if (socket_fd < 0)

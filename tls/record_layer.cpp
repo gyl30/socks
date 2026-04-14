@@ -30,7 +30,6 @@ constexpr std::size_t kNonceSeqXorBytes = 8;
 
 void validate_record_for_decrypt(const std::span<const uint8_t> record_data, boost::system::error_code& ec)
 {
-    ec.clear();
     if (record_data.size() >= kTlsRecordHeaderSize + kAeadTagSize)
     {
         return;
@@ -40,7 +39,6 @@ void validate_record_for_decrypt(const std::span<const uint8_t> record_data, boo
 
 void validate_nonce_iv_size(const std::span<const uint8_t> iv, boost::system::error_code& ec)
 {
-    ec.clear();
     if (iv.size() >= kNonceSeqXorBytes)
     {
         return;
@@ -61,7 +59,6 @@ std::vector<uint8_t> make_record_nonce(const std::span<const uint8_t> iv, uint64
 
 std::size_t trim_padding_and_read_content_type(const std::span<uint8_t> output_buffer, uint8_t& out_content_type, boost::system::error_code& ec)
 {
-    ec.clear();
     std::size_t written = output_buffer.size();
     while (written > 0 && output_buffer[written - 1] == 0)
     {
@@ -78,7 +75,6 @@ std::size_t trim_padding_and_read_content_type(const std::span<uint8_t> output_b
 
 void validate_inner_plaintext_len(std::size_t plaintext_len, boost::system::error_code& ec)
 {
-    ec.clear();
     if (plaintext_len <= kMaxTlsInnerPlaintextLen)
     {
         return;
@@ -97,7 +93,6 @@ void encrypt_tls_record(const cipher_context& ctx,
                         std::vector<uint8_t>& output_buffer,
                         boost::system::error_code& ec)
 {
-    ec.clear();
     ensure_openssl_initialized();
 
     if (plaintext.size() > kMaxTlsPlaintextLen)
@@ -209,7 +204,6 @@ std::vector<uint8_t> decrypt_record(const EVP_CIPHER* cipher,
                                     uint8_t& out_content_type,
                                     boost::system::error_code& ec)
 {
-    ec.clear();
     const cipher_context ctx;
     if (ciphertext_with_header.size() < kTlsRecordHeaderSize + kAeadTagSize)
     {

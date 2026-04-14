@@ -170,7 +170,6 @@ boost::asio::awaitable<bool> remote_tcp_proxy_session::connect_target(const boos
         co_return false;
     }
 
-    connect_ec.clear();
     connect_ec = target_socket_.set_option(boost::asio::ip::tcp::no_delay(true), connect_ec);
     if (connect_ec)
     {
