@@ -13,8 +13,8 @@
 #include <boost/asio.hpp>
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/steady_timer.hpp>
-#include <boost/asio/use_awaitable.hpp>
 #include <boost/asio/redirect_error.hpp>
+#include <boost/asio/use_awaitable.hpp>
 
 #include "log.h"
 #include "config.h"
@@ -25,6 +25,7 @@
 #include "tproxy_client.h"
 #include "tproxy_tcp_session.h"
 #include "tproxy_udp_session.h"
+
 namespace mux
 {
 
@@ -130,18 +131,18 @@ void tproxy_client::start()
 {
     if (!cfg_.tproxy.enabled)
     {
-        LOG_INFO("event {} stage start tproxy client disabled", log_event::kConnInit);
+        LOG_INFO("{} stage start tproxy client disabled", log_event::kConnInit);
         return;
     }
     if (!router_->load())
     {
-        LOG_ERROR("event {} stage start load router data failed", log_event::kConnInit);
+        LOG_ERROR("{} stage start load router data failed", log_event::kConnInit);
         std::exit(EXIT_FAILURE);
     }
 
     if (cfg_.tproxy.tcp_port == 0 && cfg_.tproxy.udp_port == 0)
     {
-        LOG_ERROR("event {} stage start listen {} tcp_port {} udp_port {} both zero",
+        LOG_ERROR("{} stage start listen {} tcp_port {} udp_port {} both zero",
                   log_event::kConnInit,
                   cfg_.tproxy.listen_host,
                   cfg_.tproxy.tcp_port,
@@ -149,7 +150,7 @@ void tproxy_client::start()
         std::exit(EXIT_FAILURE);
     }
 
-    LOG_INFO("event {} listen {} tcp_port {} udp_port {} tproxy starting listeners",
+    LOG_INFO("{} listen {} tcp_port {} udp_port {} tproxy starting listeners",
              log_event::kConnInit,
              cfg_.tproxy.listen_host,
              cfg_.tproxy.tcp_port,
@@ -165,11 +166,10 @@ boost::asio::awaitable<void> tproxy_client::start_listeners()
         open_tcp_listener(tcp_acceptor_, cfg_.tproxy.listen_host, cfg_.tproxy.tcp_port, ec);
         if (ec)
         {
-            LOG_ERROR(
-                "event {} listen {}:{} tcp listen failed {}", log_event::kConnInit, cfg_.tproxy.listen_host, cfg_.tproxy.tcp_port, ec.message());
+            LOG_ERROR("{} listen {}:{} tcp listen failed {}", log_event::kConnInit, cfg_.tproxy.listen_host, cfg_.tproxy.tcp_port, ec.message());
             std::exit(EXIT_FAILURE);
         }
-        LOG_INFO("event {} listen {}:{} tproxy tcp listening on {}:{}",
+        LOG_INFO("{} listen {}:{} tproxy tcp listening on {}:{}",
                  log_event::kConnInit,
                  cfg_.tproxy.listen_host,
                  cfg_.tproxy.tcp_port,
@@ -181,11 +181,10 @@ boost::asio::awaitable<void> tproxy_client::start_listeners()
         open_udp_listener(udp_socket_, cfg_.tproxy.listen_host, cfg_.tproxy.udp_port, ec);
         if (ec)
         {
-            LOG_ERROR(
-                "event {} listen {}:{} udp listen failed {}", log_event::kConnInit, cfg_.tproxy.listen_host, cfg_.tproxy.udp_port, ec.message());
+            LOG_ERROR("{} listen {}:{} udp listen failed {}", log_event::kConnInit, cfg_.tproxy.listen_host, cfg_.tproxy.udp_port, ec.message());
             std::exit(EXIT_FAILURE);
         }
-        LOG_INFO("event {} listen {}:{} tproxy udp listening on {}:{}",
+        LOG_INFO("{} listen {}:{} tproxy udp listening on {}:{}",
                  log_event::kConnInit,
                  cfg_.tproxy.listen_host,
                  cfg_.tproxy.udp_port,
@@ -215,7 +214,7 @@ void tproxy_client::stop()
     boost::asio::post(owner_worker_.io_context,
                       [self = shared_from_this()]()
                       {
-                          LOG_INFO("event {} listen {} tcp_port {} udp_port {} tproxy client stopping closing resources",
+                          LOG_INFO("{} listen {} tcp_port {} udp_port {} tproxy client stopping closing resources",
                                    log_event::kConnClose,
                                    self->cfg_.tproxy.listen_host,
                                    self->cfg_.tproxy.tcp_port,
@@ -225,7 +224,7 @@ void tproxy_client::stop()
                           ec = self->tcp_acceptor_.close(ec);
                           if (ec && ec != boost::asio::error::bad_descriptor)
                           {
-                              LOG_ERROR("event {} listen {}:{} tcp acceptor close failed {}",
+                              LOG_ERROR("{} listen {}:{} tcp acceptor close failed {}",
                                         log_event::kConnClose,
                                         self->cfg_.tproxy.listen_host,
                                         self->cfg_.tproxy.tcp_port,
@@ -234,7 +233,7 @@ void tproxy_client::stop()
                           ec = self->udp_socket_.close(ec);
                           if (ec && ec != boost::asio::error::bad_descriptor)
                           {
-                              LOG_ERROR("event {} listen {}:{} udp socket close failed {}",
+                              LOG_ERROR("{} listen {}:{} udp socket close failed {}",
                                         log_event::kConnClose,
                                         self->cfg_.tproxy.listen_host,
                                         self->cfg_.tproxy.udp_port,
@@ -264,24 +263,18 @@ boost::asio::awaitable<void> tproxy_client::accept_tcp_loop()
         co_await tcp_acceptor_.async_accept(socket, boost::asio::redirect_error(boost::asio::use_awaitable, ec));
         if (ec == boost::asio::error::operation_aborted)
         {
-            LOG_INFO("event {} listen {}:{} tcp accept loop stopped {}",
-                     log_event::kConnClose,
-                     cfg_.tproxy.listen_host,
-                     cfg_.tproxy.tcp_port,
-                     ec.message());
+            LOG_INFO(
+                "{} listen {}:{} tcp accept loop stopped {}", log_event::kConnClose, cfg_.tproxy.listen_host, cfg_.tproxy.tcp_port, ec.message());
             break;
         }
         if (ec)
         {
-            LOG_ERROR("event {} listen {}:{} tcp accept failed {} retry",
-                      log_event::kConnInit,
-                      cfg_.tproxy.listen_host,
-                      cfg_.tproxy.tcp_port,
-                      ec.message());
+            LOG_ERROR(
+                "{} listen {}:{} tcp accept failed {} retry", log_event::kConnInit, cfg_.tproxy.listen_host, cfg_.tproxy.tcp_port, ec.message());
             ec = co_await net::wait_for(owner_worker_.io_context, std::chrono::seconds(3));
             if (ec)
             {
-                LOG_ERROR("event {} listen {}:{} tcp accept retry timer failed {}",
+                LOG_ERROR("{} listen {}:{} tcp accept retry timer failed {}",
                           log_event::kConnInit,
                           cfg_.tproxy.listen_host,
                           cfg_.tproxy.tcp_port,
@@ -293,7 +286,7 @@ boost::asio::awaitable<void> tproxy_client::accept_tcp_loop()
         on_tcp_socket(std::move(socket));
     }
 
-    LOG_INFO("event {} listen {}:{} tcp accept loop exited", log_event::kConnClose, cfg_.tproxy.listen_host, cfg_.tproxy.tcp_port);
+    LOG_INFO("{} listen {}:{} tcp accept loop exited", log_event::kConnClose, cfg_.tproxy.listen_host, cfg_.tproxy.tcp_port);
 }
 
 void tproxy_client::on_tcp_socket(boost::asio::ip::tcp::socket&& socket)
@@ -305,7 +298,7 @@ void tproxy_client::on_tcp_socket(boost::asio::ip::tcp::socket&& socket)
     boost::system::error_code ec;
     ec = socket.set_option(boost::asio::ip::tcp::no_delay(true), ec);
     const uint32_t sid = next_session_id_.fetch_add(1, std::memory_order_relaxed);
-    LOG_INFO("event {} conn_id {} local {}:{} remote {}:{} accepted",
+    LOG_INFO("{} conn {} local {}:{} remote {}:{} accepted",
              log_event::kConnInit,
              sid,
              local_ec ? "unknown" : net::normalize_address(local_ep.address()).to_string(),
@@ -314,7 +307,7 @@ void tproxy_client::on_tcp_socket(boost::asio::ip::tcp::socket&& socket)
              peer_ec ? 0 : peer_ep.port());
     if (ec)
     {
-        LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} set no delay failed code {} error {}",
+        LOG_WARN("{} conn {} local {}:{} remote {}:{} set no delay failed code {} error {}",
                  log_event::kConnInit,
                  sid,
                  local_ec ? "unknown" : net::normalize_address(local_ep.address()).to_string(),
@@ -344,7 +337,7 @@ boost::asio::awaitable<void> tproxy_client::accept_udp_loop()
         }
         if (ec)
         {
-            LOG_ERROR("event {} listen {}:{} udp wait failed {}", log_event::kConnInit, cfg_.tproxy.listen_host, cfg_.tproxy.udp_port, ec.message());
+            LOG_ERROR("{} listen {}:{} udp wait failed {}", log_event::kConnInit, cfg_.tproxy.listen_host, cfg_.tproxy.udp_port, ec.message());
             break;
         }
 
@@ -365,7 +358,7 @@ boost::asio::awaitable<void> tproxy_client::accept_udp_loop()
             {
                 continue;
             }
-            LOG_ERROR("event {} listen {}:{} udp recv msg failed errno {} error {}",
+            LOG_ERROR("{} listen {}:{} udp recv msg failed errno {} error {}",
                       log_event::kConnInit,
                       cfg_.tproxy.listen_host,
                       cfg_.tproxy.udp_port,
@@ -375,7 +368,7 @@ boost::asio::awaitable<void> tproxy_client::accept_udp_loop()
         }
         if ((msg.msg_flags & (MSG_TRUNC | MSG_CTRUNC)) != 0)
         {
-            LOG_WARN("event {} listen {}:{} udp recv msg truncated drop flags {} bytes {} controllen {}",
+            LOG_WARN("{} listen {}:{} udp recv msg truncated drop flags {} bytes {} controllen {}",
                      log_event::kConnInit,
                      cfg_.tproxy.listen_host,
                      cfg_.tproxy.udp_port,
@@ -389,7 +382,7 @@ boost::asio::awaitable<void> tproxy_client::accept_udp_loop()
         const auto target_endpoint_opt = net::parse_original_dst(msg);
         if (!target_endpoint_opt.has_value())
         {
-            LOG_WARN("event {} client {}:{} udp parse original dst failed bytes {} flags {}",
+            LOG_WARN("{} client {}:{} udp parse original dst failed bytes {} flags {}",
                      log_event::kConnInit,
                      client_endpoint.address().to_string(),
                      client_endpoint.port(),
@@ -401,7 +394,7 @@ boost::asio::awaitable<void> tproxy_client::accept_udp_loop()
         const auto target_endpoint = net::normalize_endpoint(*target_endpoint_opt);
         if (client_endpoint.port() == 0 || target_endpoint.port() == 0)
         {
-            LOG_WARN("event {} client {}:{} target {}:{} udp skip invalid endpoint bytes {}",
+            LOG_WARN("{} client {}:{} target {}:{} udp skip invalid endpoint bytes {}",
                      log_event::kConnInit,
                      client_endpoint.address().to_string(),
                      client_endpoint.port(),
@@ -415,7 +408,7 @@ boost::asio::awaitable<void> tproxy_client::accept_udp_loop()
         co_await on_udp_packet(client_endpoint, target_endpoint, std::move(packet));
     }
 
-    LOG_INFO("event {} listen {}:{} udp accept loop exited", log_event::kConnClose, cfg_.tproxy.listen_host, cfg_.tproxy.udp_port);
+    LOG_INFO("{} listen {}:{} udp accept loop exited", log_event::kConnClose, cfg_.tproxy.listen_host, cfg_.tproxy.udp_port);
 }
 
 boost::asio::awaitable<void> tproxy_client::on_udp_packet(boost::asio::ip::udp::endpoint client_endpoint,
@@ -427,7 +420,7 @@ boost::asio::awaitable<void> tproxy_client::on_udp_packet(boost::asio::ip::udp::
 
     if (is_udp_routing_loop(target_endpoint))
     {
-        LOG_WARN("event {} client {}:{} target {}:{} udp routing loop detected drop",
+        LOG_WARN("{} client {}:{} target {}:{} udp routing loop detected drop",
                  log_event::kConnInit,
                  client_endpoint.address().to_string(),
                  client_endpoint.port(),
@@ -493,7 +486,7 @@ boost::asio::awaitable<route_type> tproxy_client::decide_udp_route(uint32_t conn
         route = co_await router_->decide_ip(target_endpoint.address());
     }
 
-    LOG_INFO("event {} conn_id {} target {}:{} route {}",
+    LOG_INFO("{} conn {} target {}:{} route {}",
              log_event::kRoute,
              conn_id,
              target_endpoint.address().to_string(),
@@ -501,8 +494,7 @@ boost::asio::awaitable<route_type> tproxy_client::decide_udp_route(uint32_t conn
              mux::to_string(route));
     if (route == route_type::kBlock)
     {
-        LOG_INFO(
-            "event {} conn_id {} target {}:{} blocked", log_event::kRoute, conn_id, target_endpoint.address().to_string(), target_endpoint.port());
+        LOG_INFO("{} conn {} target {}:{} blocked", log_event::kRoute, conn_id, target_endpoint.address().to_string(), target_endpoint.port());
     }
 
     co_return route;
@@ -568,7 +560,7 @@ bool tproxy_client::register_udp_session(const std::string& key,
     evict_udp_sessions_if_needed();
     if (udp_sessions_.size() >= constants::udp::kMaxSessions)
     {
-        LOG_WARN("event {} conn_id {} client {}:{} target {}:{} route {} udp session limit reached active {} limit {} drop packet",
+        LOG_WARN("{} conn {} client {}:{} target {}:{} route {} udp session limit reached active {} limit {} drop packet",
                  log_event::kConnInit,
                  conn_id,
                  client_endpoint.address().to_string(),
@@ -583,7 +575,7 @@ bool tproxy_client::register_udp_session(const std::string& key,
 
     udp_sessions_.emplace(key, session);
     session->start();
-    LOG_INFO("event {} conn_id {} client {}:{} target {}:{} route {} udp session registered active {}",
+    LOG_INFO("{} conn {} client {}:{} target {}:{} route {} udp session registered active {}",
              log_event::kConnEstablished,
              conn_id,
              client_endpoint.address().to_string(),

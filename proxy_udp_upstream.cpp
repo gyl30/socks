@@ -14,8 +14,8 @@
 #include "protocol.h"
 #include "constants.h"
 #include "proxy_protocol.h"
-#include "proxy_reality_connection.h"
 #include "proxy_udp_upstream.h"
+#include "proxy_reality_connection.h"
 
 namespace mux
 {
@@ -52,7 +52,8 @@ namespace
 
 proxy_udp_upstream::proxy_udp_upstream(std::shared_ptr<proxy_reality_connection> connection, const config& cfg)
     : cfg_(cfg), connection_(std::move(connection))
-{}
+{
+}
 
 boost::asio::awaitable<proxy_udp_connect_result> proxy_udp_upstream::connect(const boost::asio::any_io_executor& executor,
                                                                              const uint32_t conn_id,
@@ -146,11 +147,8 @@ boost::asio::awaitable<void> proxy_udp_upstream::close()
     co_return;
 }
 
-boost::asio::awaitable<void> proxy_udp_upstream::send_datagram(const std::string& host,
-                                                               const uint16_t port,
-                                                               const uint8_t* payload,
-                                                               const std::size_t payload_len,
-                                                               boost::system::error_code& ec)
+boost::asio::awaitable<void> proxy_udp_upstream::send_datagram(
+    const std::string& host, const uint16_t port, const uint8_t* payload, const std::size_t payload_len, boost::system::error_code& ec)
 {
     if (connection_ == nullptr)
     {

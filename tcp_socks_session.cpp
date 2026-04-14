@@ -19,20 +19,13 @@
 #include "net_utils.h"
 #include "scoped_exit.h"
 #include "tcp_socks_session.h"
+
 namespace mux
 {
 
-tcp_socks_session::tcp_socks_session(boost::asio::ip::tcp::socket socket,
-                                     std::shared_ptr<router> router,
-                                     uint32_t sid,
-                                     uint64_t trace_id,
-                                     const config& cfg)
-    : trace_id_(trace_id),
-      conn_id_(sid),
-      cfg_(cfg),
-      socket_(std::move(socket)),
-      idle_timer_(socket_.get_executor()),
-      router_(std::move(router))
+tcp_socks_session::tcp_socks_session(
+    boost::asio::ip::tcp::socket socket, std::shared_ptr<router> router, uint32_t sid, uint64_t trace_id, const config& cfg)
+    : trace_id_(trace_id), conn_id_(sid), cfg_(cfg), socket_(std::move(socket)), idle_timer_(socket_.get_executor()), router_(std::move(router))
 {
     last_activity_time_ms_ = net::now_ms();
     net::load_tcp_socket_endpoints(socket_, local_host_, local_port_, client_host_, client_port_);
@@ -48,7 +41,7 @@ boost::asio::awaitable<void> tcp_socks_session::run(const std::string& host, uin
 
     if (router_ == nullptr)
     {
-        LOG_ERROR("event {} trace_id {:016x} conn_id {} client {}:{} local {}:{} target {}:{} router unavailable",
+        LOG_ERROR("{} trace {:016x} conn {} client {}:{} local {}:{} target {}:{} router unavailable",
                   log_event::kRoute,
                   trace_id_,
                   conn_id_,
@@ -80,7 +73,7 @@ boost::asio::awaitable<void> tcp_socks_session::run(const std::string& host, uin
     const auto backend = create_backend(route);
     if (backend == nullptr)
     {
-        LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} local {}:{} target {}:{} route {} blocked",
+        LOG_WARN("{} trace {:016x} conn {} client {}:{} local {}:{} target {}:{} route {} blocked",
                  log_event::kRoute,
                  trace_id_,
                  conn_id_,
@@ -107,7 +100,7 @@ boost::asio::awaitable<void> tcp_socks_session::run(const std::string& host, uin
         co_return;
     }
 
-    LOG_INFO("event {} trace_id {:016x} conn_id {} client {}:{} local {}:{} target {}:{} route {} connected",
+    LOG_INFO("{} trace {:016x} conn {} client {}:{} local {}:{} target {}:{} route {} connected",
              log_event::kConnEstablished,
              trace_id_,
              conn_id_,
@@ -132,7 +125,7 @@ boost::asio::awaitable<void> tcp_socks_session::run(const std::string& host, uin
 
     co_await backend->close();
     const auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time_).count();
-    LOG_INFO("event {} trace_id {:016x} conn_id {} client {}:{} local {}:{} target {}:{} route {} tx_bytes {} rx_bytes {} duration_ms {}",
+    LOG_INFO("{} trace {:016x} conn {} client {}:{} local {}:{} target {}:{} route {} tx_bytes {} rx_bytes {} duration_ms {}",
              log_event::kConnClose,
              trace_id_,
              conn_id_,
@@ -166,7 +159,7 @@ boost::asio::awaitable<upstream_connect_result> tcp_socks_session::connect_backe
                                                                                    uint16_t port,
                                                                                    const route_type route)
 {
-    LOG_INFO("event {} trace_id {:016x} conn_id {} client {}:{} local {}:{} target {}:{} route {} connecting",
+    LOG_INFO("{} trace {:016x} conn {} client {}:{} local {}:{} target {}:{} route {} connecting",
              log_event::kConnInit,
              trace_id_,
              conn_id_,
@@ -183,7 +176,7 @@ boost::asio::awaitable<upstream_connect_result> tcp_socks_session::connect_backe
         co_return result;
     }
 
-    LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} local {}:{} target {}:{} route {} connect failed error {} rep {}",
+    LOG_WARN("{} trace {:016x} conn {} client {}:{} local {}:{} target {}:{} route {} connect failed error {} rep {}",
              log_event::kConnInit,
              trace_id_,
              conn_id_,
@@ -209,7 +202,7 @@ boost::asio::awaitable<void> tcp_socks_session::reply_error(uint8_t code)
     {
         co_return;
     }
-    LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} local {}:{} target {}:{} route {} write error response failed {}",
+    LOG_WARN("{} trace {:016x} conn {} client {}:{} local {}:{} target {}:{} route {} write error response failed {}",
              log_event::kSocks,
              trace_id_,
              conn_id_,
@@ -232,18 +225,17 @@ boost::asio::awaitable<bool> tcp_socks_session::reply_success(const upstream_con
     rep.push_back(0x00);
     if (!connect_result.has_bind_endpoint)
     {
-        LOG_WARN(
-            "event {} trace_id {:016x} conn_id {} client {}:{} local {}:{} target {}:{} route {} backend bind endpoint unavailable fallback zero",
-            log_event::kSocks,
-            trace_id_,
-            conn_id_,
-            client_host_,
-            client_port_,
-            local_host_,
-            local_port_,
-            target_host_,
-            target_port_,
-            route_name_);
+        LOG_WARN("{} trace {:016x} conn {} client {}:{} local {}:{} target {}:{} route {} backend bind endpoint unavailable fallback zero",
+                 log_event::kSocks,
+                 trace_id_,
+                 conn_id_,
+                 client_host_,
+                 client_port_,
+                 local_host_,
+                 local_port_,
+                 target_host_,
+                 target_port_,
+                 route_name_);
         rep.push_back(socks::kAtypIpv4);
         rep.insert(rep.end(), {0, 0, 0, 0, 0, 0});
     }
@@ -273,7 +265,7 @@ boost::asio::awaitable<bool> tcp_socks_session::reply_success(const upstream_con
     {
         co_return true;
     }
-    LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} local {}:{} target {}:{} route {} write to client failed {}",
+    LOG_WARN("{} trace {:016x} conn {} client {}:{} local {}:{} target {}:{} route {} write to client failed {}",
              log_event::kDataSend,
              trace_id_,
              conn_id_,
@@ -295,7 +287,7 @@ void tcp_socks_session::close_client_socket()
     ec = socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
     if (ec && ec != boost::asio::error::not_connected)
     {
-        LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} local {}:{} target {}:{} route {} shutdown client failed {}",
+        LOG_WARN("{} trace {:016x} conn {} client {}:{} local {}:{} target {}:{} route {} shutdown client failed {}",
                  log_event::kSocks,
                  trace_id_,
                  conn_id_,
@@ -312,7 +304,7 @@ void tcp_socks_session::close_client_socket()
     ec = socket_.close(ec);
     if (ec && ec != boost::asio::error::bad_descriptor)
     {
-        LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} local {}:{} target {}:{} route {} close client failed {}",
+        LOG_WARN("{} trace {:016x} conn {} client {}:{} local {}:{} target {}:{} route {} close client failed {}",
                  log_event::kSocks,
                  trace_id_,
                  conn_id_,
@@ -343,7 +335,7 @@ boost::asio::awaitable<void> tcp_socks_session::client_to_upstream(std::shared_p
                 if (shutdown_ec)
                 {
                     LOG_WARN(
-                        "event {} trace_id {:016x} conn_id {} client {}:{} local {}:{} target {}:{} route {} stage client_to_upstream shutdown "
+                        "{} trace {:016x} conn {} client {}:{} local {}:{} target {}:{} route {} stage client_to_upstream shutdown "
                         "backend send failed {}",
                         log_event::kSocks,
                         trace_id_,
@@ -360,19 +352,18 @@ boost::asio::awaitable<void> tcp_socks_session::client_to_upstream(std::shared_p
             }
             else
             {
-                LOG_WARN(
-                    "event {} trace_id {:016x} conn_id {} client {}:{} local {}:{} target {}:{} route {} stage client_to_upstream read failed {}",
-                    log_event::kSocks,
-                    trace_id_,
-                    conn_id_,
-                    client_host_,
-                    client_port_,
-                    local_host_,
-                    local_port_,
-                    target_host_,
-                    target_port_,
-                    route_name_,
-                    ec.message());
+                LOG_WARN("{} trace {:016x} conn {} client {}:{} local {}:{} target {}:{} route {} stage client_to_upstream read failed {}",
+                         log_event::kSocks,
+                         trace_id_,
+                         conn_id_,
+                         client_host_,
+                         client_port_,
+                         local_host_,
+                         local_port_,
+                         target_host_,
+                         target_port_,
+                         route_name_,
+                         ec.message());
                 co_await backend->close();
             }
             break;
@@ -382,7 +373,7 @@ boost::asio::awaitable<void> tcp_socks_session::client_to_upstream(std::shared_p
         if (ec)
         {
             LOG_WARN(
-                "event {} trace_id {:016x} conn_id {} client {}:{} local {}:{} target {}:{} route {} stage client_to_upstream write to backend "
+                "{} trace {:016x} conn {} client {}:{} local {}:{} target {}:{} route {} stage client_to_upstream write to backend "
                 "failed {}",
                 log_event::kSocks,
                 trace_id_,
@@ -401,7 +392,7 @@ boost::asio::awaitable<void> tcp_socks_session::client_to_upstream(std::shared_p
         tx_bytes_ += n;
         last_activity_time_ms_ = net::now_ms();
     }
-    LOG_INFO("event {} trace_id {:016x} conn_id {} client {}:{} local {}:{} target {}:{} route {} stage client_to_upstream finished tx_bytes {}",
+    LOG_INFO("{} trace {:016x} conn {} client {}:{} local {}:{} target {}:{} route {} stage client_to_upstream finished tx_bytes {}",
              log_event::kDataSend,
              trace_id_,
              conn_id_,
@@ -431,7 +422,7 @@ boost::asio::awaitable<void> tcp_socks_session::upstream_to_client(std::shared_p
                 if (shutdown_ec && shutdown_ec != boost::asio::error::not_connected)
                 {
                     LOG_WARN(
-                        "event {} trace_id {:016x} conn_id {} client {}:{} local {}:{} target {}:{} route {} stage upstream_to_client shutdown "
+                        "{} trace {:016x} conn {} client {}:{} local {}:{} target {}:{} route {} stage upstream_to_client shutdown "
                         "client send failed {}",
                         log_event::kSocks,
                         trace_id_,
@@ -448,19 +439,18 @@ boost::asio::awaitable<void> tcp_socks_session::upstream_to_client(std::shared_p
             }
             else
             {
-                LOG_WARN(
-                    "event {} trace_id {:016x} conn_id {} client {}:{} local {}:{} target {}:{} route {} stage upstream_to_client read failed {}",
-                    log_event::kSocks,
-                    trace_id_,
-                    conn_id_,
-                    client_host_,
-                    client_port_,
-                    local_host_,
-                    local_port_,
-                    target_host_,
-                    target_port_,
-                    route_name_,
-                    ec.message());
+                LOG_WARN("{} trace {:016x} conn {} client {}:{} local {}:{} target {}:{} route {} stage upstream_to_client read failed {}",
+                         log_event::kSocks,
+                         trace_id_,
+                         conn_id_,
+                         client_host_,
+                         client_port_,
+                         local_host_,
+                         local_port_,
+                         target_host_,
+                         target_port_,
+                         route_name_,
+                         ec.message());
                 close_client_socket();
             }
             break;
@@ -468,7 +458,7 @@ boost::asio::awaitable<void> tcp_socks_session::upstream_to_client(std::shared_p
         auto write_size = co_await net::wait_write_with_timeout(socket_, boost::asio::buffer(buf.data(), n), cfg_.timeout.write, ec);
         if (ec)
         {
-            LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} local {}:{} target {}:{} route {} stage upstream_to_client write failed {}",
+            LOG_WARN("{} trace {:016x} conn {} client {}:{} local {}:{} target {}:{} route {} stage upstream_to_client write failed {}",
                      log_event::kSocks,
                      trace_id_,
                      conn_id_,
@@ -486,7 +476,7 @@ boost::asio::awaitable<void> tcp_socks_session::upstream_to_client(std::shared_p
         rx_bytes_ += write_size;
         last_activity_time_ms_ = net::now_ms();
     }
-    LOG_INFO("event {} trace_id {:016x} conn_id {} client {}:{} local {}:{} target {}:{} route {} stage upstream_to_client finished rx_bytes {}",
+    LOG_INFO("{} trace {:016x} conn {} client {}:{} local {}:{} target {}:{} route {} stage upstream_to_client finished rx_bytes {}",
              log_event::kDataRecv,
              trace_id_,
              conn_id_,
@@ -515,19 +505,18 @@ boost::asio::awaitable<void> tcp_socks_session::idle_watchdog(std::shared_ptr<up
         const auto elapsed_ms = net::now_ms() - last_activity_time_ms_;
         if (elapsed_ms > idle_timeout_ms)
         {
-            LOG_WARN(
-                "event {} trace_id {:016x} conn_id {} client {}:{} local {}:{} target {}:{} route {} idle_timeout_sec {} tcp session idle closing",
-                log_event::kTimeout,
-                trace_id_,
-                conn_id_,
-                client_host_,
-                client_port_,
-                local_host_,
-                local_port_,
-                target_host_,
-                target_port_,
-                route_name_,
-                cfg_.timeout.idle);
+            LOG_WARN("{} trace {:016x} conn {} client {}:{} local {}:{} target {}:{} route {} idle_timeout_sec {} tcp session idle closing",
+                     log_event::kTimeout,
+                     trace_id_,
+                     conn_id_,
+                     client_host_,
+                     client_port_,
+                     local_host_,
+                     local_port_,
+                     target_host_,
+                     target_port_,
+                     route_name_,
+                     cfg_.timeout.idle);
             co_await backend->close();
             boost::system::error_code ignore;
             ignore = socket_.close(ignore);

@@ -12,8 +12,12 @@
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/experimental/concurrent_channel.hpp>
 
+#include "config.h"
+#include "router.h"
 #include "lru_cache.h"
+#include "context_pool.h"
 #include "proxy_udp_upstream.h"
+
 namespace mux
 {
 

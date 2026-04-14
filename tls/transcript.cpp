@@ -38,7 +38,7 @@ transcript::transcript() : md_(default_digest()), ctx_(create_digest_context(), 
 {
     if (ctx_ == nullptr || EVP_DigestInit_ex(ctx_.get(), md_, nullptr) != 1)
     {
-        LOG_ERROR("event {} stage transcript_init error digest_init_failed", mux::log_event::kHandshake);
+        LOG_ERROR("{} stage transcript_init error digest_init_failed", mux::log_event::kHandshake);
         valid_ = false;
         return;
     }
@@ -50,7 +50,7 @@ void transcript::set_protocol_hash(const EVP_MD* new_md)
     ensure_openssl_initialized();
     if (new_md == nullptr)
     {
-        LOG_ERROR("event {} stage set_protocol_hash error null_digest", mux::log_event::kHandshake);
+        LOG_ERROR("{} stage set_protocol_hash error null_digest", mux::log_event::kHandshake);
         valid_ = false;
         return;
     }
@@ -62,19 +62,19 @@ void transcript::set_protocol_hash(const EVP_MD* new_md)
     std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> new_ctx(create_digest_context(), EVP_MD_CTX_free);
     if (new_ctx == nullptr)
     {
-        LOG_ERROR("event {} stage set_protocol_hash error create_digest_context_failed", mux::log_event::kHandshake);
+        LOG_ERROR("{} stage set_protocol_hash error create_digest_context_failed", mux::log_event::kHandshake);
         valid_ = false;
         return;
     }
     if (EVP_DigestInit_ex(new_ctx.get(), new_md, nullptr) != 1)
     {
-        LOG_ERROR("event {} stage set_protocol_hash error digest_reinit_failed", mux::log_event::kHandshake);
+        LOG_ERROR("{} stage set_protocol_hash error digest_reinit_failed", mux::log_event::kHandshake);
         valid_ = false;
         return;
     }
     if (!buffer_.empty() && EVP_DigestUpdate(new_ctx.get(), buffer_.data(), buffer_.size()) != 1)
     {
-        LOG_ERROR("event {} stage set_protocol_hash buffer_size {} error digest_replay_failed", mux::log_event::kHandshake, buffer_.size());
+        LOG_ERROR("{} stage set_protocol_hash buffer_size {} error digest_replay_failed", mux::log_event::kHandshake, buffer_.size());
         valid_ = false;
         return;
     }
@@ -92,7 +92,7 @@ void transcript::update(const std::vector<uint8_t>& data)
     }
     if (EVP_DigestUpdate(ctx_.get(), data.data(), data.size()) != 1)
     {
-        LOG_ERROR("event {} stage transcript_update size {} error digest_update_failed", mux::log_event::kHandshake, data.size());
+        LOG_ERROR("{} stage transcript_update size {} error digest_update_failed", mux::log_event::kHandshake, data.size());
         valid_ = false;
     }
 }
@@ -107,22 +107,21 @@ std::vector<uint8_t> transcript::finish() const
     const std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> c(create_digest_context(), EVP_MD_CTX_free);
     if (c == nullptr || EVP_MD_CTX_copy(c.get(), ctx_.get()) != 1)
     {
-        LOG_ERROR("event {} stage transcript_finish error copy_digest_context_failed", mux::log_event::kHandshake);
+        LOG_ERROR("{} stage transcript_finish error copy_digest_context_failed", mux::log_event::kHandshake);
         return {};
     }
 
     const int hash_len = EVP_MD_size(md_);
     if (hash_len <= 0)
     {
-        LOG_ERROR("event {} stage transcript_finish error invalid_hash_len {}", mux::log_event::kHandshake, hash_len);
+        LOG_ERROR("{} stage transcript_finish error invalid_hash_len {}", mux::log_event::kHandshake, hash_len);
         return {};
     }
     std::vector<uint8_t> h(static_cast<std::size_t>(hash_len));
     unsigned int l = 0;
     if (EVP_DigestFinal_ex(c.get(), h.data(), &l) != 1 || l != h.size())
     {
-        LOG_ERROR(
-            "event {} stage transcript_finish expected_len {} actual_len {} error digest_final_failed", mux::log_event::kHandshake, h.size(), l);
+        LOG_ERROR("{} stage transcript_finish expected_len {} actual_len {} error digest_final_failed", mux::log_event::kHandshake, h.size(), l);
         return {};
     }
     return h;

@@ -13,6 +13,7 @@
 #include "constants.h"
 #include "ip_matcher.h"
 #include "domain_matcher.h"
+
 namespace mux
 {
 
@@ -66,12 +67,12 @@ static bool load_rule(const std::shared_ptr<Matcher>& matcher, const std::string
     const auto path = resolve_rule_path(filename);
     if (!path.has_value())
     {
-        LOG_WARN("event {} stage load_rule rule {} file {} error not_found", log_event::kRoute, rule_name, filename);
+        LOG_WARN("{} stage load_rule rule {} file {} error not_found", log_event::kRoute, rule_name, filename);
         return false;
     }
     if (!matcher->load(*path))
     {
-        LOG_WARN("event {} stage load_rule rule {} path {} error load_failed", log_event::kRoute, rule_name, *path);
+        LOG_WARN("{} stage load_rule rule {} path {} error load_failed", log_event::kRoute, rule_name, *path);
         return false;
     }
     return true;
@@ -104,19 +105,19 @@ boost::asio::awaitable<route_type> router::decide_ip(const boost::asio::ip::addr
     const auto target = addr.to_string();
     if (block_ip_matcher_ == nullptr || direct_ip_matcher_ == nullptr)
     {
-        LOG_WARN("event {} target {} ip matcher unavailable fallback default proxy", log_event::kRoute, target);
+        LOG_WARN("{} target {} ip matcher unavailable fallback default proxy", log_event::kRoute, target);
     }
     if (block_ip_matcher_ != nullptr && block_ip_matcher_->match(addr))
     {
-        LOG_DEBUG("event {} target {} matched ip rule block", log_event::kRoute, target);
+        LOG_DEBUG("{} target {} matched ip rule block", log_event::kRoute, target);
         co_return route_type::kBlock;
     }
     if (direct_ip_matcher_ != nullptr && direct_ip_matcher_->match(addr))
     {
-        LOG_DEBUG("event {} target {} matched ip rule direct", log_event::kRoute, target);
+        LOG_DEBUG("{} target {} matched ip rule direct", log_event::kRoute, target);
         co_return route_type::kDirect;
     }
-    LOG_DEBUG("event {} target {} ip rule not found default proxy", log_event::kRoute, target);
+    LOG_DEBUG("{} target {} ip rule not found default proxy", log_event::kRoute, target);
     co_return route_type::kProxy;
 }
 
@@ -125,24 +126,24 @@ boost::asio::awaitable<route_type> router::decide_domain(const std::string& host
     const auto target = host.empty() ? std::string("unknown") : host;
     if (block_domain_matcher_ == nullptr || direct_domain_matcher_ == nullptr || proxy_domain_matcher_ == nullptr)
     {
-        LOG_WARN("event {} target {} domain matcher unavailable fallback default direct", log_event::kRoute, target);
+        LOG_WARN("{} target {} domain matcher unavailable fallback default direct", log_event::kRoute, target);
     }
     if (block_domain_matcher_ != nullptr && block_domain_matcher_->match(host))
     {
-        LOG_DEBUG("event {} target {} matched domain rule block", log_event::kRoute, target);
+        LOG_DEBUG("{} target {} matched domain rule block", log_event::kRoute, target);
         co_return route_type::kBlock;
     }
     if (direct_domain_matcher_ != nullptr && direct_domain_matcher_->match(host))
     {
-        LOG_DEBUG("event {} target {} matched domain rule direct", log_event::kRoute, target);
+        LOG_DEBUG("{} target {} matched domain rule direct", log_event::kRoute, target);
         co_return route_type::kDirect;
     }
     if (proxy_domain_matcher_ != nullptr && proxy_domain_matcher_->match(host))
     {
-        LOG_DEBUG("event {} target {} matched domain rule proxy", log_event::kRoute, target);
+        LOG_DEBUG("{} target {} matched domain rule proxy", log_event::kRoute, target);
         co_return route_type::kProxy;
     }
-    LOG_DEBUG("event {} target {} domain rule not found default direct", log_event::kRoute, target);
+    LOG_DEBUG("{} target {} domain rule not found default direct", log_event::kRoute, target);
     co_return route_type::kDirect;
 }
 

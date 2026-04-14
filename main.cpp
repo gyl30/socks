@@ -74,7 +74,7 @@ int register_signal(boost::asio::signal_set& signals, int signal, const char* si
     ec = signals.add(signal, ec);
     if (ec)
     {
-        LOG_ERROR("event {} stage register_signal signal {} error {}", mux::log_event::kConnInit, signal_name, ec.message());
+        LOG_ERROR("{} stage register_signal signal {} error {}", mux::log_event::kConnInit, signal_name, ec.message());
         return -1;
     }
     return 0;
@@ -176,14 +176,14 @@ int run_with_config(const char* prog, const char* config_path)
 
     if (cfg->mode != "client" && cfg->mode != "server")
     {
-        LOG_ERROR("event {} stage start invalid_mode {}", mux::log_event::kConnInit, cfg->mode);
+        LOG_ERROR("{} stage start invalid_mode {}", mux::log_event::kConnInit, cfg->mode);
         return -1;
     }
     mux::io_context_pool pool(resolve_worker_threads(*cfg));
 
     auto services = start_services(pool, *cfg);
-    auto& signal_worker = pool.get_io_worker();
-    auto& signal_io = signal_worker.io_context;
+
+    auto& signal_io = pool.get_io_worker().io_context;
     boost::asio::signal_set signals(signal_io);
     int ret = register_signal(signals, SIGINT, "sigint");
     if (ret != 0)
@@ -203,7 +203,7 @@ int run_with_config(const char* prog, const char* config_path)
         });
 
     pool.run();
-    LOG_INFO("event {} mode {} shutdown", mux::log_event::kConnClose, cfg->mode);
+    LOG_INFO("{} mode {} shutdown", mux::log_event::kConnClose, cfg->mode);
     return 0;
 }
 

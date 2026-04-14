@@ -1,50 +1,52 @@
+#include <algorithm>
 #include <cerrno>
 #include <cstdio>
+#include <cstring>
 #include <limits>
 #include <memory>
 #include <string>
-#include <cstring>
-#include <utility>
-#include <algorithm>
 #include <type_traits>
+#include <utility>
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
-#include <windows.h>
 #include <netioapi.h>
+#include <windows.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #else
 #include <fcntl.h>
-#include <net/if.h>
 #include <unistd.h>
+
+#include <net/if.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #if defined(__linux__)
 #include <arpa/inet.h>
+#include <linux/if_tun.h>
 #include <linux/ipv6.h>
 #include <netinet/in.h>
-#include <linux/if_tun.h>
 #endif
 
 #if defined(__APPLE__) || defined(__MACH__)
-#include <sys/uio.h>
+#include <TargetConditionals.h>
+
 #include <arpa/inet.h>
-#include <netinet/in.h>
 #include <net/if_utun.h>
+#include <netinet/in.h>
 #include <netinet/in_var.h>
 #include <netinet6/in6_var.h>
-#include <sys/sys_domain.h>
 #include <sys/kern_control.h>
-#include <TargetConditionals.h>
+#include <sys/sys_domain.h>
+#include <sys/uio.h>
 #endif
 #endif
 
 #include <boost/system/errc.hpp>
 #ifdef _WIN32
-#include "wintun.h"
 #include "tun_device_windows_helper.h"
+#include "wintun.h"
 #pragma comment(lib, "iphlpapi.lib")
 #endif
 

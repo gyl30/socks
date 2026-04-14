@@ -2,12 +2,12 @@
 #define REALITY_FINGERPRINT_H
 
 #include <array>
-#include <cstdint>
 #include <memory>
 #include <vector>
+#include <cstdint>
 
-#include "reality/handshake/fingerprint_blueprint.h"
 #include "tls/core.h"
+#include "reality/handshake/fingerprint_blueprint.h"
 
 namespace reality
 {

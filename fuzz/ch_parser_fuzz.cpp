@@ -9,6 +9,7 @@
 #include "reality/handshake/fingerprint.h"
 #include "reality/handshake/fingerprint_patch.h"
 #include "reality/handshake/client_hello_builder.h"
+
 namespace
 {
 

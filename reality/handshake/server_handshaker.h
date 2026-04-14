@@ -10,9 +10,9 @@
 
 #include "config.h"
 #include "replay_cache.h"
+#include "reality/types.h"
 #include "site_material.h"
 #include "reality/handshake/server_handshake_context.h"
-#include "reality/types.h"
 
 namespace reality
 {

@@ -10,20 +10,18 @@
 #include <boost/asio.hpp>
 #include <boost/asio/awaitable.hpp>
 
+#include "config.h"
 #include "router.h"
 #include "upstream.h"
 #include "constants.h"
+
 namespace mux
 {
 
 class tcp_socks_session : public std::enable_shared_from_this<tcp_socks_session>
 {
    public:
-    tcp_socks_session(boost::asio::ip::tcp::socket socket,
-                      std::shared_ptr<router> router,
-                      uint32_t sid,
-                      uint64_t trace_id,
-                      const config& cfg);
+    tcp_socks_session(boost::asio::ip::tcp::socket socket, std::shared_ptr<router> router, uint32_t sid, uint64_t trace_id, const config& cfg);
 
     [[nodiscard]] boost::asio::awaitable<void> start(const std::string& host, uint16_t port);
     void stop();

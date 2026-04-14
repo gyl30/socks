@@ -12,6 +12,7 @@
 #include "net_utils.h"
 #include "scoped_exit.h"
 #include "reality/policy/fallback_executor.h"
+
 namespace reality
 {
 
@@ -44,7 +45,7 @@ boost::asio::awaitable<void> fallback_executor::run(
     if (request.client_socket == nullptr)
     {
         ec = boost::asio::error::bad_descriptor;
-        LOG_WARN("event {} conn_id {} remote {}:{} reason {} missing client socket",
+        LOG_WARN("{} conn {} remote {}:{} reason {} missing client socket",
                  mux::log_event::kFallback,
                  request.conn_id,
                  request.remote_addr,
@@ -53,7 +54,7 @@ boost::asio::awaitable<void> fallback_executor::run(
         co_return;
     }
 
-    LOG_INFO("event {} conn_id {} local {}:{} remote {}:{} sni {} reason {} target {}:{} client_hello_size {}",
+    LOG_INFO("{} conn {} local {}:{} remote {}:{} sni {} reason {} target {}:{} client_hello_size {}",
              mux::log_event::kFallback,
              request.conn_id,
              request.local_addr.empty() ? "unknown" : request.local_addr,
@@ -82,7 +83,7 @@ boost::asio::awaitable<void> fallback_executor::run(
     }
 
     co_await relay_bidirectional(*request.client_socket, upstream_socket, request);
-    LOG_INFO("event {} conn_id {} remote {}:{} finished target {}:{}",
+    LOG_INFO("{} conn {} remote {}:{} finished target {}:{}",
              mux::log_event::kFallback,
              request.conn_id,
              request.remote_addr.empty() ? "unknown" : request.remote_addr,
@@ -101,7 +102,7 @@ boost::asio::awaitable<void> fallback_executor::connect_target(boost::asio::ip::
     const auto endpoints = co_await mux::net::wait_resolve_with_timeout(resolver, host, std::to_string(port), cfg_.timeout.connect, ec);
     if (ec)
     {
-        LOG_WARN("event {} conn_id {} remote {}:{} stage resolve target {}:{} error {}",
+        LOG_WARN("{} conn {} remote {}:{} stage resolve target {}:{} error {}",
                  mux::log_event::kFallback,
                  request.conn_id,
                  request.remote_addr,
@@ -114,7 +115,7 @@ boost::asio::awaitable<void> fallback_executor::connect_target(boost::asio::ip::
     if (endpoints.begin() == endpoints.end())
     {
         ec = boost::asio::error::host_not_found;
-        LOG_WARN("event {} conn_id {} remote {}:{} stage resolve target {}:{} error {}",
+        LOG_WARN("{} conn {} remote {}:{} stage resolve target {}:{} error {}",
                  mux::log_event::kFallback,
                  request.conn_id,
                  request.remote_addr,
@@ -133,7 +134,7 @@ boost::asio::awaitable<void> fallback_executor::connect_target(boost::asio::ip::
     co_await mux::net::wait_connect_with_timeout(upstream_socket, endpoints, cfg_.timeout.connect, ec);
     if (ec)
     {
-        LOG_WARN("event {} conn_id {} remote {}:{} stage connect target {}:{} error {}",
+        LOG_WARN("{} conn {} remote {}:{} stage connect target {}:{} error {}",
                  mux::log_event::kFallback,
                  request.conn_id,
                  request.remote_addr,
@@ -148,7 +149,7 @@ boost::asio::awaitable<void> fallback_executor::connect_target(boost::asio::ip::
     no_delay_ec = upstream_socket.set_option(boost::asio::ip::tcp::no_delay(true), no_delay_ec);
     if (no_delay_ec)
     {
-        LOG_WARN("event {} conn_id {} remote {}:{} stage connect target {}:{} set no delay error {}",
+        LOG_WARN("{} conn {} remote {}:{} stage connect target {}:{} set no delay error {}",
                  mux::log_event::kFallback,
                  request.conn_id,
                  request.remote_addr,
@@ -158,7 +159,7 @@ boost::asio::awaitable<void> fallback_executor::connect_target(boost::asio::ip::
                  no_delay_ec.message());
     }
 
-    LOG_INFO("event {} conn_id {} remote {}:{} stage connect target {}:{} connected",
+    LOG_INFO("{} conn {} remote {}:{} stage connect target {}:{} connected",
              mux::log_event::kFallback,
              request.conn_id,
              request.remote_addr,
@@ -182,7 +183,7 @@ boost::asio::awaitable<void> fallback_executor::write_initial_client_hello(boost
         {
             ec = boost::asio::error::fault;
         }
-        LOG_WARN("event {} conn_id {} remote {}:{} stage initial_write target {}:{} error {}",
+        LOG_WARN("{} conn {} remote {}:{} stage initial_write target {}:{} error {}",
                  mux::log_event::kFallback,
                  request.conn_id,
                  request.remote_addr,
@@ -213,7 +214,7 @@ boost::asio::awaitable<void> fallback_executor::relay_data(boost::asio::ip::tcp:
                 shutdown_ec = dst.shutdown(boost::asio::ip::tcp::socket::shutdown_send, shutdown_ec);
                 if (shutdown_ec && shutdown_ec != boost::asio::error::not_connected)
                 {
-                    LOG_WARN("event {} conn_id {} remote {}:{} stage {} shutdown send error {}",
+                    LOG_WARN("{} conn {} remote {}:{} stage {} shutdown send error {}",
                              mux::log_event::kFallback,
                              request.conn_id,
                              request.remote_addr,
@@ -225,7 +226,7 @@ boost::asio::awaitable<void> fallback_executor::relay_data(boost::asio::ip::tcp:
             }
             if (ec != boost::asio::error::operation_aborted && ec != boost::asio::error::connection_reset)
             {
-                LOG_WARN("event {} conn_id {} remote {}:{} stage {} read error {}",
+                LOG_WARN("{} conn {} remote {}:{} stage {} read error {}",
                          mux::log_event::kFallback,
                          request.conn_id,
                          request.remote_addr,
@@ -244,7 +245,7 @@ boost::asio::awaitable<void> fallback_executor::relay_data(boost::asio::ip::tcp:
         const auto written = co_await mux::net::wait_write_with_timeout(dst, boost::asio::buffer(buf.data(), n), fallback_timeout, ec);
         if (ec)
         {
-            LOG_WARN("event {} conn_id {} remote {}:{} stage {} write error {}",
+            LOG_WARN("{} conn {} remote {}:{} stage {} write error {}",
                      mux::log_event::kFallback,
                      request.conn_id,
                      request.remote_addr,
@@ -256,7 +257,7 @@ boost::asio::awaitable<void> fallback_executor::relay_data(boost::asio::ip::tcp:
         if (written != n)
         {
             ec = boost::asio::error::fault;
-            LOG_WARN("event {} conn_id {} remote {}:{} stage {} short write {} of {}",
+            LOG_WARN("{} conn {} remote {}:{} stage {} short write {} of {}",
                      mux::log_event::kFallback,
                      request.conn_id,
                      request.remote_addr,

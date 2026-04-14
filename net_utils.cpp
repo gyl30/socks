@@ -1,21 +1,20 @@
 #include <array>
 #include <atomic>
 #include <cerrno>
-#ifndef _WIN32
-#include <netdb.h>
-#endif
 #include <cstdint>
 #include <cstring>
 #include <optional>
-#ifdef __linux__
-#include <linux/in.h>
+#include <string_view>
+
+#ifndef _WIN32
+#include <netdb.h>
 #endif
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #endif
-#include <string_view>
 #ifdef __linux__
+#include <linux/in.h>
 #include <linux/in6.h>
 #endif
 #ifndef _WIN32
@@ -44,9 +43,9 @@
 #include <boost/system/detail/error_code.hpp>
 #include <boost/system/detail/system_category.hpp>
 
+#include "constants.h"
 #include "log.h"
 #include "net_utils.h"
-#include "constants.h"
 namespace mux::net
 {
 
@@ -496,7 +495,7 @@ bool get_original_tcp_dst(boost::asio::ip::tcp::socket& socket, boost::asio::ip:
         boost::system::error_code local_ec;
         if (try_get_original_dst_from_local_endpoint(socket, endpoint, local_ec))
         {
-            LOG_DEBUG("event {} stage get_original_tcp_dst fallback local {}:{} getsockopt_v6 {} getsockopt_v4 {}",
+            LOG_DEBUG("{} stage get_original_tcp_dst fallback local {}:{} getsockopt_v6 {} getsockopt_v4 {}",
                       log_event::kRoute,
                       endpoint.address().to_string(),
                       endpoint.port(),
@@ -529,7 +528,7 @@ bool get_original_tcp_dst(boost::asio::ip::tcp::socket& socket, boost::asio::ip:
     boost::system::error_code local_ec;
     if (try_get_original_dst_from_local_endpoint(socket, endpoint, local_ec))
     {
-        LOG_DEBUG("event {} stage get_original_tcp_dst fallback local {}:{} getsockopt_v4 {} getsockopt_v6 {}",
+        LOG_DEBUG("{} stage get_original_tcp_dst fallback local {}:{} getsockopt_v4 {} getsockopt_v6 {}",
                   log_event::kRoute,
                   endpoint.address().to_string(),
                   endpoint.port(),

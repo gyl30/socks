@@ -9,10 +9,7 @@
 #include <optional>
 
 #include <boost/asio.hpp>
-extern "C"
-{
 #include <openssl/crypto.h>
-}
 #include <boost/algorithm/hex.hpp>
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/use_awaitable.hpp>
@@ -24,15 +21,15 @@ extern "C"
 #include "constants.h"
 #include "net_utils.h"
 #include "context_pool.h"
-#include "proxy_protocol.h"
 #include "replay_cache.h"
 #include "reality/types.h"
 #include "remote_server.h"
+#include "proxy_protocol.h"
+#include "tls/crypto_util.h"
+#include "reality/session/session.h"
 #include "remote_tcp_proxy_session.h"
 #include "remote_udp_proxy_session.h"
-#include "tls/crypto_util.h"
 #include "proxy_reality_connection.h"
-#include "reality/session/session.h"
 #include "reality/policy/fallback_gate.h"
 #include "reality/policy/fallback_executor.h"
 #include "reality/material/material_provider.h"
@@ -65,7 +62,7 @@ reality::server_handshake_context build_handshake_context(const std::shared_ptr<
     const auto local_ep = s->local_endpoint(local_ep_ec);
     if (local_ep_ec)
     {
-        LOG_WARN("event {} conn_id {} query local endpoint failed {}", log_event::kConnInit, conn_id, local_ep_ec.message());
+        LOG_WARN("{} conn {} query local endpoint failed {}", log_event::kConnInit, conn_id, local_ep_ec.message());
         ctx.local_addr = "unknown";
         ctx.local_port = 0;
     }
@@ -80,7 +77,7 @@ reality::server_handshake_context build_handshake_context(const std::shared_ptr<
     const auto remote_ep = s->remote_endpoint(remote_ep_ec);
     if (remote_ep_ec)
     {
-        LOG_WARN("event {} conn_id {} query remote endpoint failed {}", log_event::kConnInit, conn_id, remote_ep_ec.message());
+        LOG_WARN("{} conn {} query remote endpoint failed {}", log_event::kConnInit, conn_id, remote_ep_ec.message());
         ctx.remote_addr = "unknown";
         ctx.remote_port = 0;
     }
@@ -116,7 +113,7 @@ boost::asio::awaitable<void> remote_server::fallback_to_target_site(reality::fal
     const auto target = resolve_fallback_target(cfg_);
     if (!target.has_value())
     {
-        LOG_WARN("event {} conn_id {} reason {} no fallback target", log_event::kFallback, request.conn_id, reason == nullptr ? "unknown" : reason);
+        LOG_WARN("{} conn {} reason {} no fallback target", log_event::kFallback, request.conn_id, reason == nullptr ? "unknown" : reason);
         co_return;
     }
 
@@ -141,18 +138,18 @@ remote_server::remote_server(io_context_pool& pool, const config& cfg)
     private_key_ = tls::crypto_util::hex_to_bytes(cfg.reality.private_key);
     if (private_key_.size() != 32)
     {
-        LOG_ERROR("event {} stage init private_key length invalid {}", log_event::kConnInit, private_key_.size());
+        LOG_ERROR("{} stage init private_key length invalid {}", log_event::kConnInit, private_key_.size());
         return;
     }
     boost::algorithm::unhex(cfg.reality.short_id, std::back_inserter(short_id_bytes_));
     boost::system::error_code ec;
     auto pub = tls::crypto_util::extract_public_key(private_key_, ec);
-    LOG_INFO("event {} stage init server public key size {}", log_event::kConnInit, ec ? 0 : pub.size());
+    LOG_INFO("{} stage init server public key size {}", log_event::kConnInit, ec ? 0 : pub.size());
 
     uint8_t cert_public_key[32] = {};
     if (!tls::crypto_util::generate_ed25519_keypair(cert_public_key, reality_cert_private_key_.data()))
     {
-        LOG_ERROR("event {} stage init generate reality certificate identity failed", log_event::kConnInit);
+        LOG_ERROR("{} stage init generate reality certificate identity failed", log_event::kConnInit);
         OPENSSL_cleanse(reality_cert_private_key_.data(), reality_cert_private_key_.size());
         return;
     }
@@ -161,7 +158,7 @@ remote_server::remote_server(io_context_pool& pool, const config& cfg)
         std::vector<uint8_t>(reality_cert_private_key_.begin(), reality_cert_private_key_.end()), ec);
     if (ec)
     {
-        LOG_ERROR("event {} stage init build reality certificate template failed {}", log_event::kConnInit, ec.message());
+        LOG_ERROR("{} stage init build reality certificate template failed {}", log_event::kConnInit, ec.message());
         reality_cert_public_key_.clear();
         OPENSSL_cleanse(reality_cert_private_key_.data(), reality_cert_private_key_.size());
         return;
@@ -182,7 +179,7 @@ void remote_server::start()
 {
     if (private_key_.size() != 32 || reality_cert_public_key_.size() != 32 || reality_cert_template_.empty())
     {
-        LOG_ERROR("event {} stage start initialization incomplete private_key {} cert_public_key {} cert_template {}",
+        LOG_ERROR("{} stage start initialization incomplete private_key {} cert_public_key {} cert_template {}",
                   log_event::kConnInit,
                   private_key_.size(),
                   reality_cert_public_key_.size(),
@@ -195,7 +192,7 @@ void remote_server::start()
     auto loaded_material = reality::load_site_material(cfg_, ec);
     if (ec)
     {
-        LOG_ERROR("event {} stage start load reality site material failed {}", log_event::kConnInit, ec.message());
+        LOG_ERROR("{} stage start load reality site material failed {}", log_event::kConnInit, ec.message());
         std::exit(EXIT_FAILURE);
     }
     site_material_ = std::move(loaded_material);
@@ -203,7 +200,7 @@ void remote_server::start()
     const auto addr = boost::asio::ip::make_address(cfg_.inbound.host, ec);
     if (ec)
     {
-        LOG_ERROR("event {} stage start parse listen address {} failed {}", log_event::kConnInit, cfg_.inbound.host, ec.message());
+        LOG_ERROR("{} stage start parse listen address {} failed {}", log_event::kConnInit, cfg_.inbound.host, ec.message());
         std::exit(EXIT_FAILURE);
     }
     const auto ep = boost::asio::ip::tcp::endpoint(addr, cfg_.inbound.port);
@@ -211,18 +208,14 @@ void remote_server::start()
     ec = acceptor_.open(ep.protocol(), ec);
     if (ec)
     {
-        LOG_ERROR(
-            "event {} stage start listen {}:{} open socket failed {}", log_event::kConnInit, cfg_.inbound.host, cfg_.inbound.port, ec.message());
+        LOG_ERROR("{} stage start listen {}:{} open socket failed {}", log_event::kConnInit, cfg_.inbound.host, cfg_.inbound.port, ec.message());
         std::exit(EXIT_FAILURE);
     }
     ec = acceptor_.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true), ec);
     if (ec)
     {
-        LOG_ERROR("event {} stage start listen {}:{} set reuse_address failed {}",
-                  log_event::kConnInit,
-                  cfg_.inbound.host,
-                  cfg_.inbound.port,
-                  ec.message());
+        LOG_ERROR(
+            "{} stage start listen {}:{} set reuse_address failed {}", log_event::kConnInit, cfg_.inbound.host, cfg_.inbound.port, ec.message());
         std::exit(EXIT_FAILURE);
     }
     if (enable_dual_stack)
@@ -230,28 +223,25 @@ void remote_server::start()
         ec = acceptor_.set_option(boost::asio::ip::v6_only(false), ec);
         if (ec)
         {
-            LOG_ERROR("event {} stage start listen {}:{} disable v6_only failed {}",
-                      log_event::kConnInit,
-                      cfg_.inbound.host,
-                      cfg_.inbound.port,
-                      ec.message());
+            LOG_ERROR(
+                "{} stage start listen {}:{} disable v6_only failed {}", log_event::kConnInit, cfg_.inbound.host, cfg_.inbound.port, ec.message());
             std::exit(EXIT_FAILURE);
         }
     }
     ec = acceptor_.bind(ep, ec);
     if (ec)
     {
-        LOG_ERROR("event {} stage start listen {}:{} bind failed {}", log_event::kConnInit, cfg_.inbound.host, cfg_.inbound.port, ec.message());
+        LOG_ERROR("{} stage start listen {}:{} bind failed {}", log_event::kConnInit, cfg_.inbound.host, cfg_.inbound.port, ec.message());
         std::exit(EXIT_FAILURE);
     }
     ec = acceptor_.listen(boost::asio::socket_base::max_listen_connections, ec);
     if (ec)
     {
-        LOG_ERROR("event {} stage start listen {}:{} listen failed {}", log_event::kConnInit, cfg_.inbound.host, cfg_.inbound.port, ec.message());
+        LOG_ERROR("{} stage start listen {}:{} listen failed {}", log_event::kConnInit, cfg_.inbound.host, cfg_.inbound.port, ec.message());
         std::exit(EXIT_FAILURE);
     }
 
-    LOG_INFO("event {} listen {}:{} server listening", log_event::kConnInit, cfg_.inbound.host, cfg_.inbound.port);
+    LOG_INFO("{} listen {}:{} server listening", log_event::kConnInit, cfg_.inbound.host, cfg_.inbound.port);
 
     owner_worker_.group.spawn([self = shared_from_this()]() { return self->accept_loop(); });
 }
@@ -270,7 +260,7 @@ void remote_server::stop()
                           ec = self->acceptor_.close(ec);
                           if (ec && ec != boost::asio::error::bad_descriptor)
                           {
-                              LOG_ERROR("event {} listen {}:{} acceptor close failed {}",
+                              LOG_ERROR("{} listen {}:{} acceptor close failed {}",
                                         log_event::kConnClose,
                                         self->cfg_.inbound.host,
                                         self->cfg_.inbound.port,
@@ -291,20 +281,16 @@ boost::asio::awaitable<void> remote_server::accept_loop()
         {
             if (accept_ec == boost::asio::error::operation_aborted || accept_ec == boost::asio::error::bad_descriptor)
             {
-                LOG_INFO(
-                    "event {} listen {}:{} accept loop stopped {}", log_event::kConnClose, cfg_.inbound.host, cfg_.inbound.port, accept_ec.message());
+                LOG_INFO("{} listen {}:{} accept loop stopped {}", log_event::kConnClose, cfg_.inbound.host, cfg_.inbound.port, accept_ec.message());
                 break;
             }
-            LOG_WARN(
-                "event {} listen {}:{} accept error {} retrying", log_event::kConnInit, cfg_.inbound.host, cfg_.inbound.port, accept_ec.message());
+
+            LOG_WARN("{} listen {}:{} accept error {} retrying", log_event::kConnInit, cfg_.inbound.host, cfg_.inbound.port, accept_ec.message());
+
             const auto wait_ec = co_await net::wait_for(owner_worker_.io_context, std::chrono::milliseconds(200));
             if (wait_ec && wait_ec != boost::asio::error::operation_aborted)
             {
-                LOG_WARN("event {} listen {}:{} accept retry wait error {}",
-                         log_event::kConnInit,
-                         cfg_.inbound.host,
-                         cfg_.inbound.port,
-                         wait_ec.message());
+                LOG_WARN("{} listen {}:{} accept retry wait error {}", log_event::kConnInit, cfg_.inbound.host, cfg_.inbound.port, wait_ec.message());
             }
             continue;
         }
@@ -314,21 +300,17 @@ boost::asio::awaitable<void> remote_server::accept_loop()
         const uint32_t conn_id = next_conn_id_++;
         if (ec)
         {
-            LOG_WARN("event {} conn_id {} set no delay failed {}", log_event::kConnInit, conn_id, ec.message());
+            LOG_WARN("{} conn {} set no delay failed {}", log_event::kConnInit, conn_id, ec.message());
         }
-        worker.group.spawn(
-            [self, worker = &worker, s, conn_id]() -> boost::asio::awaitable<void>
-            {
-                co_await self->handle(*worker, s, conn_id);
-            });
+        worker.group.spawn([self, worker = &worker, s, conn_id]() -> boost::asio::awaitable<void> { co_await self->handle(*worker, s, conn_id); });
     }
-    LOG_INFO("event {} listen {}:{} accept loop exited", log_event::kConnClose, cfg_.inbound.host, cfg_.inbound.port);
+    LOG_INFO("{} listen {}:{} accept loop exited", log_event::kConnClose, cfg_.inbound.host, cfg_.inbound.port);
 }
 
 boost::asio::awaitable<void> remote_server::handle(io_worker& worker, std::shared_ptr<boost::asio::ip::tcp::socket> s, uint32_t conn_id)
 {
     auto reality_ctx = build_handshake_context(s, conn_id);
-    LOG_INFO("event {} conn_id {} local {}:{} remote {}:{} accepted",
+    LOG_INFO("{} conn {} local {}:{} remote {}:{} accepted",
              log_event::kConnInit,
              reality_ctx.conn_id,
              reality_ctx.local_addr,
@@ -375,22 +357,22 @@ boost::asio::awaitable<void> remote_server::handle(io_worker& worker, std::share
     }
     if (accept_result.mode != reality::accept_mode::kAuthenticated)
     {
-        LOG_ERROR("event {} conn_id {} unexpected accept mode {}", log_event::kHandshake, reality_ctx.conn_id, static_cast<int>(accept_result.mode));
+        LOG_ERROR("{} conn {} unexpected accept mode {}", log_event::kHandshake, reality_ctx.conn_id, static_cast<int>(accept_result.mode));
         co_return;
     }
-    LOG_INFO("event {} conn_id {} authorized sni {}", log_event::kAuth, reality_ctx.conn_id, reality_ctx.sni);
+    LOG_INFO("{} conn {} authorized sni {}", log_event::kAuth, reality_ctx.conn_id, reality_ctx.sni);
 
     auto record_context = reality::build_reality_record_context(accept_result.authenticated, ec);
     if (ec)
     {
-        LOG_ERROR("event {} conn_id {} sni {} stage build_record_context error {}",
+        LOG_ERROR("{} conn {} sni {} stage build_record_context error {}",
                   log_event::kHandshake,
                   reality_ctx.conn_id,
                   reality_ctx.sni.empty() ? "unknown" : reality_ctx.sni,
                   ec.message());
         co_return;
     }
-    LOG_INFO("event {} conn_id {} sni {} tunnel starting",
+    LOG_INFO("{} conn {} sni {} tunnel starting",
              log_event::kConnEstablished,
              reality_ctx.conn_id,
              reality_ctx.sni.empty() ? "unknown" : reality_ctx.sni);
@@ -404,7 +386,7 @@ boost::asio::awaitable<void> remote_server::process_proxy_request(io_worker& wor
 {
     if (connection == nullptr)
     {
-        LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} sni {} dropped without connection",
+        LOG_WARN("{} conn {} local {}:{} remote {}:{} sni {} dropped without connection",
                  log_event::kRoute,
                  reality_ctx.conn_id,
                  reality_ctx.local_addr,
@@ -419,7 +401,7 @@ boost::asio::awaitable<void> remote_server::process_proxy_request(io_worker& wor
     const auto packet = co_await connection->read_packet(cfg_.timeout.connect == 0 ? cfg_.timeout.read : cfg_.timeout.connect + 1, ec);
     if (ec)
     {
-        LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} sni {} read initial proxy packet failed {}",
+        LOG_WARN("{} conn {} local {}:{} remote {}:{} sni {} read initial proxy packet failed {}",
                  log_event::kRoute,
                  reality_ctx.conn_id,
                  reality_ctx.local_addr,
@@ -434,7 +416,7 @@ boost::asio::awaitable<void> remote_server::process_proxy_request(io_worker& wor
     proxy::tcp_connect_request tcp_request;
     if (proxy::decode_tcp_connect_request(packet.data(), packet.size(), tcp_request))
     {
-        LOG_INFO("event {} trace_id {:016x} conn_id {} local {}:{} remote {}:{} sni {} type tcp connect target {}:{} payload_size {}",
+        LOG_INFO("{} trace {:016x} conn {} local {}:{} remote {}:{} sni {} type tcp connect target {}:{} payload_size {}",
                  log_event::kRoute,
                  tcp_request.trace_id,
                  reality_ctx.conn_id,
@@ -455,7 +437,7 @@ boost::asio::awaitable<void> remote_server::process_proxy_request(io_worker& wor
     proxy::udp_associate_request udp_request;
     if (proxy::decode_udp_associate_request(packet.data(), packet.size(), udp_request))
     {
-        LOG_INFO("event {} trace_id {:016x} conn_id {} local {}:{} remote {}:{} sni {} type udp associate payload_size {}",
+        LOG_INFO("{} trace {:016x} conn {} local {}:{} remote {}:{} sni {} type udp associate payload_size {}",
                  log_event::kRoute,
                  udp_request.trace_id,
                  reality_ctx.conn_id,
@@ -471,7 +453,7 @@ boost::asio::awaitable<void> remote_server::process_proxy_request(io_worker& wor
         co_return;
     }
 
-    LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} sni {} invalid initial proxy request payload_size {}",
+    LOG_WARN("{} conn {} local {}:{} remote {}:{} sni {} invalid initial proxy request payload_size {}",
              log_event::kRoute,
              reality_ctx.conn_id,
              reality_ctx.local_addr,

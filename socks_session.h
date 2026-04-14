@@ -11,8 +11,9 @@
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/awaitable.hpp>
 
-#include "constants.h"
+#include "config.h"
 #include "router.h"
+#include "constants.h"
 #include "run_loop_spawner.h"
 
 namespace mux
@@ -21,11 +22,7 @@ namespace mux
 class socks_session : public std::enable_shared_from_this<socks_session>
 {
    public:
-    socks_session(boost::asio::ip::tcp::socket socket,
-                  io_worker& worker,
-                  std::shared_ptr<router> router,
-                  uint32_t sid,
-                  const config& cfg);
+    socks_session(boost::asio::ip::tcp::socket socket, io_worker& worker, std::shared_ptr<router> router, uint32_t sid, const config& cfg);
     ~socks_session();
 
     void start();

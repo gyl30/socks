@@ -14,6 +14,7 @@
 #include "constants.h"
 #include "ip_matcher.h"
 #include "rule_file_utils.h"
+
 namespace mux
 {
 
@@ -184,7 +185,7 @@ bool ip_matcher::load(const std::string& filename)
     std::ifstream ip_file(filename);
     if (!ip_file.is_open())
     {
-        LOG_WARN("event {} stage load_ip_rule file {} error open_failed", log_event::kRoute, filename);
+        LOG_WARN("{} stage load_ip_rule file {} error open_failed", log_event::kRoute, filename);
         return false;
     }
 
@@ -256,10 +257,10 @@ void ip_matcher::add_rule(const std::string& cidr, const std::string_view source
     {
         if (source_name.empty())
         {
-            LOG_WARN("event {} stage load_ip_rule error {} value {}", log_event::kRoute, reason, cidr);
+            LOG_WARN("{} stage load_ip_rule error {} value {}", log_event::kRoute, reason, cidr);
             return;
         }
-        LOG_WARN("event {} stage load_ip_rule file {} line {} error {} value {}", log_event::kRoute, source_name, line_number, reason, cidr);
+        LOG_WARN("{} stage load_ip_rule file {} line {} error {} value {}", log_event::kRoute, source_name, line_number, reason, cidr);
     };
 
     std::string_view ip_part;
@@ -275,12 +276,11 @@ void ip_matcher::add_rule(const std::string& cidr, const std::string_view source
     {
         if (source_name.empty())
         {
-            LOG_WARN("event {} stage load_ip_rule error invalid_prefix value {}", log_event::kRoute, len_part);
+            LOG_WARN("{} stage load_ip_rule error invalid_prefix value {}", log_event::kRoute, len_part);
         }
         else
         {
-            LOG_WARN(
-                "event {} stage load_ip_rule file {} line {} error invalid_prefix value {}", log_event::kRoute, source_name, line_number, len_part);
+            LOG_WARN("{} stage load_ip_rule file {} line {} error invalid_prefix value {}", log_event::kRoute, source_name, line_number, len_part);
         }
         return;
     }
@@ -290,12 +290,11 @@ void ip_matcher::add_rule(const std::string& cidr, const std::string_view source
     {
         if (source_name.empty())
         {
-            LOG_ERROR("event {} stage load_ip_rule addr {} error {}", log_event::kRoute, ip_part, ec.message());
+            LOG_ERROR("{} stage load_ip_rule addr {} error {}", log_event::kRoute, ip_part, ec.message());
         }
         else
         {
-            LOG_ERROR(
-                "event {} stage load_ip_rule file {} line {} addr {} error {}", log_event::kRoute, source_name, line_number, ip_part, ec.message());
+            LOG_ERROR("{} stage load_ip_rule file {} line {} addr {} error {}", log_event::kRoute, source_name, line_number, ip_part, ec.message());
         }
         return;
     }
@@ -305,11 +304,11 @@ void ip_matcher::add_rule(const std::string& cidr, const std::string_view source
     {
         if (source_name.empty())
         {
-            LOG_WARN("event {} stage load_ip_rule error invalid_prefix_range prefix {} max {}", log_event::kRoute, prefix_len, max_prefix_len);
+            LOG_WARN("{} stage load_ip_rule error invalid_prefix_range prefix {} max {}", log_event::kRoute, prefix_len, max_prefix_len);
         }
         else
         {
-            LOG_WARN("event {} stage load_ip_rule file {} line {} error invalid_prefix_range prefix {} max {}",
+            LOG_WARN("{} stage load_ip_rule file {} line {} error invalid_prefix_range prefix {} max {}",
                      log_event::kRoute,
                      source_name,
                      line_number,

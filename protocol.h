@@ -9,6 +9,7 @@
 
 #include <boost/asio/ip/address.hpp>
 #include <boost/system/error_code.hpp>
+
 namespace socks
 {
 

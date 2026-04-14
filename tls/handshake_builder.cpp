@@ -12,7 +12,6 @@ extern "C"
 #include <openssl/evp.h>
 #include <openssl/types.h>
 }
-
 #include "tls/core.h"
 #include "tls/handshake_builder.h"
 

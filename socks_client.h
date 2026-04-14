@@ -9,8 +9,8 @@
 #include <boost/asio/awaitable.hpp>
 
 #include "config.h"
-#include "context_pool.h"
 #include "router.h"
+#include "context_pool.h"
 
 namespace mux
 {

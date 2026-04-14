@@ -16,7 +16,9 @@
 #include "protocol.h"
 #include "lru_cache.h"
 #include "net_utils.h"
+#include "run_loop_spawner.h"
 #include "proxy_udp_upstream.h"
+
 namespace mux
 {
 
@@ -28,12 +30,8 @@ std::vector<uint8_t> build_udp_associate_reply(const boost::asio::ip::address& l
 class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
 {
    public:
-    udp_socks_session(boost::asio::ip::tcp::socket socket,
-                      io_worker& worker,
-                      std::shared_ptr<router> router,
-                      uint32_t sid,
-                      uint64_t trace_id,
-                      const config& cfg);
+    udp_socks_session(
+        boost::asio::ip::tcp::socket socket, io_worker& worker, std::shared_ptr<router> router, uint32_t sid, uint64_t trace_id, const config& cfg);
 
     void start(const std::string& host, uint16_t port);
 

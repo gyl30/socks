@@ -60,10 +60,7 @@ std::vector<uint8_t> build_udp_associate_reply(const boost::asio::ip::address& l
 namespace
 {
 
-[[nodiscard]] std::string udp_target_key(const std::string& host, const uint16_t port)
-{
-    return host + "|" + std::to_string(port);
-}
+[[nodiscard]] std::string udp_target_key(const std::string& host, const uint16_t port) { return host + "|" + std::to_string(port); }
 
 boost::asio::awaitable<void> write_socks_error_reply(
     boost::asio::ip::tcp::socket& socket, const uint8_t rep, const uint64_t trace_id, const uint32_t conn_id, const uint32_t timeout_sec)
@@ -93,7 +90,7 @@ boost::asio::awaitable<void> write_socks_error_reply(
             remote_host = remote_ep.address().to_string();
             remote_port = remote_ep.port();
         }
-        LOG_WARN("event {} trace_id {:016x} conn_id {} local {}:{} remote {}:{} write error reply failed {}",
+        LOG_WARN("{} trace {:016x} conn {} local {}:{} remote {}:{} write error reply failed {}",
                  log_event::kSocks,
                  trace_id,
                  conn_id,
@@ -135,7 +132,7 @@ void bind_local_udp_address(const boost::asio::ip::tcp::socket& tcp_socket,
     const auto tcp_local_ep = tcp_socket.local_endpoint(ec);
     if (ec)
     {
-        LOG_ERROR("event {} trace_id {:016x} conn_id {} stage query_tcp_local_endpoint error {}", log_event::kSocks, trace_id, conn_id, ec.message());
+        LOG_ERROR("{} trace {:016x} conn {} stage query_tcp_local_endpoint error {}", log_event::kSocks, trace_id, conn_id, ec.message());
         return;
     }
 
@@ -143,7 +140,7 @@ void bind_local_udp_address(const boost::asio::ip::tcp::socket& tcp_socket,
     open_and_bind_udp_socket(udp_socket, local_addr, ec);
     if (ec)
     {
-        LOG_ERROR("event {} trace_id {:016x} conn_id {} tcp local {}:{} bind udp socket failed {}",
+        LOG_ERROR("{} trace {:016x} conn {} tcp local {}:{} bind udp socket failed {}",
                   log_event::kSocks,
                   trace_id,
                   conn_id,
@@ -155,7 +152,7 @@ void bind_local_udp_address(const boost::asio::ip::tcp::socket& tcp_socket,
     const auto udp_local_ep = udp_socket.local_endpoint(ec);
     if (ec)
     {
-        LOG_ERROR("event {} trace_id {:016x} conn_id {} tcp local {}:{} query udp endpoint failed {}",
+        LOG_ERROR("{} trace {:016x} conn {} tcp local {}:{} query udp endpoint failed {}",
                   log_event::kSocks,
                   trace_id,
                   conn_id,
@@ -165,7 +162,7 @@ void bind_local_udp_address(const boost::asio::ip::tcp::socket& tcp_socket,
         return;
     }
     udp_bind_port = udp_local_ep.port();
-    LOG_INFO("event {} trace_id {:016x} conn_id {} tcp local {}:{} udp associate bound {}:{}",
+    LOG_INFO("{} trace {:016x} conn {} tcp local {}:{} udp associate bound {}:{}",
              log_event::kSocks,
              trace_id,
              conn_id,
@@ -186,7 +183,7 @@ void bind_local_udp_address(const boost::asio::ip::tcp::socket& tcp_socket,
 {
     if (!socks_codec::decode_udp_header(buf.data(), packet_len, udp_header))
     {
-        LOG_WARN("event {} trace_id {:016x} conn_id {} peer {}:{} bind {}:{} received invalid udp packet",
+        LOG_WARN("{} trace {:016x} conn {} peer {}:{} bind {}:{} received invalid udp packet",
                  log_event::kSocks,
                  trace_id,
                  conn_id,
@@ -199,7 +196,7 @@ void bind_local_udp_address(const boost::asio::ip::tcp::socket& tcp_socket,
 
     if (udp_header.frag != 0x00)
     {
-        LOG_WARN("event {} trace_id {:016x} conn_id {} peer {}:{} bind {}:{} received fragmented udp packet frag {}",
+        LOG_WARN("{} trace {:016x} conn {} peer {}:{} bind {}:{} received fragmented udp packet frag {}",
                  log_event::kSocks,
                  trace_id,
                  conn_id,
@@ -212,7 +209,7 @@ void bind_local_udp_address(const boost::asio::ip::tcp::socket& tcp_socket,
     }
     if (udp_header.addr.empty())
     {
-        LOG_WARN("event {} trace_id {:016x} conn_id {} peer {}:{} bind {}:{} received udp packet with empty target host",
+        LOG_WARN("{} trace {:016x} conn {} peer {}:{} bind {}:{} received udp packet with empty target host",
                  log_event::kSocks,
                  trace_id,
                  conn_id,
@@ -224,7 +221,7 @@ void bind_local_udp_address(const boost::asio::ip::tcp::socket& tcp_socket,
     }
     if (udp_header.port == 0)
     {
-        LOG_WARN("event {} trace_id {:016x} conn_id {} peer {}:{} bind {}:{} received udp packet with invalid target port 0",
+        LOG_WARN("{} trace {:016x} conn {} peer {}:{} bind {}:{} received udp packet with invalid target port 0",
                  log_event::kSocks,
                  trace_id,
                  conn_id,
@@ -282,11 +279,7 @@ void udp_socks_session::close_impl()
     proxy_upstream_channel_.close();
     if (proxy_upstream_ != nullptr)
     {
-        worker_.group.spawn(
-            [upstream = proxy_upstream_]() -> boost::asio::awaitable<void>
-            {
-                co_await upstream->close();
-            });
+        worker_.group.spawn([upstream = proxy_upstream_]() -> boost::asio::awaitable<void> { co_await upstream->close(); });
         proxy_upstream_.reset();
         proxy_upstream_started_ = false;
     }
@@ -300,7 +293,7 @@ void udp_socks_session::close_impl()
     close_ec = udp_socket_.close(close_ec);
     if (close_ec && close_ec != boost::asio::error::bad_descriptor)
     {
-        LOG_WARN("event {} trace_id {:016x} conn_id {} tcp peer {}:{} udp bind {}:{} close udp socket failed {}",
+        LOG_WARN("{} trace {:016x} conn {} tcp peer {}:{} udp bind {}:{} close udp socket failed {}",
                  log_event::kSocks,
                  trace_id_,
                  conn_id_,
@@ -313,7 +306,7 @@ void udp_socks_session::close_impl()
     close_ec = direct_udp_socket_v4_.close(close_ec);
     if (close_ec && close_ec != boost::asio::error::bad_descriptor)
     {
-        LOG_WARN("event {} trace_id {:016x} conn_id {} tcp peer {}:{} udp bind {}:{} close direct udp v4 socket failed {}",
+        LOG_WARN("{} trace {:016x} conn {} tcp peer {}:{} udp bind {}:{} close direct udp v4 socket failed {}",
                  log_event::kSocks,
                  trace_id_,
                  conn_id_,
@@ -326,7 +319,7 @@ void udp_socks_session::close_impl()
     close_ec = direct_udp_socket_v6_.close(close_ec);
     if (close_ec && close_ec != boost::asio::error::bad_descriptor)
     {
-        LOG_WARN("event {} trace_id {:016x} conn_id {} tcp peer {}:{} udp bind {}:{} close direct udp v6 socket failed {}",
+        LOG_WARN("{} trace {:016x} conn {} tcp peer {}:{} udp bind {}:{} close direct udp v6 socket failed {}",
                  log_event::kSocks,
                  trace_id_,
                  conn_id_,
@@ -357,7 +350,7 @@ boost::asio::awaitable<void> udp_socks_session::run(const std::string& host, con
     const auto tcp_remote_ep = socket_.remote_endpoint(ec);
     if (ec)
     {
-        LOG_ERROR("event {} trace_id {:016x} conn_id {} bind {}:{} get tcp peer failed {}",
+        LOG_ERROR("{} trace {:016x} conn {} bind {}:{} get tcp peer failed {}",
                   log_event::kSocks,
                   trace_id_,
                   conn_id_,
@@ -372,7 +365,7 @@ boost::asio::awaitable<void> udp_socks_session::run(const std::string& host, con
     has_client_ip_ = true;
     tcp_peer_host_ = client_ip_.to_string();
     tcp_peer_port_ = tcp_remote_ep.port();
-    LOG_INFO("event {} trace_id {:016x} conn_id {} tcp peer {}:{} udp bind {}:{}",
+    LOG_INFO("{} trace {:016x} conn {} tcp peer {}:{} udp bind {}:{}",
              log_event::kConnInit,
              trace_id_,
              conn_id_,
@@ -385,7 +378,7 @@ boost::asio::awaitable<void> udp_socks_session::run(const std::string& host, con
     co_await net::wait_write_with_timeout(socket_, boost::asio::buffer(final_rep), cfg_.timeout.write, ec);
     if (ec)
     {
-        LOG_WARN("event {} trace_id {:016x} conn_id {} tcp peer {}:{} udp bind {}:{} write udp associate reply failed {}",
+        LOG_WARN("{} trace {:016x} conn {} tcp peer {}:{} udp bind {}:{} write udp associate reply failed {}",
                  log_event::kSocks,
                  trace_id_,
                  conn_id_,
@@ -421,7 +414,7 @@ boost::asio::awaitable<void> udp_socks_session::run(const std::string& host, con
 
     close_impl();
     const auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time_).count();
-    LOG_INFO("event {} trace_id {:016x} conn_id {} tcp peer {}:{} udp bind {}:{} client {}:{} tx_bytes {} rx_bytes {} duration_ms {}",
+    LOG_INFO("{} trace {:016x} conn {} tcp peer {}:{} udp bind {}:{} client {}:{} tx_bytes {} rx_bytes {} duration_ms {}",
              log_event::kConnClose,
              trace_id_,
              conn_id_,
@@ -458,7 +451,7 @@ void udp_socks_session::apply_request_peer_constraint(const std::string& host, c
             remote_host = remote_ep.address().to_string();
             remote_port = remote_ep.port();
         }
-        LOG_INFO("event {} trace_id {:016x} conn_id {} local {}:{} remote {}:{} udp associate request peer ignored host {} port {}",
+        LOG_INFO("{} trace {:016x} conn {} local {}:{} remote {}:{} udp associate request peer ignored host {} port {}",
                  log_event::kSocks,
                  trace_id_,
                  conn_id_,
@@ -501,7 +494,7 @@ void udp_socks_session::open_direct_udp_socket(boost::asio::ip::udp::socket& dir
     ec = direct_socket.open(protocol, ec);
     if (ec)
     {
-        LOG_WARN("event {} trace_id {:016x} conn_id {} tcp peer {}:{} udp bind {}:{} open direct udp {} socket failed {}",
+        LOG_WARN("{} trace {:016x} conn {} tcp peer {}:{} udp bind {}:{} open direct udp {} socket failed {}",
                  log_event::kRoute,
                  trace_id_,
                  conn_id_,
@@ -519,7 +512,7 @@ void udp_socks_session::open_direct_udp_socket(boost::asio::ip::udp::socket& dir
         net::set_socket_mark(direct_socket.native_handle(), connect_mark, ec);
         if (ec)
         {
-            LOG_WARN("event {} trace_id {:016x} conn_id {} tcp peer {}:{} udp bind {}:{} set direct udp {} mark failed {}",
+            LOG_WARN("{} trace {:016x} conn {} tcp peer {}:{} udp bind {}:{} set direct udp {} mark failed {}",
                      log_event::kRoute,
                      trace_id_,
                      conn_id_,
@@ -538,7 +531,7 @@ void udp_socks_session::open_direct_udp_socket(boost::asio::ip::udp::socket& dir
     ec = direct_socket.bind(boost::asio::ip::udp::endpoint(protocol, 0), ec);
     if (ec)
     {
-        LOG_WARN("event {} trace_id {:016x} conn_id {} tcp peer {}:{} udp bind {}:{} bind direct udp {} socket failed {}",
+        LOG_WARN("{} trace {:016x} conn {} tcp peer {}:{} udp bind {}:{} bind direct udp {} socket failed {}",
                  log_event::kRoute,
                  trace_id_,
                  conn_id_,
@@ -637,7 +630,7 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> udp_socks_session::resolv
     auto endpoints = co_await net::wait_resolve_with_timeout(resolver, host, std::to_string(port), cfg_.timeout.connect, ec);
     if (ec)
     {
-        LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} udp bind {}:{} udp direct resolve failed {}:{} error {}",
+        LOG_WARN("{} trace {:016x} conn {} client {}:{} udp bind {}:{} udp direct resolve failed {}:{} error {}",
                  log_event::kRoute,
                  trace_id_,
                  conn_id_,
@@ -660,7 +653,7 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> udp_socks_session::resolv
     if (endpoints.begin() == endpoints.end())
     {
         ec = boost::asio::error::host_not_found;
-        LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} udp bind {}:{} udp direct resolve empty {}:{}",
+        LOG_WARN("{} trace {:016x} conn {} client {}:{} udp bind {}:{} udp direct resolve empty {}:{}",
                  log_event::kRoute,
                  trace_id_,
                  conn_id_,
@@ -696,7 +689,7 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> udp_socks_session::resolv
     if (!found)
     {
         ec = boost::asio::error::address_family_not_supported;
-        LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} udp bind {}:{} udp direct resolve no compatible endpoint {}:{}",
+        LOG_WARN("{} trace {:016x} conn {} client {}:{} udp bind {}:{} udp direct resolve no compatible endpoint {}:{}",
                  log_event::kRoute,
                  trace_id_,
                  conn_id_,
@@ -738,7 +731,7 @@ boost::asio::awaitable<void> udp_socks_session::forward_direct_packet(const sock
     if (direct_socket == nullptr)
     {
         const auto direct_socket_ec = boost::system::error_code(boost::asio::error::address_family_not_supported);
-        LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} udp bind {}:{} udp direct socket unavailable {}:{} error {}",
+        LOG_WARN("{} trace {:016x} conn {} client {}:{} udp bind {}:{} udp direct socket unavailable {}:{} error {}",
                  log_event::kRoute,
                  trace_id_,
                  conn_id_,
@@ -762,7 +755,7 @@ boost::asio::awaitable<void> udp_socks_session::forward_direct_packet(const sock
         }
         else
         {
-            LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} udp bind {}:{} udp direct send failed {}:{} error {}",
+            LOG_WARN("{} trace {:016x} conn {} client {}:{} udp bind {}:{} udp direct send failed {}:{} error {}",
                      log_event::kRoute,
                      trace_id_,
                      conn_id_,
@@ -799,7 +792,7 @@ boost::asio::awaitable<void> udp_socks_session::direct_udp_socket_loop(boost::as
         {
             if (!net::is_socket_close_error(ec))
             {
-                LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} udp bind {}:{} direct udp receive error {}",
+                LOG_WARN("{} trace {:016x} conn {} client {}:{} udp bind {}:{} direct udp receive error {}",
                          log_event::kRoute,
                          trace_id_,
                          conn_id_,
@@ -823,7 +816,7 @@ boost::asio::awaitable<void> udp_socks_session::direct_udp_socket_loop(boost::as
             {
                 direct_peers_.erase(normalized_sender);
             }
-            LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} udp bind {}:{} ignore udp packet from unexpected direct peer {}:{}",
+            LOG_WARN("{} trace {:016x} conn {} client {}:{} udp bind {}:{} ignore udp packet from unexpected direct peer {}:{}",
                      log_event::kRoute,
                      trace_id_,
                      conn_id_,
@@ -897,7 +890,7 @@ boost::asio::awaitable<void> udp_socks_session::forward_direct_reply_to_client(c
     const auto packet_len = udp_header.size() + payload_len;
     if (packet_len > constants::udp::kMaxPayload)
     {
-        LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} udp bind {}:{} udp reply oversized drop size {} max {}",
+        LOG_WARN("{} trace {:016x} conn {} client {}:{} udp bind {}:{} udp reply oversized drop size {} max {}",
                  log_event::kRoute,
                  trace_id_,
                  conn_id_,
@@ -921,7 +914,7 @@ boost::asio::awaitable<void> udp_socks_session::forward_direct_reply_to_client(c
     ec = send_ec;
     if (ec)
     {
-        LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} udp bind {}:{} udp direct reply failed {}:{} error {}",
+        LOG_WARN("{} trace {:016x} conn {} client {}:{} udp bind {}:{} udp direct reply failed {}:{} error {}",
                  log_event::kRoute,
                  trace_id_,
                  conn_id_,
@@ -945,7 +938,7 @@ boost::asio::awaitable<bool> udp_socks_session::ensure_proxy_upstream(boost::sys
         if (connect_result.ec || connect_result.upstream == nullptr)
         {
             ec = connect_result.ec ? connect_result.ec : boost::asio::error::not_connected;
-            LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} udp bind {}:{} target {}:{} connect proxy udp upstream failed {} rep {}",
+            LOG_WARN("{} trace {:016x} conn {} client {}:{} udp bind {}:{} target {}:{} connect proxy udp upstream failed {} rep {}",
                      log_event::kSocks,
                      trace_id_,
                      conn_id_,
@@ -961,7 +954,7 @@ boost::asio::awaitable<bool> udp_socks_session::ensure_proxy_upstream(boost::sys
         }
 
         proxy_upstream_ = connect_result.upstream;
-        LOG_INFO("event {} trace_id {:016x} conn_id {} client {}:{} udp bind {}:{} target {}:{} proxy udp upstream ready bind {}:{}",
+        LOG_INFO("{} trace {:016x} conn {} client {}:{} udp bind {}:{} target {}:{} proxy udp upstream ready bind {}:{}",
                  log_event::kSocks,
                  trace_id_,
                  conn_id_,
@@ -982,7 +975,7 @@ boost::asio::awaitable<bool> udp_socks_session::ensure_proxy_upstream(boost::sys
         if (send_ec)
         {
             ec = send_ec;
-            LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} udp bind {}:{} target {}:{} start proxy udp reader failed {}",
+            LOG_WARN("{} trace {:016x} conn {} client {}:{} udp bind {}:{} target {}:{} start proxy udp reader failed {}",
                      log_event::kSocks,
                      trace_id_,
                      conn_id_,
@@ -1030,7 +1023,7 @@ boost::asio::awaitable<void> udp_socks_session::udp_socket_loop()
         {
             if (!stopped_ && !net::is_socket_close_error(recv_ec))
             {
-                LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} udp bind {}:{} receive error {}",
+                LOG_WARN("{} trace {:016x} conn {} client {}:{} udp bind {}:{} receive error {}",
                          log_event::kSocks,
                          trace_id_,
                          conn_id_,
@@ -1046,7 +1039,7 @@ boost::asio::awaitable<void> udp_socks_session::udp_socket_loop()
         const auto normalized_sender = net::normalize_endpoint(sender);
         if (has_client_ip_ && normalized_sender.address() != client_ip_)
         {
-            LOG_WARN("event {} trace_id {:016x} conn_id {} tcp peer {}:{} udp bind {}:{} ignore udp packet from unexpected peer {} expected {}",
+            LOG_WARN("{} trace {:016x} conn {} tcp peer {}:{} udp bind {}:{} ignore udp packet from unexpected peer {} expected {}",
                      log_event::kSocks,
                      trace_id_,
                      conn_id_,
@@ -1060,7 +1053,7 @@ boost::asio::awaitable<void> udp_socks_session::udp_socket_loop()
         }
         if (has_client_addr_ && normalized_sender != client_addr_)
         {
-            LOG_WARN("event {} trace_id {:016x} conn_id {} tcp peer {}:{} udp bind {}:{} ignore udp packet from unexpected peer {}:{} expected {}:{}",
+            LOG_WARN("{} trace {:016x} conn {} tcp peer {}:{} udp bind {}:{} ignore udp packet from unexpected peer {}:{} expected {}:{}",
                      log_event::kSocks,
                      trace_id_,
                      conn_id_,
@@ -1078,7 +1071,7 @@ boost::asio::awaitable<void> udp_socks_session::udp_socket_loop()
         {
             client_addr_ = normalized_sender;
             has_client_addr_ = true;
-            LOG_INFO("event {} trace_id {:016x} conn_id {} tcp peer {}:{} udp bind {}:{} udp peer bound to {}:{}",
+            LOG_INFO("{} trace {:016x} conn {} tcp peer {}:{} udp bind {}:{} udp peer bound to {}:{}",
                      log_event::kSocks,
                      trace_id_,
                      conn_id_,
@@ -1103,7 +1096,7 @@ boost::asio::awaitable<void> udp_socks_session::udp_socket_loop()
         const auto route = co_await decide_udp_route(udp_header);
         if (route == route_type::kBlock)
         {
-            LOG_INFO("event {} trace_id {:016x} conn_id {} client {}:{} udp bind {}:{} udp blocked {}:{}",
+            LOG_INFO("{} trace {:016x} conn {} client {}:{} udp bind {}:{} udp blocked {}:{}",
                      log_event::kRoute,
                      trace_id_,
                      conn_id_,
@@ -1137,7 +1130,7 @@ boost::asio::awaitable<void> udp_socks_session::udp_socket_loop()
             {
                 clear_proxy_upstream_if_current(upstream);
                 co_await upstream->close();
-                LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} udp bind {}:{} target {}:{} write proxy udp datagram failed {}",
+                LOG_WARN("{} trace {:016x} conn {} client {}:{} udp bind {}:{} target {}:{} write proxy udp datagram failed {}",
                          log_event::kSocks,
                          trace_id_,
                          conn_id_,
@@ -1198,7 +1191,7 @@ boost::asio::awaitable<void> udp_socks_session::proxy_to_udp_sock(std::shared_pt
             clear_proxy_upstream_if_current(upstream);
             if (!stopped_ && !net::is_socket_close_error(ec))
             {
-                LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} udp bind {}:{} read proxy udp datagram failed {}",
+                LOG_WARN("{} trace {:016x} conn {} client {}:{} udp bind {}:{} read proxy udp datagram failed {}",
                          log_event::kSocks,
                          trace_id_,
                          conn_id_,
@@ -1220,7 +1213,7 @@ boost::asio::awaitable<void> udp_socks_session::proxy_to_udp_sock(std::shared_pt
         const auto udp_header = socks_codec::encode_udp_header(header);
         if (udp_header.empty())
         {
-            LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} udp bind {}:{} invalid proxy udp source {}:{}",
+            LOG_WARN("{} trace {:016x} conn {} client {}:{} udp bind {}:{} invalid proxy udp source {}:{}",
                      log_event::kSocks,
                      trace_id_,
                      conn_id_,
@@ -1236,7 +1229,7 @@ boost::asio::awaitable<void> udp_socks_session::proxy_to_udp_sock(std::shared_pt
         const auto packet_len = udp_header.size() + datagram.payload.size();
         if (packet_len > constants::udp::kMaxPayload)
         {
-            LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} udp bind {}:{} proxy udp reply oversized drop size {} max {}",
+            LOG_WARN("{} trace {:016x} conn {} client {}:{} udp bind {}:{} proxy udp reply oversized drop size {} max {}",
                      log_event::kSocks,
                      trace_id_,
                      conn_id_,
@@ -1258,7 +1251,7 @@ boost::asio::awaitable<void> udp_socks_session::proxy_to_udp_sock(std::shared_pt
             co_await udp_socket_.async_send_to(boost::asio::buffer(packet), client_addr_, boost::asio::as_tuple(boost::asio::use_awaitable));
         if (send_ec)
         {
-            LOG_ERROR("event {} trace_id {:016x} conn_id {} client {}:{} udp bind {}:{} send proxy udp reply failed {}",
+            LOG_ERROR("{} trace {:016x} conn {} client {}:{} udp bind {}:{} send proxy udp reply failed {}",
                       log_event::kSocks,
                       trace_id_,
                       conn_id_,
@@ -1286,7 +1279,7 @@ boost::asio::awaitable<void> udp_socks_session::keep_tcp_alive()
         {
             if (ec == boost::asio::error::eof)
             {
-                LOG_INFO("event {} trace_id {:016x} conn_id {} tcp peer {}:{} udp bind {}:{} client {}:{} tcp control channel closed eof",
+                LOG_INFO("{} trace {:016x} conn {} tcp peer {}:{} udp bind {}:{} client {}:{} tcp control channel closed eof",
                          log_event::kConnClose,
                          trace_id_,
                          conn_id_,
@@ -1299,7 +1292,7 @@ boost::asio::awaitable<void> udp_socks_session::keep_tcp_alive()
             }
             else if (ec != boost::asio::error::operation_aborted)
             {
-                LOG_ERROR("event {} trace_id {:016x} conn_id {} tcp peer {}:{} udp bind {}:{} client {}:{} keep tcp alive error {}",
+                LOG_ERROR("{} trace {:016x} conn {} tcp peer {}:{} udp bind {}:{} client {}:{} keep tcp alive error {}",
                           log_event::kSocks,
                           trace_id_,
                           conn_id_,
@@ -1320,7 +1313,7 @@ boost::asio::awaitable<void> udp_socks_session::keep_tcp_alive()
         ignored_bytes += n;
         if (ignored_bytes >= constants::udp::kTcpControlIgnoreLimitBytes)
         {
-            LOG_WARN("event {} trace_id {:016x} conn_id {} tcp peer {}:{} udp bind {}:{} client {}:{} tcp control channel flooded ignored_bytes {}",
+            LOG_WARN("{} trace {:016x} conn {} tcp peer {}:{} udp bind {}:{} client {}:{} tcp control channel flooded ignored_bytes {}",
                      log_event::kSocks,
                      trace_id_,
                      conn_id_,
@@ -1356,7 +1349,7 @@ boost::asio::awaitable<void> udp_socks_session::idle_watchdog()
         const auto idle_timeout_ms = static_cast<uint64_t>(cfg_.timeout.idle) * 1000ULL;
         if (elapsed_ms > idle_timeout_ms)
         {
-            LOG_WARN("event {} trace_id {:016x} conn_id {} tcp peer {}:{} udp bind {}:{} client {}:{} last_target {}:{} udp session idle closing",
+            LOG_WARN("{} trace {:016x} conn {} tcp peer {}:{} udp bind {}:{} client {}:{} last_target {}:{} udp session idle closing",
                      log_event::kSocks,
                      trace_id_,
                      conn_id_,

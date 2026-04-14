@@ -7,6 +7,7 @@
 #include <algorithm>
 
 #include "reality/handshake/auth.h"
+
 namespace reality
 {
 
