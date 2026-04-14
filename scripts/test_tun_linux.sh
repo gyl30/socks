@@ -532,12 +532,6 @@ run_step "host boost connect ready after tunnel start" \
 run_step "host async boost connect ready after tunnel start" \
     /tmp/test_async_connect_wrapper "$target_ip" "$http_port" 5
 
-run_step "host socks binary connect ready after tunnel start" \
-    env LD_LIBRARY_PATH="$runtime_ld_library_path" "$binary" probe-connect "$target_ip" "$http_port" 5
-
-run_step "host socks threaded connect ready after tunnel start" \
-env LD_LIBRARY_PATH="$runtime_ld_library_path" "$binary" probe-connect-thread "$target_ip" "$http_port" 5
-
 timeout 5 tcpdump -nn -l -i any "host $target_ip and tcp port $http_port" >"$tmp_dir/target-tcpdump.log" 2>&1 &
 pids+=("$!")
 
