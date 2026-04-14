@@ -118,42 +118,7 @@ boost::asio::awaitable<bool> remote_tcp_proxy_session::resolve_target(boost::asi
 boost::asio::awaitable<bool> remote_tcp_proxy_session::connect_target(const boost::asio::ip::tcp::resolver::results_type& resolve_res)
 {
     boost::system::error_code connect_ec = boost::asio::error::host_unreachable;
-    for (const auto& entry : resolve_res)
-    {
-        const auto endpoint = entry.endpoint();
-        const auto endpoint_text = endpoint.address().to_string() + ":" + std::to_string(endpoint.port());
-        if (target_socket_.is_open())
-        {
-            boost::system::error_code close_ec;
-            close_ec = target_socket_.close(close_ec);
-            (void)close_ec;
-        }
-        connect_ec = target_socket_.open(endpoint.protocol(), connect_ec);
-        if (connect_ec)
-        {
-            LOG_DEBUG("{} trace {:016x} conn {} target {}:{} open endpoint {} failed {}",
-                      log_event::kRoute,
-                      trace_id_,
-                      conn_id_,
-                      target_host_,
-                      target_port_,
-                      endpoint_text,
-                      connect_ec.message());
-            continue;
-        }
-        LOG_DEBUG("{} trace {:016x} conn {} target {}:{} connect try endpoint {}",
-                  log_event::kRoute,
-                  trace_id_,
-                  conn_id_,
-                  target_host_,
-                  target_port_,
-                  endpoint_text);
-        co_await net::wait_connect_with_timeout(target_socket_, endpoint, cfg_.timeout.connect, connect_ec);
-        if (!connect_ec)
-        {
-            break;
-        }
-    }
+    co_await net::wait_connect_with_timeout(target_socket_, resolve_res, cfg_.timeout.connect, connect_ec);
 
     if (connect_ec)
     {
