@@ -47,9 +47,6 @@ udp_payload_large="${BENCH_UDP_PAYLOAD_LARGE:-1200}"
 warmup_body_bytes="${BENCH_WARMUP_BODY_BYTES:-1024}"
 warmup_chunk_size="${BENCH_WARMUP_CHUNK_SIZE:-1024}"
 
-server_max_connections="${SERVER_LIMIT_MAX_CONNECTIONS:-64}"
-client_max_connections="${CLIENT_LIMIT_MAX_CONNECTIONS:-8}"
-
 tcp_path="/fast-large?body_bytes=${tcp_body_bytes}&chunk_size=${tcp_chunk_size}&chunk_interval_ms=0"
 warmup_path="/fast-large?body_bytes=${warmup_body_bytes}&chunk_size=${warmup_chunk_size}&chunk_interval_ms=0"
 
@@ -416,9 +413,8 @@ cat >"$tmp_dir/server.json" <<EOF
   "log": {"level": "info", "file": "$tmp_dir/server.log"},
   "inbound": {"host": "$host_ip", "port": $server_port},
   "socks": {"enabled": false},
-  "reality": {"sni": "$sni", "private_key": "$private_key", "public_key": "$public_key", "short_id": "$short_id"},
-  "timeout": {"read": 5, "write": 5, "connect": 5, "idle": 30},
-  "limits": {"max_connections": $server_max_connections, "max_buffer": 33554432, "max_streams": 256, "max_handshake_records": 256}
+  "reality": {"sni": "$sni", "max_handshake_records": 256, "private_key": "$private_key", "public_key": "$public_key", "short_id": "$short_id"},
+  "timeout": {"read": 5, "write": 5, "connect": 5, "idle": 30}
 }
 EOF
 
@@ -431,10 +427,8 @@ cat >"$tmp_dir/client-direct.json" <<EOF
   "tproxy": {"enabled": false, "listen_host": "::", "tcp_port": 0, "udp_port": 0, "mark": 17},
   "tun": {"enabled": true, "name": "$tun_direct", "mtu": 1400, "ipv4": "198.18.0.1", "ipv4_prefix": 32, "ipv6": "fd00::1", "ipv6_prefix": 128},
   "outbound": {"host": "$host_ip", "port": $server_port},
-  "reality": {"sni": "$sni", "fingerprint": "random", "public_key": "$public_key", "short_id": "$short_id"},
-  "timeout": {"read": 5, "write": 5, "connect": 5, "idle": 30},
-  "limits": {"max_connections": $client_max_connections, "max_buffer": 33554432, "max_streams": 256, "max_handshake_records": 256},
-  "heartbeat": {"min_interval": 15, "max_interval": 45, "min_padding": 32, "max_padding": 128}
+  "reality": {"sni": "$sni", "fingerprint": "random", "max_handshake_records": 256, "public_key": "$public_key", "short_id": "$short_id"},
+  "timeout": {"read": 5, "write": 5, "connect": 5, "idle": 30}
 }
 EOF
 
@@ -447,10 +441,8 @@ cat >"$tmp_dir/client-proxy.json" <<EOF
   "tproxy": {"enabled": false, "listen_host": "::", "tcp_port": 0, "udp_port": 0, "mark": 17},
   "tun": {"enabled": true, "name": "$tun_proxy", "mtu": 1400, "ipv4": "198.18.0.1", "ipv4_prefix": 32, "ipv6": "fd00::1", "ipv6_prefix": 128},
   "outbound": {"host": "$host_ip", "port": $server_port},
-  "reality": {"sni": "$sni", "fingerprint": "random", "public_key": "$public_key", "short_id": "$short_id"},
-  "timeout": {"read": 5, "write": 5, "connect": 5, "idle": 30},
-  "limits": {"max_connections": $client_max_connections, "max_buffer": 33554432, "max_streams": 256, "max_handshake_records": 256},
-  "heartbeat": {"min_interval": 15, "max_interval": 45, "min_padding": 32, "max_padding": 128}
+  "reality": {"sni": "$sni", "fingerprint": "random", "max_handshake_records": 256, "public_key": "$public_key", "short_id": "$short_id"},
+  "timeout": {"read": 5, "write": 5, "connect": 5, "idle": 30}
 }
 EOF
 

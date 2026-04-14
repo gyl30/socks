@@ -69,27 +69,12 @@ struct config
         uint32_t idle = 300;
     } timeout;
 
-    struct limits_t
-    {
-        uint32_t max_connections = 5;
-        uint64_t max_buffer = 10L * 1024 * 1024;
-        uint32_t max_streams = 1024;
-        uint32_t max_handshake_records = 256;
-    } limits;
-
-    struct heartbeat_t
-    {
-        uint32_t min_interval = 15;
-        uint32_t max_interval = 45;
-        uint32_t min_padding = 32;
-        uint32_t max_padding = 1024;
-    } heartbeat;
-
     struct reality_t
     {
         std::string sni = "www.apple.com";
         std::string fingerprint = "random";
         uint32_t replay_cache_max_entries = 100000;
+        uint32_t max_handshake_records = 256;
         std::string private_key;
         std::string public_key;
         std::string short_id;

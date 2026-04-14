@@ -101,7 +101,7 @@ connect_options build_connect_options(const config& cfg)
     options.sni = cfg.reality.sni;
     options.remote_host = cfg.outbound.host;
     options.remote_port = std::to_string(cfg.outbound.port);
-    options.max_handshake_records = cfg.limits.max_handshake_records;
+    options.max_handshake_records = cfg.reality.max_handshake_records;
     options.connect_mark = cfg.tproxy.enabled ? cfg.tproxy.mark : 0U;
     boost::algorithm::unhex(cfg.reality.public_key, std::back_inserter(options.server_pub_key));
     boost::algorithm::unhex(cfg.reality.short_id, std::back_inserter(options.short_id_bytes));

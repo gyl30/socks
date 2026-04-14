@@ -19,8 +19,5 @@
     },
     "timeout": {
         "idle": 300
-    },
-    "limits": {
-        "max_connections": 10000
     }
 }

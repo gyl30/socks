@@ -413,6 +413,7 @@ def build_server_config(tmp_dir, server_port, private_key, public_key, short_id,
         "socks": {"enabled": False},
         "reality": {
             "sni": sni,
+            "max_handshake_records": args.server_max_handshake_records,
             "private_key": private_key,
             "public_key": public_key,
             "short_id": short_id,
@@ -422,12 +423,6 @@ def build_server_config(tmp_dir, server_port, private_key, public_key, short_id,
             "write": args.write_timeout_sec,
             "connect": args.connect_timeout_sec,
             "idle": args.idle_timeout_sec,
-        },
-        "limits": {
-            "max_connections": args.server_max_connections,
-            "max_buffer": args.server_max_buffer,
-            "max_streams": args.server_max_streams,
-            "max_handshake_records": args.server_max_handshake_records,
         },
     }
 
@@ -460,6 +455,7 @@ def build_client_config(tmp_dir, socks_port, server_port, public_key, short_id, 
         "reality": {
             "sni": sni,
             "fingerprint": "random",
+            "max_handshake_records": args.client_max_handshake_records,
             "public_key": public_key,
             "short_id": short_id,
         },
@@ -468,18 +464,6 @@ def build_client_config(tmp_dir, socks_port, server_port, public_key, short_id, 
             "write": args.write_timeout_sec,
             "connect": args.connect_timeout_sec,
             "idle": args.idle_timeout_sec,
-        },
-        "limits": {
-            "max_connections": args.max_connections,
-            "max_buffer": args.client_max_buffer,
-            "max_streams": args.client_max_streams,
-            "max_handshake_records": args.client_max_handshake_records,
-        },
-        "heartbeat": {
-            "min_interval": args.heartbeat_min_interval,
-            "max_interval": args.heartbeat_max_interval,
-            "min_padding": args.heartbeat_min_padding,
-            "max_padding": args.heartbeat_max_padding,
         },
     }
 
@@ -525,22 +509,12 @@ def parse_args():
     parser.add_argument("--requests-per-worker", type=int, default=env_int("REQUESTS_PER_WORKER", 4))
     parser.add_argument("--client-workers", type=int, default=env_int("CLIENT_WORKERS", 8))
     parser.add_argument("--server-workers", type=int, default=env_int("SERVER_WORKERS", 8))
-    parser.add_argument("--max-connections", type=int, default=env_int("MAX_CONNECTIONS", 128))
-    parser.add_argument("--server-max-connections", type=int, default=env_int("SERVER_MAX_CONNECTIONS", 128))
     parser.add_argument("--read-timeout-sec", type=int, default=env_int("READ_TIMEOUT_SEC", 10))
     parser.add_argument("--write-timeout-sec", type=int, default=env_int("WRITE_TIMEOUT_SEC", 10))
     parser.add_argument("--connect-timeout-sec", type=int, default=env_int("CONNECT_TIMEOUT_SEC", 5))
     parser.add_argument("--idle-timeout-sec", type=int, default=env_int("IDLE_TIMEOUT_SEC", 60))
-    parser.add_argument("--client-max-buffer", type=int, default=env_int("CLIENT_MAX_BUFFER", 33554432))
-    parser.add_argument("--server-max-buffer", type=int, default=env_int("SERVER_MAX_BUFFER", 33554432))
-    parser.add_argument("--client-max-streams", type=int, default=env_int("CLIENT_MAX_STREAMS", 2048))
-    parser.add_argument("--server-max-streams", type=int, default=env_int("SERVER_MAX_STREAMS", 2048))
     parser.add_argument("--client-max-handshake-records", type=int, default=env_int("CLIENT_MAX_HANDSHAKE_RECORDS", 256))
     parser.add_argument("--server-max-handshake-records", type=int, default=env_int("SERVER_MAX_HANDSHAKE_RECORDS", 256))
-    parser.add_argument("--heartbeat-min-interval", type=int, default=env_int("HEARTBEAT_MIN_INTERVAL", 15))
-    parser.add_argument("--heartbeat-max-interval", type=int, default=env_int("HEARTBEAT_MAX_INTERVAL", 45))
-    parser.add_argument("--heartbeat-min-padding", type=int, default=env_int("HEARTBEAT_MIN_PADDING", 32))
-    parser.add_argument("--heartbeat-max-padding", type=int, default=env_int("HEARTBEAT_MAX_PADDING", 256))
     parser.add_argument("--monitor-interval-ms", type=int, default=env_int("MONITOR_INTERVAL_MS", 50))
     parser.add_argument("--worker-start-jitter-ms", type=int, default=env_int("WORKER_START_JITTER_MS", 0))
     parser.add_argument("--request-gap-min-ms", type=int, default=env_int("REQUEST_GAP_MIN_MS", 0))

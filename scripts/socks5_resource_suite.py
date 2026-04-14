@@ -162,7 +162,6 @@ def count_idle_events(tmp_dir):
         + count_any_log_occurrences(
             tmp_dir / "server.log",
             (
-                "mux upstream stream read finished Connection timed out",
                 " idle timeout ",
             ),
         )
@@ -181,7 +180,7 @@ def count_handshake_timeout_events(tmp_dir):
     )
 
 
-def build_server_config(tmp_dir, server_port, private_key, public_key, short_id, sni, workers, timeouts, limits):
+def build_server_config(tmp_dir, server_port, private_key, public_key, short_id, sni, workers, timeouts, max_handshake_records):
     return {
         "mode": "server",
         "workers": workers,
@@ -198,16 +197,16 @@ def build_server_config(tmp_dir, server_port, private_key, public_key, short_id,
         },
         "reality": {
             "sni": sni,
+            "max_handshake_records": max_handshake_records,
             "private_key": private_key,
             "public_key": public_key,
             "short_id": short_id,
         },
         "timeout": timeouts,
-        "limits": limits,
     }
 
 
-def build_client_config(tmp_dir, socks_port, server_port, public_key, short_id, sni, workers, timeouts, limits):
+def build_client_config(tmp_dir, socks_port, server_port, public_key, short_id, sni, workers, timeouts, max_handshake_records):
     return {
         "mode": "client",
         "workers": workers,
@@ -235,17 +234,11 @@ def build_client_config(tmp_dir, socks_port, server_port, public_key, short_id, 
         "reality": {
             "sni": sni,
             "fingerprint": "random",
+            "max_handshake_records": max_handshake_records,
             "public_key": public_key,
             "short_id": short_id,
         },
         "timeout": timeouts,
-        "limits": limits,
-        "heartbeat": {
-            "min_interval": 4,
-            "max_interval": 6,
-            "min_padding": 32,
-            "max_padding": 64,
-        },
     }
 
 
@@ -283,14 +276,18 @@ def create_environment(repo_root, binary, mode_name):
     if mode_name == "long":
         workers = 2
         timeouts = {"read": 2, "write": 2, "connect": 3, "idle": 3}
-        limits = {"max_connections": 32, "max_buffer": 33554432, "max_streams": 2048, "max_handshake_records": 256}
+        max_handshake_records = 256
     else:
         workers = 4
         timeouts = {"read": 2, "write": 2, "connect": 3, "idle": 3}
-        limits = {"max_connections": 128, "max_buffer": 33554432, "max_streams": 4096, "max_handshake_records": 256}
+        max_handshake_records = 256
 
-    server_config = build_server_config(tmp_dir, server_port, private_key, public_key, short_id, sni, workers, timeouts, limits)
-    client_config = build_client_config(tmp_dir, socks_port, server_port, public_key, short_id, sni, workers, timeouts, limits)
+    server_config = build_server_config(
+        tmp_dir, server_port, private_key, public_key, short_id, sni, workers, timeouts, max_handshake_records
+    )
+    client_config = build_client_config(
+        tmp_dir, socks_port, server_port, public_key, short_id, sni, workers, timeouts, max_handshake_records
+    )
     write_json(tmp_dir / "server.json", server_config)
     write_json(tmp_dir / "client.json", client_config)
 

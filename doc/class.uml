@@ -9,11 +9,9 @@ package "Infrastructure" {
         + get_io_context()
     }
 
-    class task_group {
-        + emit(cancellation_type)
-        + async_wait()
+    class io_worker {
+        + io_context
     }
-
 }
 
 package "Client Inbound" {
@@ -38,8 +36,8 @@ package "Client Inbound" {
     class udp_socks_session {
         + start(host, port)
         - run(host, port)
-        - udp_sock_to_stream()
-        - stream_to_udp_sock()
+        - ensure_proxy_upstream()
+        - idle_watchdog()
     }
 
     class tproxy_client {
@@ -57,7 +55,9 @@ package "Client Inbound" {
 
     class tproxy_udp_session {
         + start()
+        + stop()
         - run()
+        - open_proxy_upstream()
         - idle_watchdog()
     }
 
@@ -74,12 +74,15 @@ package "Client Inbound" {
     class tun_tcp_session {
         + start()
         - run()
+        - select_backend()
         - idle_watchdog()
     }
 
     class tun_udp_session {
         + start()
+        + stop()
         - run()
+        - open_proxy_upstream()
         - idle_watchdog()
     }
 
@@ -92,46 +95,48 @@ package "Client Inbound" {
 
 package "Upstream" {
     abstract class upstream {
-        + connect(host, port, ec)
+        + connect(host, port)
         + write(data, ec)
         + read(buf, ec)
+        + shutdown_send(ec)
         + close()
     }
 
     class direct_upstream
+
     class proxy_upstream
+
+    class proxy_udp_upstream {
+        + connect()
+        + send_datagram()
+        + receive_datagram()
+        + close()
+    }
 }
 
-package "Mux + Reality" {
-    class client_tunnel_pool {
-        + start()
-        + stop()
-        + select_tunnel()
-        - connect_remote_loop()
-    }
-
-    class mux_connection {
-        + start()
-        + stop()
-        + create_stream()
-        + send_async(frame, ec)
-        - read_loop()
-        - write_loop()
-        - timeout_loop()
-        - heartbeat_loop()
-    }
-
-    class mux_stream {
-        + id()
-        + async_read(ec)
-        + async_write(frame, ec)
-        + on_frame(frame, ec)
+package "Proxy Protocol + Reality" {
+    class proxy_reality_connection {
+        + connect()
+        + write()
+        + write_packet()
+        + read_some()
+        + read_packet()
+        + shutdown_send()
+        + close()
     }
 
     class reality_engine {
-        + encrypt(plaintext, ec)
-        + process_available_records(callback, ec)
+        + read_buffer()
+        + commit_read()
+        + decrypt_record()
+        + encrypt_record()
     }
+
+    class "proxy::tcp_connect_request" as tcp_connect_request
+    class "proxy::tcp_connect_reply" as tcp_connect_reply
+    class "proxy::udp_associate_request" as udp_associate_request
+    class "proxy::udp_associate_reply" as udp_associate_reply
+    class "proxy::udp_datagram" as udp_datagram
 }
 
 package "Server Side" {
@@ -140,32 +145,31 @@ package "Server Side" {
         + stop()
         - accept_loop()
         - handle(socket, conn_id)
-        - perform_handshake_response()
-        - process_stream_request()
+        - process_proxy_request()
     }
 
-    class remote_tcp_session {
-        + start(syn)
-        - run(syn)
-        - upstream()
-        - downstream()
+    class remote_tcp_proxy_session {
+        + start(request)
+        - run(request)
+        - send_connect_reply()
+        - client_to_target()
+        - target_to_client()
+        - idle_watchdog()
     }
 
-    class remote_udp_session {
-        + start()
-        - start_impl()
-        - mux_to_udp()
-        - udp_to_mux()
+    class remote_udp_proxy_session {
+        + start(request)
+        - start_impl(request)
+        - connection_to_udp()
+        - udp_to_connection()
+        - idle_watchdog()
     }
 
     class replay_cache
 }
 
-' Client relations
 socks_client o-- io_context_pool
-socks_client *-- task_group
 socks_client *-- router
-socks_client *-- client_tunnel_pool
 socks_client ..> socks_session : creates
 
 socks_session ..> tcp_socks_session : CONNECT
@@ -173,57 +177,58 @@ socks_session ..> udp_socks_session : UDP ASSOCIATE
 
 tcp_socks_session ..> router
 tcp_socks_session ..> upstream : create_backend
-udp_socks_session ..> mux_connection
-
-upstream <|-- direct_upstream
-upstream <|-- proxy_upstream
-proxy_upstream ..> mux_connection
+udp_socks_session ..> router
+udp_socks_session ..> proxy_udp_upstream : ensure_proxy_upstream
 
 tproxy_client o-- io_context_pool
-tproxy_client *-- task_group
 tproxy_client *-- router
-tproxy_client *-- client_tunnel_pool
 tproxy_client ..> tproxy_tcp_session : creates
 tproxy_client ..> tproxy_udp_session : creates
 
 tproxy_tcp_session ..> router
 tproxy_tcp_session ..> upstream : select_backend
+tproxy_udp_session ..> proxy_udp_upstream
 
 tun_client o-- tun_device
 tun_client *-- router
-tun_client *-- client_tunnel_pool
 tun_client ..> tun_tcp_session : creates
 tun_client ..> tun_udp_session : creates
 
 tun_tcp_session ..> router
-tun_tcp_session ..> upstream : create_backend
-tun_udp_session ..> mux_connection
+tun_tcp_session ..> upstream : select_backend
+tun_udp_session ..> router
+tun_udp_session ..> proxy_udp_upstream
 
-client_tunnel_pool o-- io_context_pool
-client_tunnel_pool *-- mux_connection : pool items
-mux_connection *-- reality_engine
-mux_connection *-- mux_stream : stream map
-mux_stream ..> mux_connection : weak ref
+upstream <|-- direct_upstream
+upstream <|-- proxy_upstream
+proxy_upstream ..> proxy_reality_connection
+proxy_udp_upstream ..> proxy_reality_connection
 
-' Server relations
+proxy_reality_connection *-- reality_engine
+proxy_reality_connection ..> tcp_connect_request
+proxy_reality_connection ..> tcp_connect_reply
+proxy_reality_connection ..> udp_associate_request
+proxy_reality_connection ..> udp_associate_reply
+proxy_reality_connection ..> udp_datagram
+
 remote_server o-- io_context_pool
-remote_server *-- task_group
 remote_server *-- replay_cache
-remote_server ..> mux_connection : creates per tunnel
-remote_server ..> remote_tcp_session : on SYN CONNECT
-remote_server ..> remote_udp_session : on SYN UDP_ASSOCIATE
+remote_server ..> proxy_reality_connection : wraps accepted socket
+remote_server ..> remote_tcp_proxy_session : tcp_connect_request
+remote_server ..> remote_udp_proxy_session : udp_associate_request
 
-remote_tcp_session ..> mux_connection
-remote_udp_session ..> mux_connection
+remote_tcp_proxy_session ..> proxy_reality_connection
+remote_udp_proxy_session ..> proxy_reality_connection
 
-note right of tproxy_client
-  TPROXY TCP/UDP 均已实现。
-  UDP 会话按 client/target endpoint 维护。
+note right of proxy_reality_connection
+  route=proxy 时：
+  一次 TCP 请求或一个 UDP 会话
+  对应一条 REALITY 连接。
 end note
 
-note right of tun_client
-  TUN 入口通过 lwIP 将三层报文提升为
-  TCP/UDP 会话，再复用统一路由与隧道逻辑。
+note right of remote_server
+  服务端不再接收多路 stream。
+  认证成功后只处理一个代理会话。
 end note
 
 @enduml

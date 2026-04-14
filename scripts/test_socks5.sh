@@ -101,6 +101,7 @@ cat >"$tmp_dir/server.json" <<EOF
   },
   "reality": {
     "sni": "$sni",
+    "max_handshake_records": 256,
     "private_key": "$private_key",
     "public_key": "$public_key",
     "short_id": "$short_id"
@@ -110,12 +111,6 @@ cat >"$tmp_dir/server.json" <<EOF
     "write": 5,
     "connect": 5,
     "idle": 30
-  },
-  "limits": {
-    "max_connections": 64,
-    "max_buffer": 10485760,
-    "max_streams": 256,
-    "max_handshake_records": 256
   }
 }
 EOF
@@ -148,6 +143,7 @@ cat >"$tmp_dir/client.json" <<EOF
   "reality": {
     "sni": "$sni",
     "fingerprint": "random",
+    "max_handshake_records": 256,
     "public_key": "$public_key",
     "short_id": "$short_id"
   },
@@ -156,18 +152,6 @@ cat >"$tmp_dir/client.json" <<EOF
     "write": 5,
     "connect": 5,
     "idle": 30
-  },
-  "limits": {
-    "max_connections": 4,
-    "max_buffer": 10485760,
-    "max_streams": 256,
-    "max_handshake_records": 256
-  },
-  "heartbeat": {
-    "min_interval": 15,
-    "max_interval": 45,
-    "min_padding": 32,
-    "max_padding": 128
   }
 }
 EOF
@@ -318,7 +302,7 @@ if [[ "$udp_payload" != "udp-smoke" ]]; then
 fi
 
 echo "socks5 tcp smoke ok"
-echo "socks5 mux parallel ok"
+echo "socks5 parallel proxy ok"
 echo "socks5 udp associate ok"
 
 python3 "$repo_root/scripts/socks5_edge_cases.py" \

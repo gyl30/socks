@@ -255,6 +255,7 @@ def start_client_server_pair(repo_root, temp_root, binary, socks_port, server_po
         },
         "reality": {
             "sni": reality_sni,
+            "max_handshake_records": 256,
             "private_key": private_key,
             "public_key": public_key,
             "short_id": "0102030405060708",
@@ -264,12 +265,6 @@ def start_client_server_pair(repo_root, temp_root, binary, socks_port, server_po
             "write": 5,
             "connect": 5,
             "idle": 30,
-        },
-        "limits": {
-            "max_connections": 64,
-            "max_buffer": 33554432,
-            "max_streams": 256,
-            "max_handshake_records": 256,
         },
     }
 
@@ -300,6 +295,7 @@ def start_client_server_pair(repo_root, temp_root, binary, socks_port, server_po
         "reality": {
             "sni": reality_sni,
             "fingerprint": fingerprint,
+            "max_handshake_records": 256,
             "public_key": public_key,
             "short_id": "0102030405060708",
         },
@@ -308,18 +304,6 @@ def start_client_server_pair(repo_root, temp_root, binary, socks_port, server_po
             "write": 5,
             "connect": 5,
             "idle": 30,
-        },
-        "limits": {
-            "max_connections": 32,
-            "max_buffer": 33554432,
-            "max_streams": 256,
-            "max_handshake_records": 256,
-        },
-        "heartbeat": {
-            "min_interval": 15,
-            "max_interval": 45,
-            "min_padding": 32,
-            "max_padding": 128,
         },
     }
 

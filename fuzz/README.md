@@ -13,19 +13,16 @@ cmake --build build-fuzz-clang -j2
 
 ```bash
 ./build-fuzz-clang/ch_parser_fuzz -dict=fuzz/ch_parser.dict -rss_limit_mb=2048 fuzz/corpus/ch_parser
-./build-fuzz-clang/mux_codec_fuzz -dict=fuzz/mux_codec.dict -rss_limit_mb=2048 fuzz/corpus/mux_codec
 ```
 
 ## Corpus merge
 
 ```bash
 ./fuzz/merge_corpus.sh ch_parser fuzz/corpus/ch_parser_new fuzz/corpus/ch_parser
-./fuzz/merge_corpus.sh mux_codec fuzz/corpus/mux_codec_new fuzz/corpus/mux_codec
 ```
 
 ## Crash replay
 
 ```bash
 ./fuzz/replay_crash.sh ch_parser crash-XXXXXXXXXXXXXXXX
-./fuzz/replay_crash.sh mux_codec crash-XXXXXXXXXXXXXXXX
 ```

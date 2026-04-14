@@ -283,13 +283,6 @@ sys.exit(1)
 PY
 }
 
-wait_tunnel_pool_ready() {
-    local timeout_sec="${1:-8}"
-    local start_line
-    start_line="$(log_line_count "$client_log")"
-    wait_log_pattern_since "$client_log" "$start_line" "tunnel installed" "$timeout_sec"
-}
-
 print_log_count() {
     local label="$1"
     local file="$2"
@@ -502,6 +495,7 @@ cat >"$tmp_dir/server.json" <<EOF
   },
   "reality": {
     "sni": "$sni",
+    "max_handshake_records": 256,
     "private_key": "$private_key",
     "public_key": "$public_key",
     "short_id": "$short_id"
@@ -511,12 +505,6 @@ cat >"$tmp_dir/server.json" <<EOF
     "write": 2,
     "connect": 2,
     "idle": 10
-  },
-  "limits": {
-    "max_connections": 64,
-    "max_buffer": 10485760,
-    "max_streams": 256,
-    "max_handshake_records": 256
   }
 }
 EOF
@@ -549,6 +537,7 @@ cat >"$tmp_dir/client.json" <<EOF
   "reality": {
     "sni": "$sni",
     "fingerprint": "random",
+    "max_handshake_records": 256,
     "public_key": "$public_key",
     "short_id": "$short_id"
   },
@@ -557,19 +546,6 @@ cat >"$tmp_dir/client.json" <<EOF
     "write": 2,
     "connect": 2,
     "idle": 4
-  },
-  "limits": {
-    "max_connections": 4,
-    "max_buffer": 10485760,
-    "max_streams": 256,
-    "max_handshake_records": 256
-  },
-  "heartbeat": {
-    "enabled": true,
-    "min_interval": 8,
-    "max_interval": 12,
-    "min_padding": 32,
-    "max_padding": 64
   }
 }
 EOF
@@ -646,7 +622,7 @@ run_step "udp proxy echo" \
     --port "$proxy_udp_port" \
     --payload-size 1200 \
     --expect-echo
-wait_log_pattern_since "$client_log" "$start_line" "opened proxy udp stream" 8 || {
+wait_log_pattern_since "$client_log" "$start_line" "opened proxy udp upstream" 8 || {
     echo "missing proxy udp open log" >&2
     exit 1
 }
@@ -719,11 +695,6 @@ wait_log_pattern_since "$client_log" "$start_line" "failed to write to client" 8
     exit 1
 }
 
-wait_tunnel_pool_ready 8 || {
-    echo "tunnel pool did not recover before proxy client no-read case" >&2
-    exit 1
-}
-
 start_line="$(log_line_count "$client_log")"
 run_step "tcp proxy client no-read" \
     ns_exec "$ns_app" python3 "$repo_root/scripts/tproxy_tcp_client.py" \
@@ -775,7 +746,7 @@ fi
 print_log_count "client_route_direct" "$client_log" " route direct"
 print_log_count "client_route_proxy" "$client_log" " route proxy"
 print_log_count "client_udp_direct_open" "$client_log" "opened direct udp socket"
-print_log_count "client_udp_proxy_open" "$client_log" "opened proxy udp stream"
+print_log_count "client_udp_proxy_open" "$client_log" "opened proxy udp upstream"
 print_log_count "client_tcp_idle_timeout" "$client_log" "tcp session idle closing"
 print_log_count "client_udp_idle_timeout" "$client_log" "udp session idle timeout"
 print_log_count "client_write_timeout" "$client_log" "failed to write to client"

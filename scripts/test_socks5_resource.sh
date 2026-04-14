@@ -22,22 +22,12 @@ requests_per_worker="${REQUESTS_PER_WORKER:-1}"
 bytes_per_response="${BYTES_PER_RESPONSE:-4194304}"
 client_workers="${CLIENT_WORKERS:-2}"
 server_workers="${SERVER_WORKERS:-2}"
-max_connections="${MAX_CONNECTIONS:-8}"
-server_max_connections="${SERVER_MAX_CONNECTIONS:-64}"
 read_timeout_sec="${READ_TIMEOUT_SEC:-10}"
 write_timeout_sec="${WRITE_TIMEOUT_SEC:-10}"
 connect_timeout_sec="${CONNECT_TIMEOUT_SEC:-5}"
 idle_timeout_sec="${IDLE_TIMEOUT_SEC:-60}"
-client_max_buffer="${CLIENT_MAX_BUFFER:-33554432}"
-server_max_buffer="${SERVER_MAX_BUFFER:-33554432}"
-client_max_streams="${CLIENT_MAX_STREAMS:-2048}"
-server_max_streams="${SERVER_MAX_STREAMS:-2048}"
 client_max_handshake_records="${CLIENT_MAX_HANDSHAKE_RECORDS:-256}"
 server_max_handshake_records="${SERVER_MAX_HANDSHAKE_RECORDS:-256}"
-heartbeat_min_interval="${HEARTBEAT_MIN_INTERVAL:-15}"
-heartbeat_max_interval="${HEARTBEAT_MAX_INTERVAL:-45}"
-heartbeat_min_padding="${HEARTBEAT_MIN_PADDING:-32}"
-heartbeat_max_padding="${HEARTBEAT_MAX_PADDING:-256}"
 monitor_interval_ms="${MONITOR_INTERVAL_MS:-100}"
 keep_artifacts="${KEEP_TEST_ARTIFACTS:-0}"
 
@@ -114,6 +104,7 @@ cat >"$tmp_dir/server.json" <<EOF
   },
   "reality": {
     "sni": "$sni",
+    "max_handshake_records": $server_max_handshake_records,
     "private_key": "$private_key",
     "public_key": "$public_key",
     "short_id": "$short_id"
@@ -124,11 +115,6 @@ cat >"$tmp_dir/server.json" <<EOF
     "connect": $connect_timeout_sec,
     "idle": $idle_timeout_sec
   },
-  "limits": {
-    "max_connections": $server_max_connections,
-    "max_buffer": $server_max_buffer,
-    "max_streams": $server_max_streams,
-    "max_handshake_records": $server_max_handshake_records
   }
 }
 EOF
@@ -161,6 +147,7 @@ cat >"$tmp_dir/client.json" <<EOF
   "reality": {
     "sni": "$sni",
     "fingerprint": "random",
+    "max_handshake_records": $client_max_handshake_records,
     "public_key": "$public_key",
     "short_id": "$short_id"
   },
@@ -170,17 +157,6 @@ cat >"$tmp_dir/client.json" <<EOF
     "connect": $connect_timeout_sec,
     "idle": $idle_timeout_sec
   },
-  "limits": {
-    "max_connections": $max_connections,
-    "max_buffer": $client_max_buffer,
-    "max_streams": $client_max_streams,
-    "max_handshake_records": $client_max_handshake_records
-  },
-  "heartbeat": {
-    "min_interval": $heartbeat_min_interval,
-    "max_interval": $heartbeat_max_interval,
-    "min_padding": $heartbeat_min_padding,
-    "max_padding": $heartbeat_max_padding
   }
 }
 EOF
