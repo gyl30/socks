@@ -11,8 +11,8 @@
 #include <boost/asio/awaitable.hpp>
 
 #include "config.h"
-#include "reality/handshake/fingerprint.h"
 #include "reality/types.h"
+#include "reality/handshake/fingerprint.h"
 
 namespace reality
 {

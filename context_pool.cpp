@@ -12,6 +12,7 @@
 #include "log.h"
 #include "constants.h"
 #include "context_pool.h"
+
 namespace mux
 {
 
@@ -19,7 +20,7 @@ io_context_pool::io_context_pool(std::size_t pool_size) : next_io_context_(0)
 {
     if (pool_size == 0)
     {
-        LOG_WARN("event {} stage io_context_pool requested_threads {} clamped_threads {}", log_event::kConnInit, 0, 1);
+        LOG_WARN("{} stage io_context_pool requested_threads {} clamped_threads {}", log_event::kConnInit, 0, 1);
         pool_size = 1;
     }
 
@@ -41,7 +42,7 @@ void io_context_pool::run() const
         threads.emplace_back([worker]() { worker->io_context.run(); });
     }
 
-    LOG_INFO("event {} stage io_context_pool running threads {}", log_event::kConnInit, threads.size());
+    LOG_INFO("{} stage io_context_pool running threads {}", log_event::kConnInit, threads.size());
 
     for (auto& t : threads)
     {
@@ -54,7 +55,7 @@ void io_context_pool::run() const
 
 void io_context_pool::shutdown()
 {
-    LOG_INFO("event {} stage io_context_pool shutting down work guards", log_event::kConnClose);
+    LOG_INFO("{} stage io_context_pool shutting down work guards", log_event::kConnClose);
     work_guards_.clear();
 }
 
@@ -80,7 +81,7 @@ boost::asio::awaitable<void> io_context_pool::async_wait_all() const
         const auto ec = co_await worker->group.async_wait();
         if (ec && ec != boost::asio::error::operation_aborted)
         {
-            LOG_ERROR("event {} stage io_context_pool wait_all error {}", log_event::kConnClose, ec.message());
+            LOG_ERROR("{} stage io_context_pool wait_all error {}", log_event::kConnClose, ec.message());
         }
     }
 }

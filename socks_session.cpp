@@ -26,6 +26,7 @@
 #include "run_loop_spawner.h"
 #include "tcp_socks_session.h"
 #include "udp_socks_session.h"
+
 namespace mux
 {
 
@@ -46,11 +47,7 @@ bool secure_string_equals(const std::string& lhs, const std::string& rhs)
 
 }    // namespace
 
-socks_session::socks_session(boost::asio::ip::tcp::socket socket,
-                             io_worker& worker,
-                             std::shared_ptr<router> router,
-                             uint32_t sid,
-                             const config& cfg)
+socks_session::socks_session(boost::asio::ip::tcp::socket socket, io_worker& worker, std::shared_ptr<router> router, uint32_t sid, const config& cfg)
     : sid_(sid),
       trace_id_(generate_trace_id()),
       conn_id_(sid),
@@ -75,7 +72,7 @@ void socks_session::stop()
     ec = socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
     if (ec && ec != boost::asio::error::not_connected)
     {
-        LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} shutdown client failed {}",
+        LOG_WARN("{} conn {} local {}:{} remote {}:{} shutdown client failed {}",
                  log_event::kSocks,
                  conn_id_,
                  local_host_,
@@ -87,7 +84,7 @@ void socks_session::stop()
     ec = socket_.close(ec);
     if (ec && ec != boost::asio::error::bad_descriptor)
     {
-        LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} close client failed {}",
+        LOG_WARN("{} conn {} local {}:{} remote {}:{} close client failed {}",
                  log_event::kSocks,
                  conn_id_,
                  local_host_,
@@ -100,7 +97,7 @@ void socks_session::stop()
 
 boost::asio::awaitable<void> socks_session::run_loop()
 {
-    LOG_INFO("event {} trace_id {:016x} conn_id {} local {}:{} remote {}:{} socks session started",
+    LOG_INFO("{} trace {:016x} conn {} local {}:{} remote {}:{} socks session started",
              log_event::kConnInit,
              trace_id_,
              conn_id_,
@@ -112,7 +109,7 @@ boost::asio::awaitable<void> socks_session::run_loop()
     {
         if (!peer_closed_before_greeting_)
         {
-            LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} handshake failed",
+            LOG_WARN("{} conn {} local {}:{} remote {}:{} handshake failed",
                      log_event::kSocks,
                      conn_id_,
                      local_host_,
@@ -127,7 +124,7 @@ boost::asio::awaitable<void> socks_session::run_loop()
     const auto [ok, host, port, cmd] = co_await read_request();
     if (!ok)
     {
-        LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} request invalid",
+        LOG_WARN("{} conn {} local {}:{} remote {}:{} request invalid",
                  log_event::kSocks,
                  conn_id_,
                  local_host_,
@@ -150,7 +147,7 @@ boost::asio::awaitable<void> socks_session::run_loop()
     }
     else
     {
-        LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} cmd {} unsupported",
+        LOG_WARN("{} conn {} local {}:{} remote {}:{} cmd {} unsupported",
                  log_event::kSocks,
                  conn_id_,
                  local_host_,
@@ -185,7 +182,7 @@ boost::asio::awaitable<bool> socks_session::handshake()
 
     if (selected_method == socks::kMethodNoAcceptable)
     {
-        LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} no acceptable method",
+        LOG_WARN("{} conn {} local {}:{} remote {}:{} no acceptable method",
                  log_event::kSocks,
                  conn_id_,
                  local_host_,
@@ -213,7 +210,7 @@ boost::asio::awaitable<bool> socks_session::read_socks_greeting(uint8_t& method_
         if (ec == boost::asio::error::eof)
         {
             peer_closed_before_greeting_ = true;
-            LOG_INFO("event {} conn_id {} local {}:{} remote {}:{} peer closed before greeting",
+            LOG_INFO("{} conn {} local {}:{} remote {}:{} peer closed before greeting",
                      log_event::kConnClose,
                      conn_id_,
                      local_host_,
@@ -222,7 +219,7 @@ boost::asio::awaitable<bool> socks_session::read_socks_greeting(uint8_t& method_
                      client_port_);
             co_return false;
         }
-        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} read greeting failed {}",
+        LOG_ERROR("{} conn {} local {}:{} remote {}:{} read greeting failed {}",
                   log_event::kSocks,
                   conn_id_,
                   local_host_,
@@ -234,7 +231,7 @@ boost::asio::awaitable<bool> socks_session::read_socks_greeting(uint8_t& method_
     }
     if (ver_nmethods[0] != socks::kVer)
     {
-        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} invalid greeting version {}",
+        LOG_ERROR("{} conn {} local {}:{} remote {}:{} invalid greeting version {}",
                   log_event::kSocks,
                   conn_id_,
                   local_host_,
@@ -255,7 +252,7 @@ boost::asio::awaitable<bool> socks_session::read_auth_methods(uint8_t method_cou
     co_await net::wait_read_with_timeout(socket_, boost::asio::buffer(methods), cfg_.timeout.read, ec);
     if (ec)
     {
-        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} read methods failed {}",
+        LOG_ERROR("{} conn {} local {}:{} remote {}:{} read methods failed {}",
                   log_event::kSocks,
                   conn_id_,
                   local_host_,
@@ -294,7 +291,7 @@ boost::asio::awaitable<bool> socks_session::write_selected_method(uint8_t method
     co_await net::wait_write_with_timeout(socket_, boost::asio::buffer(resp), cfg_.timeout.write, ec);
     if (ec)
     {
-        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} write selected method failed {}",
+        LOG_ERROR("{} conn {} local {}:{} remote {}:{} write selected method failed {}",
                   log_event::kSocks,
                   conn_id_,
                   local_host_,
@@ -337,25 +334,15 @@ boost::asio::awaitable<bool> socks_session::do_password_auth()
 
     if (!success)
     {
-        LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} auth failed",
-                 log_event::kAuth,
-                 conn_id_,
-                 local_host_,
-                 local_port_,
-                 client_host_,
-                 client_port_);
+        LOG_WARN(
+            "{} conn {} local {}:{} remote {}:{} auth failed", log_event::kAuth, conn_id_, local_host_, local_port_, client_host_, client_port_);
         const auto delay_ec = co_await net::wait_for(worker_.io_context, std::chrono::milliseconds(constants::socks::kAuthFailDelayMs));
         (void)delay_ec;
     }
     else
     {
-        LOG_INFO("event {} conn_id {} local {}:{} remote {}:{} auth success",
-                 log_event::kAuth,
-                 conn_id_,
-                 local_host_,
-                 local_port_,
-                 client_host_,
-                 client_port_);
+        LOG_INFO(
+            "{} conn {} local {}:{} remote {}:{} auth success", log_event::kAuth, conn_id_, local_host_, local_port_, client_host_, client_port_);
     }
 
     co_return success;
@@ -368,7 +355,7 @@ boost::asio::awaitable<bool> socks_session::read_auth_version()
     co_await net::wait_read_with_timeout(socket_, boost::asio::buffer(&ver, 1), cfg_.timeout.read, ec);
     if (ec)
     {
-        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} read auth version failed {}",
+        LOG_ERROR("{} conn {} local {}:{} remote {}:{} read auth version failed {}",
                   log_event::kAuth,
                   conn_id_,
                   local_host_,
@@ -381,7 +368,7 @@ boost::asio::awaitable<bool> socks_session::read_auth_version()
 
     if (ver != 0x01)
     {
-        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} invalid auth version {}",
+        LOG_ERROR("{} conn {} local {}:{} remote {}:{} invalid auth version {}",
                   log_event::kAuth,
                   conn_id_,
                   local_host_,
@@ -401,7 +388,7 @@ boost::asio::awaitable<bool> socks_session::read_auth_field(std::string& out, co
     co_await net::wait_read_with_timeout(socket_, boost::asio::buffer(&field_len, 1), cfg_.timeout.read, ec);
     if (ec)
     {
-        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} read {} len failed {}",
+        LOG_ERROR("{} conn {} local {}:{} remote {}:{} read {} len failed {}",
                   log_event::kAuth,
                   conn_id_,
                   local_host_,
@@ -414,7 +401,7 @@ boost::asio::awaitable<bool> socks_session::read_auth_field(std::string& out, co
     }
     if (field_len == 0)
     {
-        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} read {} len invalid 0",
+        LOG_ERROR("{} conn {} local {}:{} remote {}:{} read {} len invalid 0",
                   log_event::kAuth,
                   conn_id_,
                   local_host_,
@@ -429,7 +416,7 @@ boost::asio::awaitable<bool> socks_session::read_auth_field(std::string& out, co
     co_await net::wait_read_with_timeout(socket_, boost::asio::buffer(out), cfg_.timeout.read, ec);
     if (ec)
     {
-        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} read {} failed {}",
+        LOG_ERROR("{} conn {} local {}:{} remote {}:{} read {} failed {}",
                   log_event::kAuth,
                   conn_id_,
                   local_host_,
@@ -457,7 +444,7 @@ boost::asio::awaitable<bool> socks_session::write_auth_result(bool success)
     co_await net::wait_write_with_timeout(socket_, boost::asio::buffer(result), cfg_.timeout.write, ec);
     if (ec)
     {
-        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} write auth result failed {}",
+        LOG_ERROR("{} conn {} local {}:{} remote {}:{} write auth result failed {}",
                   log_event::kAuth,
                   conn_id_,
                   local_host_,
@@ -498,7 +485,7 @@ boost::asio::awaitable<bool> socks_session::read_request_ip(std::string& host, c
     co_await net::wait_read_with_timeout(socket_, boost::asio::buffer(bytes), cfg_.timeout.read, ec);
     if (ec)
     {
-        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} request read {} failed {}",
+        LOG_ERROR("{} conn {} local {}:{} remote {}:{} request read {} failed {}",
                   log_event::kSocks,
                   conn_id_,
                   local_host_,
@@ -526,7 +513,7 @@ boost::asio::awaitable<bool> socks_session::read_request_domain(std::string& hos
     co_await net::wait_read_with_timeout(socket_, boost::asio::buffer(&domain_len, 1), cfg_.timeout.read, ec);
     if (ec)
     {
-        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} request read domain len failed {}",
+        LOG_ERROR("{} conn {} local {}:{} remote {}:{} request read domain len failed {}",
                   log_event::kSocks,
                   conn_id_,
                   local_host_,
@@ -539,7 +526,7 @@ boost::asio::awaitable<bool> socks_session::read_request_domain(std::string& hos
     }
     if (domain_len == 0)
     {
-        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} request domain len invalid 0",
+        LOG_ERROR("{} conn {} local {}:{} remote {}:{} request domain len invalid 0",
                   log_event::kSocks,
                   conn_id_,
                   local_host_,
@@ -553,7 +540,7 @@ boost::asio::awaitable<bool> socks_session::read_request_domain(std::string& hos
     co_await net::wait_read_with_timeout(socket_, boost::asio::buffer(host), cfg_.timeout.read, ec);
     if (ec)
     {
-        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} request read domain failed {}",
+        LOG_ERROR("{} conn {} local {}:{} remote {}:{} request read domain failed {}",
                   log_event::kSocks,
                   conn_id_,
                   local_host_,
@@ -566,7 +553,7 @@ boost::asio::awaitable<bool> socks_session::read_request_domain(std::string& hos
     }
     if (host.find('\0') != std::string::npos)
     {
-        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} request domain contains nul",
+        LOG_ERROR("{} conn {} local {}:{} remote {}:{} request domain contains nul",
                   log_event::kSocks,
                   conn_id_,
                   local_host_,
@@ -578,7 +565,7 @@ boost::asio::awaitable<bool> socks_session::read_request_domain(std::string& hos
     }
     if (!socks::is_valid_domain(host))
     {
-        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} request domain invalid",
+        LOG_ERROR("{} conn {} local {}:{} remote {}:{} request domain invalid",
                   log_event::kSocks,
                   conn_id_,
                   local_host_,
@@ -610,7 +597,7 @@ boost::asio::awaitable<bool> socks_session::read_request_host(uint8_t atyp, uint
     {
         co_return co_await read_request_ipv6(host);
     }
-    LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} request unsupported atyp {} cmd {}",
+    LOG_WARN("{} conn {} local {}:{} remote {}:{} request unsupported atyp {} cmd {}",
              log_event::kSocks,
              conn_id_,
              local_host_,
@@ -638,7 +625,7 @@ boost::asio::awaitable<bool> socks_session::read_request_header(std::array<uint8
     co_await net::wait_read_with_timeout(socket_, boost::asio::buffer(head), cfg_.timeout.read, ec);
     if (ec)
     {
-        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} request read failed {}",
+        LOG_ERROR("{} conn {} local {}:{} remote {}:{} request read failed {}",
                   log_event::kSocks,
                   conn_id_,
                   local_host_,
@@ -659,7 +646,7 @@ boost::asio::awaitable<bool> socks_session::read_request_port(uint16_t& port)
     co_await net::wait_read_with_timeout(socket_, boost::asio::buffer(&port_n, 2), cfg_.timeout.read, ec);
     if (ec)
     {
-        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} request read port failed {}",
+        LOG_ERROR("{} conn {} local {}:{} remote {}:{} request read port failed {}",
                   log_event::kSocks,
                   conn_id_,
                   local_host_,
@@ -678,7 +665,7 @@ boost::asio::awaitable<std::optional<socks_session::request_info>> socks_session
 {
     if (head[0] != socks::kVer || head[2] != 0)
     {
-        LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} request invalid header ver {} rsv {}",
+        LOG_WARN("{} conn {} local {}:{} remote {}:{} request invalid header ver {} rsv {}",
                  log_event::kSocks,
                  conn_id_,
                  local_host_,
@@ -692,7 +679,7 @@ boost::asio::awaitable<std::optional<socks_session::request_info>> socks_session
 
     if (!is_supported_cmd(head[1]))
     {
-        LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} request unsupported cmd {}",
+        LOG_WARN("{} conn {} local {}:{} remote {}:{} request unsupported cmd {}",
                  log_event::kSocks,
                  conn_id_,
                  local_host_,
@@ -705,7 +692,7 @@ boost::asio::awaitable<std::optional<socks_session::request_info>> socks_session
 
     if (!is_supported_atyp(head[1], head[3]))
     {
-        LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} request unsupported atyp {} cmd {}",
+        LOG_WARN("{} conn {} local {}:{} remote {}:{} request unsupported atyp {} cmd {}",
                  log_event::kSocks,
                  conn_id_,
                  local_host_,
@@ -736,7 +723,7 @@ boost::asio::awaitable<socks_session::request_info> socks_session::read_request_
 
     if (host.empty())
     {
-        LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} request empty host",
+        LOG_WARN("{} conn {} local {}:{} remote {}:{} request empty host",
                  log_event::kSocks,
                  conn_id_,
                  local_host_,
@@ -747,7 +734,7 @@ boost::asio::awaitable<socks_session::request_info> socks_session::read_request_
     }
     if (cmd == socks::kCmdConnect && port == 0)
     {
-        LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} request invalid port 0",
+        LOG_WARN("{} conn {} local {}:{} remote {}:{} request invalid port 0",
                  log_event::kSocks,
                  conn_id_,
                  local_host_,
@@ -757,7 +744,7 @@ boost::asio::awaitable<socks_session::request_info> socks_session::read_request_
         co_return co_await reject_request(cmd, socks::kRepGenFail);
     }
 
-    LOG_INFO("event {} trace_id {:016x} conn_id {} local {}:{} remote {}:{} cmd {} request {} {}",
+    LOG_INFO("{} trace {:016x} conn {} local {}:{} remote {}:{} cmd {} request {} {}",
              log_event::kSocks,
              trace_id_,
              conn_id_,
@@ -796,7 +783,7 @@ boost::asio::awaitable<void> socks_session::reply_error(uint8_t code)
     co_await net::wait_write_with_timeout(socket_, boost::asio::buffer(err), cfg_.timeout.write, ec);
     if (ec)
     {
-        LOG_ERROR("event {} conn_id {} local {}:{} remote {}:{} write error response failed {}",
+        LOG_ERROR("{} conn {} local {}:{} remote {}:{} write error response failed {}",
                   log_event::kSocks,
                   conn_id_,
                   local_host_,

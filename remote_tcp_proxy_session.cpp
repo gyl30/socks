@@ -49,7 +49,7 @@ boost::asio::awaitable<void> remote_tcp_proxy_session::run(const proxy::tcp_conn
     bind_host_ = "0.0.0.0";
     bind_port_ = 0;
 
-    LOG_INFO("event {} trace_id {:016x} conn_id {} target {}:{} remote {}:{} connecting",
+    LOG_INFO("{} trace {:016x} conn {} target {}:{} remote {}:{} connecting",
              log_event::kConnInit,
              trace_id_,
              conn_id_,
@@ -89,7 +89,7 @@ boost::asio::awaitable<bool> remote_tcp_proxy_session::resolve_target(boost::asi
     if (ec)
     {
         const auto rep = socks::map_connect_error_to_socks_rep(ec);
-        LOG_WARN("event {} trace_id {:016x} conn_id {} target {}:{} resolve failed {} rep {}",
+        LOG_WARN("{} trace {:016x} conn {} target {}:{} resolve failed {} rep {}",
                  log_event::kRoute,
                  trace_id_,
                  conn_id_,
@@ -102,7 +102,7 @@ boost::asio::awaitable<bool> remote_tcp_proxy_session::resolve_target(boost::asi
     }
     if (resolve_res.begin() == resolve_res.end())
     {
-        LOG_WARN("event {} trace_id {:016x} conn_id {} target {}:{} resolve empty rep {}",
+        LOG_WARN("{} trace {:016x} conn {} target {}:{} resolve empty rep {}",
                  log_event::kRoute,
                  trace_id_,
                  conn_id_,
@@ -131,7 +131,7 @@ boost::asio::awaitable<bool> remote_tcp_proxy_session::connect_target(const boos
         connect_ec = target_socket_.open(endpoint.protocol(), connect_ec);
         if (connect_ec)
         {
-            LOG_DEBUG("event {} trace_id {:016x} conn_id {} target {}:{} open endpoint {} failed {}",
+            LOG_DEBUG("{} trace {:016x} conn {} target {}:{} open endpoint {} failed {}",
                       log_event::kRoute,
                       trace_id_,
                       conn_id_,
@@ -141,7 +141,7 @@ boost::asio::awaitable<bool> remote_tcp_proxy_session::connect_target(const boos
                       connect_ec.message());
             continue;
         }
-        LOG_DEBUG("event {} trace_id {:016x} conn_id {} target {}:{} connect try endpoint {}",
+        LOG_DEBUG("{} trace {:016x} conn {} target {}:{} connect try endpoint {}",
                   log_event::kRoute,
                   trace_id_,
                   conn_id_,
@@ -158,7 +158,7 @@ boost::asio::awaitable<bool> remote_tcp_proxy_session::connect_target(const boos
     if (connect_ec)
     {
         const auto rep = socks::map_connect_error_to_socks_rep(connect_ec);
-        LOG_WARN("event {} trace_id {:016x} conn_id {} target {}:{} connect failed {} rep {}",
+        LOG_WARN("{} trace {:016x} conn {} target {}:{} connect failed {} rep {}",
                  log_event::kRoute,
                  trace_id_,
                  conn_id_,
@@ -173,7 +173,7 @@ boost::asio::awaitable<bool> remote_tcp_proxy_session::connect_target(const boos
     connect_ec = target_socket_.set_option(boost::asio::ip::tcp::no_delay(true), connect_ec);
     if (connect_ec)
     {
-        LOG_WARN("event {} trace_id {:016x} conn_id {} target {}:{} stage set_no_delay error {}",
+        LOG_WARN("{} trace {:016x} conn {} target {}:{} stage set_no_delay error {}",
                  log_event::kRoute,
                  trace_id_,
                  conn_id_,
@@ -185,7 +185,7 @@ boost::asio::awaitable<bool> remote_tcp_proxy_session::connect_target(const boos
     const auto local_ep = target_socket_.local_endpoint(connect_ec);
     if (connect_ec)
     {
-        LOG_WARN("event {} trace_id {:016x} conn_id {} target {}:{} stage query_bind_endpoint error {}",
+        LOG_WARN("{} trace {:016x} conn {} target {}:{} stage query_bind_endpoint error {}",
                  log_event::kRoute,
                  trace_id_,
                  conn_id_,
@@ -198,7 +198,7 @@ boost::asio::awaitable<bool> remote_tcp_proxy_session::connect_target(const boos
 
     bind_host_ = local_ep.address().to_string();
     bind_port_ = local_ep.port();
-    LOG_INFO("event {} trace_id {:016x} conn_id {} target {}:{} connected bind {}:{}",
+    LOG_INFO("{} trace {:016x} conn {} target {}:{} connected bind {}:{}",
              log_event::kConnEstablished,
              trace_id_,
              conn_id_,
@@ -222,7 +222,7 @@ boost::asio::awaitable<bool> remote_tcp_proxy_session::send_connect_reply(const 
     std::vector<uint8_t> packet;
     if (!proxy::encode_tcp_connect_reply(reply, packet))
     {
-        LOG_WARN("event {} trace_id {:016x} conn_id {} target {}:{} bind {}:{} encode tcp connect reply failed rep {}",
+        LOG_WARN("{} trace {:016x} conn {} target {}:{} bind {}:{} encode tcp connect reply failed rep {}",
                  log_event::kRoute,
                  trace_id_,
                  conn_id_,
@@ -238,7 +238,7 @@ boost::asio::awaitable<bool> remote_tcp_proxy_session::send_connect_reply(const 
     co_await connection_->write_packet(packet, ec);
     if (ec)
     {
-        LOG_WARN("event {} trace_id {:016x} conn_id {} target {}:{} bind {}:{} send tcp connect reply failed {} rep {}",
+        LOG_WARN("{} trace {:016x} conn {} target {}:{} bind {}:{} send tcp connect reply failed {} rep {}",
                  log_event::kRoute,
                  trace_id_,
                  conn_id_,
@@ -294,7 +294,7 @@ boost::asio::awaitable<void> remote_tcp_proxy_session::client_to_target()
             }
             else
             {
-                LOG_INFO("event {} trace_id {:016x} conn_id {} target {}:{} client_to_target finished {}",
+                LOG_INFO("{} trace {:016x} conn {} target {}:{} client_to_target finished {}",
                          log_event::kRoute,
                          trace_id_,
                          conn_id_,
@@ -304,11 +304,10 @@ boost::asio::awaitable<void> remote_tcp_proxy_session::client_to_target()
             }
             break;
         }
-        co_await net::wait_write_with_timeout(
-            target_socket_, boost::asio::buffer(buffer.data(), bytes_read), cfg_.timeout.write, ec);
+        co_await net::wait_write_with_timeout(target_socket_, boost::asio::buffer(buffer.data(), bytes_read), cfg_.timeout.write, ec);
         if (ec)
         {
-            LOG_WARN("event {} trace_id {:016x} conn_id {} target {}:{} client_to_target write failed {}",
+            LOG_WARN("{} trace {:016x} conn {} target {}:{} client_to_target write failed {}",
                      log_event::kDataSend,
                      trace_id_,
                      conn_id_,
@@ -344,7 +343,7 @@ boost::asio::awaitable<void> remote_tcp_proxy_session::target_to_client()
             }
             else
             {
-                LOG_INFO("event {} trace_id {:016x} conn_id {} target {}:{} target_to_client finished {}",
+                LOG_INFO("{} trace {:016x} conn {} target {}:{} target_to_client finished {}",
                          log_event::kRoute,
                          trace_id_,
                          conn_id_,
@@ -357,7 +356,7 @@ boost::asio::awaitable<void> remote_tcp_proxy_session::target_to_client()
         co_await connection_->write(std::span<const uint8_t>(buffer.data(), bytes_read), ec);
         if (ec)
         {
-            LOG_WARN("event {} trace_id {:016x} conn_id {} target {}:{} target_to_client write failed {}",
+            LOG_WARN("{} trace {:016x} conn {} target {}:{} target_to_client write failed {}",
                      log_event::kDataSend,
                      trace_id_,
                      conn_id_,
@@ -384,7 +383,7 @@ boost::asio::awaitable<void> remote_tcp_proxy_session::idle_watchdog()
         }
         if (net::now_ms() - last_activity_time_ms_ > idle_timeout_ms)
         {
-            LOG_WARN("event {} trace_id {:016x} conn_id {} target {}:{} bind {}:{} idle timeout {}s",
+            LOG_WARN("{} trace {:016x} conn {} target {}:{} bind {}:{} idle timeout {}s",
                      log_event::kTimeout,
                      trace_id_,
                      conn_id_,
@@ -401,7 +400,7 @@ boost::asio::awaitable<void> remote_tcp_proxy_session::idle_watchdog()
 void remote_tcp_proxy_session::log_close_summary() const
 {
     const auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time_).count();
-    LOG_INFO("event {} trace_id {:016x} conn_id {} target {}:{} bind {}:{} tx_bytes {} rx_bytes {} duration_ms {}",
+    LOG_INFO("{} trace {:016x} conn {} target {}:{} bind {}:{} tx_bytes {} rx_bytes {} duration_ms {}",
              log_event::kConnClose,
              trace_id_,
              conn_id_,

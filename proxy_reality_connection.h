@@ -12,8 +12,8 @@
 #include <boost/asio/awaitable.hpp>
 
 #include "config.h"
-#include "reality/session/session.h"
 #include "reality/session/engine.h"
+#include "reality/session/session.h"
 
 namespace mux
 {
@@ -26,8 +26,10 @@ class proxy_reality_connection
                              const config& cfg,
                              uint32_t conn_id);
 
-    [[nodiscard]] static boost::asio::awaitable<std::shared_ptr<proxy_reality_connection>> connect(
-        const boost::asio::any_io_executor& executor, const config& cfg, uint32_t conn_id, boost::system::error_code& ec);
+    [[nodiscard]] static boost::asio::awaitable<std::shared_ptr<proxy_reality_connection>> connect(const boost::asio::any_io_executor& executor,
+                                                                                                   const config& cfg,
+                                                                                                   uint32_t conn_id,
+                                                                                                   boost::system::error_code& ec);
 
     [[nodiscard]] std::string_view local_host() const { return local_host_; }
     [[nodiscard]] uint16_t local_port() const { return local_port_; }

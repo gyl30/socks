@@ -4,6 +4,7 @@
 #include <boost/system/detail/error_code.hpp>
 
 #include "reality/types.h"
+
 namespace reality
 {
 struct reality_record_context

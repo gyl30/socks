@@ -8,6 +8,7 @@
 #include "constants.h"
 #include "domain_matcher.h"
 #include "rule_file_utils.h"
+
 namespace mux
 {
 
@@ -30,7 +31,7 @@ bool domain_matcher::load(const std::string& filename)
     std::ifstream domain_file(filename);
     if (!domain_file.is_open())
     {
-        LOG_WARN("event {} stage load_domain_rule file {} error open_failed", log_event::kRoute, filename);
+        LOG_WARN("{} stage load_domain_rule file {} error open_failed", log_event::kRoute, filename);
         return false;
     }
 
@@ -44,7 +45,7 @@ bool domain_matcher::load(const std::string& filename)
 
         add(line);
     }
-    LOG_INFO("event {} stage load_domain_rule file {} count {}", log_event::kRoute, filename, domains_.size());
+    LOG_INFO("{} stage load_domain_rule file {} count {}", log_event::kRoute, filename, domains_.size());
     return true;
 }
 

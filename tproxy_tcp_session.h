@@ -5,24 +5,23 @@
 #include <chrono>
 #include <memory>
 #include <string>
-#include <utility>
 #include <cstdint>
+#include <utility>
 
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/steady_timer.hpp>
 
+#include "config.h"
 #include "router.h"
 #include "upstream.h"
+
 namespace mux
 {
 
 class tproxy_tcp_session : public std::enable_shared_from_this<tproxy_tcp_session>
 {
    public:
-    tproxy_tcp_session(boost::asio::ip::tcp::socket socket,
-                       std::shared_ptr<router> router,
-                       uint32_t sid,
-                       const config& cfg);
+    tproxy_tcp_session(boost::asio::ip::tcp::socket socket, std::shared_ptr<router> router, uint32_t sid, const config& cfg);
 
     [[nodiscard]] boost::asio::awaitable<void> start();
     void stop();

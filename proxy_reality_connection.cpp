@@ -1,12 +1,12 @@
 #include <span>
+#include <memory>
 #include <string>
 #include <vector>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
-#include <memory>
-#include <optional>
 #include <utility>
+#include <optional>
 #include <algorithm>
 
 #include <boost/asio.hpp>
@@ -14,12 +14,12 @@
 
 #include "log.h"
 #include "config.h"
+#include "tls/core.h"
 #include "constants.h"
 #include "net_utils.h"
+#include "reality/types.h"
 #include "proxy_protocol.h"
 #include "proxy_reality_connection.h"
-#include "reality/types.h"
-#include "tls/core.h"
 #include "reality/handshake/fingerprint.h"
 #include "reality/handshake/client_handshaker.h"
 
@@ -120,7 +120,7 @@ void prepare_socket_for_connect(boost::asio::ip::tcp::socket& socket,
         ec = socket.close(ec);
         if (ec)
         {
-            LOG_WARN("event {} conn_id {} stage recycle_socket target {}:{} error {}",
+            LOG_WARN("{} conn {} stage recycle_socket target {}:{} error {}",
                      log_event::kConnInit,
                      conn_id,
                      endpoint.address().to_string(),
@@ -132,7 +132,7 @@ void prepare_socket_for_connect(boost::asio::ip::tcp::socket& socket,
     ec = socket.open(endpoint.protocol(), ec);
     if (ec)
     {
-        LOG_WARN("event {} conn_id {} stage open_socket target {}:{} error {}",
+        LOG_WARN("{} conn {} stage open_socket target {}:{} error {}",
                  log_event::kConnInit,
                  conn_id,
                  endpoint.address().to_string(),
@@ -145,7 +145,7 @@ void prepare_socket_for_connect(boost::asio::ip::tcp::socket& socket,
         net::set_socket_mark(socket.native_handle(), mark, ec);
         if (ec)
         {
-            LOG_WARN("event {} conn_id {} stage set_mark target {}:{} error {}",
+            LOG_WARN("{} conn {} stage set_mark target {}:{} error {}",
                      log_event::kConnInit,
                      conn_id,
                      endpoint.address().to_string(),
@@ -159,18 +159,15 @@ void prepare_socket_for_connect(boost::asio::ip::tcp::socket& socket,
     }
 }
 
-boost::asio::awaitable<void> tcp_connect_remote(boost::asio::ip::tcp::socket& socket,
-                                                const config& cfg,
-                                                const connect_options& options,
-                                                uint32_t conn_id,
-                                                boost::system::error_code& ec)
+boost::asio::awaitable<void> tcp_connect_remote(
+    boost::asio::ip::tcp::socket& socket, const config& cfg, const connect_options& options, uint32_t conn_id, boost::system::error_code& ec)
 {
     const auto timeout_sec = cfg.timeout.connect;
     boost::asio::ip::tcp::resolver resolver(socket.get_executor());
     const auto resolve_endpoints = co_await net::wait_resolve_with_timeout(resolver, options.remote_host, options.remote_port, timeout_sec, ec);
     if (ec)
     {
-        LOG_ERROR("event {} conn_id {} stage resolve target {}:{} error {}",
+        LOG_ERROR("{} conn {} stage resolve target {}:{} error {}",
                   log_event::kConnInit,
                   conn_id,
                   options.remote_host,
@@ -196,7 +193,7 @@ boost::asio::awaitable<void> tcp_connect_remote(boost::asio::ip::tcp::socket& so
 
     if (ec == boost::asio::error::timed_out)
     {
-        LOG_ERROR("event {} conn_id {} stage connect target {}:{} timeout {}s",
+        LOG_ERROR("{} conn {} stage connect target {}:{} timeout {}s",
                   log_event::kConnInit,
                   conn_id,
                   options.remote_host,
@@ -205,7 +202,7 @@ boost::asio::awaitable<void> tcp_connect_remote(boost::asio::ip::tcp::socket& so
     }
     else
     {
-        LOG_ERROR("event {} conn_id {} stage connect target {}:{} error {}",
+        LOG_ERROR("{} conn {} stage connect target {}:{} error {}",
                   log_event::kConnInit,
                   conn_id,
                   options.remote_host,
@@ -214,18 +211,15 @@ boost::asio::awaitable<void> tcp_connect_remote(boost::asio::ip::tcp::socket& so
     }
 }
 
-boost::asio::awaitable<reality::client_handshake_result> perform_reality_handshake(boost::asio::ip::tcp::socket& socket,
-                                                                                   const config& cfg,
-                                                                                   const connect_options& options,
-                                                                                   uint32_t conn_id,
-                                                                                   boost::system::error_code& ec)
+boost::asio::awaitable<reality::client_handshake_result> perform_reality_handshake(
+    boost::asio::ip::tcp::socket& socket, const config& cfg, const connect_options& options, uint32_t conn_id, boost::system::error_code& ec)
 {
     const reality::client_handshaker handshaker(
         cfg, options.sni, options.server_pub_key, options.short_id_bytes, options.fingerprint_type, options.max_handshake_records);
     auto handshake_res = co_await handshaker.run(socket, conn_id, ec);
     if (ec)
     {
-        LOG_ERROR("event {} conn_id {} sni {} stage handshake target {}:{} error {}",
+        LOG_ERROR("{} conn {} sni {} stage handshake target {}:{} error {}",
                   log_event::kHandshake,
                   conn_id,
                   options.sni,
@@ -242,10 +236,7 @@ proxy_reality_connection::proxy_reality_connection(boost::asio::ip::tcp::socket 
                                                    reality::reality_record_context record_context,
                                                    const config& cfg,
                                                    const uint32_t conn_id)
-    : cfg_(cfg),
-      conn_id_(conn_id),
-      socket_(std::move(socket)),
-      reality_engine_(std::move(record_context))
+    : cfg_(cfg), conn_id_(conn_id), socket_(std::move(socket)), reality_engine_(std::move(record_context))
 {
     boost::system::error_code ec;
     const auto local_endpoint = socket_.local_endpoint(ec);
@@ -264,8 +255,10 @@ proxy_reality_connection::proxy_reality_connection(boost::asio::ip::tcp::socket 
     }
 }
 
-boost::asio::awaitable<std::shared_ptr<proxy_reality_connection>> proxy_reality_connection::connect(
-    const boost::asio::any_io_executor& executor, const config& cfg, const uint32_t conn_id, boost::system::error_code& ec)
+boost::asio::awaitable<std::shared_ptr<proxy_reality_connection>> proxy_reality_connection::connect(const boost::asio::any_io_executor& executor,
+                                                                                                    const config& cfg,
+                                                                                                    const uint32_t conn_id,
+                                                                                                    boost::system::error_code& ec)
 {
     const auto options = build_connect_options(cfg);
     boost::asio::ip::tcp::socket socket(executor);
@@ -282,7 +275,7 @@ boost::asio::awaitable<std::shared_ptr<proxy_reality_connection>> proxy_reality_
     }
     if (handshake_result.auth_mode == reality::client_auth_mode::kRealCertificateFallback)
     {
-        LOG_WARN("event {} conn_id {} sni {} target {}:{} peer is not a reality endpoint",
+        LOG_WARN("{} conn {} sni {} target {}:{} peer is not a reality endpoint",
                  log_event::kHandshake,
                  conn_id,
                  options.sni,
@@ -298,7 +291,7 @@ boost::asio::awaitable<std::shared_ptr<proxy_reality_connection>> proxy_reality_
     auto record_context = reality::build_reality_record_context(handshake_result, ec);
     if (ec)
     {
-        LOG_ERROR("event {} conn_id {} sni {} stage build_record_context target {}:{} error {}",
+        LOG_ERROR("{} conn {} sni {} stage build_record_context target {}:{} error {}",
                   log_event::kHandshake,
                   conn_id,
                   options.sni,
@@ -322,7 +315,7 @@ boost::asio::awaitable<void> proxy_reality_connection::write(const std::span<con
     const auto ciphertext = reality_engine_.encrypt_record(plaintext, ec);
     if (ec)
     {
-        LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} stage encrypt_record error {}",
+        LOG_WARN("{} conn {} local {}:{} remote {}:{} stage encrypt_record error {}",
                  log_event::kDataSend,
                  conn_id_,
                  local_host_,
@@ -335,7 +328,7 @@ boost::asio::awaitable<void> proxy_reality_connection::write(const std::span<con
     co_await net::wait_write_with_timeout(socket_, boost::asio::buffer(ciphertext.data(), ciphertext.size()), cfg_.timeout.write, ec);
     if (ec)
     {
-        LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} stage write_ciphertext error {}",
+        LOG_WARN("{} conn {} local {}:{} remote {}:{} stage write_ciphertext error {}",
                  log_event::kDataSend,
                  conn_id_,
                  local_host_,
@@ -380,7 +373,7 @@ boost::asio::awaitable<bool> proxy_reality_connection::ensure_plaintext_availabl
         auto record = reality_engine_.decrypt_record(ec);
         if (ec)
         {
-            LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} stage decrypt_record error {}",
+            LOG_WARN("{} conn {} local {}:{} remote {}:{} stage decrypt_record error {}",
                      log_event::kDataRecv,
                      conn_id_,
                      local_host_,
@@ -395,7 +388,7 @@ boost::asio::awaitable<bool> proxy_reality_connection::ensure_plaintext_availabl
             if (record->content_type != tls::kContentTypeApplicationData)
             {
                 ec = boost::asio::error::invalid_argument;
-                LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} stage unexpected_record_type {}",
+                LOG_WARN("{} conn {} local {}:{} remote {}:{} stage unexpected_record_type {}",
                          log_event::kDataRecv,
                          conn_id_,
                          local_host_,
@@ -423,7 +416,7 @@ boost::asio::awaitable<bool> proxy_reality_connection::ensure_plaintext_availabl
         {
             if (ec != boost::asio::error::eof)
             {
-                LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} stage read_ciphertext error {}",
+                LOG_WARN("{} conn {} local {}:{} remote {}:{} stage read_ciphertext error {}",
                          log_event::kDataRecv,
                          conn_id_,
                          local_host_,
@@ -494,7 +487,7 @@ boost::asio::awaitable<std::vector<uint8_t>> proxy_reality_connection::read_pack
     if (packet_size > proxy::kMaxPacketSize)
     {
         ec = boost::asio::error::message_size;
-        LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} stage read_packet packet_size {} max {}",
+        LOG_WARN("{} conn {} local {}:{} remote {}:{} stage read_packet packet_size {} max {}",
                  log_event::kDataRecv,
                  conn_id_,
                  local_host_,

@@ -32,15 +32,14 @@ class proxy_udp_upstream : public std::enable_shared_from_this<proxy_udp_upstrea
    public:
     proxy_udp_upstream(std::shared_ptr<proxy_reality_connection> connection, const config& cfg);
 
-    [[nodiscard]] static boost::asio::awaitable<proxy_udp_connect_result> connect(
-        const boost::asio::any_io_executor& executor, uint32_t conn_id, uint64_t trace_id, const config& cfg);
+    [[nodiscard]] static boost::asio::awaitable<proxy_udp_connect_result> connect(const boost::asio::any_io_executor& executor,
+                                                                                  uint32_t conn_id,
+                                                                                  uint64_t trace_id,
+                                                                                  const config& cfg);
 
     boost::asio::awaitable<void> close();
-    boost::asio::awaitable<void> send_datagram(const std::string& host,
-                                               uint16_t port,
-                                               const uint8_t* payload,
-                                               std::size_t payload_len,
-                                               boost::system::error_code& ec);
+    boost::asio::awaitable<void> send_datagram(
+        const std::string& host, uint16_t port, const uint8_t* payload, std::size_t payload_len, boost::system::error_code& ec);
     [[nodiscard]] boost::asio::awaitable<proxy::udp_datagram> receive_datagram(uint32_t timeout_sec, boost::system::error_code& ec);
 
     [[nodiscard]] std::string_view bind_host() const { return bind_host_; }

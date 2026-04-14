@@ -11,7 +11,6 @@ extern "C"
 {
 #include <openssl/x509.h>
 }
-
 #include "tls/core.h"
 #include "tls/handshake_message.h"
 

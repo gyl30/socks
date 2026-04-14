@@ -68,7 +68,7 @@ boost::asio::awaitable<void> remote_udp_proxy_session::start_impl(const proxy::u
                 return true;
             }
 
-            LOG_WARN("event {} trace_id {:016x} conn_id {} stage open_dual_stack_udp error {} fallback ipv4",
+            LOG_WARN("{} trace {:016x} conn {} stage open_dual_stack_udp error {} fallback ipv4",
                      log_event::kRoute,
                      trace_id_,
                      conn_id_,
@@ -79,11 +79,8 @@ boost::asio::awaitable<void> remote_udp_proxy_session::start_impl(const proxy::u
         }
         else
         {
-            LOG_WARN("event {} trace_id {:016x} conn_id {} stage open_ipv6_udp error {} fallback ipv4",
-                     log_event::kRoute,
-                     trace_id_,
-                     conn_id_,
-                     ec.message());
+            LOG_WARN(
+                "{} trace {:016x} conn {} stage open_ipv6_udp error {} fallback ipv4", log_event::kRoute, trace_id_, conn_id_, ec.message());
         }
 
         ec = udp_socket_.open(boost::asio::ip::udp::v4(), ec);
@@ -141,12 +138,8 @@ boost::asio::awaitable<void> remote_udp_proxy_session::start_impl(const proxy::u
         co_return;
     }
 
-    LOG_INFO("event {} trace_id {:016x} conn_id {} udp associate ready bind {}:{}",
-             log_event::kConnEstablished,
-             trace_id_,
-             conn_id_,
-             bind_host_,
-             bind_port_);
+    LOG_INFO(
+        "{} trace {:016x} conn {} udp associate ready bind {}:{}", log_event::kConnEstablished, trace_id_, conn_id_, bind_host_, bind_port_);
 
     using boost::asio::experimental::awaitable_operators::operator||;
     if (cfg_.timeout.idle == 0)
@@ -166,7 +159,7 @@ boost::asio::awaitable<void> remote_udp_proxy_session::start_impl(const proxy::u
     }
 
     const auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time_).count();
-    LOG_INFO("event {} trace_id {:016x} conn_id {} bind {}:{} tx_bytes {} rx_bytes {} duration_ms {}",
+    LOG_INFO("{} trace {:016x} conn {} bind {}:{} tx_bytes {} rx_bytes {} duration_ms {}",
              log_event::kConnClose,
              trace_id_,
              conn_id_,
@@ -201,7 +194,7 @@ boost::asio::awaitable<void> remote_udp_proxy_session::connection_to_udp()
         proxy::udp_datagram datagram;
         if (!proxy::decode_udp_datagram(packet.data(), packet.size(), datagram))
         {
-            LOG_WARN("event {} trace_id {:016x} conn_id {} bind {}:{} invalid udp datagram payload_size {}",
+            LOG_WARN("{} trace {:016x} conn {} bind {}:{} invalid udp datagram payload_size {}",
                      log_event::kRoute,
                      trace_id_,
                      conn_id_,
@@ -226,7 +219,7 @@ boost::asio::awaitable<void> remote_udp_proxy_session::connection_to_udp()
             boost::asio::buffer(datagram.payload.data(), payload_len), target_ep, boost::asio::redirect_error(boost::asio::use_awaitable, ec));
         if (ec)
         {
-            LOG_WARN("event {} trace_id {:016x} conn_id {} bind {}:{} send target {}:{} error {}",
+            LOG_WARN("{} trace {:016x} conn {} bind {}:{} send target {}:{} error {}",
                      log_event::kRoute,
                      trace_id_,
                      conn_id_,
@@ -259,8 +252,8 @@ boost::asio::awaitable<void> remote_udp_proxy_session::udp_to_connection()
     for (;;)
     {
         boost::system::error_code ec;
-        const auto bytes_read =
-            co_await udp_socket_.async_receive_from(boost::asio::buffer(buffer), endpoint, boost::asio::redirect_error(boost::asio::use_awaitable, ec));
+        const auto bytes_read = co_await udp_socket_.async_receive_from(
+            boost::asio::buffer(buffer), endpoint, boost::asio::redirect_error(boost::asio::use_awaitable, ec));
         if (ec)
         {
             break;
@@ -318,7 +311,7 @@ boost::asio::awaitable<void> remote_udp_proxy_session::idle_watchdog()
         }
         if (net::now_ms() - last_activity_time_ms_ > idle_timeout_ms)
         {
-            LOG_INFO("event {} trace_id {:016x} conn_id {} udp session idle timeout bind {}:{}",
+            LOG_INFO("{} trace {:016x} conn {} udp session idle timeout bind {}:{}",
                      log_event::kTimeout,
                      trace_id_,
                      conn_id_,
@@ -330,8 +323,8 @@ boost::asio::awaitable<void> remote_udp_proxy_session::idle_watchdog()
 }
 
 boost::asio::awaitable<boost::asio::ip::udp::endpoint> remote_udp_proxy_session::resolve_target_endpoint(const std::string& host,
-                                                                                                          const uint16_t port,
-                                                                                                          boost::system::error_code& ec)
+                                                                                                         const uint16_t port,
+                                                                                                         boost::system::error_code& ec)
 {
     const auto key = host + ":" + std::to_string(port);
     const auto now_ms = net::now_ms();

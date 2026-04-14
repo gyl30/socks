@@ -10,6 +10,7 @@ extern "C"
 #include <openssl/rand.h>
 #include <openssl/types.h>
 }
+
 #include <boost/system/error_code.hpp>
 
 #include "tls/core.h"

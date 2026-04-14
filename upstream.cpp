@@ -1,8 +1,8 @@
+#include <span>
 #include <memory>
 #include <string>
 #include <vector>
 #include <cstdint>
-#include <span>
 #include <utility>
 #include <algorithm>
 
@@ -15,11 +15,12 @@
 #include "log.h"
 #include "config.h"
 #include "protocol.h"
-#include "constants.h"
 #include "upstream.h"
+#include "constants.h"
 #include "net_utils.h"
 #include "proxy_protocol.h"
 #include "proxy_reality_connection.h"
+
 namespace mux
 {
 
@@ -115,13 +116,8 @@ boost::asio::awaitable<upstream_connect_result> direct_upstream::connect(const s
     auto endpoints = co_await net::wait_resolve_with_timeout(resolver_, host, std::to_string(port), cfg_.timeout.connect, ec);
     if (ec)
     {
-        LOG_WARN("event {} trace_id {:016x} conn_id {} stage resolve target {}:{} error {}",
-                 log_event::kRoute,
-                 trace_id_,
-                 conn_id_,
-                 host,
-                 port,
-                 ec.message());
+        LOG_WARN(
+            "{} trace {:016x} conn {} stage resolve target {}:{} error {}", log_event::kRoute, trace_id_, conn_id_, host, port, ec.message());
         result.ec = ec;
         result.socks_rep = socks::map_connect_error_to_socks_rep(ec);
         co_return result;
@@ -162,7 +158,7 @@ boost::asio::awaitable<upstream_connect_result> direct_upstream::connect(const s
         op_ec = socket_.set_option(boost::asio::ip::tcp::no_delay(true), op_ec);
         if (op_ec)
         {
-            LOG_WARN("event {} trace_id {:016x} conn_id {} stage set_no_delay target {}:{} error {}",
+            LOG_WARN("{} trace {:016x} conn {} stage set_no_delay target {}:{} error {}",
                      log_event::kRoute,
                      trace_id_,
                      conn_id_,
@@ -173,7 +169,7 @@ boost::asio::awaitable<upstream_connect_result> direct_upstream::connect(const s
         const auto local_ep = socket_.local_endpoint(op_ec);
         if (op_ec)
         {
-            LOG_WARN("event {} trace_id {:016x} conn_id {} stage query_bind_endpoint target {}:{} error {}",
+            LOG_WARN("{} trace {:016x} conn {} stage query_bind_endpoint target {}:{} error {}",
                      log_event::kRoute,
                      trace_id_,
                      conn_id_,
@@ -189,7 +185,7 @@ boost::asio::awaitable<upstream_connect_result> direct_upstream::connect(const s
             bind_host_ = result.bind_addr.to_string();
             bind_port_ = result.bind_port;
         }
-        LOG_INFO("event {} trace_id {:016x} conn_id {} route direct connected target {}:{} bind {}:{}",
+        LOG_INFO("{} trace {:016x} conn {} route direct connected target {}:{} bind {}:{}",
                  log_event::kRoute,
                  trace_id_,
                  conn_id_,
@@ -221,7 +217,7 @@ boost::asio::awaitable<void> direct_upstream::close()
     ec = socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
     if (ec && !net::is_socket_shutdown_error(ec))
     {
-        LOG_WARN("event {} trace_id {:016x} conn_id {} stage close target {}:{} bind {}:{} shutdown failed {}",
+        LOG_WARN("{} trace {:016x} conn {} stage close target {}:{} bind {}:{} shutdown failed {}",
                  log_event::kRoute,
                  trace_id_,
                  conn_id_,
@@ -234,7 +230,7 @@ boost::asio::awaitable<void> direct_upstream::close()
     ec = socket_.close(ec);
     if (ec && !net::is_socket_shutdown_error(ec))
     {
-        LOG_WARN("event {} trace_id {:016x} conn_id {} stage close target {}:{} bind {}:{} socket failed {}",
+        LOG_WARN("{} trace {:016x} conn {} stage close target {}:{} bind {}:{} socket failed {}",
                  log_event::kRoute,
                  trace_id_,
                  conn_id_,
@@ -282,9 +278,7 @@ uint32_t proxy_upstream::connect_ack_timeout() const
     return std::max(cfg_.timeout.read, cfg_.timeout.connect + 1);
 }
 
-boost::asio::awaitable<void> proxy_upstream::send_connect_request(const std::string& host,
-                                                                  const uint16_t port,
-                                                                  boost::system::error_code& ec) const
+boost::asio::awaitable<void> proxy_upstream::send_connect_request(const std::string& host, const uint16_t port, boost::system::error_code& ec) const
 {
     if (connection_ == nullptr)
     {
@@ -301,7 +295,7 @@ boost::asio::awaitable<void> proxy_upstream::send_connect_request(const std::str
     if (!proxy::encode_tcp_connect_request(request, packet))
     {
         ec = boost::asio::error::message_size;
-        LOG_ERROR("event {} trace_id {:016x} conn_id {} stage send_connect_request target {}:{} encode failed",
+        LOG_ERROR("{} trace {:016x} conn {} stage send_connect_request target {}:{} encode failed",
                   log_event::kRoute,
                   trace_id_,
                   conn_id_,
@@ -310,7 +304,7 @@ boost::asio::awaitable<void> proxy_upstream::send_connect_request(const std::str
         co_return;
     }
 
-    LOG_INFO("event {} trace_id {:016x} conn_id {} stage send_connect_request target {}:{} payload_size {}",
+    LOG_INFO("{} trace {:016x} conn {} stage send_connect_request target {}:{} payload_size {}",
              log_event::kRoute,
              trace_id_,
              conn_id_,
@@ -320,7 +314,7 @@ boost::asio::awaitable<void> proxy_upstream::send_connect_request(const std::str
     co_await connection_->write_packet(packet, ec);
     if (ec)
     {
-        LOG_ERROR("event {} trace_id {:016x} conn_id {} stage send_connect_request target {}:{} error {}",
+        LOG_ERROR("{} trace {:016x} conn {} stage send_connect_request target {}:{} error {}",
                   log_event::kRoute,
                   trace_id_,
                   conn_id_,
@@ -331,9 +325,7 @@ boost::asio::awaitable<void> proxy_upstream::send_connect_request(const std::str
     }
 }
 
-boost::asio::awaitable<void> proxy_upstream::wait_connect_reply(const std::string& host,
-                                                                const uint16_t port,
-                                                                upstream_connect_result& result) const
+boost::asio::awaitable<void> proxy_upstream::wait_connect_reply(const std::string& host, const uint16_t port, upstream_connect_result& result) const
 {
     if (connection_ == nullptr)
     {
@@ -346,7 +338,7 @@ boost::asio::awaitable<void> proxy_upstream::wait_connect_reply(const std::strin
     const auto packet = co_await connection_->read_packet(connect_ack_timeout(), reply_ec);
     if (reply_ec)
     {
-        LOG_ERROR("event {} trace_id {:016x} conn_id {} stage wait_connect_reply target {}:{} error {}",
+        LOG_ERROR("{} trace {:016x} conn {} stage wait_connect_reply target {}:{} error {}",
                   log_event::kRoute,
                   trace_id_,
                   conn_id_,
@@ -361,7 +353,7 @@ boost::asio::awaitable<void> proxy_upstream::wait_connect_reply(const std::strin
     proxy::tcp_connect_reply reply;
     if (!proxy::decode_tcp_connect_reply(packet.data(), packet.size(), reply))
     {
-        LOG_WARN("event {} trace_id {:016x} conn_id {} stage decode_connect_reply target {}:{} invalid_reply_payload payload_size {}",
+        LOG_WARN("{} trace {:016x} conn {} stage decode_connect_reply target {}:{} invalid_reply_payload payload_size {}",
                  log_event::kRoute,
                  trace_id_,
                  conn_id_,
@@ -375,7 +367,7 @@ boost::asio::awaitable<void> proxy_upstream::wait_connect_reply(const std::strin
     result.socks_rep = reply.socks_rep;
     if (reply.socks_rep != socks::kRepSuccess)
     {
-        LOG_WARN("event {} trace_id {:016x} conn_id {} stage wait_connect_reply target {}:{} remote_rep {}",
+        LOG_WARN("{} trace {:016x} conn {} stage wait_connect_reply target {}:{} remote_rep {}",
                  log_event::kRoute,
                  trace_id_,
                  conn_id_,
@@ -390,7 +382,7 @@ boost::asio::awaitable<void> proxy_upstream::wait_connect_reply(const std::strin
     const auto bind_addr = boost::asio::ip::make_address(reply.bind_host, bind_ec);
     if (bind_ec)
     {
-        LOG_WARN("event {} trace_id {:016x} conn_id {} stage wait_connect_reply target {}:{} invalid_bind_addr {}",
+        LOG_WARN("{} trace {:016x} conn {} stage wait_connect_reply target {}:{} invalid_bind_addr {}",
                  log_event::kRoute,
                  trace_id_,
                  conn_id_,
@@ -405,7 +397,7 @@ boost::asio::awaitable<void> proxy_upstream::wait_connect_reply(const std::strin
         result.has_bind_endpoint = true;
     }
 
-    LOG_INFO("event {} trace_id {:016x} conn_id {} stage wait_connect_reply target {}:{} bind {}:{}",
+    LOG_INFO("{} trace {:016x} conn {} stage wait_connect_reply target {}:{} bind {}:{}",
              log_event::kRoute,
              trace_id_,
              conn_id_,
@@ -433,7 +425,7 @@ boost::asio::awaitable<upstream_connect_result> proxy_upstream::connect(const st
         {
             ec = boost::asio::error::not_connected;
         }
-        LOG_ERROR("event {} trace_id {:016x} conn_id {} target {}:{} route proxy connect reality failed {}",
+        LOG_ERROR("{} trace {:016x} conn {} target {}:{} route proxy connect reality failed {}",
                   log_event::kRoute,
                   trace_id_,
                   conn_id_,
@@ -445,7 +437,7 @@ boost::asio::awaitable<upstream_connect_result> proxy_upstream::connect(const st
         co_return result;
     }
 
-    LOG_INFO("event {} trace_id {:016x} conn_id {} target {}:{} route proxy connected reality local {}:{} remote {}:{}",
+    LOG_INFO("{} trace {:016x} conn {} target {}:{} route proxy connected reality local {}:{} remote {}:{}",
              log_event::kRoute,
              trace_id_,
              conn_id_,
@@ -494,7 +486,7 @@ boost::asio::awaitable<std::size_t> proxy_upstream::read(std::vector<uint8_t>& b
     const auto bytes_read = co_await connection_->read_some(buf, 0, ec);
     if (ec && !net::is_socket_close_error(ec))
     {
-        LOG_WARN("event {} trace_id {:016x} conn_id {} target {}:{} bind {}:{} stage read_proxy_data error {}",
+        LOG_WARN("{} trace {:016x} conn {} target {}:{} bind {}:{} stage read_proxy_data error {}",
                  log_event::kRoute,
                  trace_id_,
                  conn_id_,

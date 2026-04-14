@@ -6,6 +6,7 @@
 #include <cstdint>
 
 #include "reality/handshake/fingerprint.h"
+
 namespace reality
 {
 

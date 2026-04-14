@@ -8,13 +8,13 @@
 
 extern "C"
 {
+#include "lwip/init.h"
 #include "lwip/ip.h"
 #include "lwip/ip4.h"
 #include "lwip/ip6.h"
 #include "lwip/nd6.h"
 #include "lwip/tcp.h"
 #include "lwip/udp.h"
-#include "lwip/init.h"
 #include "lwip/pbuf.h"
 #include "lwip/netif.h"
 #include "lwip/ip4_frag.h"

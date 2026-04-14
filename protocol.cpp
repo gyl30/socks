@@ -8,6 +8,7 @@
 #include <boost/asio.hpp>
 
 #include "protocol.h"
+
 namespace
 {
 

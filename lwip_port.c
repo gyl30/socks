@@ -1,8 +1,6 @@
 #include <time.h>
-#ifdef _WIN32
 #include <stdio.h>
 #include <stdarg.h>
-#endif
 #include <stdlib.h>
 
 unsigned int lwip_port_rand(void)

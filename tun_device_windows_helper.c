@@ -5,12 +5,8 @@
 
 #include "tun_device_windows_helper.h"
 
-DWORD tun_device_windows_configure_interface(const NET_LUID* luid,
-                                             const uint32_t mtu,
-                                             const void* ipv4_addr,
-                                             const uint8_t ipv4_prefix,
-                                             const void* ipv6_addr,
-                                             const uint8_t ipv6_prefix)
+DWORD tun_device_windows_configure_interface(
+    const NET_LUID* luid, const uint32_t mtu, const void* ipv4_addr, const uint8_t ipv4_prefix, const void* ipv6_addr, const uint8_t ipv6_prefix)
 {
     MIB_IFROW if_row;
     DWORD result;

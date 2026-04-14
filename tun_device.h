@@ -8,6 +8,7 @@
 #include <boost/system/error_code.hpp>
 
 #include "config.h"
+
 #ifdef _WIN32
 #include "tun_device_windows_helper.h"
 #endif
