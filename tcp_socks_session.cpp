@@ -22,50 +22,20 @@
 namespace mux
 {
 
-namespace
-{
-
-std::pair<std::string, uint16_t> endpoint_parts(const boost::asio::ip::tcp::endpoint& endpoint)
-{
-    return {endpoint.address().to_string(), endpoint.port()};
-}
-
-void load_socket_endpoints(
-    boost::asio::ip::tcp::socket& socket, std::string& local_host, uint16_t& local_port, std::string& remote_host, uint16_t& remote_port)
-{
-    boost::system::error_code ec;
-    const auto local_endpoint = socket.local_endpoint(ec);
-    if (!ec)
-    {
-        std::tie(local_host, local_port) = endpoint_parts(local_endpoint);
-    }
-
-    ec.clear();
-    const auto remote_endpoint = socket.remote_endpoint(ec);
-    if (!ec)
-    {
-        std::tie(remote_host, remote_port) = endpoint_parts(remote_endpoint);
-    }
-}
-
-}    // namespace
-
 tcp_socks_session::tcp_socks_session(boost::asio::ip::tcp::socket socket,
                                      std::shared_ptr<router> router,
                                      uint32_t sid,
                                      uint64_t trace_id,
-                                     const config& cfg,
-                                     std::shared_ptr<void> active_connection_guard)
+                                     const config& cfg)
     : trace_id_(trace_id),
       conn_id_(sid),
       cfg_(cfg),
       socket_(std::move(socket)),
       idle_timer_(socket_.get_executor()),
-      router_(std::move(router)),
-      active_connection_guard_(std::move(active_connection_guard))
+      router_(std::move(router))
 {
     last_activity_time_ms_ = net::now_ms();
-    load_socket_endpoints(socket_, local_host_, local_port_, client_host_, client_port_);
+    net::load_tcp_socket_endpoints(socket_, local_host_, local_port_, client_host_, client_port_);
 }
 
 boost::asio::awaitable<void> tcp_socks_session::start(const std::string& host, uint16_t port) { co_await run(host, port); }

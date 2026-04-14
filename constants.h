@@ -50,15 +50,6 @@ constexpr uint32_t kFileSize = 50U * 1024U * 1024U;
 constexpr uint32_t kFileCount = 5;
 }    // namespace log
 
-namespace mux
-{
-constexpr std::size_t kWriteChannelCapacity = 1024;
-constexpr std::size_t kStreamRecvChannelCapacity = 1024;
-constexpr std::size_t kStopChannelCapacity = 1;
-constexpr uint32_t kControlFrameSendTimeoutSec = 1;
-constexpr uint32_t kReconnectRetryIntervalSec = 2;
-}    // namespace mux
-
 namespace replay
 {
 constexpr auto kWindow = std::chrono::seconds(auth::kMaxClockSkewSec * 2);
@@ -81,7 +72,6 @@ constexpr std::size_t kMaxPacketSize = 8192;
 constexpr std::size_t kMaxPayload = 65507;
 constexpr std::size_t kTcpControlReadBufferSize = 1024;
 constexpr std::size_t kTcpControlIgnoreLimitBytes = 4096;
-constexpr uint32_t kTunnelPollIntervalMs = 200;
 }    // namespace udp
 
 namespace tls_limits
@@ -128,15 +118,11 @@ constexpr const char* kConnClose = "conn_close";
 constexpr const char* kHandshake = "handshake";
 constexpr const char* kDataSend = "data_send";
 constexpr const char* kDataRecv = "data_recv";
-constexpr const char* kStreamOpen = "stream_open";
-constexpr const char* kStreamClose = "stream_close";
 constexpr const char* kRoute = "route";
 constexpr const char* kFallback = "fallback";
 constexpr const char* kAuth = "auth";
-constexpr const char* kMux = "mux";
-constexpr const char* kMuxFrame = "mux_frame";
+constexpr const char* kRelay = "relay";
 constexpr const char* kSocks = "socks";
-constexpr const char* kDns = "dns";
 constexpr const char* kTimeout = "timeout";
 constexpr const char* kCert = "cert";
 

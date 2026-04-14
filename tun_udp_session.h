@@ -65,7 +65,6 @@ class tun_udp_session : public std::enable_shared_from_this<tun_udp_session>
     uint32_t conn_id_ = 0;
     const config& cfg_;
     io_worker& worker_;
-    std::shared_ptr<void> active_guard_;
     std::shared_ptr<router> router_;
     udp_pcb* pcb_ = nullptr;
     route_type route_ = route_type::kBlock;

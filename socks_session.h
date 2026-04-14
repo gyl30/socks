@@ -25,8 +25,7 @@ class socks_session : public std::enable_shared_from_this<socks_session>
                   io_worker& worker,
                   std::shared_ptr<router> router,
                   uint32_t sid,
-                  const config& cfg,
-                  std::shared_ptr<void> active_connection_guard = nullptr);
+                  const config& cfg);
     ~socks_session();
 
     void start();
@@ -115,7 +114,6 @@ class socks_session : public std::enable_shared_from_this<socks_session>
     io_worker& worker_;
     boost::asio::ip::tcp::socket socket_;
     std::shared_ptr<router> router_;
-    std::shared_ptr<void> active_guard_;
 };
 
 }    // namespace mux

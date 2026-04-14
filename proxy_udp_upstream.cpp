@@ -50,15 +50,9 @@ namespace
 
 }    // namespace
 
-proxy_udp_upstream::proxy_udp_upstream(std::shared_ptr<proxy_reality_connection> connection,
-                                       const uint32_t conn_id,
-                                       const uint64_t trace_id,
-                                       const config& cfg)
+proxy_udp_upstream::proxy_udp_upstream(std::shared_ptr<proxy_reality_connection> connection, const config& cfg)
     : cfg_(cfg), connection_(std::move(connection))
-{
-    (void)conn_id;
-    (void)trace_id;
-}
+{}
 
 boost::asio::awaitable<proxy_udp_connect_result> proxy_udp_upstream::connect(const boost::asio::any_io_executor& executor,
                                                                              const uint32_t conn_id,
@@ -77,7 +71,7 @@ boost::asio::awaitable<proxy_udp_connect_result> proxy_udp_upstream::connect(con
         co_return result;
     }
 
-    auto upstream = std::make_shared<proxy_udp_upstream>(connection, conn_id, trace_id, cfg);
+    auto upstream = std::make_shared<proxy_udp_upstream>(connection, cfg);
     proxy::udp_associate_request request;
     request.trace_id = trace_id;
     std::vector<uint8_t> packet;

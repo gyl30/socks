@@ -62,7 +62,6 @@ class tun_tcp_session : public std::enable_shared_from_this<tun_tcp_session>
     tcp_pcb* pcb_ = nullptr;
     pbuf* queue_ = nullptr;
     std::function<void()> on_close_;
-    std::shared_ptr<void> active_guard_;
     boost::asio::steady_timer idle_timer_;
     boost::asio::steady_timer client_wait_timer_;
     boost::asio::steady_timer send_wait_timer_;

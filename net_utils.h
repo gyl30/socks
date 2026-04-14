@@ -104,6 +104,35 @@ struct udp_endpoint_equal
 
 [[nodiscard]] boost::asio::ip::udp::endpoint endpoint_from_sockaddr(const sockaddr_storage& addr, std::size_t len);
 
+[[nodiscard]] inline bool is_basic_close_error(const boost::system::error_code& ec)
+{
+    return ec == boost::asio::error::operation_aborted || ec == boost::asio::error::bad_descriptor;
+}
+
+[[nodiscard]] inline bool is_socket_close_error(const boost::system::error_code& ec)
+{
+    return is_basic_close_error(ec) || ec == boost::asio::error::not_connected || ec == boost::asio::error::eof;
+}
+
+[[nodiscard]] inline bool is_socket_shutdown_error(const boost::system::error_code& ec)
+{
+    return is_basic_close_error(ec) || ec == boost::asio::error::not_connected;
+}
+
+[[nodiscard]] inline bool is_channel_close_error(const boost::system::error_code& ec)
+{
+    return is_basic_close_error(ec) || ec == boost::asio::experimental::error::channel_errors::channel_closed ||
+           ec == boost::asio::experimental::error::channel_errors::channel_cancelled;
+}
+
+void load_tcp_socket_endpoints(boost::asio::ip::tcp::socket& socket,
+                               std::string& local_host,
+                               uint16_t& local_port,
+                               std::string& remote_host,
+                               uint16_t& remote_port,
+                               boost::system::error_code* local_ec = nullptr,
+                               boost::system::error_code* remote_ec = nullptr);
+
 [[nodiscard]] bool get_original_tcp_dst(boost::asio::ip::tcp::socket& socket,
                                         boost::asio::ip::tcp::endpoint& endpoint,
                                         boost::system::error_code& ec);

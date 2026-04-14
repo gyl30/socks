@@ -30,7 +30,7 @@ struct proxy_udp_connect_result
 class proxy_udp_upstream : public std::enable_shared_from_this<proxy_udp_upstream>
 {
    public:
-    proxy_udp_upstream(std::shared_ptr<proxy_reality_connection> connection, uint32_t conn_id, uint64_t trace_id, const config& cfg);
+    proxy_udp_upstream(std::shared_ptr<proxy_reality_connection> connection, const config& cfg);
 
     [[nodiscard]] static boost::asio::awaitable<proxy_udp_connect_result> connect(
         const boost::asio::any_io_executor& executor, uint32_t conn_id, uint64_t trace_id, const config& cfg);

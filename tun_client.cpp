@@ -291,7 +291,7 @@ boost::asio::awaitable<void> tun_client::read_loop()
             auto* packet = pbuf_alloc(PBUF_RAW, static_cast<u16_t>(bytes_read), PBUF_RAM);
             if (packet == nullptr)
             {
-                LOG_WARN("event {} device {} index {} alloc lwip pbuf failed size {}", log_event::kMux, device_.name(), device_.index(), bytes_read);
+                LOG_WARN("event {} device {} index {} alloc lwip pbuf failed size {}", log_event::kRelay, device_.name(), device_.index(), bytes_read);
                 continue;
             }
 
@@ -356,7 +356,7 @@ err_t tun_client::write_packet_to_tun(const pbuf* packet)
         {
             return ERR_WOULDBLOCK;
         }
-        LOG_WARN("event {} device {} index {} write tun packet failed {}", log_event::kMux, device_.name(), device_.index(), ec.message());
+        LOG_WARN("event {} device {} index {} write tun packet failed {}", log_event::kRelay, device_.name(), device_.index(), ec.message());
         return ERR_IF;
     }
     if (written != static_cast<std::ptrdiff_t>(payload.size()))

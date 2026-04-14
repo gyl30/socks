@@ -26,7 +26,6 @@
 #include "run_loop_spawner.h"
 #include "tcp_socks_session.h"
 #include "udp_socks_session.h"
-#include "connection_tracker.h"
 namespace mux
 {
 
@@ -45,37 +44,13 @@ bool secure_string_equals(const std::string& lhs, const std::string& rhs)
     return diff == 0;
 }
 
-std::pair<std::string, uint16_t> endpoint_parts(const boost::asio::ip::tcp::endpoint& endpoint)
-{
-    return {endpoint.address().to_string(), endpoint.port()};
-}
-
-void load_socket_endpoints(
-    boost::asio::ip::tcp::socket& socket, std::string& local_host, uint16_t& local_port, std::string& remote_host, uint16_t& remote_port)
-{
-    boost::system::error_code ec;
-    const auto local_endpoint = socket.local_endpoint(ec);
-    if (!ec)
-    {
-        std::tie(local_host, local_port) = endpoint_parts(local_endpoint);
-    }
-
-    ec.clear();
-    const auto remote_endpoint = socket.remote_endpoint(ec);
-    if (!ec)
-    {
-        std::tie(remote_host, remote_port) = endpoint_parts(remote_endpoint);
-    }
-}
-
 }    // namespace
 
 socks_session::socks_session(boost::asio::ip::tcp::socket socket,
                              io_worker& worker,
                              std::shared_ptr<router> router,
                              uint32_t sid,
-                             const config& cfg,
-                             std::shared_ptr<void> active_connection_guard)
+                             const config& cfg)
     : sid_(sid),
       trace_id_(generate_trace_id()),
       conn_id_(sid),
@@ -85,14 +60,9 @@ socks_session::socks_session(boost::asio::ip::tcp::socket socket,
       cfg_(cfg),
       worker_(worker),
       socket_(std::move(socket)),
-      router_(std::move(router)),
-      active_guard_(std::move(active_connection_guard))
+      router_(std::move(router))
 {
-    if (!active_guard_)
-    {
-        active_guard_ = acquire_active_connection_guard();
-    }
-    load_socket_endpoints(socket_, local_host_, local_port_, client_host_, client_port_);
+    net::load_tcp_socket_endpoints(socket_, local_host_, local_port_, client_host_, client_port_);
 }
 
 socks_session::~socks_session() = default;
@@ -170,12 +140,12 @@ boost::asio::awaitable<void> socks_session::run_loop()
 
     if (cmd == socks::kCmdConnect)
     {
-        const auto tcp_sess = std::make_shared<tcp_socks_session>(std::move(socket_), router_, sid_, trace_id_, cfg_, std::move(active_guard_));
+        const auto tcp_sess = std::make_shared<tcp_socks_session>(std::move(socket_), router_, sid_, trace_id_, cfg_);
         worker_.group.spawn([tcp_sess, host, port]() -> boost::asio::awaitable<void> { co_await tcp_sess->start(host, port); });
     }
     else if (cmd == socks::kCmdUdpAssociate)
     {
-        const auto udp_sess = std::make_shared<udp_socks_session>(std::move(socket_), worker_, router_, sid_, trace_id_, cfg_, std::move(active_guard_));
+        const auto udp_sess = std::make_shared<udp_socks_session>(std::move(socket_), worker_, router_, sid_, trace_id_, cfg_);
         udp_sess->start(host, port);
     }
     else

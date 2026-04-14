@@ -17,7 +17,6 @@
 #include "constants.h"
 #include "net_utils.h"
 #include "tun_tcp_session.h"
-#include "connection_tracker.h"
 namespace mux
 {
 
@@ -48,7 +47,6 @@ tun_tcp_session::tun_tcp_session(const boost::asio::any_io_executor& executor,
       router_(std::move(router)),
       pcb_(pcb),
       on_close_(std::move(on_close)),
-      active_guard_(acquire_active_connection_guard()),
       idle_timer_(executor),
       client_wait_timer_(executor),
       send_wait_timer_(executor),
