@@ -22,18 +22,17 @@ extern "C"
 #include "config.h"
 #include "protocol.h"
 #include "constants.h"
-#include "mux_codec.h"
 #include "net_utils.h"
 #include "context_pool.h"
-#include "mux_protocol.h"
+#include "proxy_protocol.h"
 #include "replay_cache.h"
 #include "reality/types.h"
 #include "remote_server.h"
-#include "mux_connection.h"
-#include "remote_session.h"
+#include "remote_tcp_proxy_session.h"
+#include "remote_udp_proxy_session.h"
 #include "tls/crypto_util.h"
 #include "connection_tracker.h"
-#include "remote_udp_session.h"
+#include "proxy_reality_connection.h"
 #include "reality/session/session.h"
 #include "reality/policy/fallback_gate.h"
 #include "reality/policy/fallback_executor.h"
@@ -311,19 +310,6 @@ boost::asio::awaitable<void> remote_server::accept_loop()
             continue;
         }
 
-        const auto active_connections = connection_tracker::instance().active_connections();
-        if (active_connections >= cfg_.limits.max_connections)
-        {
-            close_tcp_socket(*s);
-            LOG_WARN("event {} listen {}:{} active {} limit {} connection limit reached drop",
-                     log_event::kConnInit,
-                     cfg_.inbound.host,
-                     cfg_.inbound.port,
-                     active_connections,
-                     cfg_.limits.max_connections);
-            continue;
-        }
-
         boost::system::error_code ec;
         ec = s->set_option(boost::asio::ip::tcp::no_delay(true), ec);
         const uint32_t conn_id = next_conn_id_++;
@@ -411,193 +397,92 @@ boost::asio::awaitable<void> remote_server::handle(io_worker& worker, std::share
              log_event::kConnEstablished,
              reality_ctx.conn_id,
              reality_ctx.sni.empty() ? "unknown" : reality_ctx.sni);
-    auto connection = std::make_shared<mux_connection>(std::move(*s), worker, std::move(record_context), cfg_, conn_id);
-    connection->start_accepting_streams();
-    connection->start();
-    for (;;)
-    {
-        mux_frame frame;
-        frame = co_await connection->async_receive_syn(ec);
-        if (ec)
-        {
-            if (ec != boost::asio::error::operation_aborted && ec != boost::asio::experimental::error::channel_errors::channel_closed &&
-                ec != boost::asio::experimental::error::channel_errors::channel_cancelled)
-            {
-                LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} sni {} stage accept_incoming_stream error {}",
-                         log_event::kMux,
-                         reality_ctx.conn_id,
-                         reality_ctx.local_addr,
-                         reality_ctx.local_port,
-                         reality_ctx.remote_addr,
-                         reality_ctx.remote_port,
-                         reality_ctx.sni.empty() ? "unknown" : reality_ctx.sni,
-                         ec.message());
-            }
-            break;
-        }
-        co_await process_stream_request(worker, connection, reality_ctx, std::move(frame));
-    }
-    if (connection != nullptr)
-    {
-        co_await connection->async_wait_stopped();
-    }
-    co_return;
+    auto connection = std::make_shared<proxy_reality_connection>(std::move(*s), std::move(record_context), cfg_, conn_id);
+    co_await process_proxy_request(worker, connection, reality_ctx);
 }
 
-static boost::asio::awaitable<void> send_stream_reset(const std::shared_ptr<mux_connection>& connection, mux_frame frame)
-{
-    frame.h.command = mux::kCmdRst;
-    if (!frame.payload.empty())
-    {
-        std::vector<uint8_t>().swap(frame.payload);
-    }
-    boost::system::error_code ec;
-    co_await connection->send_async_with_timeout(std::move(frame), constants::mux::kControlFrameSendTimeoutSec, ec);
-}
-
-boost::asio::awaitable<void> remote_server::process_stream_request(io_worker& worker,
-                                                                   std::shared_ptr<mux_connection> connection,
-                                                                   const reality::server_handshake_context& reality_ctx,
-                                                                   mux_frame frame) const
+boost::asio::awaitable<void> remote_server::process_proxy_request(io_worker& worker,
+                                                                  std::shared_ptr<proxy_reality_connection> connection,
+                                                                  const reality::server_handshake_context& reality_ctx) const
 {
     if (connection == nullptr)
     {
-        LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} sni {} stream_id {} dropped without connection",
-                 log_event::kMux,
+        LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} sni {} dropped without connection",
+                 log_event::kRoute,
                  reality_ctx.conn_id,
                  reality_ctx.local_addr,
                  reality_ctx.local_port,
                  reality_ctx.remote_addr,
                  reality_ctx.remote_port,
-                 reality_ctx.sni.empty() ? "unknown" : reality_ctx.sni,
-                 frame.h.stream_id);
+                 reality_ctx.sni.empty() ? "unknown" : reality_ctx.sni);
         co_return;
     }
 
-    syn_payload syn;
-    if (!mux_codec::decode_syn(frame.payload.data(), frame.payload.size(), syn))
+    boost::system::error_code ec;
+    const auto packet = co_await connection->read_packet(cfg_.timeout.connect == 0 ? cfg_.timeout.read : cfg_.timeout.connect + 1, ec);
+    if (ec)
     {
-        LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} sni {} stream_id {} payload_size {} invalid syn",
-                 log_event::kMux,
+        LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} sni {} read initial proxy packet failed {}",
+                 log_event::kRoute,
                  reality_ctx.conn_id,
                  reality_ctx.local_addr,
                  reality_ctx.local_port,
                  reality_ctx.remote_addr,
                  reality_ctx.remote_port,
                  reality_ctx.sni.empty() ? "unknown" : reality_ctx.sni,
-                 frame.h.stream_id,
-                 frame.payload.size());
-        co_await send_stream_reset(connection, std::move(frame));
-        co_return;
-    }
-    if (syn.addr.empty())
-    {
-        LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} sni {} stream_id {} invalid target empty",
-                 log_event::kMux,
-                 reality_ctx.conn_id,
-                 reality_ctx.local_addr,
-                 reality_ctx.local_port,
-                 reality_ctx.remote_addr,
-                 reality_ctx.remote_port,
-                 reality_ctx.sni.empty() ? "unknown" : reality_ctx.sni,
-                 frame.h.stream_id);
-        co_await send_stream_reset(connection, std::move(frame));
-        co_return;
-    }
-    if (syn.socks_cmd == socks::kCmdConnect && syn.port == 0)
-    {
-        LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} sni {} stream_id {} invalid target {}:{}",
-                 log_event::kMux,
-                 reality_ctx.conn_id,
-                 reality_ctx.local_addr,
-                 reality_ctx.local_port,
-                 reality_ctx.remote_addr,
-                 reality_ctx.remote_port,
-                 reality_ctx.sni.empty() ? "unknown" : reality_ctx.sni,
-                 frame.h.stream_id,
-                 syn.addr,
-                 syn.port);
-        co_await send_stream_reset(connection, std::move(frame));
+                 ec.message());
         co_return;
     }
 
-    if (syn.socks_cmd == socks::kCmdConnect)
+    proxy::tcp_connect_request tcp_request;
+    if (proxy::decode_tcp_connect_request(packet.data(), packet.size(), tcp_request))
     {
-        LOG_INFO("event {} trace_id {:016x} conn_id {} stream_id {} type tcp connect target {}:{} payload_size {}",
-                 log_event::kMux,
-                 syn.trace_id,
-                 reality_ctx.conn_id,
-                 frame.h.stream_id,
-                 syn.addr,
-                 syn.port,
-                 frame.payload.size());
-        const auto sess =
-            std::make_shared<remote_tcp_session>(worker.io_context, connection, frame.h.stream_id, reality_ctx.conn_id, syn.trace_id, cfg_);
-        if (!sess->has_stream())
-        {
-            LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} sni {} stream_id {} target {}:{} create incoming tcp stream failed",
-                     log_event::kMux,
-                     reality_ctx.conn_id,
-                     reality_ctx.local_addr,
-                     reality_ctx.local_port,
-                     reality_ctx.remote_addr,
-                     reality_ctx.remote_port,
-                     reality_ctx.sni.empty() ? "unknown" : reality_ctx.sni,
-                     frame.h.stream_id,
-                     syn.addr,
-                     syn.port);
-            co_await send_stream_reset(connection, std::move(frame));
-            co_return;
-        }
-        worker.group.spawn([sess, syn]() mutable -> boost::asio::awaitable<void> { co_await sess->start(syn); });
-        co_return;
-    }
-    if (syn.socks_cmd == socks::kCmdUdpAssociate)
-    {
-        LOG_INFO("event {} trace_id {:016x} conn_id {} local {}:{} remote {}:{} sni {} stream_id {} type udp associate payload_size {}",
-                 log_event::kMux,
-                 syn.trace_id,
+        LOG_INFO("event {} trace_id {:016x} conn_id {} local {}:{} remote {}:{} sni {} type tcp connect target {}:{} payload_size {}",
+                 log_event::kRoute,
+                 tcp_request.trace_id,
                  reality_ctx.conn_id,
                  reality_ctx.local_addr,
                  reality_ctx.local_port,
                  reality_ctx.remote_addr,
                  reality_ctx.remote_port,
                  reality_ctx.sni.empty() ? "unknown" : reality_ctx.sni,
-                 frame.h.stream_id,
-                 frame.payload.size());
-        const auto sess =
-            std::make_shared<remote_udp_session>(worker.io_context, connection, frame.h.stream_id, reality_ctx.conn_id, syn.trace_id, cfg_);
-        if (!sess->has_stream())
-        {
-            LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} sni {} stream_id {} create incoming udp stream failed",
-                     log_event::kMux,
-                     reality_ctx.conn_id,
-                     reality_ctx.local_addr,
-                     reality_ctx.local_port,
-                     reality_ctx.remote_addr,
-                     reality_ctx.remote_port,
-                     reality_ctx.sni.empty() ? "unknown" : reality_ctx.sni,
-                     frame.h.stream_id);
-            co_await send_stream_reset(connection, std::move(frame));
-            co_return;
-        }
-        worker.group.spawn([sess]() mutable -> boost::asio::awaitable<void> { co_await sess->start(); });
+                 tcp_request.target_host,
+                 tcp_request.target_port,
+                 packet.size());
+        const auto session =
+            std::make_shared<remote_tcp_proxy_session>(worker.io_context, std::move(connection), reality_ctx.conn_id, tcp_request.trace_id, cfg_);
+        co_await session->start(tcp_request);
         co_return;
     }
 
-    LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} sni {} stream_id {} target {}:{} unknown cmd {}",
-             log_event::kMux,
+    proxy::udp_associate_request udp_request;
+    if (proxy::decode_udp_associate_request(packet.data(), packet.size(), udp_request))
+    {
+        LOG_INFO("event {} trace_id {:016x} conn_id {} local {}:{} remote {}:{} sni {} type udp associate payload_size {}",
+                 log_event::kRoute,
+                 udp_request.trace_id,
+                 reality_ctx.conn_id,
+                 reality_ctx.local_addr,
+                 reality_ctx.local_port,
+                 reality_ctx.remote_addr,
+                 reality_ctx.remote_port,
+                 reality_ctx.sni.empty() ? "unknown" : reality_ctx.sni,
+                 packet.size());
+        const auto session =
+            std::make_shared<remote_udp_proxy_session>(worker.io_context, std::move(connection), reality_ctx.conn_id, udp_request.trace_id, cfg_);
+        co_await session->start(udp_request);
+        co_return;
+    }
+
+    LOG_WARN("event {} conn_id {} local {}:{} remote {}:{} sni {} invalid initial proxy request payload_size {}",
+             log_event::kRoute,
              reality_ctx.conn_id,
              reality_ctx.local_addr,
              reality_ctx.local_port,
              reality_ctx.remote_addr,
              reality_ctx.remote_port,
              reality_ctx.sni.empty() ? "unknown" : reality_ctx.sni,
-             frame.h.stream_id,
-             syn.addr,
-             syn.port,
-             syn.socks_cmd);
-    co_await send_stream_reset(connection, std::move(frame));
+             packet.size());
 }
 
 }    // namespace mux

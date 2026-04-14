@@ -20,7 +20,6 @@ class tproxy_tcp_session : public std::enable_shared_from_this<tproxy_tcp_sessio
 {
    public:
     tproxy_tcp_session(boost::asio::ip::tcp::socket socket,
-                       std::shared_ptr<client_tunnel_pool> tunnel_pool,
                        std::shared_ptr<router> router,
                        uint32_t sid,
                        const config& cfg);
@@ -63,7 +62,6 @@ class tproxy_tcp_session : public std::enable_shared_from_this<tproxy_tcp_sessio
     std::chrono::steady_clock::time_point start_time_ = std::chrono::steady_clock::now();
     boost::asio::ip::tcp::socket socket_;
     boost::asio::steady_timer idle_timer_;
-    std::shared_ptr<client_tunnel_pool> tunnel_pool_;
     std::shared_ptr<router> router_;
     const config& cfg_;
     std::shared_ptr<void> active_guard_;

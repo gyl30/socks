@@ -18,7 +18,6 @@
 #include "trace_id.h"
 #include "constants.h"
 #include "net_utils.h"
-#include "client_tunnel_pool.h"
 #include "connection_tracker.h"
 #include "tproxy_tcp_session.h"
 namespace mux
@@ -43,7 +42,6 @@ std::string describe_endpoint_error(const boost::system::error_code& ec) { retur
 }    // namespace
 
 tproxy_tcp_session::tproxy_tcp_session(boost::asio::ip::tcp::socket socket,
-                                       std::shared_ptr<client_tunnel_pool> tunnel_pool,
                                        std::shared_ptr<router> router,
                                        uint32_t sid,
                                        const config& cfg)
@@ -51,7 +49,6 @@ tproxy_tcp_session::tproxy_tcp_session(boost::asio::ip::tcp::socket socket,
       conn_id_(sid),
       socket_(std::move(socket)),
       idle_timer_(socket_.get_executor()),
-      tunnel_pool_(std::move(tunnel_pool)),
       router_(std::move(router)),
       cfg_(cfg)
 {
@@ -247,17 +244,7 @@ boost::asio::awaitable<std::pair<route_type, std::shared_ptr<upstream>>> tproxy_
     }
     if (route == route_type::kProxy)
     {
-        if (tunnel_pool_ == nullptr)
-        {
-            LOG_WARN("event {} trace_id {:016x} conn_id {} target {}:{} tunnel pool unavailable for proxy route",
-                     log_event::kRoute,
-                     trace_id_,
-                     conn_id_,
-                     target_addr_,
-                     target_port_);
-            co_return std::make_pair(route_type::kBlock, std::shared_ptr<upstream>(nullptr));
-        }
-        const std::shared_ptr<upstream> backend = make_proxy_upstream(tunnel_pool_, conn_id_, trace_id_, cfg_);
+        const std::shared_ptr<upstream> backend = make_proxy_upstream(socket_.get_executor(), conn_id_, trace_id_, cfg_);
         co_return std::make_pair(route, backend);
     }
     co_return std::make_pair(route_type::kBlock, std::shared_ptr<upstream>(nullptr));

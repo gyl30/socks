@@ -72,7 +72,6 @@ void load_socket_endpoints(
 
 socks_session::socks_session(boost::asio::ip::tcp::socket socket,
                              io_worker& worker,
-                             std::shared_ptr<client_tunnel_pool> tunnel_pool,
                              std::shared_ptr<router> router,
                              uint32_t sid,
                              const config& cfg,
@@ -87,8 +86,7 @@ socks_session::socks_session(boost::asio::ip::tcp::socket socket,
       worker_(worker),
       socket_(std::move(socket)),
       router_(std::move(router)),
-      active_guard_(std::move(active_connection_guard)),
-      tunnel_pool_(std::move(tunnel_pool))
+      active_guard_(std::move(active_connection_guard))
 {
     if (!active_guard_)
     {
@@ -172,14 +170,12 @@ boost::asio::awaitable<void> socks_session::run_loop()
 
     if (cmd == socks::kCmdConnect)
     {
-        const auto tcp_sess =
-            std::make_shared<tcp_socks_session>(std::move(socket_), tunnel_pool_, router_, sid_, trace_id_, cfg_, std::move(active_guard_));
+        const auto tcp_sess = std::make_shared<tcp_socks_session>(std::move(socket_), router_, sid_, trace_id_, cfg_, std::move(active_guard_));
         worker_.group.spawn([tcp_sess, host, port]() -> boost::asio::awaitable<void> { co_await tcp_sess->start(host, port); });
     }
     else if (cmd == socks::kCmdUdpAssociate)
     {
-        const auto udp_sess =
-            std::make_shared<udp_socks_session>(std::move(socket_), worker_, tunnel_pool_, router_, sid_, trace_id_, cfg_, std::move(active_guard_));
+        const auto udp_sess = std::make_shared<udp_socks_session>(std::move(socket_), worker_, router_, sid_, trace_id_, cfg_, std::move(active_guard_));
         udp_sess->start(host, port);
     }
     else

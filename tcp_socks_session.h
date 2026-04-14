@@ -10,6 +10,7 @@
 #include <boost/asio.hpp>
 #include <boost/asio/awaitable.hpp>
 
+#include "router.h"
 #include "upstream.h"
 #include "constants.h"
 namespace mux
@@ -19,7 +20,6 @@ class tcp_socks_session : public std::enable_shared_from_this<tcp_socks_session>
 {
    public:
     tcp_socks_session(boost::asio::ip::tcp::socket socket,
-                      std::shared_ptr<client_tunnel_pool> tunnel_pool,
                       std::shared_ptr<router> router,
                       uint32_t sid,
                       uint64_t trace_id,
@@ -66,7 +66,6 @@ class tcp_socks_session : public std::enable_shared_from_this<tcp_socks_session>
     uint16_t target_port_ = 0;
     std::string route_name_ = "unknown";
     std::shared_ptr<router> router_;
-    std::shared_ptr<client_tunnel_pool> tunnel_pool_;
     std::shared_ptr<void> active_connection_guard_;
 };
 

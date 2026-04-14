@@ -51,7 +51,6 @@ void load_socket_endpoints(
 }    // namespace
 
 tcp_socks_session::tcp_socks_session(boost::asio::ip::tcp::socket socket,
-                                     std::shared_ptr<client_tunnel_pool> tunnel_pool,
                                      std::shared_ptr<router> router,
                                      uint32_t sid,
                                      uint64_t trace_id,
@@ -63,7 +62,6 @@ tcp_socks_session::tcp_socks_session(boost::asio::ip::tcp::socket socket,
       socket_(std::move(socket)),
       idle_timer_(socket_.get_executor()),
       router_(std::move(router)),
-      tunnel_pool_(std::move(tunnel_pool)),
       active_connection_guard_(std::move(active_connection_guard))
 {
     last_activity_time_ms_ = net::now_ms();
@@ -188,7 +186,7 @@ std::shared_ptr<upstream> tcp_socks_session::create_backend(const route_type rou
     }
     if (route == route_type::kProxy)
     {
-        return make_proxy_upstream(tunnel_pool_, conn_id_, trace_id_, cfg_);
+        return make_proxy_upstream(socket_.get_executor(), conn_id_, trace_id_, cfg_);
     }
     return nullptr;
 }

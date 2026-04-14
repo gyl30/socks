@@ -20,14 +20,13 @@
 #include "context_pool.h"
 #include "tun_tcp_session.h"
 #include "tun_udp_session.h"
-#include "client_tunnel_pool.h"
 namespace mux
 {
 
 class tun_client : public std::enable_shared_from_this<tun_client>
 {
    public:
-    tun_client(io_context_pool& pool, const config& cfg, std::shared_ptr<client_tunnel_pool> tunnel_pool = nullptr);
+    tun_client(io_context_pool& pool, const config& cfg);
 
     void start();
     void stop();
@@ -53,7 +52,6 @@ class tun_client : public std::enable_shared_from_this<tun_client>
     config cfg_;
     io_worker& owner_worker_;
     std::shared_ptr<router> router_;
-    std::shared_ptr<client_tunnel_pool> tunnel_pool_;
     tun_device device_;
 #ifdef _WIN32
     boost::asio::windows::object_handle tun_wait_handle_{owner_worker_.io_context};

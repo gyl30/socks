@@ -23,7 +23,6 @@
 #include "net_utils.h"
 #include "context_pool.h"
 #include "tproxy_client.h"
-#include "client_tunnel_pool.h"
 #include "tproxy_tcp_session.h"
 #include "tproxy_udp_session.h"
 namespace mux
@@ -122,12 +121,8 @@ void open_udp_listener(boost::asio::ip::udp::socket& socket, const std::string& 
 
 }    // namespace
 
-tproxy_client::tproxy_client(io_context_pool& pool, const config& cfg, std::shared_ptr<client_tunnel_pool> tunnel_pool)
-    : cfg_(cfg),
-      owner_worker_(pool.get_io_worker()),
-      router_(std::make_shared<router>()),
-      tunnel_pool_(tunnel_pool != nullptr ? std::move(tunnel_pool) : std::make_shared<client_tunnel_pool>(pool, cfg)),
-      tcp_acceptor_(owner_worker_.io_context)
+tproxy_client::tproxy_client(io_context_pool& pool, const config& cfg)
+    : cfg_(cfg), owner_worker_(pool.get_io_worker()), router_(std::make_shared<router>()), tcp_acceptor_(owner_worker_.io_context)
 {
 }
 
@@ -331,7 +326,7 @@ void tproxy_client::on_tcp_socket(boost::asio::ip::tcp::socket&& socket)
                  ec.message());
     }
 
-    const auto session = std::make_shared<tproxy_tcp_session>(std::move(socket), tunnel_pool_, router_, sid, cfg_);
+    const auto session = std::make_shared<tproxy_tcp_session>(std::move(socket), router_, sid, cfg_);
     owner_worker_.group.spawn([session]() -> boost::asio::awaitable<void> { co_await session->start(); });
 }
 
@@ -550,7 +545,6 @@ std::shared_ptr<tproxy_udp_session> tproxy_client::make_udp_session(const std::s
 {
     const auto weak_self = weak_from_this();
     return std::make_shared<tproxy_udp_session>(owner_worker_,
-                                                tunnel_pool_,
                                                 client_endpoint,
                                                 target_endpoint,
                                                 route,
