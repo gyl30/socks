@@ -31,7 +31,6 @@ extern "C"
 #include "remote_tcp_proxy_session.h"
 #include "remote_udp_proxy_session.h"
 #include "tls/crypto_util.h"
-#include "connection_tracker.h"
 #include "proxy_reality_connection.h"
 #include "reality/session/session.h"
 #include "reality/policy/fallback_gate.h"
@@ -320,8 +319,6 @@ boost::asio::awaitable<void> remote_server::accept_loop()
         worker.group.spawn(
             [self, worker = &worker, s, conn_id]() -> boost::asio::awaitable<void>
             {
-                const auto active_guard = acquire_active_connection_guard();
-
                 co_await self->handle(*worker, s, conn_id);
             });
     }

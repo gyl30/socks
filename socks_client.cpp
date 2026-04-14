@@ -23,46 +23,6 @@ namespace mux
 namespace
 {
 
-std::pair<std::string, uint16_t> endpoint_parts(const boost::asio::ip::tcp::endpoint& endpoint)
-{
-    return {endpoint.address().to_string(), endpoint.port()};
-}
-
-void load_socket_endpoints(boost::asio::ip::tcp::socket& socket,
-                           uint32_t conn_id,
-                           std::string& local_host,
-                           uint16_t& local_port,
-                           std::string& remote_host,
-                           uint16_t& remote_port)
-{
-    local_host = "unknown";
-    local_port = 0;
-    remote_host = "unknown";
-    remote_port = 0;
-
-    boost::system::error_code local_ec;
-    const auto local_endpoint = socket.local_endpoint(local_ec);
-    if (local_ec)
-    {
-        LOG_WARN("event {} conn_id {} stage query_local_endpoint error {}", log_event::kConnInit, conn_id, local_ec.message());
-    }
-    else
-    {
-        std::tie(local_host, local_port) = endpoint_parts(local_endpoint);
-    }
-
-    boost::system::error_code remote_ec;
-    const auto remote_endpoint = socket.remote_endpoint(remote_ec);
-    if (remote_ec)
-    {
-        LOG_WARN("event {} conn_id {} stage query_remote_endpoint error {}", log_event::kConnInit, conn_id, remote_ec.message());
-    }
-    else
-    {
-        std::tie(remote_host, remote_port) = endpoint_parts(remote_endpoint);
-    }
-}
-
 void setup_acceptor(boost::asio::ip::tcp::acceptor& acceptor, const std::string& host, uint16_t port, boost::system::error_code& ec)
 {
     const auto listen_addr = boost::asio::ip::make_address(host, ec);
@@ -173,7 +133,17 @@ boost::asio::awaitable<void> socks_client::accept_loop()
         std::string remote_host;
         uint16_t local_port = 0;
         uint16_t remote_port = 0;
-        load_socket_endpoints(socket, sid, local_host, local_port, remote_host, remote_port);
+        boost::system::error_code local_ep_ec;
+        boost::system::error_code remote_ep_ec;
+        net::load_tcp_socket_endpoints(socket, local_host, local_port, remote_host, remote_port, &local_ep_ec, &remote_ep_ec);
+        if (local_ep_ec)
+        {
+            LOG_WARN("event {} conn_id {} stage query_local_endpoint error {}", log_event::kConnInit, sid, local_ep_ec.message());
+        }
+        if (remote_ep_ec)
+        {
+            LOG_WARN("event {} conn_id {} stage query_remote_endpoint error {}", log_event::kConnInit, sid, remote_ep_ec.message());
+        }
         LOG_INFO(
             "event {} conn_id {} local {}:{} remote {}:{} accepted", log_event::kConnInit, sid, local_host, local_port, remote_host, remote_port);
         ec = socket.set_option(boost::asio::ip::tcp::no_delay(true), ec);

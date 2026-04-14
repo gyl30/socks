@@ -20,13 +20,8 @@
 #include "proxy_udp_upstream.h"
 #include "context_pool.h"
 #include "tun_udp_session.h"
-#include "connection_tracker.h"
 namespace mux
 {
-
-namespace
-{
-}    // namespace
 
 tun_udp_session::tun_udp_session(io_worker& worker,
                                  std::shared_ptr<router> router,
@@ -40,7 +35,6 @@ tun_udp_session::tun_udp_session(io_worker& worker,
       conn_id_(conn_id),
       cfg_(cfg),
       worker_(worker),
-      active_guard_(acquire_active_connection_guard()),
       router_(std::move(router)),
       pcb_(pcb),
       last_activity_time_ms_(net::now_ms()),
@@ -98,7 +92,7 @@ void tun_udp_session::enqueue_packet(pbuf* packet)
     if (payload.size() > constants::udp::kMaxPayload)
     {
         LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} target {}:{} drop tun udp payload too large {} max {}",
-                 log_event::kMux,
+                 log_event::kRelay,
                  trace_id_,
                  conn_id_,
                  client_endpoint_.address().to_string(),
@@ -119,15 +113,14 @@ void tun_udp_session::enqueue_packet(pbuf* packet)
                                    {
                                        return;
                                    }
-                                   if (self->stopped_.load(std::memory_order_relaxed) || ec == boost::asio::error::operation_aborted ||
-                                       ec == boost::asio::error::bad_descriptor ||
+                                   if (self->stopped_.load(std::memory_order_relaxed) || net::is_basic_close_error(ec) ||
                                        ec == boost::asio::experimental::error::channel_errors::channel_closed)
                                    {
                                        return;
                                    }
 
                                    LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} target {}:{} enqueue tun udp packet failed {}",
-                                            log_event::kMux,
+                                            log_event::kRelay,
                                             self->trace_id_,
                                             self->conn_id_,
                                             self->client_endpoint_.address().to_string(),
@@ -376,7 +369,7 @@ boost::asio::awaitable<void> tun_udp_session::packets_to_direct()
         if (ec)
         {
             LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} target {}:{} send tun direct udp payload failed {}",
-                     log_event::kMux,
+                     log_event::kRelay,
                      trace_id_,
                      conn_id_,
                      client_endpoint_.address().to_string(),
@@ -542,7 +535,7 @@ boost::asio::awaitable<bool> tun_udp_session::send_to_client(const boost::asio::
     if (out == nullptr)
     {
         LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} target {}:{} source {}:{} alloc lwip udp payload failed {}",
-                 log_event::kMux,
+                 log_event::kRelay,
                  trace_id_,
                  conn_id_,
                  client_endpoint_.address().to_string(),
@@ -566,7 +559,7 @@ boost::asio::awaitable<bool> tun_udp_session::send_to_client(const boost::asio::
     if (send_err != ERR_OK)
     {
         LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} target {}:{} source {}:{} send tun udp reply failed {}",
-                 log_event::kMux,
+                 log_event::kRelay,
                  trace_id_,
                  conn_id_,
                  client_endpoint_.address().to_string(),

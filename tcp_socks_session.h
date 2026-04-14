@@ -23,8 +23,7 @@ class tcp_socks_session : public std::enable_shared_from_this<tcp_socks_session>
                       std::shared_ptr<router> router,
                       uint32_t sid,
                       uint64_t trace_id,
-                      const config& cfg,
-                      std::shared_ptr<void> active_connection_guard);
+                      const config& cfg);
 
     [[nodiscard]] boost::asio::awaitable<void> start(const std::string& host, uint16_t port);
     void stop();
@@ -66,7 +65,6 @@ class tcp_socks_session : public std::enable_shared_from_this<tcp_socks_session>
     uint16_t target_port_ = 0;
     std::string route_name_ = "unknown";
     std::shared_ptr<router> router_;
-    std::shared_ptr<void> active_connection_guard_;
 };
 
 }    // namespace mux

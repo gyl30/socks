@@ -66,7 +66,6 @@ class tproxy_udp_session : public std::enable_shared_from_this<tproxy_udp_sessio
     uint32_t conn_id_ = 0;
     const config& cfg_;
     io_worker& worker_;
-    std::shared_ptr<void> active_guard_;
     route_type route_;
     std::atomic<bool> stopped_{false};
     uint64_t last_activity_time_ms_ = 0;

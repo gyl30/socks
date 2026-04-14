@@ -18,7 +18,6 @@
 #include "trace_id.h"
 #include "constants.h"
 #include "net_utils.h"
-#include "connection_tracker.h"
 #include "tproxy_tcp_session.h"
 namespace mux
 {
@@ -31,13 +30,6 @@ std::string describe_endpoint(const boost::asio::ip::tcp::endpoint& endpoint)
 }
 
 std::string describe_endpoint_error(const boost::system::error_code& ec) { return std::string("<error:") + ec.message() + ">"; }
-
-[[nodiscard]] bool is_expected_upstream_shutdown_error(const boost::system::error_code& ec)
-{
-    return ec == boost::asio::error::operation_aborted || ec == boost::asio::error::bad_descriptor ||
-           ec == boost::asio::experimental::error::channel_errors::channel_closed ||
-           ec == boost::asio::experimental::error::channel_errors::channel_cancelled || ec == boost::asio::error::connection_reset;
-}
 
 }    // namespace
 
@@ -53,7 +45,6 @@ tproxy_tcp_session::tproxy_tcp_session(boost::asio::ip::tcp::socket socket,
       cfg_(cfg)
 {
     last_activity_time_ms_ = net::now_ms();
-    active_guard_ = acquire_active_connection_guard();
 }
 
 boost::asio::awaitable<void> tproxy_tcp_session::start() { co_await run(); }
@@ -392,7 +383,7 @@ boost::asio::awaitable<void> tproxy_tcp_session::upstream_to_client(std::shared_
             }
             else
             {
-                if (is_expected_upstream_shutdown_error(ec))
+                if (net::is_channel_close_error(ec) || ec == boost::asio::error::connection_reset)
                 {
                     LOG_INFO(
                         "event {} trace_id {:016x} conn_id {} client {}:{} target {}:{} stage upstream_to_client backend read stopped {} code {}",

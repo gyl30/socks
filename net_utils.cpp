@@ -53,6 +53,11 @@ namespace mux::net
 namespace
 {
 
+[[nodiscard]] std::pair<std::string, uint16_t> endpoint_parts(const boost::asio::ip::tcp::endpoint& endpoint)
+{
+    return {endpoint.address().to_string(), endpoint.port()};
+}
+
 uint64_t fnv1a_update(uint64_t hash, const unsigned char* data, std::size_t len)
 {
     for (std::size_t i = 0; i < len; ++i)
@@ -408,6 +413,42 @@ boost::asio::ip::udp::endpoint endpoint_from_sockaddr(const sockaddr_storage& ad
         return endpoint_from_sockaddr_v6(addr, len);
     }
     return {};
+}
+
+void load_tcp_socket_endpoints(boost::asio::ip::tcp::socket& socket,
+                               std::string& local_host,
+                               uint16_t& local_port,
+                               std::string& remote_host,
+                               uint16_t& remote_port,
+                               boost::system::error_code* local_ec,
+                               boost::system::error_code* remote_ec)
+{
+    local_host = "unknown";
+    local_port = 0;
+    remote_host = "unknown";
+    remote_port = 0;
+
+    boost::system::error_code local_endpoint_ec;
+    const auto local_endpoint = socket.local_endpoint(local_endpoint_ec);
+    if (!local_endpoint_ec)
+    {
+        std::tie(local_host, local_port) = endpoint_parts(local_endpoint);
+    }
+    if (local_ec != nullptr)
+    {
+        *local_ec = local_endpoint_ec;
+    }
+
+    boost::system::error_code remote_endpoint_ec;
+    const auto remote_endpoint = socket.remote_endpoint(remote_endpoint_ec);
+    if (!remote_endpoint_ec)
+    {
+        std::tie(remote_host, remote_port) = endpoint_parts(remote_endpoint);
+    }
+    if (remote_ec != nullptr)
+    {
+        *remote_ec = remote_endpoint_ec;
+    }
 }
 
 bool get_original_tcp_dst(boost::asio::ip::tcp::socket& socket, boost::asio::ip::tcp::endpoint& endpoint, boost::system::error_code& ec)

@@ -23,22 +23,6 @@
 namespace mux
 {
 
-namespace
-{
-
-[[nodiscard]] bool is_expected_proxy_shutdown(const boost::system::error_code& ec)
-{
-    return ec == boost::asio::error::operation_aborted || ec == boost::asio::error::bad_descriptor ||
-           ec == boost::asio::error::not_connected || ec == boost::asio::error::eof;
-}
-
-[[nodiscard]] bool is_expected_direct_close_error(const boost::system::error_code& ec)
-{
-    return ec == boost::asio::error::operation_aborted || ec == boost::asio::error::bad_descriptor || ec == boost::asio::error::not_connected;
-}
-
-}    // namespace
-
 class direct_upstream final : public upstream
 {
    public:
@@ -235,7 +219,7 @@ boost::asio::awaitable<void> direct_upstream::close()
 {
     boost::system::error_code ec;
     ec = socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
-    if (ec && !is_expected_direct_close_error(ec))
+    if (ec && !net::is_socket_shutdown_error(ec))
     {
         LOG_WARN("event {} trace_id {:016x} conn_id {} stage close target {}:{} bind {}:{} shutdown failed {}",
                  log_event::kRoute,
@@ -248,7 +232,7 @@ boost::asio::awaitable<void> direct_upstream::close()
                  ec.message());
     }
     ec = socket_.close(ec);
-    if (ec && !is_expected_direct_close_error(ec))
+    if (ec && !net::is_socket_shutdown_error(ec))
     {
         LOG_WARN("event {} trace_id {:016x} conn_id {} stage close target {}:{} bind {}:{} socket failed {}",
                  log_event::kRoute,
@@ -509,7 +493,7 @@ boost::asio::awaitable<std::size_t> proxy_upstream::read(std::vector<uint8_t>& b
         co_return 0;
     }
     const auto bytes_read = co_await connection_->read_some(buf, 0, ec);
-    if (ec && !is_expected_proxy_shutdown(ec))
+    if (ec && !net::is_socket_close_error(ec))
     {
         LOG_WARN("event {} trace_id {:016x} conn_id {} target {}:{} bind {}:{} stage read_proxy_data error {}",
                  log_event::kRoute,
@@ -542,7 +526,7 @@ boost::asio::awaitable<void> proxy_upstream::shutdown_send(boost::system::error_
         co_return;
     }
     co_await connection_->shutdown_send(ec);
-    if (is_expected_proxy_shutdown(ec))
+    if (net::is_socket_close_error(ec))
     {
         ec.clear();
     }

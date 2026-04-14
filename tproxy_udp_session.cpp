@@ -24,7 +24,6 @@
 #include "proxy_protocol.h"
 #include "proxy_udp_upstream.h"
 #include "context_pool.h"
-#include "connection_tracker.h"
 #include "tproxy_udp_session.h"
 namespace mux
 {
@@ -46,12 +45,6 @@ void set_socket_reuse_port(int fd, boost::system::error_code& ec)
     (void)fd;
     ec = boost::system::error_code(static_cast<int>(boost::system::errc::not_supported), boost::system::generic_category());
 #endif
-}
-
-[[nodiscard]] bool is_normal_close_error(const boost::system::error_code& ec)
-{
-    return ec == boost::asio::error::operation_aborted || ec == boost::asio::error::bad_descriptor ||
-           ec == boost::asio::error::not_connected || ec == boost::asio::error::eof;
 }
 
 }    // namespace
@@ -76,9 +69,7 @@ tproxy_udp_session::tproxy_udp_session(io_worker& worker,
       on_close_(std::move(on_close)),
       packet_channel_(worker.io_context, constants::udp::kPacketChannelCapacity),
       reply_sockets_(constants::udp::kMaxReplySockets)
-{
-    active_guard_ = acquire_active_connection_guard();
-}
+{}
 
 void tproxy_udp_session::start()
 {
@@ -97,7 +88,7 @@ boost::asio::awaitable<udp_enqueue_result> tproxy_udp_session::enqueue_packet(st
     if (payload.size() > constants::udp::kMaxPacketSize)
     {
         LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} target {}:{} drop udp packet because payload too large size {} max {}",
-                 log_event::kMux,
+                 log_event::kRelay,
                  trace_id_,
                  conn_id_,
                  client_endpoint_.address().to_string(),
@@ -113,14 +104,14 @@ boost::asio::awaitable<udp_enqueue_result> tproxy_udp_session::enqueue_packet(st
         co_await packet_channel_.async_send(boost::system::error_code{}, std::move(payload), boost::asio::as_tuple(boost::asio::use_awaitable));
     if (send_ec)
     {
-        if (stopped_.load(std::memory_order_relaxed) || send_ec == boost::asio::error::operation_aborted ||
-            send_ec == boost::asio::error::bad_descriptor || send_ec == boost::asio::experimental::error::channel_errors::channel_closed)
+        if (stopped_.load(std::memory_order_relaxed) || net::is_basic_close_error(send_ec) ||
+            send_ec == boost::asio::experimental::error::channel_errors::channel_closed)
         {
             co_return udp_enqueue_result::kClosed;
         }
 
         LOG_WARN("event {} trace_id {:016x} conn_id {} enqueue udp packet failed {} client {}:{} target {}:{}",
-                 log_event::kMux,
+                 log_event::kRelay,
                  trace_id_,
                  conn_id_,
                  send_ec.message(),
@@ -337,7 +328,7 @@ boost::asio::awaitable<void> tproxy_udp_session::packets_to_direct()
         if (ec)
         {
             LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} target {}:{} send direct udp payload failed {}",
-                     log_event::kMux,
+                     log_event::kRelay,
                      trace_id_,
                      conn_id_,
                      client_endpoint_.address().to_string(),
@@ -489,12 +480,12 @@ boost::asio::awaitable<bool> tproxy_udp_session::send_to_client(const boost::asi
         {
             ec = boost::asio::error::operation_aborted;
         }
-        if (stopped_.load(std::memory_order_relaxed) || is_normal_close_error(ec))
+        if (stopped_.load(std::memory_order_relaxed) || net::is_socket_close_error(ec))
         {
             co_return false;
         }
         LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} target {}:{} source {}:{} get reply socket failed {}",
-                 log_event::kMux,
+                 log_event::kRelay,
                  trace_id_,
                  conn_id_,
                  client_endpoint_.address().to_string(),
@@ -511,7 +502,7 @@ boost::asio::awaitable<bool> tproxy_udp_session::send_to_client(const boost::asi
         boost::asio::buffer(payload, payload_len), client_endpoint_, boost::asio::as_tuple(boost::asio::use_awaitable));
     if (send_ec)
     {
-        if (stopped_.load(std::memory_order_relaxed) || is_normal_close_error(send_ec))
+        if (stopped_.load(std::memory_order_relaxed) || net::is_socket_close_error(send_ec))
         {
             co_return false;
         }
@@ -521,7 +512,7 @@ boost::asio::awaitable<bool> tproxy_udp_session::send_to_client(const boost::asi
         (void)close_ec;
         reply_sockets_.erase(key);
         LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} target {}:{} source {}:{} send udp reply to client failed {}",
-                 log_event::kMux,
+                 log_event::kRelay,
                  trace_id_,
                  conn_id_,
                  client_endpoint_.address().to_string(),

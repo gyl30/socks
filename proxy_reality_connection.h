@@ -29,7 +29,6 @@ class proxy_reality_connection
     [[nodiscard]] static boost::asio::awaitable<std::shared_ptr<proxy_reality_connection>> connect(
         const boost::asio::any_io_executor& executor, const config& cfg, uint32_t conn_id, boost::system::error_code& ec);
 
-    [[nodiscard]] uint32_t conn_id() const { return conn_id_; }
     [[nodiscard]] std::string_view local_host() const { return local_host_; }
     [[nodiscard]] uint16_t local_port() const { return local_port_; }
     [[nodiscard]] std::string_view remote_host() const { return remote_host_; }

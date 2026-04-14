@@ -60,12 +60,6 @@ std::vector<uint8_t> build_udp_associate_reply(const boost::asio::ip::address& l
 namespace
 {
 
-[[nodiscard]] bool is_normal_close_error(const boost::system::error_code& ec)
-{
-    return ec == boost::asio::error::operation_aborted || ec == boost::asio::error::bad_descriptor ||
-           ec == boost::asio::error::not_connected || ec == boost::asio::error::eof;
-}
-
 [[nodiscard]] std::string udp_target_key(const std::string& host, const uint16_t port)
 {
     return host + "|" + std::to_string(port);
@@ -251,8 +245,7 @@ udp_socks_session::udp_socks_session(boost::asio::ip::tcp::socket socket,
                                      std::shared_ptr<router> router,
                                      const uint32_t sid,
                                      const uint64_t trace_id,
-                                     const config& cfg,
-                                     std::shared_ptr<void> active_connection_guard)
+                                     const config& cfg)
     : trace_id_(trace_id),
       conn_id_(sid),
       cfg_(cfg),
@@ -266,7 +259,6 @@ udp_socks_session::udp_socks_session(boost::asio::ip::tcp::socket socket,
       router_(std::move(router)),
       resolved_targets_(constants::udp::kMaxCacheEntries),
       direct_peers_(constants::udp::kMaxCacheEntries),
-      active_connection_guard_(std::move(active_connection_guard)),
       proxy_upstream_channel_(worker.io_context, 1)
 {
     last_activity_time_ms_ = net::now_ms();
@@ -736,7 +728,7 @@ boost::asio::awaitable<void> udp_socks_session::forward_direct_packet(const sock
     const auto target = co_await resolve_target_endpoint(header.addr, header.port, ec);
     if (ec)
     {
-        if (!is_normal_close_error(ec))
+        if (!net::is_socket_close_error(ec))
         {
             ec.clear();
         }
@@ -764,7 +756,7 @@ boost::asio::awaitable<void> udp_socks_session::forward_direct_packet(const sock
     (void)send_n;
     if (send_ec)
     {
-        if (is_normal_close_error(send_ec))
+        if (net::is_socket_close_error(send_ec))
         {
             ec = send_ec;
         }
@@ -805,7 +797,7 @@ boost::asio::awaitable<void> udp_socks_session::direct_udp_socket_loop(boost::as
             co_await direct_socket.async_receive_from(boost::asio::buffer(buf), sender, boost::asio::redirect_error(boost::asio::use_awaitable, ec));
         if (ec)
         {
-            if (!is_normal_close_error(ec))
+            if (!net::is_socket_close_error(ec))
             {
                 LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} udp bind {}:{} direct udp receive error {}",
                          log_event::kRoute,
@@ -847,7 +839,7 @@ boost::asio::awaitable<void> udp_socks_session::direct_udp_socket_loop(boost::as
         co_await forward_direct_reply_to_client(sender, buf.data(), n, ec);
         if (ec)
         {
-            if (!is_normal_close_error(ec))
+            if (!net::is_socket_close_error(ec))
             {
                 ec = direct_socket.close(ec);
                 (void)ec;
@@ -1037,7 +1029,7 @@ boost::asio::awaitable<void> udp_socks_session::udp_socket_loop()
             co_await udp_socket_.async_receive_from(boost::asio::buffer(buf), sender, boost::asio::as_tuple(boost::asio::use_awaitable));
         if (recv_ec)
         {
-            if (!stopped_ && !is_normal_close_error(recv_ec))
+            if (!stopped_ && !net::is_socket_close_error(recv_ec))
             {
                 LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} udp bind {}:{} receive error {}",
                          log_event::kSocks,
@@ -1205,7 +1197,7 @@ boost::asio::awaitable<void> udp_socks_session::proxy_to_udp_sock(std::shared_pt
                 continue;
             }
             clear_proxy_upstream_if_current(upstream);
-            if (!stopped_ && !is_normal_close_error(ec))
+            if (!stopped_ && !net::is_socket_close_error(ec))
             {
                 LOG_WARN("event {} trace_id {:016x} conn_id {} client {}:{} udp bind {}:{} read proxy udp datagram failed {}",
                          log_event::kSocks,

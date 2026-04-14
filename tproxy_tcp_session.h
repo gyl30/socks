@@ -64,7 +64,6 @@ class tproxy_tcp_session : public std::enable_shared_from_this<tproxy_tcp_sessio
     boost::asio::steady_timer idle_timer_;
     std::shared_ptr<router> router_;
     const config& cfg_;
-    std::shared_ptr<void> active_guard_;
     uint64_t last_activity_time_ms_{0};
     std::atomic<bool> backend_closed_{false};
 };

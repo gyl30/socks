@@ -33,8 +33,7 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
                       std::shared_ptr<router> router,
                       uint32_t sid,
                       uint64_t trace_id,
-                      const config& cfg,
-                      std::shared_ptr<void> active_connection_guard = nullptr);
+                      const config& cfg);
 
     void start(const std::string& host, uint16_t port);
 
@@ -123,7 +122,6 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
     uint16_t last_target_port_ = 0;
     lru_cache<std::string, endpoint_cache_entry> resolved_targets_;
     lru_cache<boost::asio::ip::udp::endpoint, peer_cache_entry, net::udp_endpoint_hash, net::udp_endpoint_equal> direct_peers_;
-    std::shared_ptr<void> active_connection_guard_;
     proxy_upstream_channel_type proxy_upstream_channel_;
 };
 
