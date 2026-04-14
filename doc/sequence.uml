@@ -7,31 +7,22 @@ participant "socks_client" as SocksClient
 participant "socks_session" as SocksSession
 participant "router" as Router
 participant "upstream" as Upstream
-participant "client_tunnel_pool" as TunnelPool
-participant "mux_connection(client)" as ClientMux
+participant "proxy_reality_connection" as ProxyConn
 participant "remote_server" as RemoteServer
-participant "remote_tcp_session" as RemoteTcp
+participant "remote_tcp_proxy_session" as RemoteTcp
 participant "Target" as Target
 
-== Startup ==
-SocksClient -> TunnelPool: start()
-loop i in [0, limits.max_connections)
-  TunnelPool -> RemoteServer: TCP connect + REALITY handshake
-  TunnelPool -> ClientMux: run() (active tunnel)
-end
-
-== SOCKS5 Handshake ==
 App -> SocksClient: TCP connect
 SocksClient -> SocksSession: create + start()
 App -> SocksSession: greeting(methods)
-SocksSession -> App: select method (NO_AUTH / USERPASS)
+SocksSession -> App: select method
 opt USERPASS
   App -> SocksSession: username/password
   SocksSession -> App: auth result
 end
 
 App -> SocksSession: CONNECT host:port
-SocksSession -> Router: decide_ip/decide_domain(host)
+SocksSession -> Router: decide_ip / decide_domain(host)
 
 alt route = direct
   SocksSession -> Upstream: direct_upstream.connect(host, port)
@@ -48,58 +39,54 @@ alt route = direct
   end
 else route = proxy
   SocksSession -> Upstream: proxy_upstream.connect(host, port)
-  Upstream -> TunnelPool: select_tunnel()
+  Upstream -> ProxyConn: connect()
+  ProxyConn -> RemoteServer: TCP connect + REALITY handshake
 
-  alt no active tunnel
+  Upstream -> ProxyConn: tcp_connect_request(host, port, trace_id)
+  ProxyConn -> RemoteServer: encrypted request
+  RemoteServer -> RemoteTcp: start(request)
+  RemoteTcp -> Target: resolve + connect
+
+  alt target connect failed
+    RemoteTcp -> RemoteServer: tcp_connect_reply(fail)
+    RemoteServer -> ProxyConn: encrypted reply
+    ProxyConn -> Upstream: tcp_connect_reply(fail)
     Upstream --> SocksSession: connect failed
-    SocksSession -> App: SOCKS REP_HOST_UNREACH
-  else tunnel selected
-    Upstream -> ClientMux: create_stream + SYN(host,port)
-    ClientMux -> RemoteServer: encrypted SYN
-    RemoteServer -> RemoteTcp: create + start(syn)
-    RemoteTcp -> Target: resolve + connect
+    SocksSession -> App: SOCKS error reply
+  else target connect success
+    Target --> RemoteTcp: connected
+    RemoteTcp -> RemoteServer: tcp_connect_reply(success, bind)
+    RemoteServer -> ProxyConn: encrypted reply
+    ProxyConn -> Upstream: tcp_connect_reply(success)
+    Upstream --> SocksSession: connect ok
+    SocksSession -> App: SOCKS REP_SUCCESS
 
-    alt target connect failed
-      RemoteTcp -> RemoteServer: ACK(rep!=success)
-      RemoteServer -> ClientMux: encrypted ACK(fail)
-      ClientMux -> Upstream: ACK(fail)
-      Upstream --> SocksSession: connect failed
-      SocksSession -> App: SOCKS error reply
-    else target connect success
-      Target --> RemoteTcp: connected
-      RemoteTcp -> RemoteServer: ACK(success,bind)
-      RemoteServer -> ClientMux: encrypted ACK(success)
-      ClientMux -> Upstream: ACK(success)
-      Upstream --> SocksSession: connect ok
-      SocksSession -> App: SOCKS REP_SUCCESS
+    loop bidirectional relay
+      App -> SocksSession: data
+      SocksSession -> Upstream: write(data)
+      Upstream -> ProxyConn: write(plaintext)
+      ProxyConn -> RemoteServer: encrypted application data
+      RemoteServer -> RemoteTcp: relay to target
 
-      loop bidirectional relay
-        App -> SocksSession: data
-        SocksSession -> Upstream: DAT
-        Upstream -> ClientMux: mux DAT
-        ClientMux -> RemoteServer: encrypted DAT
-        RemoteServer -> RemoteTcp: DAT to target
-
-        Target -> RemoteTcp: data
-        RemoteTcp -> RemoteServer: DAT
-        RemoteServer -> ClientMux: encrypted DAT
-        ClientMux -> Upstream: DAT
-        Upstream -> SocksSession: data
-        SocksSession -> App: data
-      end
+      Target -> RemoteTcp: data
+      RemoteTcp -> RemoteServer: relay to client
+      RemoteServer -> ProxyConn: encrypted application data
+      ProxyConn -> Upstream: read(plaintext)
+      Upstream -> SocksSession: data
+      SocksSession -> App: data
     end
   end
 end
 
 == Close ==
 App -> SocksSession: close / idle timeout
-SocksSession -> Upstream: close()
-Upstream -> ClientMux: remove_stream()
+SocksSession -> Upstream: shutdown_send / close
+Upstream -> ProxyConn: shutdown_send / close
 
-note over SocksSession, RemoteTcp
-  支持 TCP 半关闭：
-  任一侧读到 EOF，会对另一侧执行 shutdown_send。
-  会话结束仍以 stream 移除或连接关闭为主。
+note over Upstream, ProxyConn
+  route=proxy 时，一次 TCP 代理请求独占一条 REALITY 连接。
+  不再存在预建隧道、多路 stream、
+  stream_id、旧式控制帧或保活帧。
 end note
 
 @enduml

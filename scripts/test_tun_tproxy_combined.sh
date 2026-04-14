@@ -250,9 +250,8 @@ cat >"$tmp_dir/server.json" <<EOF
   "log": {"level": "info", "file": "$tmp_dir/server.log"},
   "inbound": {"host": "$host_ip", "port": $server_port},
   "socks": {"enabled": false},
-  "reality": {"sni": "$sni", "private_key": "$private_key", "public_key": "$public_key", "short_id": "$short_id"},
-  "timeout": {"read": 5, "write": 5, "connect": 5, "idle": 30},
-  "limits": {"max_connections": 16, "max_buffer": 33554432, "max_streams": 256, "max_handshake_records": 256}
+  "reality": {"sni": "$sni", "max_handshake_records": 256, "private_key": "$private_key", "public_key": "$public_key", "short_id": "$short_id"},
+  "timeout": {"read": 5, "write": 5, "connect": 5, "idle": 30}
 }
 EOF
 
@@ -265,10 +264,8 @@ cat >"$tmp_dir/client.json" <<EOF
   "tproxy": {"enabled": true, "listen_host": "0.0.0.0", "tcp_port": $tproxy_tcp_port, "udp_port": $tproxy_udp_port, "mark": 17},
   "tun": {"enabled": true, "name": "$tun_name", "mtu": 1400, "ipv4": "198.18.0.1", "ipv4_prefix": 32, "ipv6": "fd00::1", "ipv6_prefix": 128},
   "outbound": {"host": "$host_ip", "port": $server_port},
-  "reality": {"sni": "$sni", "fingerprint": "random", "public_key": "$public_key", "short_id": "$short_id"},
-  "timeout": {"read": 5, "write": 5, "connect": 5, "idle": 30},
-  "limits": {"max_connections": 4, "max_buffer": 33554432, "max_streams": 256, "max_handshake_records": 256},
-  "heartbeat": {"min_interval": 15, "max_interval": 45, "min_padding": 32, "max_padding": 128}
+  "reality": {"sni": "$sni", "fingerprint": "random", "max_handshake_records": 256, "public_key": "$public_key", "short_id": "$short_id"},
+  "timeout": {"read": 5, "write": 5, "connect": 5, "idle": 30}
 }
 EOF
 
@@ -361,7 +358,7 @@ ns_exec "$ns_client" env LD_LIBRARY_PATH="$runtime_ld_library_path" SOCKS_CONFIG
 client_pid=$!
 pids+=("$client_pid")
 
-wait_for_log "$tmp_dir/client.log" "tun client started name $tun_name" 20
+wait_for_log "$tmp_dir/client.log" "tun client started" 20
 wait_for_log "$tmp_dir/client.log" "tproxy tcp listening on 0.0.0.0:$tproxy_tcp_port" 20
 wait_for_log "$tmp_dir/client.log" "tproxy udp listening on 0.0.0.0:$tproxy_udp_port" 20
 
@@ -433,13 +430,6 @@ run_step "tproxy udp proxy" \
         --port "$udp_port" \
         --payload "tproxy-proxy" \
         --expect-echo
-
-pool_start_count="$(grep -Fc "tunnel pool starting" "$tmp_dir/client.log" || true)"
-printf 'tunnel_pool_start_count=%s\n' "$pool_start_count" >"$tmp_dir/pool-count.txt"
-if [[ "$pool_start_count" != "1" ]]; then
-    echo "expected one shared tunnel pool start log got $pool_start_count" >&2
-    exit 1
-fi
 
 wait_for_log "$tmp_dir/client.log" "target ${direct_ip}:${http_port} route direct" 5
 wait_for_log "$tmp_dir/client.log" "target ${proxy_ip}:${http_port} route proxy" 5

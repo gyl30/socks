@@ -333,6 +333,7 @@ def main():
             },
             "reality": {
                 "sni": reality_sni,
+                "max_handshake_records": 256,
                 "private_key": private_key,
                 "public_key": public_key,
                 "short_id": "0102030405060708",
@@ -342,12 +343,6 @@ def main():
                 "write": 5,
                 "connect": 5,
                 "idle": 30,
-            },
-            "limits": {
-                "max_connections": 64,
-                "max_buffer": 10485760,
-                "max_streams": 256,
-                "max_handshake_records": 256,
             },
         }
 
@@ -378,6 +373,7 @@ def main():
             "reality": {
                 "sni": reality_sni,
                 "fingerprint": "random",
+                "max_handshake_records": 256,
                 "public_key": public_key,
                 "short_id": "0102030405060708",
             },
@@ -386,18 +382,6 @@ def main():
                 "write": 5,
                 "connect": 5,
                 "idle": 30,
-            },
-            "limits": {
-                "max_connections": 4,
-                "max_buffer": 10485760,
-                "max_streams": 256,
-                "max_handshake_records": 256,
-            },
-            "heartbeat": {
-                "min_interval": 15,
-                "max_interval": 45,
-                "min_padding": 32,
-                "max_padding": 128,
             },
         }
 
@@ -521,7 +505,7 @@ def main():
 
         print("reality_https_proxy ok")
         print("reality_sni_hijack ok")
-        print("mux_parallel ok")
+        print("parallel_proxy ok")
         print("udp_associate ok")
         if args.real_url:
             print("real_https_url ok")

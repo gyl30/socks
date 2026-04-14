@@ -21,6 +21,7 @@
   },
   "reality": {
     "sni": "www.example.com",
+    "max_handshake_records": 256,
     "private_key": "替换为服务端私钥",
     "public_key": "替换为服务端公钥",
     "short_id": "0102030405060708"
@@ -30,18 +31,6 @@
     "write": 100,
     "connect": 10,
     "idle": 300
-  },
-  "limits": {
-    "max_connections": 10000,
-    "max_buffer": 10485760,
-    "max_streams": 1024,
-    "max_handshake_records": 256
-  },
-  "heartbeat": {
-    "min_interval": 15,
-    "max_interval": 45,
-    "min_padding": 32,
-    "max_padding": 1024
   }
 }
 ```
@@ -87,6 +76,7 @@
   "reality": {
     "sni": "www.example.com",
     "fingerprint": "random",
+    "max_handshake_records": 256,
     "public_key": "替换为服务端公钥",
     "short_id": "0102030405060708"
   },
@@ -95,18 +85,6 @@
     "write": 100,
     "connect": 10,
     "idle": 300
-  },
-  "limits": {
-    "max_connections": 10,
-    "max_buffer": 10485760,
-    "max_streams": 1024,
-    "max_handshake_records": 256
-  },
-  "heartbeat": {
-    "min_interval": 15,
-    "max_interval": 45,
-    "min_padding": 32,
-    "max_padding": 1024
   }
 }
 ```

@@ -5,9 +5,8 @@ skinparam componentStyle uml2
 package "Client Process" {
     [SOCKS5 Listener] as SocksListener
     [SOCKS Session] as SocksSession
-    [TPROXY TCP Listener] as TproxyListener
-    [TPROXY TCP Session] as TproxySession
-    [TPROXY UDP Listener] as TproxyUdpListener
+    [TPROXY Client] as TproxyClient
+    [TPROXY TCP Session] as TproxyTcpSession
     [TPROXY UDP Session] as TproxyUdpSession
     [TUN Device] as TunDevice
     [tun_client] as TunClient
@@ -17,91 +16,79 @@ package "Client Process" {
     [Router] as Router
     [direct_upstream] as DirectUpstream
     [proxy_upstream] as ProxyUpstream
+    [proxy_udp_upstream] as ProxyUdpUpstream
 
-    [client_tunnel_pool] as TunnelPool
-    [mux_connection (client)] as ClientMux
+    [proxy_reality_connection (client)] as ClientConn
     [reality_engine (client)] as ClientReality
-
 }
 
 cloud "Internet" {
-    [TLS-like TCP Tunnel] as Network
+    [TLS-like TCP Connection] as Network
 }
 
 package "Server Process" {
     [remote_server] as RemoteServer
-    [mux_connection (server)] as ServerMux
+    [proxy_reality_connection (server)] as ServerConn
     [reality_engine (server)] as ServerReality
-    [remote_tcp_session] as RemoteTcp
-    [remote_udp_session] as RemoteUdp
+    [remote_tcp_proxy_session] as RemoteTcp
+    [remote_udp_proxy_session] as RemoteUdp
 }
 
 [User App] as App
 [Target Service] as Target
+
 App --> SocksListener : SOCKS5 TCP
 SocksListener --> SocksSession : create
 
-App --> TproxyListener : redirected TCP (Linux)
-TproxyListener --> TproxySession : create
-
-App --> TproxyUdpListener : redirected UDP (Linux)
-TproxyUdpListener --> TproxyUdpSession : create
+App --> TproxyClient : redirected TCP/UDP
+TproxyClient --> TproxyTcpSession : TCP create
+TproxyClient --> TproxyUdpSession : UDP create
 
 App --> TunDevice : routed L3 packets
 TunDevice --> TunClient : read/write packets
-TunClient --> TunTcpSession : TCP accept via lwIP
-TunClient --> TunUdpSession : UDP recv via lwIP
+TunClient --> TunTcpSession : TCP via lwIP
+TunClient --> TunUdpSession : UDP via lwIP
 
 SocksSession --> Router : decide_ip / decide_domain
-TproxySession --> Router : decide_ip
+TproxyTcpSession --> Router : decide_ip
 TproxyUdpSession --> Router : decide_ip
 TunTcpSession --> Router : decide_ip / decide_domain
 TunUdpSession --> Router : decide_ip
 
-Router --> DirectUpstream : route=direct
-Router --> ProxyUpstream : route=proxy
+Router --> DirectUpstream : route=direct,tcp
+Router --> ProxyUpstream : route=proxy,tcp
+Router --> ProxyUdpUpstream : route=proxy,udp
 
 DirectUpstream --> Target : direct TCP
+SocksSession --> ProxyUdpUpstream : UDP ASSOCIATE proxy path
+TproxyUdpSession --> Target : direct UDP
 TunUdpSession --> Target : direct UDP
 
-ProxyUpstream --> TunnelPool : select_tunnel
-TunnelPool --> ClientMux : create/use tunnel
-ClientMux --> ClientReality : encrypt/decrypt mux frames
+ProxyUpstream --> ClientConn : one TCP request one connection
+ProxyUdpUpstream --> ClientConn : one UDP session one connection
+ClientConn --> ClientReality : encrypt/decrypt plaintext
 ClientReality <--> Network
 Network <--> ServerReality
-ServerReality --> ServerMux : plaintext mux frame
+ServerReality --> ServerConn : decrypt/encrypt plaintext
 
-RemoteServer --> ServerReality : REALITY 握手
-RemoteServer --> ServerMux : async_receive_syn
-ServerMux --> RemoteTcp : SYN CONNECT
-ServerMux --> RemoteUdp : SYN UDP_ASSOCIATE
-
+RemoteServer --> ServerConn : wrap accepted socket
+RemoteServer --> RemoteTcp : tcp_connect_request
+RemoteServer --> RemoteUdp : udp_associate_request
 RemoteTcp --> Target : TCP connect + relay
 RemoteUdp --> Target : UDP relay
 
-TproxyUdpSession --> TunnelPool : route=proxy
-TproxyUdpSession --> Target : direct UDP
-
 note right of ProxyUpstream
-  route=proxy 时：
-  create_stream + SYN/ACK/DAT
+  每个代理 TCP 请求独占一条 REALITY 连接。
+end note
+
+note right of ProxyUdpUpstream
+  UDP 保留报文 framing，
+  但不再有 mux stream。
 end note
 
 note right of RemoteServer
-  REALITY 成功握手路径直接返回协议内临时证书。
-  不再依赖按 SNI 抓取外部证书。
-  首个 ClientHello 已完整读入时，认证失败会回退到
-  reality.sni 或客户端 SNI 的 443 做普通 TLS 中继。
-  更完整的站点素材拟态仍未实现。
-end note
-
-note bottom of TproxyListener
-  TPROXY TCP/UDP 均已实现。
-end note
-
-note bottom of TunClient
-  TUN 入口依赖 tun_device + lwIP。
-  当前系统级自动化验证以 Linux 为主。
+  认证成功后只处理一个代理会话，
+  会话结束即关闭整条 REALITY 连接。
 end note
 
 @enduml

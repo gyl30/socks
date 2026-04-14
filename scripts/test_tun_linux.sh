@@ -327,6 +327,7 @@ cat >"$tmp_dir/server.json" <<EOF
   },
   "reality": {
     "sni": "$sni",
+    "max_handshake_records": 256,
     "private_key": "$private_key",
     "public_key": "$public_key",
     "short_id": "$short_id"
@@ -336,12 +337,6 @@ cat >"$tmp_dir/server.json" <<EOF
     "write": 5,
     "connect": 5,
     "idle": 30
-  },
-  "limits": {
-    "max_connections": 64,
-    "max_buffer": 10485760,
-    "max_streams": 256,
-    "max_handshake_records": 256
   }
 }
 EOF
@@ -380,6 +375,7 @@ cat >"$tmp_dir/client.json" <<EOF
   "reality": {
     "sni": "$sni",
     "fingerprint": "random",
+    "max_handshake_records": 256,
     "public_key": "$public_key",
     "short_id": "$short_id"
   },
@@ -388,18 +384,6 @@ cat >"$tmp_dir/client.json" <<EOF
     "write": 5,
     "connect": 5,
     "idle": 30
-  },
-  "limits": {
-    "max_connections": 8,
-    "max_buffer": 10485760,
-    "max_streams": 256,
-    "max_handshake_records": 256
-  },
-  "heartbeat": {
-    "min_interval": 15,
-    "max_interval": 45,
-    "min_padding": 32,
-    "max_padding": 128
   }
 }
 EOF
@@ -516,7 +500,7 @@ client_pid=$!
 pids+=("$client_pid")
 
 wait_for_port "$host_ip" "$server_port" "reality_server"
-wait_for_log "$tmp_dir/client.log" "tun client started name $tun_name" 20
+wait_for_log "$tmp_dir/client.log" "tun client started" 20
 host_netns_id="$(readlink /proc/$$/ns/net)"
 server_netns_id="$(readlink /proc/$server_pid/ns/net)"
 if [[ "$host_netns_id" != "$server_netns_id" ]]; then
@@ -578,7 +562,7 @@ run_step "tun udp proxy smoke" \
         --payload "tun-udp-echo" \
         --expect-echo
 
-wait_for_log "$tmp_dir/client.log" "tun client started name $tun_name" 5
+wait_for_log "$tmp_dir/client.log" "tun client started" 5
 
 echo "tun tcp proxy smoke ok"
 echo "tun udp proxy smoke ok"
