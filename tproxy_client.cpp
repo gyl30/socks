@@ -178,7 +178,6 @@ boost::asio::awaitable<void> tproxy_client::start_listeners()
     }
     if (cfg_.tproxy.udp_port != 0)
     {
-        ec.clear();
         open_udp_listener(udp_socket_, cfg_.tproxy.listen_host, cfg_.tproxy.udp_port, ec);
         if (ec)
         {

@@ -267,7 +267,6 @@ proxy_reality_connection::proxy_reality_connection(boost::asio::ip::tcp::socket 
 boost::asio::awaitable<std::shared_ptr<proxy_reality_connection>> proxy_reality_connection::connect(
     const boost::asio::any_io_executor& executor, const config& cfg, const uint32_t conn_id, boost::system::error_code& ec)
 {
-    ec.clear();
     const auto options = build_connect_options(cfg);
     boost::asio::ip::tcp::socket socket(executor);
     co_await tcp_connect_remote(socket, cfg, options, conn_id, ec);
@@ -314,7 +313,6 @@ boost::asio::awaitable<std::shared_ptr<proxy_reality_connection>> proxy_reality_
 
 boost::asio::awaitable<void> proxy_reality_connection::write(const std::span<const uint8_t> data, boost::system::error_code& ec)
 {
-    ec.clear();
     if (data.empty())
     {
         co_return;
@@ -350,7 +348,6 @@ boost::asio::awaitable<void> proxy_reality_connection::write(const std::span<con
 
 boost::asio::awaitable<void> proxy_reality_connection::write_packet(const std::vector<uint8_t>& packet, boost::system::error_code& ec)
 {
-    ec.clear();
     if (packet.size() > proxy::kMaxPacketSize)
     {
         ec = boost::asio::error::message_size;
@@ -378,7 +375,6 @@ std::size_t proxy_reality_connection::consume_plaintext(const std::span<uint8_t>
 
 boost::asio::awaitable<bool> proxy_reality_connection::ensure_plaintext_available(const uint32_t timeout_sec, boost::system::error_code& ec)
 {
-    ec.clear();
     while (pending_plaintext_.empty())
     {
         auto record = reality_engine_.decrypt_record(ec);
@@ -452,7 +448,6 @@ boost::asio::awaitable<std::size_t> proxy_reality_connection::read_some(std::vec
                                                                         const uint32_t timeout_sec,
                                                                         boost::system::error_code& ec)
 {
-    ec.clear();
     if (buffer.empty())
     {
         buffer.resize(constants::net::kBufferSize);
@@ -470,7 +465,6 @@ boost::asio::awaitable<bool> proxy_reality_connection::read_exact(std::vector<ui
                                                                   const uint32_t timeout_sec,
                                                                   boost::system::error_code& ec)
 {
-    ec.clear();
     out.clear();
     out.reserve(size);
     while (out.size() < size)
@@ -489,7 +483,6 @@ boost::asio::awaitable<bool> proxy_reality_connection::read_exact(std::vector<ui
 
 boost::asio::awaitable<std::vector<uint8_t>> proxy_reality_connection::read_packet(const uint32_t timeout_sec, boost::system::error_code& ec)
 {
-    ec.clear();
     std::vector<uint8_t> header;
     if (!(co_await read_exact(header, 4, timeout_sec, ec)))
     {
@@ -523,7 +516,6 @@ boost::asio::awaitable<std::vector<uint8_t>> proxy_reality_connection::read_pack
 
 boost::asio::awaitable<void> proxy_reality_connection::shutdown_send(boost::system::error_code& ec)
 {
-    ec.clear();
     ec = socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
     if (ec == boost::asio::error::not_connected)
     {
@@ -534,7 +526,6 @@ boost::asio::awaitable<void> proxy_reality_connection::shutdown_send(boost::syst
 
 void proxy_reality_connection::close(boost::system::error_code& ec)
 {
-    ec.clear();
     ec = socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
     if (ec == boost::asio::error::not_connected)
     {

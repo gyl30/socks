@@ -28,7 +28,6 @@ void handshake_reassembler::append(std::span<const uint8_t> data)
 
 bool handshake_reassembler::next(std::vector<uint8_t>& out, boost::system::error_code& ec)
 {
-    ec.clear();
     if (overflowed_)
     {
         overflowed_ = false;

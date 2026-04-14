@@ -21,7 +21,6 @@ namespace
 
 [[nodiscard]] std::size_t hash_size(const EVP_MD* md, boost::system::error_code& ec)
 {
-    ec.clear();
     const int hash_len = EVP_MD_size(md);
     if (hash_len <= 0)
     {
@@ -36,7 +35,6 @@ namespace
 std::pair<std::vector<uint8_t>, std::vector<uint8_t>> derive_traffic_keys(
     const std::vector<uint8_t>& secret, boost::system::error_code& ec, std::size_t key_len, std::size_t iv_len, const EVP_MD* md)
 {
-    ec.clear();
     auto key = crypto_util::hkdf_expand_label(secret, "key", {}, key_len, md, ec);
     if (ec)
     {
@@ -55,7 +53,6 @@ handshake_keys derive_handshake_keys(const std::vector<uint8_t>& shared_secret,
                                      const EVP_MD* md,
                                      boost::system::error_code& ec)
 {
-    ec.clear();
     const auto hash_len = hash_size(md, ec);
     if (ec)
     {
@@ -119,7 +116,6 @@ std::pair<std::vector<uint8_t>, std::vector<uint8_t>> derive_application_secrets
                                                                                  const EVP_MD* md,
                                                                                  boost::system::error_code& ec)
 {
-    ec.clear();
     const auto hash_len = hash_size(md, ec);
     if (ec)
     {
@@ -143,7 +139,6 @@ std::vector<uint8_t> compute_finished_verify_data(const std::vector<uint8_t>& ba
                                                   const EVP_MD* md,
                                                   boost::system::error_code& ec)
 {
-    ec.clear();
     const auto hash_len = hash_size(md, ec);
     if (ec)
     {

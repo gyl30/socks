@@ -433,7 +433,6 @@ boost::asio::awaitable<const char*> read_client_hello_handshake(boost::asio::ip:
                                                                 const server_log_context& log_context,
                                                                 boost::system::error_code& ec)
 {
-    ec.clear();
     wire_buf.clear();
     handshake_buf.clear();
     const auto handshake_start_ms = mux::net::now_ms();
@@ -549,7 +548,6 @@ auth_inputs build_auth_decrypt_inputs(const server_handshake_state& state,
                                       const std::vector<uint8_t>& server_private_key,
                                       boost::system::error_code& ec)
 {
-    ec.clear();
     auto shared = tls::crypto_util::x25519_derive(server_private_key, state.x25519_peer_pub, ec);
     if (ec)
     {
@@ -800,7 +798,6 @@ handshake_crypto_result build_handshake_crypto(server_handshake_state& state,
                                                const std::vector<uint8_t>& sign_key_bytes,
                                                boost::system::error_code& ec)
 {
-    ec.clear();
     handshake_crypto_result out;
     const auto suite = tls::select_tls13_suite(cipher_suite);
     if (!suite.has_value())
@@ -925,7 +922,6 @@ handshake_crypto_result build_handshake_crypto(server_handshake_state& state,
 
 std::vector<uint8_t> generate_server_random(boost::system::error_code& ec)
 {
-    ec.clear();
     std::vector<uint8_t> server_random(32, 0);
     if (RAND_bytes(server_random.data(), 32) != 1)
     {
@@ -940,7 +936,6 @@ std::vector<uint8_t> build_reality_bound_certificate(const std::vector<uint8_t>&
                                                      const std::vector<uint8_t>& cert_public_key,
                                                      boost::system::error_code& ec)
 {
-    ec.clear();
     auto template_signature = tls::crypto_util::extract_certificate_signature(cert_template, ec);
     if (ec)
     {
@@ -1309,7 +1304,6 @@ std::vector<uint8_t> compose_server_hello_flight(const std::vector<uint8_t>& sh_
                                                  const std::pair<std::vector<uint8_t>, std::vector<uint8_t>>& s_hs_keys,
                                                  boost::system::error_code& ec)
 {
-    ec.clear();
     std::vector<uint8_t> out_sh;
     const auto sh_rec = tls::write_record_header(tls::kContentTypeHandshake, static_cast<uint16_t>(sh_msg.size()));
     out_sh.insert(out_sh.end(), sh_rec.begin(), sh_rec.end());
@@ -1943,7 +1937,6 @@ boost::asio::awaitable<bool> complete_authenticated_handshake(const server_hands
                                                               authenticated_session& authenticated,
                                                               boost::system::error_code& ec)
 {
-    ec.clear();
     const auto out_sh = compose_server_hello_flight(plan.crypto.sh_msg,
                                                     plan.crypto.flight2_plain,
                                                     plan.send_change_cipher_spec,
@@ -2095,7 +2088,6 @@ server_handshaker::server_handshaker(const dependencies& deps)
 
 boost::asio::awaitable<server_accept_result> server_handshaker::accept(server_handshake_context& handshake_ctx, boost::system::error_code& ec) const
 {
-    ec.clear();
     server_accept_result result;
     server_handshake_state state;
     state.log_context = make_server_log_context(handshake_ctx);

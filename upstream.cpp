@@ -249,7 +249,6 @@ boost::asio::awaitable<void> direct_upstream::close()
 
 boost::asio::awaitable<void> direct_upstream::shutdown_send(boost::system::error_code& ec)
 {
-    ec.clear();
     ec = socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
     if (ec == boost::asio::error::not_connected)
     {
@@ -520,7 +519,6 @@ boost::asio::awaitable<void> proxy_upstream::write(const std::vector<uint8_t>& d
 
 boost::asio::awaitable<void> proxy_upstream::shutdown_send(boost::system::error_code& ec)
 {
-    ec.clear();
     if (connection_ == nullptr || send_shutdown_)
     {
         co_return;

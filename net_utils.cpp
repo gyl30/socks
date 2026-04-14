@@ -127,7 +127,6 @@ bool try_get_original_dst_from_local_endpoint(boost::asio::ip::tcp::socket& sock
                                               boost::asio::ip::tcp::endpoint& endpoint,
                                               boost::system::error_code& ec)
 {
-    ec.clear();
     const auto local_endpoint = socket.local_endpoint(ec);
     if (ec)
     {
@@ -146,7 +145,6 @@ bool try_get_original_dst_from_local_endpoint(boost::asio::ip::tcp::socket& sock
 
 void set_socket_bool_option(int fd, int level, int option, boost::system::error_code& ec)
 {
-    ec.clear();
 #ifdef __linux__
     constexpr int one = 1;
     if (setsockopt(fd, level, option, &one, sizeof(one)) != 0)
@@ -168,7 +166,6 @@ using socket_option_setter = void (*)(int fd, boost::system::error_code& ec);
 
 void set_dual_stack_socket_option(int fd, bool ipv6, socket_option_setter set_v4, socket_option_setter set_v6, boost::system::error_code& ec)
 {
-    ec.clear();
     if (!ipv6)
     {
         set_v4(fd, ec);
@@ -453,7 +450,6 @@ void load_tcp_socket_endpoints(boost::asio::ip::tcp::socket& socket,
 
 bool get_original_tcp_dst(boost::asio::ip::tcp::socket& socket, boost::asio::ip::tcp::endpoint& endpoint, boost::system::error_code& ec)
 {
-    ec.clear();
 #ifdef __linux__
     boost::system::error_code peer_ec;
     const auto peer_endpoint = socket.remote_endpoint(peer_ec);

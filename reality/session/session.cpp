@@ -32,7 +32,6 @@ traffic_key_material make_traffic_key_material(std::pair<std::vector<uint8_t>, s
 
 bool validate_negotiated_params(const negotiated_params& negotiated, boost::system::error_code& ec)
 {
-    ec.clear();
     if (negotiated.md == nullptr || negotiated.cipher == nullptr)
     {
         ec = boost::asio::error::invalid_argument;
@@ -48,7 +47,6 @@ reality_record_context build_reality_record_context_from_parts(const negotiated_
                                                                const perspective session_perspective,
                                                                boost::system::error_code& ec)
 {
-    ec.clear();
     if (!validate_negotiated_params(negotiated, ec))
     {
         return {};

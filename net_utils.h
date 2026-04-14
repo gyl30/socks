@@ -203,7 +203,6 @@ inline uint64_t now_ms()
 
 inline uint32_t remaining_timeout_seconds(uint64_t start_ms, uint32_t timeout_sec, boost::system::error_code& ec)
 {
-    ec.clear();
     if (timeout_sec == 0)
     {
         return 0;
@@ -248,6 +247,27 @@ inline boost::asio::awaitable<void> wait_connect_with_timeout(boost::asio::ip::t
         {
             const auto& [op_ec] = result;
             ec = op_ec;
+        },
+        [&](const auto& wait_result)
+        {
+            const auto& [wait_ec] = wait_result;
+            ec = wait_ec ? wait_ec : boost::system::error_code{boost::asio::error::timed_out};
+        });
+}
+
+inline boost::asio::awaitable<void> wait_connect_with_timeout(boost::asio::ip::tcp::socket& socket,
+                                                              const boost::asio::ip::tcp::resolver::results_type& endpoints,
+                                                              uint32_t timeout_sec,
+                                                              boost::system::error_code& ec)
+{
+    co_await detail::await_with_timeout(
+        timeout_sec,
+        [&]() { return boost::asio::async_connect(socket, endpoints, boost::asio::as_tuple(boost::asio::use_awaitable)); },
+        [&](const auto& result)
+        {
+            const auto& [op_ec, endpoint] = result;
+            ec = op_ec;
+            (void)endpoint;
         },
         [&](const auto& wait_result)
         {
