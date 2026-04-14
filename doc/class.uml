@@ -224,11 +224,19 @@ note right of proxy_reality_connection
   route=proxy 时：
   一次 TCP 请求或一个 UDP 会话
   对应一条 REALITY 连接。
+  连接结束后直接销毁，
+  不再回收到连接池。
 end note
 
 note right of remote_server
   服务端不再接收多路 stream。
   认证成功后只处理一个代理会话。
+end note
+
+note bottom of replay_cache
+  运行时残留已清理：
+  无 connection_tracker，
+  关闭错误判断统一由 net_utils 提供。
 end note
 
 @enduml

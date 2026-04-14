@@ -231,3 +231,47 @@ flowchart TD
 - 服务端不再在一条连接上承载多个 stream。
 - TCP 关闭语义回到“连接即会话”，半关闭直接依赖 `shutdown_send`。
 - UDP 仍然有内部报文封装，但只保留 `udp_associate_reply` 和 `udp_datagram` 这类单会话协议消息。
+
+## 8. 当前运行时清理基线
+
+- 已删除 `client_tunnel_pool`、`mux_connection`、`mux_stream`、`mux_protocol`、`mux_codec`。
+- 已删除旧的 `connection_tracker` 和只增减不读取的连接守卫。
+- `route=proxy` 时，TCP 请求和 UDP 会话都直接新建 `proxy_reality_connection`，不再存在预建隧道槽位。
+- 连接关闭和正常收尾错误判断统一收敛到 `net_utils`：
+  `is_basic_close_error`、`is_socket_close_error`、`is_socket_shutdown_error`、`is_channel_close_error`。
+- 旧的 `log_event::kMux` 已替换为 `log_event::kRelay`，日志语义和当前架构一致。
+
+## 9. 严格告警验证
+
+- 构建系统新增了 `ENABLE_STRICT_WARNINGS` 开关，默认关闭，不影响日常构建。
+- 当前严格告警集包含：
+  `-Wshadow`、`-Wpedantic`、`-Wcast-qual`、`-Wold-style-cast`、`-Wsign-conversion`
+- 推荐用单独构建目录验证：
+
+```bash
+cmake -S . -B build-gcc-strict \
+  -DCMAKE_C_COMPILER=gcc \
+  -DCMAKE_CXX_COMPILER=g++ \
+  -DENABLE_ASAN=OFF \
+  -DENABLE_TSAN=OFF \
+  -DENABLE_LSAN=OFF \
+  -DENABLE_STRICT_WARNINGS=ON \
+  -DOPENSSL_ROOT_DIR=/home/gyl/openssl \
+  -DBOOST_ROOT=/home/gyl/boost_1_89_0
+cmake --build build-gcc-strict -j8
+```
+
+```bash
+cmake -S . -B build-clang-strict \
+  -DCMAKE_C_COMPILER=clang \
+  -DCMAKE_CXX_COMPILER=clang++ \
+  -DENABLE_ASAN=OFF \
+  -DENABLE_TSAN=OFF \
+  -DENABLE_LSAN=OFF \
+  -DENABLE_STRICT_WARNINGS=ON \
+  -DOPENSSL_ROOT_DIR=/home/gyl/openssl \
+  -DBOOST_ROOT=/home/gyl/boost_1_89_0
+cmake --build build-clang-strict -j8
+```
+
+- 当前代码在 GCC 和 Clang 下都已通过这组 stricter warnings 的全量编译。
