@@ -27,7 +27,7 @@ struct JsonReader
     rapidjson::Value* m;
     std::vector<const char*> path_;
 
-    JsonReader(rapidjson::Value* m) : m(m) {}
+    JsonReader(rapidjson::Value* value) : m(value) {}
     void startObject() {}
     void endObject() {}
     void iterArray(const std::function<void()>& fn);
@@ -42,7 +42,7 @@ struct JsonPrettyWriter
 
     W* m;
 
-    JsonPrettyWriter(W* m) : m(m) {}
+    JsonPrettyWriter(W* writer) : m(writer) {}
     void startArray();
     void endArray();
     void startObject();
@@ -60,7 +60,7 @@ struct JsonWriter
 
     W* m;
 
-    JsonWriter(W* m) : m(m) {}
+    JsonWriter(W* writer) : m(writer) {}
     void startArray();
     void endArray();
     void startObject();
@@ -86,14 +86,14 @@ inline     void JsonWriter::int64(int64_t v) { m->Int64(v); }
 inline     void JsonWriter::string(const char* s) { m->String(s); }
 inline     void JsonWriter::string(const char* s, size_t len) { m->String(s, static_cast<rapidjson::SizeType>(len)); }
 inline     void reflect(JsonReader &vis, bool &v              ) { if (!vis.m->IsBool())   throw std::invalid_argument("bool");               v = vis.m->GetBool(); }
-inline     void reflect(JsonReader &vis, unsigned char &v     ) { if (!vis.m->IsInt())    throw std::invalid_argument("uint8_t");            v = (uint8_t)vis.m->GetInt(); }
-inline     void reflect(JsonReader &vis, short &v             ) { if (!vis.m->IsInt())    throw std::invalid_argument("short");              v = (short)vis.m->GetInt(); }
-inline     void reflect(JsonReader &vis, unsigned short &v    ) { if (!vis.m->IsInt())    throw std::invalid_argument("unsigned short");     v = (unsigned short)vis.m->GetInt(); }
-inline     void reflect(JsonReader &vis, int8_t &v            ) { if (!vis.m->IsInt())    throw std::invalid_argument("int8_t");             v = (int8_t)vis.m->GetInt(); }
+inline     void reflect(JsonReader &vis, unsigned char &v     ) { if (!vis.m->IsInt())    throw std::invalid_argument("uint8_t");            v = static_cast<uint8_t>(vis.m->GetInt()); }
+inline     void reflect(JsonReader &vis, short &v             ) { if (!vis.m->IsInt())    throw std::invalid_argument("short");              v = static_cast<short>(vis.m->GetInt()); }
+inline     void reflect(JsonReader &vis, unsigned short &v    ) { if (!vis.m->IsInt())    throw std::invalid_argument("unsigned short");     v = static_cast<unsigned short>(vis.m->GetInt()); }
+inline     void reflect(JsonReader &vis, int8_t &v            ) { if (!vis.m->IsInt())    throw std::invalid_argument("int8_t");             v = static_cast<int8_t>(vis.m->GetInt()); }
 inline     void reflect(JsonReader &vis, int &v               ) { if (!vis.m->IsInt())    throw std::invalid_argument("int");                v = vis.m->GetInt(); }
-inline     void reflect(JsonReader &vis, unsigned &v          ) { if (!vis.m->IsUint64()) throw std::invalid_argument("unsigned");           v = (unsigned)vis.m->GetUint64(); }
-inline     void reflect(JsonReader &vis, long &v              ) { if (!vis.m->IsInt64())  throw std::invalid_argument("long");               v = (long)vis.m->GetInt64(); }
-inline     void reflect(JsonReader &vis, unsigned long &v     ) { if (!vis.m->IsUint64()) throw std::invalid_argument("unsigned long");      v = (unsigned long)vis.m->GetUint64(); }
+inline     void reflect(JsonReader &vis, unsigned &v          ) { if (!vis.m->IsUint64()) throw std::invalid_argument("unsigned");           v = static_cast<unsigned>(vis.m->GetUint64()); }
+inline     void reflect(JsonReader &vis, long &v              ) { if (!vis.m->IsInt64())  throw std::invalid_argument("long");               v = static_cast<long>(vis.m->GetInt64()); }
+inline     void reflect(JsonReader &vis, unsigned long &v     ) { if (!vis.m->IsUint64()) throw std::invalid_argument("unsigned long");      v = static_cast<unsigned long>(vis.m->GetUint64()); }
 inline     void reflect(JsonReader &vis, long long &v         ) { if (!vis.m->IsInt64())  throw std::invalid_argument("long long");          v = vis.m->GetInt64(); }
 inline     void reflect(JsonReader &vis, unsigned long long &v) { if (!vis.m->IsUint64()) throw std::invalid_argument("unsigned long long"); v = vis.m->GetUint64(); }
 inline     void reflect(JsonReader &vis, double &v            ) { if (!vis.m->IsDouble()) throw std::invalid_argument("double");             v = vis.m->GetDouble(); }
@@ -123,7 +123,7 @@ inline     void JsonPrettyWriter::key(const char* name) { m->Key(name); }
 inline     void JsonPrettyWriter::null_() { m->Null(); }
 inline     void JsonPrettyWriter::int64(int64_t v) { m->Int64(v); }
 inline     void JsonPrettyWriter::string(const char* s) { m->String(s); }
-inline     void JsonPrettyWriter::string(const char* s, size_t len) { m->String(s, (rapidjson::SizeType)len); }
+inline     void JsonPrettyWriter::string(const char* s, size_t len) { m->String(s, static_cast<rapidjson::SizeType>(len)); }
 inline     void reflect(JsonPrettyWriter &vis, bool &v              ) { vis.m->Bool(v); }
 inline     void reflect(JsonPrettyWriter &vis, unsigned char &v     ) { vis.m->Int(v); }
 inline     void reflect(JsonPrettyWriter &vis, short &v             ) { vis.m->Int(v); }

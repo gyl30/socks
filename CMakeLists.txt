@@ -50,6 +50,16 @@ add_compile_options(
   -Werror=format-security
   -fno-strict-aliasing)
 
+option(ENABLE_STRICT_WARNINGS "Enable stricter C++ warning set" OFF)
+if(ENABLE_STRICT_WARNINGS)
+  add_compile_options(
+    "$<$<COMPILE_LANGUAGE:CXX>:-Wshadow>"
+    "$<$<COMPILE_LANGUAGE:CXX>:-Wpedantic>"
+    "$<$<COMPILE_LANGUAGE:CXX>:-Wcast-qual>"
+    "$<$<COMPILE_LANGUAGE:CXX>:-Wold-style-cast>"
+    "$<$<COMPILE_LANGUAGE:CXX>:-Wsign-conversion>")
+endif()
+
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR CMAKE_CXX_COMPILER_ID MATCHES
                                             "AppleClang")
   add_compile_options(-Wno-unknown-warning-option)
