@@ -212,7 +212,7 @@ boost::asio::awaitable<route_decision> reality_udp_session::decide_route(const p
     co_return decision;
 }
 
-boost::asio::awaitable<std::shared_ptr<proxy_udp_upstream>> reality_udp_session::get_proxy_upstream(const std::string& outbound_tag)
+boost::asio::awaitable<std::shared_ptr<udp_proxy_outbound>> reality_udp_session::get_proxy_upstream(const std::string& outbound_tag)
 {
     if (stopping_.load())
     {
@@ -258,7 +258,7 @@ boost::asio::awaitable<std::shared_ptr<proxy_udp_upstream>> reality_udp_session:
 
 boost::asio::awaitable<void> reality_udp_session::close_proxy_upstreams()
 {
-    std::vector<std::shared_ptr<proxy_udp_upstream>> upstreams;
+    std::vector<std::shared_ptr<udp_proxy_outbound>> upstreams;
     upstreams.reserve(proxy_upstreams_.size());
     for (const auto& [outbound_tag, upstream] : proxy_upstreams_)
     {
@@ -479,7 +479,7 @@ boost::asio::awaitable<void> reality_udp_session::udp_to_connection()
 }
 
 boost::asio::awaitable<void> reality_udp_session::proxy_to_connection(const std::string& outbound_tag,
-                                                                      const std::shared_ptr<proxy_udp_upstream>& upstream)
+                                                                      const std::shared_ptr<udp_proxy_outbound>& upstream)
 {
     if (connection_ == nullptr || upstream == nullptr)
     {

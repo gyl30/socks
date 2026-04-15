@@ -1005,7 +1005,7 @@ boost::asio::awaitable<bool> udp_socks_session::ensure_proxy_upstream(boost::sys
     co_return true;
 }
 
-void udp_socks_session::clear_proxy_upstream_if_current(const std::shared_ptr<proxy_udp_upstream>& upstream)
+void udp_socks_session::clear_proxy_upstream_if_current(const std::shared_ptr<udp_proxy_outbound>& upstream)
 {
     if (upstream == nullptr || proxy_upstream_ != upstream)
     {
@@ -1181,7 +1181,7 @@ boost::asio::awaitable<void> udp_socks_session::wait_and_proxy_to_udp_sock()
     }
 }
 
-boost::asio::awaitable<void> udp_socks_session::proxy_to_udp_sock(std::shared_ptr<proxy_udp_upstream> upstream)
+boost::asio::awaitable<void> udp_socks_session::proxy_to_udp_sock(std::shared_ptr<udp_proxy_outbound> upstream)
 {
     const auto read_timeout = (cfg_.timeout.idle == 0) ? cfg_.timeout.read : std::max(cfg_.timeout.read, cfg_.timeout.idle + 2);
     boost::system::error_code ec;

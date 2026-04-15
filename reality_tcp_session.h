@@ -32,16 +32,16 @@ class reality_tcp_session : public std::enable_shared_from_this<reality_tcp_sess
 
    private:
     [[nodiscard]] boost::asio::awaitable<void> run(const proxy::tcp_connect_request& request);
-    [[nodiscard]] boost::asio::awaitable<bool> send_connect_reply(uint8_t socks_rep, const upstream_connect_result* connect_result);
-    [[nodiscard]] boost::asio::awaitable<upstream_connect_result> connect_backend(const std::shared_ptr<upstream>& backend,
+    [[nodiscard]] boost::asio::awaitable<bool> send_connect_reply(uint8_t socks_rep, const tcp_outbound_connect_result* connect_result);
+    [[nodiscard]] boost::asio::awaitable<tcp_outbound_connect_result> connect_backend(const std::shared_ptr<tcp_outbound_stream>& backend,
                                                                                   const std::string& host,
                                                                                   uint16_t port,
                                                                                   route_type route);
-    [[nodiscard]] std::shared_ptr<upstream> create_backend(route_type route, const std::string& outbound_tag) const;
-    [[nodiscard]] boost::asio::awaitable<void> relay_target(const std::shared_ptr<upstream>& backend);
-    [[nodiscard]] boost::asio::awaitable<void> client_to_upstream(const std::shared_ptr<upstream>& backend);
-    [[nodiscard]] boost::asio::awaitable<void> upstream_to_client(const std::shared_ptr<upstream>& backend);
-    [[nodiscard]] boost::asio::awaitable<void> idle_watchdog(const std::shared_ptr<upstream>& backend);
+    [[nodiscard]] std::shared_ptr<tcp_outbound_stream> create_backend(route_type route, const std::string& outbound_tag) const;
+    [[nodiscard]] boost::asio::awaitable<void> relay_target(const std::shared_ptr<tcp_outbound_stream>& backend);
+    [[nodiscard]] boost::asio::awaitable<void> client_to_upstream(const std::shared_ptr<tcp_outbound_stream>& backend);
+    [[nodiscard]] boost::asio::awaitable<void> upstream_to_client(const std::shared_ptr<tcp_outbound_stream>& backend);
+    [[nodiscard]] boost::asio::awaitable<void> idle_watchdog(const std::shared_ptr<tcp_outbound_stream>& backend);
     void log_close_summary() const;
 
    private:

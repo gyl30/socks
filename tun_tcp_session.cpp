@@ -167,7 +167,7 @@ boost::asio::awaitable<void> tun_tcp_session::run()
              duration_ms);
 }
 
-boost::asio::awaitable<std::pair<route_decision, std::shared_ptr<upstream>>> tun_tcp_session::select_backend()
+boost::asio::awaitable<std::pair<route_decision, std::shared_ptr<tcp_outbound_stream>>> tun_tcp_session::select_backend()
 {
     const auto target_ip = boost::asio::ip::make_address(target_addr_);
     const auto decision = co_await router_->decide_ip_detail(target_ip);
@@ -181,11 +181,11 @@ boost::asio::awaitable<std::pair<route_decision, std::shared_ptr<upstream>>> tun
                  client_port_,
                  target_addr_,
                  target_port_);
-        co_return std::make_pair(decision, std::shared_ptr<upstream>(nullptr));
+        co_return std::make_pair(decision, std::shared_ptr<tcp_outbound_stream>(nullptr));
     }
     if (decision.route != route_type::kDirect && decision.route != route_type::kProxy)
     {
-        co_return std::make_pair(route_decision{}, std::shared_ptr<upstream>(nullptr));
+        co_return std::make_pair(route_decision{}, std::shared_ptr<tcp_outbound_stream>(nullptr));
     }
     const auto handler = make_outbound_handler(cfg_, decision.outbound_tag);
     if (handler == nullptr)
@@ -199,13 +199,13 @@ boost::asio::awaitable<std::pair<route_decision, std::shared_ptr<upstream>>> tun
                  target_addr_,
                  target_port_,
                  decision.outbound_tag);
-        co_return std::make_pair(decision, std::shared_ptr<upstream>(nullptr));
+        co_return std::make_pair(decision, std::shared_ptr<tcp_outbound_stream>(nullptr));
     }
     const auto backend = handler->create_tcp_upstream(idle_timer_.get_executor(), conn_id_, trace_id_, cfg_);
     co_return std::make_pair(decision, backend);
 }
 
-boost::asio::awaitable<void> tun_tcp_session::client_to_upstream(const std::shared_ptr<upstream>& backend)
+boost::asio::awaitable<void> tun_tcp_session::client_to_upstream(const std::shared_ptr<tcp_outbound_stream>& backend)
 {
     boost::system::error_code ec;
     for (;;)
@@ -260,7 +260,7 @@ boost::asio::awaitable<void> tun_tcp_session::client_to_upstream(const std::shar
     }
 }
 
-boost::asio::awaitable<void> tun_tcp_session::upstream_to_client(const std::shared_ptr<upstream>& backend)
+boost::asio::awaitable<void> tun_tcp_session::upstream_to_client(const std::shared_ptr<tcp_outbound_stream>& backend)
 {
     std::vector<uint8_t> buffer(8192);
     boost::system::error_code ec;

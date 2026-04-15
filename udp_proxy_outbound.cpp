@@ -346,12 +346,12 @@ boost::asio::awaitable<std::size_t> receive_udp_packet_with_timeout(boost::asio:
 
 }    // namespace
 
-proxy_udp_upstream::proxy_udp_upstream(std::shared_ptr<proxy_reality_connection> connection, const config& cfg)
+udp_proxy_outbound::udp_proxy_outbound(std::shared_ptr<proxy_reality_connection> connection, const config& cfg)
     : cfg_(cfg), mode_(upstream_mode::kReality), connection_(std::move(connection))
 {
 }
 
-proxy_udp_upstream::proxy_udp_upstream(std::shared_ptr<boost::asio::ip::tcp::socket> control_socket,
+udp_proxy_outbound::udp_proxy_outbound(std::shared_ptr<boost::asio::ip::tcp::socket> control_socket,
                                        std::shared_ptr<boost::asio::ip::udp::socket> udp_socket,
                                        boost::asio::ip::udp::endpoint udp_server_endpoint,
                                        const config& cfg)
@@ -363,13 +363,13 @@ proxy_udp_upstream::proxy_udp_upstream(std::shared_ptr<boost::asio::ip::tcp::soc
 {
 }
 
-boost::asio::awaitable<proxy_udp_connect_result> proxy_udp_upstream::connect(const boost::asio::any_io_executor& executor,
+boost::asio::awaitable<udp_proxy_outbound_connect_result> udp_proxy_outbound::connect(const boost::asio::any_io_executor& executor,
                                                                              const uint32_t conn_id,
                                                                              const uint64_t trace_id,
                                                                              const config& cfg,
                                                                              const std::string& outbound_tag)
 {
-    proxy_udp_connect_result result;
+    udp_proxy_outbound_connect_result result;
     result.socks_rep = socks::kRepSuccess;
     const auto* outbound = find_outbound_entry(cfg, outbound_tag);
     if (outbound == nullptr)
@@ -390,7 +390,7 @@ boost::asio::awaitable<proxy_udp_connect_result> proxy_udp_upstream::connect(con
             co_return result;
         }
 
-        auto upstream = std::make_shared<proxy_udp_upstream>(connection, cfg);
+        auto upstream = std::make_shared<udp_proxy_outbound>(connection, cfg);
         proxy::udp_associate_request request;
         request.trace_id = trace_id;
         std::vector<uint8_t> packet;
@@ -542,7 +542,7 @@ boost::asio::awaitable<proxy_udp_connect_result> proxy_udp_upstream::connect(con
         co_return result;
     }
 
-    auto upstream = std::make_shared<proxy_udp_upstream>(control_socket, udp_socket, udp_server_endpoint, cfg);
+    auto upstream = std::make_shared<udp_proxy_outbound>(control_socket, udp_socket, udp_server_endpoint, cfg);
     upstream->bind_host_ = bind_host;
     upstream->bind_port_ = bind_port;
     boost::system::error_code bind_ec;
@@ -557,7 +557,7 @@ boost::asio::awaitable<proxy_udp_connect_result> proxy_udp_upstream::connect(con
     co_return result;
 }
 
-uint32_t proxy_udp_upstream::associate_reply_timeout() const
+uint32_t udp_proxy_outbound::associate_reply_timeout() const
 {
     if (cfg_.timeout.connect == 0)
     {
@@ -566,7 +566,7 @@ uint32_t proxy_udp_upstream::associate_reply_timeout() const
     return std::max(cfg_.timeout.read, cfg_.timeout.connect + 1);
 }
 
-boost::asio::awaitable<void> proxy_udp_upstream::close()
+boost::asio::awaitable<void> udp_proxy_outbound::close()
 {
     if (connection_ != nullptr)
     {
@@ -592,7 +592,7 @@ boost::asio::awaitable<void> proxy_udp_upstream::close()
     co_return;
 }
 
-boost::asio::awaitable<void> proxy_udp_upstream::send_datagram(
+boost::asio::awaitable<void> udp_proxy_outbound::send_datagram(
     const std::string& host, const uint16_t port, const uint8_t* payload, const std::size_t payload_len, boost::system::error_code& ec)
 {
     if (mode_ == upstream_mode::kReality)
@@ -639,7 +639,7 @@ boost::asio::awaitable<void> proxy_udp_upstream::send_datagram(
     co_await send_udp_packet_with_timeout(*socks_udp_socket_, socks_udp_server_endpoint_, packet, cfg_.timeout.write, ec);
 }
 
-boost::asio::awaitable<proxy::udp_datagram> proxy_udp_upstream::receive_datagram(const uint32_t timeout_sec, boost::system::error_code& ec)
+boost::asio::awaitable<proxy::udp_datagram> udp_proxy_outbound::receive_datagram(const uint32_t timeout_sec, boost::system::error_code& ec)
 {
     if (mode_ == upstream_mode::kReality)
     {
