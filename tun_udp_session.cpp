@@ -153,7 +153,9 @@ void tun_udp_session::on_recv(void* arg, udp_pcb* pcb, pbuf* packet, const ip_ad
 
 boost::asio::awaitable<bool> tun_udp_session::run()
 {
-    route_ = co_await decide_route();
+    const auto decision = co_await decide_route();
+    route_ = decision.route;
+    outbound_tag_ = decision.outbound_tag;
     if (route_ == route_type::kBlock)
     {
         LOG_WARN("{} trace {:016x} conn {} blocked tun udp target {}:{}",
@@ -182,13 +184,13 @@ boost::asio::awaitable<bool> tun_udp_session::run()
     co_return co_await run_proxy_mode();
 }
 
-boost::asio::awaitable<route_type> tun_udp_session::decide_route() const
+boost::asio::awaitable<route_decision> tun_udp_session::decide_route() const
 {
     if (router_ == nullptr)
     {
-        co_return route_type::kBlock;
+        co_return route_decision{};
     }
-    co_return co_await router_->decide_ip(target_endpoint_.address());
+    co_return co_await router_->decide_ip_detail(target_endpoint_.address());
 }
 
 boost::asio::awaitable<bool> tun_udp_session::open_direct_socket()
@@ -272,7 +274,7 @@ boost::asio::awaitable<bool> tun_udp_session::open_direct_socket()
 
 boost::asio::awaitable<bool> tun_udp_session::open_proxy_upstream()
 {
-    const auto connect_result = co_await proxy_udp_upstream::connect(worker_.io_context.get_executor(), conn_id_, trace_id_, cfg_);
+    const auto connect_result = co_await proxy_udp_upstream::connect(worker_.io_context.get_executor(), conn_id_, trace_id_, cfg_, outbound_tag_);
     if (connect_result.ec || connect_result.upstream == nullptr)
     {
         auto ec = connect_result.ec;

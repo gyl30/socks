@@ -42,7 +42,7 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
     void apply_request_peer_constraint(const std::string& host, uint16_t port) const;
     [[nodiscard]] std::string current_client_host() const;
     [[nodiscard]] uint16_t current_client_port() const;
-    [[nodiscard]] boost::asio::awaitable<route_type> decide_udp_route(const socks_udp_header& header) const;
+    [[nodiscard]] boost::asio::awaitable<route_decision> decide_udp_route(const socks_udp_header& header) const;
     [[nodiscard]] boost::asio::awaitable<bool> ensure_proxy_upstream(boost::system::error_code& ec);
     [[nodiscard]] boost::asio::awaitable<boost::asio::ip::udp::endpoint> resolve_target_endpoint(const std::string& host,
                                                                                                  uint16_t port,
@@ -102,6 +102,7 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
     boost::asio::ip::udp::socket direct_udp_socket_v6_;
     std::shared_ptr<router> router_;
     std::shared_ptr<proxy_udp_upstream> proxy_upstream_;
+    std::string proxy_outbound_tag_;
     uint64_t last_activity_time_ms_{0};
     bool stopped_ = false;
     bool proxy_upstream_started_ = false;

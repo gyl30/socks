@@ -583,20 +583,23 @@ boost::asio::ip::udp::socket* udp_socks_session::select_direct_udp_socket(const 
     return &direct_udp_socket_v4_;
 }
 
-boost::asio::awaitable<route_type> udp_socks_session::decide_udp_route(const socks_udp_header& header) const
+boost::asio::awaitable<route_decision> udp_socks_session::decide_udp_route(const socks_udp_header& header) const
 {
     if (router_ == nullptr)
     {
-        co_return route_type::kProxy;
+        route_decision decision;
+        decision.route = route_type::kBlock;
+        decision.outbound_type = "no_route";
+        co_return decision;
     }
 
     boost::system::error_code ec;
     const auto addr = boost::asio::ip::make_address(header.addr, ec);
     if (ec)
     {
-        co_return co_await router_->decide_domain(header.addr);
+        co_return co_await router_->decide_domain_detail(header.addr);
     }
-    co_return co_await router_->decide_ip(socks_codec::normalize_ip_address(addr));
+    co_return co_await router_->decide_ip_detail(socks_codec::normalize_ip_address(addr));
 }
 
 boost::asio::awaitable<boost::asio::ip::udp::endpoint> udp_socks_session::resolve_target_endpoint(const std::string& host,
@@ -934,7 +937,8 @@ boost::asio::awaitable<bool> udp_socks_session::ensure_proxy_upstream(boost::sys
 {
     if (proxy_upstream_ == nullptr)
     {
-        const auto connect_result = co_await proxy_udp_upstream::connect(worker_.io_context.get_executor(), conn_id_, trace_id_, cfg_);
+        const auto connect_result =
+            co_await proxy_udp_upstream::connect(worker_.io_context.get_executor(), conn_id_, trace_id_, cfg_, proxy_outbound_tag_);
         if (connect_result.ec || connect_result.upstream == nullptr)
         {
             ec = connect_result.ec ? connect_result.ec : boost::asio::error::not_connected;
@@ -1093,8 +1097,9 @@ boost::asio::awaitable<void> udp_socks_session::udp_socket_loop()
         last_target_port_ = udp_header.port;
         has_last_target_ = true;
 
-        const auto route = co_await decide_udp_route(udp_header);
-        if (route == route_type::kBlock)
+        const auto decision = co_await decide_udp_route(udp_header);
+        proxy_outbound_tag_ = decision.outbound_tag;
+        if (decision.route == route_type::kBlock)
         {
             LOG_INFO("{} trace {:016x} conn {} client {}:{} udp bind {}:{} udp blocked {}:{}",
                      log_event::kRoute,
@@ -1110,7 +1115,7 @@ boost::asio::awaitable<void> udp_socks_session::udp_socket_loop()
         }
 
         const auto payload_len = n - udp_header.header_len;
-        if (route == route_type::kProxy)
+        if (decision.route == route_type::kProxy)
         {
             boost::system::error_code open_ec;
             if (!(co_await ensure_proxy_upstream(open_ec)))

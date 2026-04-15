@@ -28,6 +28,7 @@ class proxy_reality_connection
 
     [[nodiscard]] static boost::asio::awaitable<std::shared_ptr<proxy_reality_connection>> connect(const boost::asio::any_io_executor& executor,
                                                                                                    const config& cfg,
+                                                                                                   const std::string& outbound_tag,
                                                                                                    uint32_t conn_id,
                                                                                                    boost::system::error_code& ec);
 

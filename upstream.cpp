@@ -53,7 +53,11 @@ class direct_upstream final : public upstream
 class proxy_upstream final : public upstream
 {
    public:
-    explicit proxy_upstream(const boost::asio::any_io_executor& executor, uint32_t conn_id, uint64_t trace_id, const config& cfg);
+    explicit proxy_upstream(const boost::asio::any_io_executor& executor,
+                            uint32_t conn_id,
+                            uint64_t trace_id,
+                            const config& cfg,
+                            std::string outbound_tag);
 
     boost::asio::awaitable<void> close() override;
     boost::asio::awaitable<void> shutdown_send(boost::system::error_code& ec) override;
@@ -71,6 +75,7 @@ class proxy_upstream final : public upstream
     uint32_t conn_id_ = 0;
     uint64_t trace_id_ = 0;
     boost::asio::any_io_executor executor_;
+    std::string outbound_tag_;
     std::string target_host_ = "unknown";
     uint16_t target_port_ = 0;
     std::string bind_host_ = "unknown";
@@ -258,14 +263,22 @@ std::shared_ptr<upstream> make_direct_upstream(const boost::asio::any_io_executo
     return std::make_shared<direct_upstream>(executor, conn_id, trace_id, cfg);
 }
 
-proxy_upstream::proxy_upstream(const boost::asio::any_io_executor& executor, uint32_t conn_id, uint64_t trace_id, const config& cfg)
-    : cfg_(cfg), conn_id_(conn_id), trace_id_(trace_id), executor_(executor)
+proxy_upstream::proxy_upstream(const boost::asio::any_io_executor& executor,
+                               uint32_t conn_id,
+                               uint64_t trace_id,
+                               const config& cfg,
+                               std::string outbound_tag)
+    : cfg_(cfg), conn_id_(conn_id), trace_id_(trace_id), executor_(executor), outbound_tag_(std::move(outbound_tag))
 {
 }
 
-std::shared_ptr<upstream> make_proxy_upstream(const boost::asio::any_io_executor& executor, uint32_t conn_id, uint64_t trace_id, const config& cfg)
+std::shared_ptr<upstream> make_proxy_upstream(const boost::asio::any_io_executor& executor,
+                                              uint32_t conn_id,
+                                              uint64_t trace_id,
+                                              const config& cfg,
+                                              const std::string& outbound_tag)
 {
-    return std::make_shared<proxy_upstream>(executor, conn_id, trace_id, cfg);
+    return std::make_shared<proxy_upstream>(executor, conn_id, trace_id, cfg, outbound_tag);
 }
 
 uint32_t proxy_upstream::connect_ack_timeout() const
@@ -418,31 +431,33 @@ boost::asio::awaitable<upstream_connect_result> proxy_upstream::connect(const st
     send_shutdown_ = false;
     boost::system::error_code ec;
     connection_.reset();
-    connection_ = co_await proxy_reality_connection::connect(executor_, cfg_, conn_id_, ec);
+    connection_ = co_await proxy_reality_connection::connect(executor_, cfg_, outbound_tag_, conn_id_, ec);
     if (connection_ == nullptr)
     {
         if (!ec)
         {
             ec = boost::asio::error::not_connected;
         }
-        LOG_ERROR("{} trace {:016x} conn {} target {}:{} route proxy connect reality failed {}",
+        LOG_ERROR("{} trace {:016x} conn {} target {}:{} route proxy out_tag {} connect reality failed {}",
                   log_event::kRoute,
                   trace_id_,
                   conn_id_,
                   host,
                   port,
+                  outbound_tag_,
                   ec.message());
         result.ec = ec;
         result.socks_rep = socks::map_connect_error_to_socks_rep(ec);
         co_return result;
     }
 
-    LOG_INFO("{} trace {:016x} conn {} target {}:{} route proxy connected reality local {}:{} remote {}:{}",
+    LOG_INFO("{} trace {:016x} conn {} target {}:{} route proxy out_tag {} connected reality local {}:{} remote {}:{}",
              log_event::kRoute,
              trace_id_,
              conn_id_,
              host,
              port,
+             outbound_tag_,
              connection_->local_host(),
              connection_->local_port(),
              connection_->remote_host(),

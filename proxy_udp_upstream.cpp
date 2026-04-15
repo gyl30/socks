@@ -58,13 +58,14 @@ proxy_udp_upstream::proxy_udp_upstream(std::shared_ptr<proxy_reality_connection>
 boost::asio::awaitable<proxy_udp_connect_result> proxy_udp_upstream::connect(const boost::asio::any_io_executor& executor,
                                                                              const uint32_t conn_id,
                                                                              const uint64_t trace_id,
-                                                                             const config& cfg)
+                                                                             const config& cfg,
+                                                                             const std::string& outbound_tag)
 {
     proxy_udp_connect_result result;
     result.socks_rep = socks::kRepSuccess;
 
     boost::system::error_code ec;
-    auto connection = co_await proxy_reality_connection::connect(executor, cfg, conn_id, ec);
+    auto connection = co_await proxy_reality_connection::connect(executor, cfg, outbound_tag, conn_id, ec);
     if (connection == nullptr)
     {
         result.ec = ec ? ec : boost::asio::error::not_connected;

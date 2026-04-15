@@ -40,7 +40,7 @@ class tcp_socks_session : public std::enable_shared_from_this<tcp_socks_session>
 
     [[nodiscard]] boost::asio::awaitable<void> upstream_to_client(std::shared_ptr<upstream> backend);
     [[nodiscard]] boost::asio::awaitable<void> idle_watchdog(std::shared_ptr<upstream> backend);
-    [[nodiscard]] std::shared_ptr<upstream> create_backend(route_type route);
+    [[nodiscard]] std::shared_ptr<upstream> create_backend(route_type route, const std::string& outbound_tag);
 
     void close_client_socket();
 

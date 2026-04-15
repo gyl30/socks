@@ -94,7 +94,7 @@ boost::asio::awaitable<void> tun_tcp_session::run()
              target_addr_,
              target_port_);
 
-    const auto [route, backend] = co_await select_backend();
+    const auto [decision, backend] = co_await select_backend();
     if (backend == nullptr)
     {
         co_return;
@@ -108,7 +108,7 @@ boost::asio::awaitable<void> tun_tcp_session::run()
              client_port_,
              target_addr_,
              target_port_,
-             relay::to_string(route));
+             decision.matched ? decision.outbound_tag : decision.outbound_type);
 
     const auto connect_result = co_await backend->connect(target_addr_, target_port_);
     if (connect_result.ec)
@@ -121,7 +121,7 @@ boost::asio::awaitable<void> tun_tcp_session::run()
                  client_port_,
                  target_addr_,
                  target_port_,
-                 relay::to_string(route),
+                 decision.matched ? decision.outbound_tag : decision.outbound_type,
                  connect_result.ec.message());
         co_await backend->close();
         close_client_connection(true);
@@ -136,7 +136,7 @@ boost::asio::awaitable<void> tun_tcp_session::run()
              client_port_,
              target_addr_,
              target_port_,
-             relay::to_string(route));
+             decision.matched ? decision.outbound_tag : decision.outbound_type);
 
     using boost::asio::experimental::awaitable_operators::operator&&;
     using boost::asio::experimental::awaitable_operators::operator||;
@@ -166,11 +166,11 @@ boost::asio::awaitable<void> tun_tcp_session::run()
              duration_ms);
 }
 
-boost::asio::awaitable<std::pair<route_type, std::shared_ptr<upstream>>> tun_tcp_session::select_backend()
+boost::asio::awaitable<std::pair<route_decision, std::shared_ptr<upstream>>> tun_tcp_session::select_backend()
 {
     const auto target_ip = boost::asio::ip::make_address(target_addr_);
-    const auto route = co_await router_->decide_ip(target_ip);
-    if (route == route_type::kBlock)
+    const auto decision = co_await router_->decide_ip_detail(target_ip);
+    if (decision.route == route_type::kBlock)
     {
         LOG_WARN("{} trace {:016x} conn {} client {}:{} target {}:{} blocked",
                  log_event::kRoute,
@@ -180,17 +180,17 @@ boost::asio::awaitable<std::pair<route_type, std::shared_ptr<upstream>>> tun_tcp
                  client_port_,
                  target_addr_,
                  target_port_);
-        co_return std::make_pair(route, std::shared_ptr<upstream>(nullptr));
+        co_return std::make_pair(decision, std::shared_ptr<upstream>(nullptr));
     }
-    if (route == route_type::kDirect)
+    if (decision.route == route_type::kDirect)
     {
-        co_return std::make_pair(route, make_direct_upstream(idle_timer_.get_executor(), conn_id_, trace_id_, cfg_));
+        co_return std::make_pair(decision, make_direct_upstream(idle_timer_.get_executor(), conn_id_, trace_id_, cfg_));
     }
-    if (route == route_type::kProxy)
+    if (decision.route == route_type::kProxy)
     {
-        co_return std::make_pair(route, make_proxy_upstream(idle_timer_.get_executor(), conn_id_, trace_id_, cfg_));
+        co_return std::make_pair(decision, make_proxy_upstream(idle_timer_.get_executor(), conn_id_, trace_id_, cfg_, decision.outbound_tag));
     }
-    co_return std::make_pair(route_type::kBlock, std::shared_ptr<upstream>(nullptr));
+    co_return std::make_pair(route_decision{}, std::shared_ptr<upstream>(nullptr));
 }
 
 boost::asio::awaitable<void> tun_tcp_session::client_to_upstream(const std::shared_ptr<upstream>& backend)
