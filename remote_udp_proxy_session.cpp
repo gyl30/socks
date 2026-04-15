@@ -9,16 +9,20 @@
 
 #include <boost/asio.hpp>
 #include <boost/asio/as_tuple.hpp>
+#include <boost/asio/co_spawn.hpp>
+#include <boost/asio/detached.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/asio/redirect_error.hpp>
 #include <boost/asio/experimental/awaitable_operators.hpp>
 
 #include "log.h"
 #include "config.h"
+#include "router.h"
 #include "protocol.h"
 #include "constants.h"
 #include "net_utils.h"
 #include "proxy_protocol.h"
+#include "proxy_udp_upstream.h"
 #include "remote_udp_proxy_session.h"
 
 namespace relay
@@ -26,6 +30,7 @@ namespace relay
 
 remote_udp_proxy_session::remote_udp_proxy_session(boost::asio::io_context& io_context,
                                                    std::shared_ptr<proxy_reality_connection> connection,
+                                                   std::shared_ptr<router> router,
                                                    const uint32_t conn_id,
                                                    const uint64_t trace_id,
                                                    const config& cfg)
@@ -36,6 +41,7 @@ remote_udp_proxy_session::remote_udp_proxy_session(boost::asio::io_context& io_c
       udp_socket_(io_context),
       udp_resolver_(io_context),
       connection_(std::move(connection)),
+      router_(std::move(router)),
       resolved_targets_(constants::udp::kMaxCacheEntries),
       allowed_reply_peers_(constants::udp::kMaxCacheEntries)
 {
@@ -138,8 +144,12 @@ boost::asio::awaitable<void> remote_udp_proxy_session::start_impl(const proxy::u
         co_return;
     }
 
-    LOG_INFO(
-        "{} trace {:016x} conn {} udp associate ready bind {}:{}", log_event::kConnEstablished, trace_id_, conn_id_, bind_host_, bind_port_);
+    LOG_INFO("{} trace {:016x} conn {} udp associate ready bind {}:{}",
+             log_event::kConnEstablished,
+             trace_id_,
+             conn_id_,
+             bind_host_,
+             bind_port_);
 
     using boost::asio::experimental::awaitable_operators::operator||;
     if (cfg_.timeout.idle == 0)
@@ -151,7 +161,9 @@ boost::asio::awaitable<void> remote_udp_proxy_session::start_impl(const proxy::u
         co_await (connection_to_udp() || udp_to_connection() || idle_watchdog());
     }
 
+    stopping_.store(true);
     close_socket();
+    co_await close_proxy_upstreams();
     if (connection_ != nullptr)
     {
         boost::system::error_code close_ec;
@@ -168,6 +180,102 @@ boost::asio::awaitable<void> remote_udp_proxy_session::start_impl(const proxy::u
              tx_bytes_,
              rx_bytes_,
              duration_ms);
+}
+
+boost::asio::awaitable<route_decision> remote_udp_proxy_session::decide_route(const proxy::udp_datagram& datagram) const
+{
+    route_decision decision;
+    decision.route = route_type::kBlock;
+    decision.outbound_type = "no_route";
+    if (router_ == nullptr)
+    {
+        LOG_ERROR("{} trace {:016x} conn {} target {}:{} route unavailable",
+                  log_event::kRoute,
+                  trace_id_,
+                  conn_id_,
+                  datagram.target_host.empty() ? "unknown" : datagram.target_host,
+                  datagram.target_port);
+        co_return decision;
+    }
+
+    boost::system::error_code ec;
+    const auto target_addr = boost::asio::ip::make_address(datagram.target_host, ec);
+    if (ec)
+    {
+        decision = co_await router_->decide_domain_detail(datagram.target_host);
+    }
+    else
+    {
+        decision = co_await router_->decide_ip_detail(target_addr);
+    }
+    co_return decision;
+}
+
+boost::asio::awaitable<std::shared_ptr<proxy_udp_upstream>> remote_udp_proxy_session::get_proxy_upstream(const std::string& outbound_tag)
+{
+    if (stopping_.load())
+    {
+        co_return nullptr;
+    }
+
+    if (const auto it = proxy_upstreams_.find(outbound_tag); it != proxy_upstreams_.end())
+    {
+        co_return it->second;
+    }
+
+    const auto connect_result = co_await proxy_udp_upstream::connect(udp_socket_.get_executor(), conn_id_, trace_id_, cfg_, outbound_tag);
+    if (connect_result.ec || connect_result.upstream == nullptr)
+    {
+        LOG_WARN("{} trace {:016x} conn {} out_tag {} open proxy udp upstream failed {} rep {}",
+                 log_event::kRoute,
+                 trace_id_,
+                 conn_id_,
+                 outbound_tag,
+                 connect_result.ec ? connect_result.ec.message() : "not_connected",
+                 connect_result.socks_rep);
+        co_return nullptr;
+    }
+
+    proxy_upstreams_.insert_or_assign(outbound_tag, connect_result.upstream);
+    LOG_INFO("{} trace {:016x} conn {} out_tag {} proxy udp upstream ready bind {}:{}",
+             log_event::kRoute,
+             trace_id_,
+             conn_id_,
+             outbound_tag,
+             connect_result.upstream->bind_host(),
+             connect_result.upstream->bind_port());
+
+    boost::asio::co_spawn(udp_socket_.get_executor(),
+                          [self = shared_from_this(), outbound_tag, upstream = connect_result.upstream]() -> boost::asio::awaitable<void>
+                          {
+                              co_await self->proxy_to_connection(outbound_tag, upstream);
+                          },
+                          boost::asio::detached);
+
+    co_return connect_result.upstream;
+}
+
+boost::asio::awaitable<void> remote_udp_proxy_session::close_proxy_upstreams()
+{
+    std::vector<std::shared_ptr<proxy_udp_upstream>> upstreams;
+    upstreams.reserve(proxy_upstreams_.size());
+    for (const auto& [outbound_tag, upstream] : proxy_upstreams_)
+    {
+        (void)outbound_tag;
+        if (upstream != nullptr)
+        {
+            upstreams.push_back(upstream);
+        }
+    }
+    proxy_upstreams_.clear();
+
+    for (const auto& upstream : upstreams)
+    {
+        if (upstream != nullptr)
+        {
+            co_await upstream->close();
+        }
+    }
 }
 
 boost::asio::awaitable<void> remote_udp_proxy_session::connection_to_udp()
@@ -204,39 +312,115 @@ boost::asio::awaitable<void> remote_udp_proxy_session::connection_to_udp()
             break;
         }
 
-        auto target_ep = co_await resolve_target_endpoint(datagram.target_host, datagram.target_port, ec);
-        if (ec)
-        {
-            continue;
-        }
+        last_activity_time_ms_ = net::now_ms();
         const auto payload_len = datagram.payload.size();
         if (payload_len > constants::udp::kMaxPayload)
         {
-            continue;
-        }
-
-        co_await udp_socket_.async_send_to(
-            boost::asio::buffer(datagram.payload.data(), payload_len), target_ep, boost::asio::redirect_error(boost::asio::use_awaitable, ec));
-        if (ec)
-        {
-            LOG_WARN("{} trace {:016x} conn {} bind {}:{} send target {}:{} error {}",
+            LOG_WARN("{} trace {:016x} conn {} bind {}:{} target {}:{} drop udp datagram payload too large size {} max {}",
                      log_event::kRoute,
                      trace_id_,
                      conn_id_,
                      bind_host_,
                      bind_port_,
-                     target_ep.address().to_string(),
-                     target_ep.port(),
+                     datagram.target_host,
+                     datagram.target_port,
+                     payload_len,
+                     constants::udp::kMaxPayload);
+            continue;
+        }
+
+        const auto decision = co_await decide_route(datagram);
+        const auto route_name = decision.matched ? decision.outbound_tag : decision.outbound_type;
+        if (decision.route == route_type::kBlock)
+        {
+            LOG_WARN("{} trace {:016x} conn {} bind {}:{} target {}:{} route {} drop udp datagram",
+                     log_event::kRoute,
+                     trace_id_,
+                     conn_id_,
+                     bind_host_,
+                     bind_port_,
+                     datagram.target_host,
+                     datagram.target_port,
+                     route_name);
+            continue;
+        }
+
+        if (decision.route == route_type::kDirect)
+        {
+            auto target_ep = co_await resolve_target_endpoint(datagram.target_host, datagram.target_port, ec);
+            if (ec)
+            {
+                LOG_WARN("{} trace {:016x} conn {} bind {}:{} target {}:{} route {} resolve failed {}",
+                         log_event::kRoute,
+                         trace_id_,
+                         conn_id_,
+                         bind_host_,
+                         bind_port_,
+                         datagram.target_host,
+                         datagram.target_port,
+                         route_name,
+                         ec.message());
+                continue;
+            }
+
+            co_await udp_socket_.async_send_to(
+                boost::asio::buffer(datagram.payload.data(), payload_len), target_ep, boost::asio::redirect_error(boost::asio::use_awaitable, ec));
+            if (ec)
+            {
+                LOG_WARN("{} trace {:016x} conn {} bind {}:{} target {}:{} route {} send udp failed {}",
+                         log_event::kRoute,
+                         trace_id_,
+                         conn_id_,
+                         bind_host_,
+                         bind_port_,
+                         target_ep.address().to_string(),
+                         target_ep.port(),
+                         route_name,
+                         ec.message());
+                continue;
+            }
+
+            tx_bytes_ += payload_len;
+            const auto normalized_target = net::normalize_endpoint(target_ep);
+            const auto now_ms = net::now_ms();
+            allowed_reply_peers_.evict_if([&](const auto&, const auto& entry) { return entry.expires_at <= now_ms; });
+            allowed_reply_peers_.put(normalized_target, peer_cache_entry{now_ms + constants::udp::kCacheTtlMs});
+            continue;
+        }
+
+        const auto upstream = co_await get_proxy_upstream(decision.outbound_tag);
+        if (upstream == nullptr)
+        {
+            continue;
+        }
+
+        co_await upstream->send_datagram(datagram.target_host, datagram.target_port, datagram.payload.data(), datagram.payload.size(), ec);
+        if (ec)
+        {
+            LOG_WARN("{} trace {:016x} conn {} bind {}:{} target {}:{} route {} send proxy udp failed {}",
+                     log_event::kRoute,
+                     trace_id_,
+                     conn_id_,
+                     bind_host_,
+                     bind_port_,
+                     datagram.target_host,
+                     datagram.target_port,
+                     route_name,
                      ec.message());
             continue;
         }
 
-        last_activity_time_ms_ = net::now_ms();
         tx_bytes_ += payload_len;
-        const auto normalized_target = net::normalize_endpoint(target_ep);
-        const auto now_ms = net::now_ms();
-        allowed_reply_peers_.evict_if([&](const auto&, const auto& entry) { return entry.expires_at <= now_ms; });
-        allowed_reply_peers_.put(normalized_target, peer_cache_entry{now_ms + constants::udp::kCacheTtlMs});
+        LOG_INFO("{} trace {:016x} conn {} bind {}:{} target {}:{} route {} forwarded proxy udp bytes {}",
+                 log_event::kRoute,
+                 trace_id_,
+                 conn_id_,
+                 bind_host_,
+                 bind_port_,
+                 datagram.target_host,
+                 datagram.target_port,
+                 route_name,
+                 payload_len);
     }
 }
 
@@ -293,6 +477,94 @@ boost::asio::awaitable<void> remote_udp_proxy_session::udp_to_connection()
     }
 }
 
+boost::asio::awaitable<void> remote_udp_proxy_session::proxy_to_connection(const std::string& outbound_tag,
+                                                                           const std::shared_ptr<proxy_udp_upstream>& upstream)
+{
+    if (connection_ == nullptr || upstream == nullptr)
+    {
+        co_return;
+    }
+
+    for (;;)
+    {
+        if (stopping_.load())
+        {
+            break;
+        }
+
+        boost::system::error_code ec;
+        const auto read_timeout = (cfg_.timeout.idle == 0) ? cfg_.timeout.read : std::max(cfg_.timeout.read, cfg_.timeout.idle + 2);
+        const auto datagram = co_await upstream->receive_datagram(read_timeout, ec);
+        if (ec)
+        {
+            if (ec == boost::asio::error::timed_out)
+            {
+                continue;
+            }
+            LOG_WARN("{} trace {:016x} conn {} bind {}:{} out_tag {} receive proxy udp failed {}",
+                     log_event::kRoute,
+                     trace_id_,
+                     conn_id_,
+                     bind_host_,
+                     bind_port_,
+                     outbound_tag,
+                     ec.message());
+            break;
+        }
+
+        std::vector<uint8_t> packet;
+        if (!proxy::encode_udp_datagram(datagram, packet))
+        {
+            LOG_WARN("{} trace {:016x} conn {} bind {}:{} out_tag {} encode proxy udp datagram failed target {}:{}",
+                     log_event::kRoute,
+                     trace_id_,
+                     conn_id_,
+                     bind_host_,
+                     bind_port_,
+                     outbound_tag,
+                     datagram.target_host,
+                     datagram.target_port);
+            continue;
+        }
+
+        co_await connection_->write_packet(packet, ec);
+        if (ec)
+        {
+            LOG_WARN("{} trace {:016x} conn {} bind {}:{} out_tag {} write proxy udp reply failed {}",
+                     log_event::kRoute,
+                     trace_id_,
+                     conn_id_,
+                     bind_host_,
+                     bind_port_,
+                     outbound_tag,
+                     ec.message());
+            break;
+        }
+
+        last_activity_time_ms_ = net::now_ms();
+        rx_bytes_ += datagram.payload.size();
+        LOG_INFO("{} trace {:016x} conn {} bind {}:{} out_tag {} recv proxy udp target {}:{} bytes {}",
+                 log_event::kRoute,
+                 trace_id_,
+                 conn_id_,
+                 bind_host_,
+                 bind_port_,
+                 outbound_tag,
+                 datagram.target_host,
+                 datagram.target_port,
+                 datagram.payload.size());
+    }
+
+    if (const auto it = proxy_upstreams_.find(outbound_tag); it != proxy_upstreams_.end() && it->second == upstream)
+    {
+        proxy_upstreams_.erase(it);
+    }
+    if (!stopping_.load())
+    {
+        co_await upstream->close();
+    }
+}
+
 boost::asio::awaitable<void> remote_udp_proxy_session::idle_watchdog()
 {
     if (cfg_.timeout.idle == 0)
@@ -317,6 +589,13 @@ boost::asio::awaitable<void> remote_udp_proxy_session::idle_watchdog()
                      conn_id_,
                      bind_host_,
                      bind_port_);
+            stopping_.store(true);
+            boost::system::error_code close_ec;
+            udp_socket_.close(close_ec);
+            if (connection_ != nullptr)
+            {
+                connection_->close(close_ec);
+            }
             break;
         }
     }
