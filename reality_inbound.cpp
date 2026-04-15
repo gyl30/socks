@@ -28,8 +28,8 @@
 #include "proxy_protocol.h"
 #include "tls/crypto_util.h"
 #include "reality/session/session.h"
-#include "reality_tcp_session.h"
-#include "reality_udp_session.h"
+#include "reality_tcp_connect_session.h"
+#include "reality_udp_associate_session.h"
 #include "proxy_reality_connection.h"
 #include "reality/policy/fallback_gate.h"
 #include "reality/policy/fallback_executor.h"
@@ -439,9 +439,9 @@ boost::asio::awaitable<void> reality_inbound::process_proxy_request(io_worker& w
                  tcp_request.target_host,
                  tcp_request.target_port,
                  packet.size());
-        const auto session =
-            std::make_shared<reality_tcp_session>(worker.io_context, std::move(connection), router_, reality_ctx.conn_id, tcp_request.trace_id, cfg_);
-        co_await session->start(tcp_request);
+        const auto tcp_connect_session = std::make_shared<reality_tcp_connect_session>(
+            worker.io_context, std::move(connection), router_, reality_ctx.conn_id, tcp_request.trace_id, cfg_);
+        co_await tcp_connect_session->start(tcp_request);
         co_return;
     }
 
@@ -458,9 +458,9 @@ boost::asio::awaitable<void> reality_inbound::process_proxy_request(io_worker& w
                  reality_ctx.remote_port,
                  reality_ctx.sni.empty() ? "unknown" : reality_ctx.sni,
                  packet.size());
-        const auto session =
-            std::make_shared<reality_udp_session>(worker.io_context, std::move(connection), router_, reality_ctx.conn_id, udp_request.trace_id, cfg_);
-        co_await session->start(udp_request);
+        const auto udp_associate_session = std::make_shared<reality_udp_associate_session>(
+            worker.io_context, std::move(connection), router_, reality_ctx.conn_id, udp_request.trace_id, cfg_);
+        co_await udp_associate_session->start(udp_request);
         co_return;
     }
 

@@ -20,17 +20,17 @@
 #include "protocol.h"
 #include "net_utils.h"
 #include "proxy_protocol.h"
-#include "reality_tcp_session.h"
+#include "reality_tcp_connect_session.h"
 
 namespace relay
 {
 
-reality_tcp_session::reality_tcp_session(boost::asio::io_context& io_context,
-                                         std::shared_ptr<proxy_reality_connection> connection,
-                                         std::shared_ptr<router> router,
-                                         const uint32_t conn_id,
-                                         const uint64_t trace_id,
-                                         const config& cfg)
+reality_tcp_connect_session::reality_tcp_connect_session(boost::asio::io_context& io_context,
+                                                         std::shared_ptr<proxy_reality_connection> connection,
+                                                         std::shared_ptr<router> router,
+                                                         const uint32_t conn_id,
+                                                         const uint64_t trace_id,
+                                                         const config& cfg)
     : conn_id_(conn_id),
       trace_id_(trace_id),
       cfg_(cfg),
@@ -42,9 +42,9 @@ reality_tcp_session::reality_tcp_session(boost::asio::io_context& io_context,
     last_activity_time_ms_ = net::now_ms();
 }
 
-boost::asio::awaitable<void> reality_tcp_session::start(const proxy::tcp_connect_request& request) { co_await run(request); }
+boost::asio::awaitable<void> reality_tcp_connect_session::start(const proxy::tcp_connect_request& request) { co_await run(request); }
 
-boost::asio::awaitable<void> reality_tcp_session::run(const proxy::tcp_connect_request& request)
+boost::asio::awaitable<void> reality_tcp_connect_session::run(const proxy::tcp_connect_request& request)
 {
     target_host_ = request.target_host;
     target_port_ = request.target_port;
@@ -130,7 +130,7 @@ boost::asio::awaitable<void> reality_tcp_session::run(const proxy::tcp_connect_r
     log_close_summary();
 }
 
-std::shared_ptr<tcp_outbound_stream> reality_tcp_session::create_backend(const route_type route, const std::string& outbound_tag) const
+std::shared_ptr<tcp_outbound_stream> reality_tcp_connect_session::create_backend(const route_type route, const std::string& outbound_tag) const
 {
     if (route != route_type::kDirect && route != route_type::kProxy)
     {
@@ -144,7 +144,7 @@ std::shared_ptr<tcp_outbound_stream> reality_tcp_session::create_backend(const r
     return handler->create_tcp_upstream(executor_, conn_id_, trace_id_, cfg_);
 }
 
-boost::asio::awaitable<tcp_outbound_connect_result> reality_tcp_session::connect_backend(const std::shared_ptr<tcp_outbound_stream>& backend,
+boost::asio::awaitable<tcp_outbound_connect_result> reality_tcp_connect_session::connect_backend(const std::shared_ptr<tcp_outbound_stream>& backend,
                                                                                      const std::string& host,
                                                                                      const uint16_t port,
                                                                                      const route_type route)
@@ -180,7 +180,7 @@ boost::asio::awaitable<tcp_outbound_connect_result> reality_tcp_session::connect
     co_return result;
 }
 
-boost::asio::awaitable<bool> reality_tcp_session::send_connect_reply(const uint8_t socks_rep, const tcp_outbound_connect_result* connect_result)
+boost::asio::awaitable<bool> reality_tcp_connect_session::send_connect_reply(const uint8_t socks_rep, const tcp_outbound_connect_result* connect_result)
 {
     if (connection_ == nullptr)
     {
@@ -238,7 +238,7 @@ boost::asio::awaitable<bool> reality_tcp_session::send_connect_reply(const uint8
     co_return true;
 }
 
-boost::asio::awaitable<void> reality_tcp_session::relay_target(const std::shared_ptr<tcp_outbound_stream>& backend)
+boost::asio::awaitable<void> reality_tcp_connect_session::relay_target(const std::shared_ptr<tcp_outbound_stream>& backend)
 {
     using boost::asio::experimental::awaitable_operators::operator&&;
     using boost::asio::experimental::awaitable_operators::operator||;
@@ -252,7 +252,7 @@ boost::asio::awaitable<void> reality_tcp_session::relay_target(const std::shared
     co_await ((client_to_outbound(backend) && outbound_to_client(backend)) || idle_watchdog(backend));
 }
 
-boost::asio::awaitable<void> reality_tcp_session::client_to_outbound(const std::shared_ptr<tcp_outbound_stream>& backend)
+boost::asio::awaitable<void> reality_tcp_connect_session::client_to_outbound(const std::shared_ptr<tcp_outbound_stream>& backend)
 {
     if (connection_ == nullptr || backend == nullptr)
     {
@@ -310,7 +310,7 @@ boost::asio::awaitable<void> reality_tcp_session::client_to_outbound(const std::
     }
 }
 
-boost::asio::awaitable<void> reality_tcp_session::outbound_to_client(const std::shared_ptr<tcp_outbound_stream>& backend)
+boost::asio::awaitable<void> reality_tcp_connect_session::outbound_to_client(const std::shared_ptr<tcp_outbound_stream>& backend)
 {
     if (connection_ == nullptr || backend == nullptr)
     {
@@ -360,7 +360,7 @@ boost::asio::awaitable<void> reality_tcp_session::outbound_to_client(const std::
     }
 }
 
-boost::asio::awaitable<void> reality_tcp_session::idle_watchdog(const std::shared_ptr<tcp_outbound_stream>& backend)
+boost::asio::awaitable<void> reality_tcp_connect_session::idle_watchdog(const std::shared_ptr<tcp_outbound_stream>& backend)
 {
     const auto idle_timeout_ms = static_cast<uint64_t>(cfg_.timeout.idle) * 1000ULL;
     while (true)
@@ -397,7 +397,7 @@ boost::asio::awaitable<void> reality_tcp_session::idle_watchdog(const std::share
     }
 }
 
-void reality_tcp_session::log_close_summary() const
+void reality_tcp_connect_session::log_close_summary() const
 {
     const auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time_).count();
     LOG_INFO("{} trace {:016x} conn {} target {}:{} route {} bind {}:{} tx_bytes {} rx_bytes {} duration_ms {}",

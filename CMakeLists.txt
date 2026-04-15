@@ -243,8 +243,8 @@ set(SOCKS_SOURCES
     tls/record_layer.cpp
     tls/key_schedule.cpp
     ip_matcher.cpp
-    reality_tcp_session.cpp
-    reality_udp_session.cpp
+    reality_tcp_connect_session.cpp
+    reality_udp_associate_session.cpp
     udp_proxy_outbound.cpp
     tcp_outbound_stream.cpp
     proxy_protocol.cpp
