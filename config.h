@@ -116,6 +116,7 @@ struct config
         std::string type;
         std::string tag;
         std::optional<reality_outbound_t> reality;
+        std::optional<socks_t> socks;
     };
 
     struct route_rule_t

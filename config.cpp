@@ -698,6 +698,23 @@ template <typename T>
             continue;
         }
 
+        if (parsed.type == "socks")
+        {
+            const auto* settings = find_member_object(entry, "settings");
+            if (settings == nullptr)
+            {
+                return fail_config(filename, entry_path + ".settings missing");
+            }
+            config::socks_t socks;
+            if (!parse_socks_settings(*settings, filename, entry_path + ".settings", socks))
+            {
+                return false;
+            }
+            parsed.socks = std::move(socks);
+            out.push_back(std::move(parsed));
+            continue;
+        }
+
         return fail_config(filename, entry_path + " unsupported_type");
     }
     return true;
@@ -1195,6 +1212,13 @@ std::string dump_config(const config& cfg)
             writer.Key("settings");
             writer.StartObject();
             write_reality_outbound_settings(writer, *outbound.reality);
+            writer.EndObject();
+        }
+        else if (outbound.type == "socks" && outbound.socks.has_value())
+        {
+            writer.Key("settings");
+            writer.StartObject();
+            write_socks_settings(writer, *outbound.socks);
             writer.EndObject();
         }
         writer.EndObject();

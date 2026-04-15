@@ -39,6 +39,10 @@ namespace
     {
         return route_type::kProxy;
     }
+    if (outbound_type == "socks")
+    {
+        return route_type::kProxy;
+    }
     return route_type::kBlock;
 }
 
