@@ -18,15 +18,15 @@
 namespace relay
 {
 
-class remote_tcp_proxy_session : public std::enable_shared_from_this<remote_tcp_proxy_session>
+class reality_tcp_session : public std::enable_shared_from_this<reality_tcp_session>
 {
    public:
-    remote_tcp_proxy_session(boost::asio::io_context& io_context,
-                             std::shared_ptr<proxy_reality_connection> connection,
-                             std::shared_ptr<router> router,
-                             uint32_t conn_id,
-                             uint64_t trace_id,
-                             const config& cfg);
+    reality_tcp_session(boost::asio::io_context& io_context,
+                        std::shared_ptr<proxy_reality_connection> connection,
+                        std::shared_ptr<router> router,
+                        uint32_t conn_id,
+                        uint64_t trace_id,
+                        const config& cfg);
 
     boost::asio::awaitable<void> start(const proxy::tcp_connect_request& request);
 

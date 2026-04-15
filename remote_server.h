@@ -23,11 +23,11 @@
 namespace relay
 {
 
-class remote_server : public std::enable_shared_from_this<remote_server>
+class reality_inbound : public std::enable_shared_from_this<reality_inbound>
 {
    public:
-    remote_server(io_context_pool& pool, const config& cfg);
-    virtual ~remote_server();
+    reality_inbound(io_context_pool& pool, const config& cfg);
+    virtual ~reality_inbound();
 
    public:
     void start();
