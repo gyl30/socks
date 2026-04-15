@@ -480,26 +480,43 @@ short_id="0102030405060708"
 
 cat >"$tmp_dir/server.json" <<EOF
 {
-  "mode": "server",
   "workers": 2,
   "log": {
     "level": "debug",
     "file": "$server_log"
   },
-  "inbound": {
-    "host": "$wan_ip",
-    "port": $server_port
-  },
-  "socks": {
-    "enabled": false
-  },
-  "reality": {
-    "sni": "$sni",
-    "max_handshake_records": 256,
-    "private_key": "$private_key",
-    "public_key": "$public_key",
-    "short_id": "$short_id"
-  },
+  "inbounds": [
+    {
+      "type": "reality",
+      "tag": "reality-in",
+      "settings": {
+        "host": "$wan_ip",
+        "port": $server_port,
+        "sni": "$sni",
+        "private_key": "$private_key",
+        "public_key": "$public_key",
+        "short_id": "$short_id",
+        "replay_cache_max_entries": 100000
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "direct"
+    },
+    {
+      "type": "block",
+      "tag": "block"
+    }
+  ],
+  "routing": [
+    {
+      "type": "inbound",
+      "values": ["reality-in"],
+      "out": "direct"
+    }
+  ],
   "timeout": {
     "read": 2,
     "write": 2,
@@ -511,36 +528,63 @@ EOF
 
 cat >"$tmp_dir/client.json" <<EOF
 {
-  "mode": "client",
   "workers": 2,
   "log": {
     "level": "debug",
     "file": "$client_log"
   },
-  "socks": {
-    "enabled": false,
-    "host": "127.0.0.1",
-    "port": 0,
-    "auth": false
-  },
-  "tproxy": {
-    "enabled": true,
-    "listen_host": "0.0.0.0",
-    "tcp_port": $tproxy_tcp_port,
-    "udp_port": $tproxy_udp_port,
-    "mark": 17
-  },
-  "outbound": {
-    "host": "$wan_ip",
-    "port": $server_port
-  },
-  "reality": {
-    "sni": "$sni",
-    "fingerprint": "random",
-    "max_handshake_records": 256,
-    "public_key": "$public_key",
-    "short_id": "$short_id"
-  },
+  "inbounds": [
+    {
+      "type": "tproxy",
+      "tag": "tproxy-in",
+      "settings": {
+        "listen_host": "0.0.0.0",
+        "tcp_port": $tproxy_tcp_port,
+        "udp_port": $tproxy_udp_port,
+        "mark": 17
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "reality",
+      "tag": "reality-out",
+      "settings": {
+        "host": "$wan_ip",
+        "port": $server_port,
+        "sni": "$sni",
+        "fingerprint": "random",
+        "public_key": "$public_key",
+        "short_id": "$short_id",
+        "max_handshake_records": 256
+      }
+    },
+    {
+      "type": "direct",
+      "tag": "direct"
+    },
+    {
+      "type": "block",
+      "tag": "block"
+    }
+  ],
+  "routing": [
+    {
+      "type": "ip",
+      "file": "$repo_root/config/block_ip.txt",
+      "out": "block"
+    },
+    {
+      "type": "ip",
+      "file": "$repo_root/config/direct_ip.txt",
+      "out": "direct"
+    },
+    {
+      "type": "inbound",
+      "values": ["tproxy-in"],
+      "out": "reality-out"
+    }
+  ],
   "timeout": {
     "read": 2,
     "write": 2,
@@ -557,14 +601,14 @@ start_in_ns "$ns_wan" "$tmp_dir/direct-udp-echo.log" python3 "$repo_root/scripts
 start_in_ns "$ns_wan" "$tmp_dir/proxy-udp-echo.log" python3 "$repo_root/scripts/socks5_udp_echo_server.py" --host "$proxy_udp_ip" --port "$proxy_udp_port"
 start_in_ns "$ns_wan" "$tmp_dir/direct-udp-blackhole.log" python3 "$repo_root/scripts/udp_blackhole_server.py" --host "$direct_udp_blackhole_ip" --port "$direct_udp_blackhole_port"
 start_in_ns "$ns_wan" "$tmp_dir/proxy-udp-blackhole.log" python3 "$repo_root/scripts/udp_blackhole_server.py" --host "$proxy_udp_blackhole_ip" --port "$proxy_udp_blackhole_port"
-start_in_ns "$ns_wan" "$tmp_dir/reality-server.stdout.log" env LD_LIBRARY_PATH="$runtime_ld_library_path" SOCKS_CONFIG_DIR="$repo_root/config" "$binary" -c "$tmp_dir/server.json"
+start_in_ns "$ns_wan" "$tmp_dir/reality-server.stdout.log" env LD_LIBRARY_PATH="$runtime_ld_library_path" "$binary" -c "$tmp_dir/server.json"
 
 wait_tcp_port "$ns_wan" "$wan_ip" "$server_port" "reality_server"
 wait_tcp_port "$ns_wan" "$direct_tcp_ip" "$direct_tcp_port" "direct_http_server"
 wait_tcp_port "$ns_wan" "$proxy_tcp_ip" "$proxy_tcp_port" "proxy_http_server"
 
 echo "[setup] start TPROXY client inside $ns_mid"
-start_in_ns "$ns_mid" "$tmp_dir/tproxy-client.stdout.log" env LD_LIBRARY_PATH="$runtime_ld_library_path" SOCKS_CONFIG_DIR="$repo_root/config" "$binary" -c "$tmp_dir/client.json"
+start_in_ns "$ns_mid" "$tmp_dir/tproxy-client.stdout.log" env LD_LIBRARY_PATH="$runtime_ld_library_path" "$binary" -c "$tmp_dir/client.json"
 
 if ! wait_log_pattern_since "$client_log" 0 "tproxy tcp listening on 0.0.0.0:$tproxy_tcp_port" 10; then
     echo "tproxy tcp listener did not start" >&2
