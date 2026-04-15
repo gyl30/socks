@@ -26,6 +26,7 @@ class tun_tcp_session : public std::enable_shared_from_this<tun_tcp_session>
                     std::shared_ptr<router> router,
                     tcp_pcb* pcb,
                     uint32_t sid,
+                    std::string inbound_tag,
                     const config& cfg,
                     std::function<void()> on_close);
 
@@ -57,6 +58,7 @@ class tun_tcp_session : public std::enable_shared_from_this<tun_tcp_session>
    private:
     uint64_t trace_id_ = 0;
     uint32_t conn_id_ = 0;
+    std::string inbound_tag_;
     const config& cfg_;
     std::shared_ptr<router> router_;
     tcp_pcb* pcb_ = nullptr;

@@ -15,6 +15,7 @@
 #include "config.h"
 #include "outbound.h"
 #include "router.h"
+#include "trace_store.h"
 #include "trace_id.h"
 #include "tcp_outbound_stream.h"
 #include "constants.h"
@@ -38,10 +39,12 @@ std::string describe_endpoint_error(const boost::system::error_code& ec) { retur
 tproxy_tcp_session::tproxy_tcp_session(boost::asio::ip::tcp::socket socket,
                                        std::shared_ptr<router> router,
                                        uint32_t sid,
+                                       std::string inbound_tag,
                                        const config& cfg,
                                        const config::tproxy_t& settings)
     : trace_id_(generate_trace_id()),
       conn_id_(sid),
+      inbound_tag_(std::move(inbound_tag)),
       socket_(std::move(socket)),
       idle_timer_(socket_.get_executor()),
       router_(std::move(router)),
@@ -105,11 +108,75 @@ boost::asio::awaitable<void> tproxy_tcp_session::run()
     const auto peer_ep = socket_.remote_endpoint(peer_ec);
     update_session_endpoints(target_ep, local_ec, local_ep, peer_ec, peer_ep);
     log_redirected_connection();
+    trace_store::instance().record_event(trace_event{
+        .trace_id = trace_id_,
+        .conn_id = conn_id_,
+        .stage = trace_stage::kConnAccepted,
+        .result = trace_result::kOk,
+        .inbound_tag = inbound_tag_,
+        .inbound_type = "tproxy",
+        .target_host = target_addr_,
+        .target_port = target_port_,
+        .local_host = local_addr_.empty() ? "unknown" : local_addr_,
+        .local_port = local_port_,
+        .remote_host = client_addr_.empty() ? "unknown" : client_addr_,
+        .remote_port = client_port_,
+    });
 
     const auto target_addr = net::normalize_address(target_ep.address());
+    trace_store::instance().record_event(trace_event{
+        .trace_id = trace_id_,
+        .conn_id = conn_id_,
+        .stage = trace_stage::kRouteDecideStart,
+        .result = trace_result::kOk,
+        .inbound_tag = inbound_tag_,
+        .inbound_type = "tproxy",
+        .target_host = target_addr_,
+        .target_port = target_port_,
+        .local_host = local_addr_.empty() ? "unknown" : local_addr_,
+        .local_port = local_port_,
+        .remote_host = client_addr_.empty() ? "unknown" : client_addr_,
+        .remote_port = client_port_,
+    });
     const auto [decision, backend] = co_await select_backend(target_addr);
+    trace_store::instance().record_event(trace_event{
+        .trace_id = trace_id_,
+        .conn_id = conn_id_,
+        .stage = trace_stage::kRouteDecideDone,
+        .result = decision.route == route_type::kBlock ? trace_result::kFail : trace_result::kOk,
+        .inbound_tag = inbound_tag_,
+        .inbound_type = "tproxy",
+        .target_host = target_addr_,
+        .target_port = target_port_,
+        .route_type = relay::to_string(decision.route),
+        .match_type = decision.match_type,
+        .match_value = decision.match_value,
+        .outbound_tag = decision.outbound_tag,
+        .outbound_type = decision.outbound_type,
+        .local_host = local_addr_.empty() ? "unknown" : local_addr_,
+        .local_port = local_port_,
+        .remote_host = client_addr_.empty() ? "unknown" : client_addr_,
+        .remote_port = client_port_,
+    });
     if (backend == nullptr)
     {
+        const auto error_message = (decision.route == route_type::kBlock) ? std::string("route blocked") : std::string("outbound handler unavailable");
+        trace_store::instance().record_event(trace_event{
+            .trace_id = trace_id_,
+            .conn_id = conn_id_,
+            .stage = trace_stage::kSessionError,
+            .result = trace_result::kFail,
+            .inbound_tag = inbound_tag_,
+            .inbound_type = "tproxy",
+            .target_host = target_addr_,
+            .target_port = target_port_,
+            .route_type = relay::to_string(decision.route),
+            .match_type = decision.match_type,
+            .match_value = decision.match_value,
+            .outbound_tag = decision.outbound_tag,
+            .outbound_type = decision.outbound_type,
+            .error_message = error_message,
+        });
         co_return;
     }
     LOG_INFO("{} trace {:016x} conn {} target {}:{} route {}",
@@ -119,14 +186,65 @@ boost::asio::awaitable<void> tproxy_tcp_session::run()
              target_addr_,
              target_port_,
              decision.matched ? decision.outbound_tag : decision.outbound_type);
-    if (!(co_await connect_backend(decision.route, backend)))
+    if (!(co_await connect_backend(decision, backend)))
     {
+        trace_store::instance().record_event(trace_event{
+            .trace_id = trace_id_,
+            .conn_id = conn_id_,
+            .stage = trace_stage::kSessionError,
+            .result = trace_result::kFail,
+            .inbound_tag = inbound_tag_,
+            .inbound_type = "tproxy",
+            .target_host = target_addr_,
+            .target_port = target_port_,
+            .route_type = relay::to_string(decision.route),
+            .match_type = decision.match_type,
+            .match_value = decision.match_value,
+            .outbound_tag = decision.outbound_tag,
+            .outbound_type = decision.outbound_type,
+        });
         co_return;
     }
 
+    trace_store::instance().record_event(trace_event{
+        .trace_id = trace_id_,
+        .conn_id = conn_id_,
+        .stage = trace_stage::kRelayStart,
+        .result = trace_result::kOk,
+        .inbound_tag = inbound_tag_,
+        .inbound_type = "tproxy",
+        .target_host = target_addr_,
+        .target_port = target_port_,
+        .route_type = relay::to_string(decision.route),
+        .match_type = decision.match_type,
+        .match_value = decision.match_value,
+        .outbound_tag = decision.outbound_tag,
+        .outbound_type = decision.outbound_type,
+        .local_host = local_addr_.empty() ? "unknown" : local_addr_,
+        .local_port = local_port_,
+        .remote_host = client_addr_.empty() ? "unknown" : client_addr_,
+        .remote_port = client_port_,
+    });
     co_await relay_backend(backend);
     co_await backend->close();
     close_client_socket();
+    trace_store::instance().record_event(trace_event{
+        .trace_id = trace_id_,
+        .conn_id = conn_id_,
+        .stage = trace_stage::kSessionClose,
+        .result = trace_result::kOk,
+        .inbound_tag = inbound_tag_,
+        .inbound_type = "tproxy",
+        .target_host = target_addr_,
+        .target_port = target_port_,
+        .route_type = relay::to_string(decision.route),
+        .bytes_tx = tx_bytes_,
+        .bytes_rx = rx_bytes_,
+        .local_host = local_addr_.empty() ? "unknown" : local_addr_,
+        .local_port = local_port_,
+        .remote_host = client_addr_.empty() ? "unknown" : client_addr_,
+        .remote_port = client_port_,
+    });
     log_close_summary();
 }
 
@@ -248,31 +366,109 @@ boost::asio::awaitable<std::pair<route_decision, std::shared_ptr<tcp_outbound_st
     co_return std::make_pair(decision, backend);
 }
 
-boost::asio::awaitable<bool> tproxy_tcp_session::connect_backend(route_type route, const std::shared_ptr<tcp_outbound_stream>& backend)
+boost::asio::awaitable<bool> tproxy_tcp_session::connect_backend(const route_decision& decision,
+                                                                 const std::shared_ptr<tcp_outbound_stream>& backend)
 {
+    const auto connect_start = std::chrono::steady_clock::now();
+    trace_store::instance().record_event(trace_event{
+        .trace_id = trace_id_,
+        .conn_id = conn_id_,
+        .stage = trace_stage::kOutboundConnectStart,
+        .result = trace_result::kOk,
+        .inbound_tag = inbound_tag_,
+        .inbound_type = "tproxy",
+        .target_host = target_addr_,
+        .target_port = target_port_,
+        .route_type = relay::to_string(decision.route),
+        .match_type = decision.match_type,
+        .match_value = decision.match_value,
+        .outbound_tag = decision.outbound_tag,
+        .outbound_type = decision.outbound_type,
+        .local_host = local_addr_.empty() ? "unknown" : local_addr_,
+        .local_port = local_port_,
+        .remote_host = client_addr_.empty() ? "unknown" : client_addr_,
+        .remote_port = client_port_,
+    });
     const auto connect_result = co_await backend->connect(target_addr_, target_port_);
+    const auto latency_ms = static_cast<uint32_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - connect_start).count());
     if (connect_result.ec)
     {
+        trace_event event{
+            .trace_id = trace_id_,
+            .conn_id = conn_id_,
+            .stage = trace_stage::kOutboundConnectDone,
+            .result = trace_result::kFail,
+            .inbound_tag = inbound_tag_,
+            .inbound_type = "tproxy",
+            .target_host = target_addr_,
+            .target_port = target_port_,
+            .route_type = relay::to_string(decision.route),
+            .match_type = decision.match_type,
+            .match_value = decision.match_value,
+            .outbound_tag = decision.outbound_tag,
+            .outbound_type = decision.outbound_type,
+            .local_host = local_addr_.empty() ? "unknown" : local_addr_,
+            .local_port = local_port_,
+            .remote_host = client_addr_.empty() ? "unknown" : client_addr_,
+            .remote_port = client_port_,
+            .latency_ms = latency_ms,
+            .error_code = connect_result.ec.value(),
+            .error_message = connect_result.ec.message(),
+        };
+        if (connect_result.has_bind_endpoint)
+        {
+            event.extra["bind_host"] = connect_result.bind_addr.to_string();
+            event.extra["bind_port"] = std::to_string(connect_result.bind_port);
+        }
+        event.extra["socks_rep"] = std::to_string(connect_result.socks_rep);
+        trace_store::instance().record_event(std::move(event));
         LOG_WARN("{} trace {:016x} conn {} target {}:{} route {} connect failed error {} rep {}",
                  log_event::kConnInit,
                  trace_id_,
                  conn_id_,
                  target_addr_,
                  target_port_,
-                 relay::to_string(route),
+                 relay::to_string(decision.route),
                  connect_result.ec.message(),
                  connect_result.socks_rep);
         co_await backend->close();
         co_return false;
     }
 
+    trace_event event{
+        .trace_id = trace_id_,
+        .conn_id = conn_id_,
+        .stage = trace_stage::kOutboundConnectDone,
+        .result = trace_result::kOk,
+        .inbound_tag = inbound_tag_,
+        .inbound_type = "tproxy",
+        .target_host = target_addr_,
+        .target_port = target_port_,
+        .route_type = relay::to_string(decision.route),
+        .match_type = decision.match_type,
+        .match_value = decision.match_value,
+        .outbound_tag = decision.outbound_tag,
+        .outbound_type = decision.outbound_type,
+        .local_host = local_addr_.empty() ? "unknown" : local_addr_,
+        .local_port = local_port_,
+        .remote_host = client_addr_.empty() ? "unknown" : client_addr_,
+        .remote_port = client_port_,
+        .latency_ms = latency_ms,
+    };
+    if (connect_result.has_bind_endpoint)
+    {
+        event.extra["bind_host"] = connect_result.bind_addr.to_string();
+        event.extra["bind_port"] = std::to_string(connect_result.bind_port);
+    }
+    trace_store::instance().record_event(std::move(event));
     LOG_INFO("{} trace {:016x} conn {} target {}:{} route {} connected",
              log_event::kConnEstablished,
              trace_id_,
              conn_id_,
              target_addr_,
              target_port_,
-             relay::to_string(route));
+             relay::to_string(decision.route));
     co_return true;
 }
 

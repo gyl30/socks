@@ -47,6 +47,9 @@ class tproxy_inbound : public std::enable_shared_from_this<tproxy_inbound>
                                                                        const boost::asio::ip::udp::endpoint& target_endpoint,
                                                                        route_type route,
                                                                        const std::string& outbound_tag,
+                                                                       const std::string& outbound_type,
+                                                                       const std::string& match_type,
+                                                                       const std::string& match_value,
                                                                        uint32_t conn_id);
     [[nodiscard]] bool register_udp_session(const std::string& key,
                                             const std::shared_ptr<tproxy_udp_session>& session,

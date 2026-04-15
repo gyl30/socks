@@ -330,7 +330,7 @@ void tproxy_inbound::on_tcp_socket(boost::asio::ip::tcp::socket&& socket)
                  ec.message());
     }
 
-    const auto session = std::make_shared<tproxy_tcp_session>(std::move(socket), router_, sid, cfg_, settings_);
+    const auto session = std::make_shared<tproxy_tcp_session>(std::move(socket), router_, sid, inbound_tag_, cfg_, settings_);
     owner_worker_.group.spawn([session]() -> boost::asio::awaitable<void> { co_await session->start(); });
 }
 
@@ -461,7 +461,15 @@ boost::asio::awaitable<void> tproxy_inbound::on_udp_packet(boost::asio::ip::udp:
         co_return;
     }
 
-    auto session = make_udp_session(key, client_endpoint, target_endpoint, decision.route, decision.outbound_tag, conn_id);
+    auto session = make_udp_session(key,
+                                    client_endpoint,
+                                    target_endpoint,
+                                    decision.route,
+                                    decision.outbound_tag,
+                                    decision.outbound_type,
+                                    decision.match_type,
+                                    decision.match_value,
+                                    conn_id);
     const auto enqueue_result = co_await session->enqueue_packet(std::move(payload));
     if (enqueue_result != udp_enqueue_result::kEnqueued)
     {
@@ -549,6 +557,9 @@ std::shared_ptr<tproxy_udp_session> tproxy_inbound::make_udp_session(const std::
                                                                      const boost::asio::ip::udp::endpoint& target_endpoint,
                                                                      route_type route,
                                                                      const std::string& outbound_tag,
+                                                                     const std::string& outbound_type,
+                                                                     const std::string& match_type,
+                                                                     const std::string& match_value,
                                                                      uint32_t conn_id)
 {
     const auto weak_self = weak_from_this();
@@ -557,7 +568,11 @@ std::shared_ptr<tproxy_udp_session> tproxy_inbound::make_udp_session(const std::
                                                 target_endpoint,
                                                 route,
                                                 outbound_tag,
+                                                outbound_type,
+                                                match_type,
+                                                match_value,
                                                 conn_id,
+                                                inbound_tag_,
                                                 cfg_,
                                                 [weak_self, key]()
                                                 {
