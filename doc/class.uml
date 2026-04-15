@@ -36,7 +36,7 @@ package "Client Inbound" {
     class udp_socks_session {
         + start(host, port)
         - run(host, port)
-        - ensure_proxy_upstream()
+        - ensure_proxy_outbound()
         - idle_watchdog()
     }
 
@@ -57,7 +57,7 @@ package "Client Inbound" {
         + start()
         + stop()
         - run()
-        - open_proxy_upstream()
+        - open_proxy_outbound()
         - idle_watchdog()
     }
 
@@ -82,7 +82,7 @@ package "Client Inbound" {
         + start()
         + stop()
         - run()
-        - open_proxy_upstream()
+        - open_proxy_outbound()
         - idle_watchdog()
     }
 
@@ -178,7 +178,7 @@ socks_session ..> udp_socks_session : UDP ASSOCIATE
 tcp_socks_session ..> router
 tcp_socks_session ..> tcp_outbound_stream : create_backend
 udp_socks_session ..> router
-udp_socks_session ..> udp_proxy_outbound : ensure_proxy_upstream
+udp_socks_session ..> udp_proxy_outbound : ensure_proxy_outbound
 
 tproxy_inbound o-- io_context_pool
 tproxy_inbound *-- router
