@@ -13,6 +13,7 @@
 #include "context_pool.h"
 #include "replay_cache.h"
 #include "site_material.h"
+#include "router.h"
 #include "proxy_protocol.h"
 #include "proxy_reality_connection.h"
 #include "reality/policy/fallback_gate.h"
@@ -53,6 +54,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     uint32_t next_conn_id_{1};
     replay_cache replay_cache_;
     std::optional<reality::site_material> site_material_;
+    std::shared_ptr<router> router_;
     reality::fallback_gate fallback_gate_;
     reality::fallback_executor fallback_executor_;
     std::atomic<bool> stopping_{false};
