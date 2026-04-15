@@ -56,6 +56,13 @@ struct config
         uint32_t idle = 300;
     };
 
+    struct web_t
+    {
+        bool enabled = false;
+        std::string host = "127.0.0.1";
+        uint16_t port = 18080;
+    };
+
     struct reality_inbound_t
     {
         std::string host = "0.0.0.0";
@@ -108,6 +115,7 @@ struct config
     uint32_t workers = 0;
     log_t log;
     timeout_t timeout;
+    web_t web;
     std::vector<inbound_entry_t> inbounds;
     std::vector<outbound_entry_t> outbounds;
     std::vector<route_rule_t> routing;

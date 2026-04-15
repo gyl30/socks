@@ -166,7 +166,7 @@ boost::asio::awaitable<void> reality_tcp_connect_session::run(const proxy::tcp_c
         co_return;
     }
 
-    const auto connect_result = co_await connect_backend(backend, target_host_, target_port_, decision.route);
+    const auto connect_result = co_await connect_backend(backend, target_host_, target_port_, decision.route, decision.outbound_type);
     if (connect_result.ec)
     {
         co_await backend->close();
@@ -232,7 +232,8 @@ std::shared_ptr<tcp_outbound_stream> reality_tcp_connect_session::create_backend
 boost::asio::awaitable<tcp_outbound_connect_result> reality_tcp_connect_session::connect_backend(const std::shared_ptr<tcp_outbound_stream>& backend,
                                                                                      const std::string& host,
                                                                                      const uint16_t port,
-                                                                                     const route_type route)
+                                                                                     const route_type route,
+                                                                                     const std::string& outbound_type)
 {
     LOG_INFO("{} trace {:016x} conn {} target {}:{} route {} connecting",
              log_event::kConnInit,
@@ -252,7 +253,7 @@ boost::asio::awaitable<tcp_outbound_connect_result> reality_tcp_connect_session:
         .target_port = port,
         .route_type = relay::to_string(route),
         .outbound_tag = route_name_,
-        .outbound_type = "unknown",
+        .outbound_type = outbound_type,
         .local_host = bind_host_,
         .local_port = bind_port_,
         .remote_host = std::string(connection_ != nullptr ? connection_->remote_host() : std::string_view("unknown")),
@@ -277,7 +278,7 @@ boost::asio::awaitable<tcp_outbound_connect_result> reality_tcp_connect_session:
             .target_port = port,
             .route_type = relay::to_string(route),
             .outbound_tag = route_name_,
-            .outbound_type = "unknown",
+            .outbound_type = outbound_type,
             .local_host = bind_host_,
             .local_port = bind_port_,
             .remote_host = host,
@@ -306,7 +307,7 @@ boost::asio::awaitable<tcp_outbound_connect_result> reality_tcp_connect_session:
         .target_port = port,
         .route_type = relay::to_string(route),
         .outbound_tag = route_name_,
-        .outbound_type = "unknown",
+        .outbound_type = outbound_type,
         .local_host = bind_host_,
         .local_port = bind_port_,
         .remote_host = host,

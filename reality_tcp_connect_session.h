@@ -37,7 +37,8 @@ class reality_tcp_connect_session : public std::enable_shared_from_this<reality_
     [[nodiscard]] boost::asio::awaitable<tcp_outbound_connect_result> connect_backend(const std::shared_ptr<tcp_outbound_stream>& backend,
                                                                                   const std::string& host,
                                                                                   uint16_t port,
-                                                                                  route_type route);
+                                                                                  route_type route,
+                                                                                  const std::string& outbound_type);
     [[nodiscard]] std::shared_ptr<tcp_outbound_stream> create_backend(route_type route, const std::string& outbound_tag) const;
     [[nodiscard]] boost::asio::awaitable<void> relay_target(const std::shared_ptr<tcp_outbound_stream>& backend);
     [[nodiscard]] boost::asio::awaitable<void> client_to_outbound(const std::shared_ptr<tcp_outbound_stream>& backend);

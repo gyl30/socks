@@ -38,7 +38,8 @@ class socks_tcp_connect_session : public std::enable_shared_from_this<socks_tcp_
     [[nodiscard]] boost::asio::awaitable<tcp_outbound_connect_result> connect_backend(const std::shared_ptr<tcp_outbound_stream>& backend,
                                                                                   const std::string& host,
                                                                                   uint16_t port,
-                                                                                  route_type route);
+                                                                                  route_type route,
+                                                                                  const std::string& outbound_type);
     [[nodiscard]] boost::asio::awaitable<bool> reply_success(const tcp_outbound_connect_result& connect_result);
 
     [[nodiscard]] boost::asio::awaitable<void> client_to_outbound(std::shared_ptr<tcp_outbound_stream> backend);
