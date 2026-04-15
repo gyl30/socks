@@ -1,6 +1,7 @@
 #include <chrono>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <utility>
 #include <algorithm>
@@ -18,6 +19,7 @@
 #include "tcp_outbound_stream.h"
 #include "constants.h"
 #include "protocol.h"
+#include "trace_store.h"
 #include "net_utils.h"
 #include "proxy_protocol.h"
 #include "reality_tcp_connect_session.h"
@@ -30,9 +32,11 @@ reality_tcp_connect_session::reality_tcp_connect_session(boost::asio::io_context
                                                          std::shared_ptr<router> router,
                                                          const uint32_t conn_id,
                                                          const uint64_t trace_id,
+                                                         std::string inbound_tag,
                                                          const config& cfg)
     : conn_id_(conn_id),
       trace_id_(trace_id),
+      inbound_tag_(std::move(inbound_tag)),
       cfg_(cfg),
       executor_(io_context.get_executor()),
       idle_timer_(io_context),
@@ -51,6 +55,16 @@ boost::asio::awaitable<void> reality_tcp_connect_session::run(const proxy::tcp_c
     bind_host_ = "0.0.0.0";
     bind_port_ = 0;
     route_name_ = "unknown";
+    trace_store::instance().record_event(trace_event{
+        .trace_id = trace_id_,
+        .conn_id = conn_id_,
+        .stage = trace_stage::kConnAccepted,
+        .result = trace_result::kOk,
+        .inbound_tag = inbound_tag_,
+        .inbound_type = "reality",
+        .target_host = target_host_,
+        .target_port = target_port_,
+    });
 
     LOG_INFO("{} trace {:016x} conn {} target {}:{} remote {}:{} connecting",
              log_event::kConnInit,
@@ -63,6 +77,21 @@ boost::asio::awaitable<void> reality_tcp_connect_session::run(const proxy::tcp_c
 
     if (router_ == nullptr)
     {
+        trace_store::instance().record_event(trace_event{
+            .trace_id = trace_id_,
+            .conn_id = conn_id_,
+            .stage = trace_stage::kRouteDecideDone,
+            .result = trace_result::kFail,
+            .inbound_tag = inbound_tag_,
+            .inbound_type = "reality",
+            .target_host = target_host_,
+            .target_port = target_port_,
+            .local_host = bind_host_,
+            .local_port = bind_port_,
+            .remote_host = std::string(connection_ != nullptr ? connection_->remote_host() : std::string_view("unknown")),
+            .remote_port = static_cast<uint16_t>(connection_ != nullptr ? connection_->remote_port() : 0U),
+            .error_message = "router unavailable",
+        });
         LOG_ERROR("{} trace {:016x} conn {} target {}:{} route unavailable",
                   log_event::kRoute,
                   trace_id_,
@@ -87,10 +116,45 @@ boost::asio::awaitable<void> reality_tcp_connect_session::run(const proxy::tcp_c
         decision = co_await router_->decide_ip_detail(target_addr);
     }
     route_name_ = decision.matched ? decision.outbound_tag : decision.outbound_type;
+    trace_store::instance().record_event(trace_event{
+        .trace_id = trace_id_,
+        .conn_id = conn_id_,
+        .stage = trace_stage::kRouteDecideDone,
+        .result = decision.route == route_type::kBlock ? trace_result::kFail : trace_result::kOk,
+        .inbound_tag = inbound_tag_,
+        .inbound_type = "reality",
+        .target_host = target_host_,
+        .target_port = target_port_,
+        .route_type = relay::to_string(decision.route),
+        .match_type = decision.match_type,
+        .match_value = decision.match_value,
+        .outbound_tag = decision.outbound_tag,
+        .outbound_type = decision.outbound_type,
+        .local_host = bind_host_,
+        .local_port = bind_port_,
+        .remote_host = std::string(connection_ != nullptr ? connection_->remote_host() : std::string_view("unknown")),
+        .remote_port = static_cast<uint16_t>(connection_ != nullptr ? connection_->remote_port() : 0U),
+    });
 
     const auto backend = create_backend(decision.route, decision.outbound_tag);
     if (backend == nullptr)
     {
+        trace_store::instance().record_event(trace_event{
+            .trace_id = trace_id_,
+            .conn_id = conn_id_,
+            .stage = trace_stage::kSessionError,
+            .result = trace_result::kFail,
+            .inbound_tag = inbound_tag_,
+            .inbound_type = "reality",
+            .target_host = target_host_,
+            .target_port = target_port_,
+            .route_type = relay::to_string(decision.route),
+            .match_type = decision.match_type,
+            .match_value = decision.match_value,
+            .outbound_tag = decision.outbound_tag,
+            .outbound_type = decision.outbound_type,
+            .error_message = "route blocked",
+        });
         LOG_WARN("{} trace {:016x} conn {} target {}:{} route {} blocked",
                  log_event::kRoute,
                  trace_id_,
@@ -127,6 +191,27 @@ boost::asio::awaitable<void> reality_tcp_connect_session::run(const proxy::tcp_c
 
     co_await relay_target(backend);
     co_await backend->close();
+    trace_store::instance().record_event(trace_event{
+        .trace_id = trace_id_,
+        .conn_id = conn_id_,
+        .stage = trace_stage::kSessionClose,
+        .result = trace_result::kOk,
+        .inbound_tag = inbound_tag_,
+        .inbound_type = "reality",
+        .target_host = target_host_,
+        .target_port = target_port_,
+        .route_type = route_name_,
+        .bytes_tx = tx_bytes_,
+        .bytes_rx = rx_bytes_,
+        .local_host = bind_host_,
+        .local_port = bind_port_,
+        .remote_host = std::string(connection_ != nullptr ? connection_->remote_host() : std::string_view("unknown")),
+        .remote_port = static_cast<uint16_t>(connection_ != nullptr ? connection_->remote_port() : 0U),
+        .extra = {{"duration_ms", std::to_string(
+                                      std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
+                                                                                           start_time_)
+                                          .count())}},
+    });
     log_close_summary();
 }
 
@@ -156,6 +241,23 @@ boost::asio::awaitable<tcp_outbound_connect_result> reality_tcp_connect_session:
              host,
              port,
              relay::to_string(route));
+    trace_store::instance().record_event(trace_event{
+        .trace_id = trace_id_,
+        .conn_id = conn_id_,
+        .stage = trace_stage::kOutboundConnectStart,
+        .result = trace_result::kOk,
+        .inbound_tag = inbound_tag_,
+        .inbound_type = "reality",
+        .target_host = host,
+        .target_port = port,
+        .route_type = relay::to_string(route),
+        .outbound_tag = route_name_,
+        .outbound_type = "unknown",
+        .local_host = bind_host_,
+        .local_port = bind_port_,
+        .remote_host = std::string(connection_ != nullptr ? connection_->remote_host() : std::string_view("unknown")),
+        .remote_port = static_cast<uint16_t>(connection_ != nullptr ? connection_->remote_port() : 0U),
+    });
     const auto result = co_await backend->connect(host, port);
     if (!result.ec)
     {
@@ -164,6 +266,23 @@ boost::asio::awaitable<tcp_outbound_connect_result> reality_tcp_connect_session:
             bind_host_ = result.bind_addr.to_string();
             bind_port_ = result.bind_port;
         }
+        trace_store::instance().record_event(trace_event{
+            .trace_id = trace_id_,
+            .conn_id = conn_id_,
+            .stage = trace_stage::kOutboundConnectDone,
+            .result = trace_result::kOk,
+            .inbound_tag = inbound_tag_,
+            .inbound_type = "reality",
+            .target_host = host,
+            .target_port = port,
+            .route_type = relay::to_string(route),
+            .outbound_tag = route_name_,
+            .outbound_type = "unknown",
+            .local_host = bind_host_,
+            .local_port = bind_port_,
+            .remote_host = host,
+            .remote_port = port,
+        });
         co_return result;
     }
 
@@ -176,6 +295,25 @@ boost::asio::awaitable<tcp_outbound_connect_result> reality_tcp_connect_session:
              relay::to_string(route),
              result.ec.message(),
              result.socks_rep);
+    trace_store::instance().record_event(trace_event{
+        .trace_id = trace_id_,
+        .conn_id = conn_id_,
+        .stage = trace_stage::kOutboundConnectDone,
+        .result = trace_result::kFail,
+        .inbound_tag = inbound_tag_,
+        .inbound_type = "reality",
+        .target_host = host,
+        .target_port = port,
+        .route_type = relay::to_string(route),
+        .outbound_tag = route_name_,
+        .outbound_type = "unknown",
+        .local_host = bind_host_,
+        .local_port = bind_port_,
+        .remote_host = host,
+        .remote_port = port,
+        .error_code = static_cast<int32_t>(result.ec.value()),
+        .error_message = result.ec.message(),
+    });
     (void)co_await send_connect_reply(result.socks_rep, nullptr);
     co_return result;
 }

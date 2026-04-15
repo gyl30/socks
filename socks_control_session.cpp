@@ -18,6 +18,7 @@
 #include "log.h"
 #include "config.h"
 #include "protocol.h"
+#include "trace_store.h"
 #include "trace_id.h"
 #include "constants.h"
 #include "net_utils.h"
@@ -51,11 +52,13 @@ socks_control_session::socks_control_session(boost::asio::ip::tcp::socket socket
                                              io_worker& worker,
                                              std::shared_ptr<router> router,
                                              uint32_t sid,
+                                             std::string inbound_tag,
                                              const config& cfg,
                                              const config::socks_t& settings)
     : sid_(sid),
       trace_id_(generate_trace_id()),
       conn_id_(sid),
+      inbound_tag_(std::move(inbound_tag)),
       cfg_(cfg),
       settings_(settings),
       worker_(worker),
@@ -108,8 +111,32 @@ boost::asio::awaitable<void> socks_control_session::run_loop()
              local_port_,
              client_host_,
              client_port_);
+    trace_store::instance().record_event(trace_event{
+        .trace_id = trace_id_,
+        .conn_id = conn_id_,
+        .stage = trace_stage::kConnAccepted,
+        .result = trace_result::kOk,
+        .inbound_tag = inbound_tag_,
+        .inbound_type = "socks",
+        .local_host = local_host_,
+        .local_port = local_port_,
+        .remote_host = client_host_,
+        .remote_port = client_port_,
+    });
     if (!co_await handshake())
     {
+        trace_store::instance().record_event(trace_event{
+            .trace_id = trace_id_,
+            .conn_id = conn_id_,
+            .stage = trace_stage::kHandshakeDone,
+            .result = trace_result::kFail,
+            .inbound_tag = inbound_tag_,
+            .inbound_type = "socks",
+            .local_host = local_host_,
+            .local_port = local_port_,
+            .remote_host = client_host_,
+            .remote_port = client_port_,
+        });
         if (!peer_closed_before_greeting_)
         {
             LOG_WARN("{} conn {} local {}:{} remote {}:{} handshake failed",
@@ -123,10 +150,34 @@ boost::asio::awaitable<void> socks_control_session::run_loop()
         stop();
         co_return;
     }
+    trace_store::instance().record_event(trace_event{
+        .trace_id = trace_id_,
+        .conn_id = conn_id_,
+        .stage = trace_stage::kHandshakeDone,
+        .result = trace_result::kOk,
+        .inbound_tag = inbound_tag_,
+        .inbound_type = "socks",
+        .local_host = local_host_,
+        .local_port = local_port_,
+        .remote_host = client_host_,
+        .remote_port = client_port_,
+    });
 
     const auto [ok, host, port, cmd] = co_await read_request();
     if (!ok)
     {
+        trace_store::instance().record_event(trace_event{
+            .trace_id = trace_id_,
+            .conn_id = conn_id_,
+            .stage = trace_stage::kRequestDone,
+            .result = trace_result::kFail,
+            .inbound_tag = inbound_tag_,
+            .inbound_type = "socks",
+            .local_host = local_host_,
+            .local_port = local_port_,
+            .remote_host = client_host_,
+            .remote_port = client_port_,
+        });
         LOG_WARN("{} conn {} local {}:{} remote {}:{} request invalid",
                  log_event::kSocks,
                  conn_id_,
@@ -137,17 +188,33 @@ boost::asio::awaitable<void> socks_control_session::run_loop()
         stop();
         co_return;
     }
+    trace_store::instance().record_event(trace_event{
+        .trace_id = trace_id_,
+        .conn_id = conn_id_,
+        .stage = trace_stage::kRequestDone,
+        .result = trace_result::kOk,
+        .inbound_tag = inbound_tag_,
+        .inbound_type = "socks",
+        .target_host = host,
+        .target_port = port,
+        .local_host = local_host_,
+        .local_port = local_port_,
+        .remote_host = client_host_,
+        .remote_port = client_port_,
+        .extra = {{"cmd", std::to_string(cmd)}},
+    });
 
     if (cmd == socks::kCmdConnect)
     {
-        const auto tcp_connect_session = std::make_shared<socks_tcp_connect_session>(std::move(socket_), router_, sid_, trace_id_, cfg_);
+        const auto tcp_connect_session =
+            std::make_shared<socks_tcp_connect_session>(std::move(socket_), router_, sid_, trace_id_, inbound_tag_, cfg_);
         worker_.group.spawn(
             [tcp_connect_session, host, port]() -> boost::asio::awaitable<void> { co_await tcp_connect_session->start(host, port); });
     }
     else if (cmd == socks::kCmdUdpAssociate)
     {
         const auto udp_associate_session =
-            std::make_shared<socks_udp_associate_session>(std::move(socket_), worker_, router_, sid_, trace_id_, cfg_);
+            std::make_shared<socks_udp_associate_session>(std::move(socket_), worker_, router_, sid_, trace_id_, inbound_tag_, cfg_);
         udp_associate_session->start(host, port);
     }
     else
@@ -167,6 +234,19 @@ boost::asio::awaitable<void> socks_control_session::run_loop()
 
 boost::asio::awaitable<bool> socks_control_session::handshake()
 {
+    trace_store::instance().record_event(trace_event{
+        .trace_id = trace_id_,
+        .conn_id = conn_id_,
+        .stage = trace_stage::kHandshakeStart,
+        .result = trace_result::kOk,
+        .inbound_tag = inbound_tag_,
+        .inbound_type = "socks",
+        .local_host = local_host_,
+        .local_port = local_port_,
+        .remote_host = client_host_,
+        .remote_port = client_port_,
+    });
+
     uint8_t method_count = 0;
     if (!(co_await read_socks_greeting(method_count)))
     {

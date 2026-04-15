@@ -2,6 +2,7 @@
 #include <chrono>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <cstdint>
 #include <utility>
@@ -20,6 +21,7 @@
 #include "outbound.h"
 #include "router.h"
 #include "protocol.h"
+#include "trace_store.h"
 #include "constants.h"
 #include "net_utils.h"
 #include "proxy_protocol.h"
@@ -34,9 +36,11 @@ reality_udp_associate_session::reality_udp_associate_session(boost::asio::io_con
                                                              std::shared_ptr<router> router,
                                                              const uint32_t conn_id,
                                                              const uint64_t trace_id,
+                                                             std::string inbound_tag,
                                                              const config& cfg)
     : conn_id_(conn_id),
       trace_id_(trace_id),
+      inbound_tag_(std::move(inbound_tag)),
       cfg_(cfg),
       idle_timer_(io_context),
       udp_socket_(io_context),
@@ -145,6 +149,18 @@ boost::asio::awaitable<void> reality_udp_associate_session::start_impl(const pro
         co_return;
     }
 
+    trace_store::instance().record_event(trace_event{
+        .trace_id = trace_id_,
+        .conn_id = conn_id_,
+        .stage = trace_stage::kConnAccepted,
+        .result = trace_result::kOk,
+        .inbound_tag = inbound_tag_,
+        .inbound_type = "reality",
+        .local_host = bind_host_,
+        .local_port = bind_port_,
+        .remote_host = std::string(connection_ != nullptr ? connection_->remote_host() : std::string_view("unknown")),
+        .remote_port = static_cast<uint16_t>(connection_ != nullptr ? connection_->remote_port() : 0U),
+    });
     LOG_INFO("{} trace {:016x} conn {} udp associate ready bind {}:{}",
              log_event::kConnEstablished,
              trace_id_,
@@ -172,6 +188,25 @@ boost::asio::awaitable<void> reality_udp_associate_session::start_impl(const pro
     }
 
     const auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time_).count();
+    trace_store::instance().record_event(trace_event{
+        .trace_id = trace_id_,
+        .conn_id = conn_id_,
+        .stage = trace_stage::kSessionClose,
+        .result = trace_result::kOk,
+        .inbound_tag = inbound_tag_,
+        .inbound_type = "reality",
+        .target_host = "unknown",
+        .target_port = 0,
+        .outbound_tag = "unknown",
+        .outbound_type = "proxy",
+        .bytes_tx = tx_bytes_,
+        .bytes_rx = rx_bytes_,
+        .local_host = bind_host_,
+        .local_port = bind_port_,
+        .remote_host = std::string(connection_ != nullptr ? connection_->remote_host() : std::string_view("unknown")),
+        .remote_port = static_cast<uint16_t>(connection_ != nullptr ? connection_->remote_port() : 0U),
+        .extra = {{"duration_ms", std::to_string(duration_ms)}},
+    });
     LOG_INFO("{} trace {:016x} conn {} bind {}:{} tx_bytes {} rx_bytes {} duration_ms {}",
              log_event::kConnClose,
              trace_id_,
@@ -224,6 +259,22 @@ boost::asio::awaitable<std::shared_ptr<udp_proxy_outbound>> reality_udp_associat
         co_return it->second;
     }
 
+    trace_store::instance().record_event(trace_event{
+        .trace_id = trace_id_,
+        .conn_id = conn_id_,
+        .stage = trace_stage::kOutboundConnectStart,
+        .result = trace_result::kOk,
+        .inbound_tag = inbound_tag_,
+        .inbound_type = "reality",
+        .target_host = "unknown",
+        .target_port = 0,
+        .outbound_tag = outbound_tag,
+        .outbound_type = "proxy",
+        .local_host = bind_host_,
+        .local_port = bind_port_,
+        .remote_host = std::string(connection_ != nullptr ? connection_->remote_host() : std::string_view("unknown")),
+        .remote_port = static_cast<uint16_t>(connection_ != nullptr ? connection_->remote_port() : 0U),
+    });
     const auto connect_result = co_await connect_udp_proxy_outbound(udp_socket_.get_executor(), conn_id_, trace_id_, cfg_, outbound_tag);
     if (connect_result.ec || connect_result.outbound == nullptr)
     {
@@ -234,10 +285,44 @@ boost::asio::awaitable<std::shared_ptr<udp_proxy_outbound>> reality_udp_associat
                  outbound_tag,
                  connect_result.ec ? connect_result.ec.message() : "not_connected",
                  connect_result.socks_rep);
+        trace_store::instance().record_event(trace_event{
+            .trace_id = trace_id_,
+            .conn_id = conn_id_,
+            .stage = trace_stage::kOutboundConnectDone,
+            .result = trace_result::kFail,
+            .inbound_tag = inbound_tag_,
+            .inbound_type = "reality",
+            .target_host = "unknown",
+            .target_port = 0,
+            .outbound_tag = outbound_tag,
+            .outbound_type = "proxy",
+            .local_host = bind_host_,
+            .local_port = bind_port_,
+            .remote_host = std::string(connection_ != nullptr ? connection_->remote_host() : std::string_view("unknown")),
+            .remote_port = static_cast<uint16_t>(connection_ != nullptr ? connection_->remote_port() : 0U),
+            .error_code = static_cast<int32_t>((connect_result.ec ? connect_result.ec : boost::asio::error::operation_aborted).value()),
+            .error_message = connect_result.ec ? connect_result.ec.message() : "not_connected",
+        });
         co_return nullptr;
     }
 
     proxy_outbounds_.insert_or_assign(outbound_tag, connect_result.outbound);
+    trace_store::instance().record_event(trace_event{
+        .trace_id = trace_id_,
+        .conn_id = conn_id_,
+        .stage = trace_stage::kOutboundConnectDone,
+        .result = trace_result::kOk,
+        .inbound_tag = inbound_tag_,
+        .inbound_type = "reality",
+        .target_host = "unknown",
+        .target_port = 0,
+        .outbound_tag = outbound_tag,
+        .outbound_type = "proxy",
+        .local_host = bind_host_,
+        .local_port = bind_port_,
+        .remote_host = std::string(connection_ != nullptr ? connection_->remote_host() : std::string_view("unknown")),
+        .remote_port = static_cast<uint16_t>(connection_ != nullptr ? connection_->remote_port() : 0U),
+    });
     LOG_INFO("{} trace {:016x} conn {} out_tag {} proxy udp outbound ready bind {}:{}",
              log_event::kRoute,
              trace_id_,
@@ -332,6 +417,25 @@ boost::asio::awaitable<void> reality_udp_associate_session::connection_to_udp()
 
         const auto decision = co_await decide_route(datagram);
         const auto route_name = decision.matched ? decision.outbound_tag : decision.outbound_type;
+        trace_store::instance().record_event(trace_event{
+            .trace_id = trace_id_,
+            .conn_id = conn_id_,
+            .stage = trace_stage::kRouteDecideDone,
+            .result = decision.route == route_type::kBlock ? trace_result::kFail : trace_result::kOk,
+            .inbound_tag = inbound_tag_,
+            .inbound_type = "reality",
+            .target_host = datagram.target_host,
+            .target_port = datagram.target_port,
+            .route_type = relay::to_string(decision.route),
+            .match_type = decision.match_type,
+            .match_value = decision.match_value,
+            .outbound_tag = decision.outbound_tag,
+            .outbound_type = decision.outbound_type,
+            .local_host = bind_host_,
+            .local_port = bind_port_,
+            .remote_host = std::string(connection_ != nullptr ? connection_->remote_host() : std::string_view("unknown")),
+            .remote_port = static_cast<uint16_t>(connection_ != nullptr ? connection_->remote_port() : 0U),
+        });
         if (decision.route == route_type::kBlock)
         {
             LOG_WARN("{} trace {:016x} conn {} bind {}:{} target {}:{} route {} drop udp datagram",

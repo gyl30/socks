@@ -26,6 +26,7 @@ class reality_tcp_connect_session : public std::enable_shared_from_this<reality_
                                 std::shared_ptr<router> router,
                                 uint32_t conn_id,
                                 uint64_t trace_id,
+                                std::string inbound_tag,
                                 const config& cfg);
 
     boost::asio::awaitable<void> start(const proxy::tcp_connect_request& request);
@@ -47,6 +48,8 @@ class reality_tcp_connect_session : public std::enable_shared_from_this<reality_
    private:
     uint32_t conn_id_ = 0;
     uint64_t trace_id_ = 0;
+    std::string inbound_tag_;
+    std::string inbound_type_ = "reality";
     const config& cfg_;
     std::string target_host_ = "unknown";
     uint16_t target_port_ = 0;

@@ -16,6 +16,7 @@
 #include "outbound.h"
 #include "router.h"
 #include "protocol.h"
+#include "trace_store.h"
 #include "tcp_outbound_stream.h"
 #include "net_utils.h"
 #include "scoped_exit.h"
@@ -24,9 +25,19 @@
 namespace relay
 {
 
-socks_tcp_connect_session::socks_tcp_connect_session(
-    boost::asio::ip::tcp::socket socket, std::shared_ptr<router> router, uint32_t sid, uint64_t trace_id, const config& cfg)
-    : trace_id_(trace_id), conn_id_(sid), cfg_(cfg), socket_(std::move(socket)), idle_timer_(socket_.get_executor()), router_(std::move(router))
+socks_tcp_connect_session::socks_tcp_connect_session(boost::asio::ip::tcp::socket socket,
+                                                     std::shared_ptr<router> router,
+                                                     uint32_t sid,
+                                                     uint64_t trace_id,
+                                                     std::string inbound_tag,
+                                                     const config& cfg)
+    : trace_id_(trace_id),
+      conn_id_(sid),
+      inbound_tag_(std::move(inbound_tag)),
+      cfg_(cfg),
+      socket_(std::move(socket)),
+      idle_timer_(socket_.get_executor()),
+      router_(std::move(router))
 {
     last_activity_time_ms_ = net::now_ms();
     net::load_tcp_socket_endpoints(socket_, local_host_, local_port_, client_host_, client_port_);
@@ -42,6 +53,21 @@ boost::asio::awaitable<void> socks_tcp_connect_session::run(const std::string& h
 
     if (router_ == nullptr)
     {
+        trace_store::instance().record_event(trace_event{
+            .trace_id = trace_id_,
+            .conn_id = conn_id_,
+            .stage = trace_stage::kRouteDecideDone,
+            .result = trace_result::kFail,
+            .inbound_tag = inbound_tag_,
+            .inbound_type = "socks",
+            .target_host = host,
+            .target_port = port,
+            .local_host = local_host_,
+            .local_port = local_port_,
+            .remote_host = client_host_,
+            .remote_port = client_port_,
+            .error_message = "router unavailable",
+        });
         LOG_ERROR("{} trace {:016x} conn {} client {}:{} local {}:{} target {}:{} router unavailable",
                   log_event::kRoute,
                   trace_id_,
@@ -72,10 +98,45 @@ boost::asio::awaitable<void> socks_tcp_connect_session::run(const std::string& h
     target_host_ = host;
     target_port_ = port;
     route_name_ = decision.matched ? decision.outbound_tag : decision.outbound_type;
+    trace_store::instance().record_event(trace_event{
+        .trace_id = trace_id_,
+        .conn_id = conn_id_,
+        .stage = trace_stage::kRouteDecideDone,
+        .result = decision.route == route_type::kBlock ? trace_result::kFail : trace_result::kOk,
+        .inbound_tag = inbound_tag_,
+        .inbound_type = "socks",
+        .target_host = host,
+        .target_port = port,
+        .route_type = relay::to_string(decision.route),
+        .match_type = decision.match_type,
+        .match_value = decision.match_value,
+        .outbound_tag = decision.outbound_tag,
+        .outbound_type = decision.outbound_type,
+        .local_host = local_host_,
+        .local_port = local_port_,
+        .remote_host = client_host_,
+        .remote_port = client_port_,
+    });
 
     const auto backend = create_backend(decision.route, decision.outbound_tag);
     if (backend == nullptr)
     {
+        trace_store::instance().record_event(trace_event{
+            .trace_id = trace_id_,
+            .conn_id = conn_id_,
+            .stage = trace_stage::kSessionError,
+            .result = trace_result::kFail,
+            .inbound_tag = inbound_tag_,
+            .inbound_type = "socks",
+            .target_host = host,
+            .target_port = port,
+            .route_type = relay::to_string(decision.route),
+            .match_type = decision.match_type,
+            .match_value = decision.match_value,
+            .outbound_tag = decision.outbound_tag,
+            .outbound_type = decision.outbound_type,
+            .error_message = "route blocked",
+        });
         LOG_WARN("{} trace {:016x} conn {} client {}:{} local {}:{} target {}:{} route {} blocked",
                  log_event::kRoute,
                  trace_id_,
@@ -94,6 +155,23 @@ boost::asio::awaitable<void> socks_tcp_connect_session::run(const std::string& h
     if (connect_result.ec)
     {
         co_await backend->close();
+        trace_store::instance().record_event(trace_event{
+            .trace_id = trace_id_,
+            .conn_id = conn_id_,
+            .stage = trace_stage::kSessionError,
+            .result = trace_result::kFail,
+            .inbound_tag = inbound_tag_,
+            .inbound_type = "socks",
+            .target_host = host,
+            .target_port = port,
+            .route_type = relay::to_string(decision.route),
+            .match_type = decision.match_type,
+            .match_value = decision.match_value,
+            .outbound_tag = decision.outbound_tag,
+            .outbound_type = decision.outbound_type,
+            .error_code = static_cast<int32_t>(connect_result.ec.value()),
+            .error_message = connect_result.ec.message(),
+        });
         co_return;
     }
 
@@ -115,6 +193,26 @@ boost::asio::awaitable<void> socks_tcp_connect_session::run(const std::string& h
              port,
              route_name_);
 
+    trace_store::instance().record_event(trace_event{
+        .trace_id = trace_id_,
+        .conn_id = conn_id_,
+        .stage = trace_stage::kRelayStart,
+        .result = trace_result::kOk,
+        .inbound_tag = inbound_tag_,
+        .inbound_type = "socks",
+        .target_host = host,
+        .target_port = port,
+        .route_type = relay::to_string(decision.route),
+        .match_type = decision.match_type,
+        .match_value = decision.match_value,
+        .outbound_tag = decision.outbound_tag,
+        .outbound_type = decision.outbound_type,
+        .local_host = local_host_,
+        .local_port = local_port_,
+        .remote_host = client_host_,
+        .remote_port = client_port_,
+    });
+
     using boost::asio::experimental::awaitable_operators::operator&&;
     using boost::asio::experimental::awaitable_operators::operator||;
     if (cfg_.timeout.idle == 0)
@@ -128,6 +226,24 @@ boost::asio::awaitable<void> socks_tcp_connect_session::run(const std::string& h
 
     co_await backend->close();
     const auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time_).count();
+    trace_store::instance().record_event(trace_event{
+        .trace_id = trace_id_,
+        .conn_id = conn_id_,
+        .stage = trace_stage::kSessionClose,
+        .result = trace_result::kOk,
+        .inbound_tag = inbound_tag_,
+        .inbound_type = "socks",
+        .target_host = target_host_,
+        .target_port = target_port_,
+        .route_type = route_name_,
+        .bytes_tx = tx_bytes_,
+        .bytes_rx = rx_bytes_,
+        .local_host = local_host_,
+        .local_port = local_port_,
+        .remote_host = client_host_,
+        .remote_port = client_port_,
+        .extra = {{"duration_ms", std::to_string(duration_ms)}},
+    });
     LOG_INFO("{} trace {:016x} conn {} client {}:{} local {}:{} target {}:{} route {} tx_bytes {} rx_bytes {} duration_ms {}",
              log_event::kConnClose,
              trace_id_,
@@ -174,9 +290,43 @@ boost::asio::awaitable<tcp_outbound_connect_result> socks_tcp_connect_session::c
              host,
              port,
              relay::to_string(route));
+    trace_store::instance().record_event(trace_event{
+        .trace_id = trace_id_,
+        .conn_id = conn_id_,
+        .stage = trace_stage::kOutboundConnectStart,
+        .result = trace_result::kOk,
+        .inbound_tag = inbound_tag_,
+        .inbound_type = "socks",
+        .target_host = host,
+        .target_port = port,
+        .route_type = relay::to_string(route),
+        .outbound_tag = route_name_,
+        .outbound_type = "unknown",
+        .local_host = local_host_,
+        .local_port = local_port_,
+        .remote_host = client_host_,
+        .remote_port = client_port_,
+    });
     const auto result = co_await backend->connect(host, port);
     if (!result.ec)
     {
+        trace_store::instance().record_event(trace_event{
+            .trace_id = trace_id_,
+            .conn_id = conn_id_,
+            .stage = trace_stage::kOutboundConnectDone,
+            .result = trace_result::kOk,
+            .inbound_tag = inbound_tag_,
+            .inbound_type = "socks",
+            .target_host = host,
+            .target_port = port,
+            .route_type = relay::to_string(route),
+            .outbound_tag = route_name_,
+            .outbound_type = "unknown",
+            .local_host = result.has_bind_endpoint ? result.bind_addr.to_string() : local_host_,
+            .local_port = result.has_bind_endpoint ? result.bind_port : local_port_,
+            .remote_host = host,
+            .remote_port = port,
+        });
         co_return result;
     }
 
@@ -193,6 +343,25 @@ boost::asio::awaitable<tcp_outbound_connect_result> socks_tcp_connect_session::c
              relay::to_string(route),
              result.ec.message(),
              result.socks_rep);
+    trace_store::instance().record_event(trace_event{
+        .trace_id = trace_id_,
+        .conn_id = conn_id_,
+        .stage = trace_stage::kOutboundConnectDone,
+        .result = trace_result::kFail,
+        .inbound_tag = inbound_tag_,
+        .inbound_type = "socks",
+        .target_host = host,
+        .target_port = port,
+        .route_type = relay::to_string(route),
+        .outbound_tag = route_name_,
+        .outbound_type = "unknown",
+        .local_host = local_host_,
+        .local_port = local_port_,
+        .remote_host = host,
+        .remote_port = port,
+        .error_code = static_cast<int32_t>(result.ec.value()),
+        .error_message = result.ec.message(),
+    });
     co_await reply_error(result.socks_rep);
     co_return result;
 }

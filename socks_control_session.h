@@ -26,6 +26,7 @@ class socks_control_session : public std::enable_shared_from_this<socks_control_
                           io_worker& worker,
                           std::shared_ptr<router> router,
                           uint32_t sid,
+                          std::string inbound_tag,
                           const config& cfg,
                           const config::socks_t& settings);
     ~socks_control_session();
@@ -104,6 +105,7 @@ class socks_control_session : public std::enable_shared_from_this<socks_control_
     uint32_t sid_;
     uint64_t trace_id_ = 0;
     uint32_t conn_id_ = 0;
+    std::string inbound_tag_;
     std::string local_host_ = "unknown";
     uint16_t local_port_ = 0;
     std::string client_host_ = "unknown";

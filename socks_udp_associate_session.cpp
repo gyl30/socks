@@ -19,6 +19,7 @@
 #include "outbound.h"
 #include "router.h"
 #include "protocol.h"
+#include "trace_store.h"
 #include "constants.h"
 #include "net_utils.h"
 #include "context_pool.h"
@@ -243,9 +244,11 @@ socks_udp_associate_session::socks_udp_associate_session(boost::asio::ip::tcp::s
                                                          std::shared_ptr<router> router,
                                                          const uint32_t sid,
                                                          const uint64_t trace_id,
+                                                         std::string inbound_tag,
                                                          const config& cfg)
     : trace_id_(trace_id),
       conn_id_(sid),
+      inbound_tag_(std::move(inbound_tag)),
       cfg_(cfg),
       worker_(worker),
       timer_(worker.io_context),
@@ -366,6 +369,18 @@ boost::asio::awaitable<void> socks_udp_associate_session::run(const std::string&
     has_client_ip_ = true;
     tcp_peer_host_ = client_ip_.to_string();
     tcp_peer_port_ = tcp_remote_ep.port();
+    trace_store::instance().record_event(trace_event{
+        .trace_id = trace_id_,
+        .conn_id = conn_id_,
+        .stage = trace_stage::kConnAccepted,
+        .result = trace_result::kOk,
+        .inbound_tag = inbound_tag_,
+        .inbound_type = "socks",
+        .local_host = udp_bind_host_,
+        .local_port = udp_bind_port_,
+        .remote_host = tcp_peer_host_,
+        .remote_port = tcp_peer_port_,
+    });
     LOG_INFO("{} trace {:016x} conn {} tcp peer {}:{} udp bind {}:{}",
              log_event::kConnInit,
              trace_id_,
@@ -415,6 +430,25 @@ boost::asio::awaitable<void> socks_udp_associate_session::run(const std::string&
 
     close_impl();
     const auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time_).count();
+    trace_store::instance().record_event(trace_event{
+        .trace_id = trace_id_,
+        .conn_id = conn_id_,
+        .stage = trace_stage::kSessionClose,
+        .result = trace_result::kOk,
+        .inbound_tag = inbound_tag_,
+        .inbound_type = "socks",
+        .target_host = has_last_target_ ? last_target_addr_ : "unknown",
+        .target_port = static_cast<uint16_t>(has_last_target_ ? last_target_port_ : 0U),
+        .outbound_tag = proxy_outbound_tag_,
+        .outbound_type = proxy_outbound_ != nullptr ? "proxy" : "direct",
+        .bytes_tx = tx_bytes_,
+        .bytes_rx = rx_bytes_,
+        .local_host = udp_bind_host_,
+        .local_port = udp_bind_port_,
+        .remote_host = tcp_peer_host_,
+        .remote_port = tcp_peer_port_,
+        .extra = {{"duration_ms", std::to_string(duration_ms)}},
+    });
     LOG_INFO("{} trace {:016x} conn {} tcp peer {}:{} udp bind {}:{} client {}:{} tx_bytes {} rx_bytes {} duration_ms {}",
              log_event::kConnClose,
              trace_id_,
@@ -938,11 +972,45 @@ boost::asio::awaitable<bool> socks_udp_associate_session::ensure_proxy_outbound(
 {
     if (proxy_outbound_ == nullptr)
     {
+        trace_store::instance().record_event(trace_event{
+            .trace_id = trace_id_,
+            .conn_id = conn_id_,
+            .stage = trace_stage::kOutboundConnectStart,
+            .result = trace_result::kOk,
+            .inbound_tag = inbound_tag_,
+            .inbound_type = "socks",
+            .target_host = has_last_target_ ? last_target_addr_ : "unknown",
+            .target_port = static_cast<uint16_t>(has_last_target_ ? last_target_port_ : 0U),
+            .outbound_tag = proxy_outbound_tag_,
+            .outbound_type = "proxy",
+            .local_host = udp_bind_host_,
+            .local_port = udp_bind_port_,
+            .remote_host = tcp_peer_host_,
+            .remote_port = tcp_peer_port_,
+        });
         const auto connect_result =
             co_await connect_udp_proxy_outbound(worker_.io_context.get_executor(), conn_id_, trace_id_, cfg_, proxy_outbound_tag_);
         if (connect_result.ec || connect_result.outbound == nullptr)
         {
             ec = connect_result.ec ? connect_result.ec : boost::asio::error::not_connected;
+            trace_store::instance().record_event(trace_event{
+                .trace_id = trace_id_,
+                .conn_id = conn_id_,
+                .stage = trace_stage::kOutboundConnectDone,
+                .result = trace_result::kFail,
+                .inbound_tag = inbound_tag_,
+                .inbound_type = "socks",
+                .target_host = has_last_target_ ? last_target_addr_ : "unknown",
+                .target_port = static_cast<uint16_t>(has_last_target_ ? last_target_port_ : 0U),
+                .outbound_tag = proxy_outbound_tag_,
+                .outbound_type = "proxy",
+                .local_host = udp_bind_host_,
+                .local_port = udp_bind_port_,
+                .remote_host = tcp_peer_host_,
+                .remote_port = tcp_peer_port_,
+                .error_code = static_cast<int32_t>(ec.value()),
+                .error_message = ec.message(),
+            });
             LOG_WARN("{} trace {:016x} conn {} client {}:{} udp bind {}:{} target {}:{} connect proxy udp outbound failed {} rep {}",
                      log_event::kSocks,
                      trace_id_,
@@ -959,6 +1027,22 @@ boost::asio::awaitable<bool> socks_udp_associate_session::ensure_proxy_outbound(
         }
 
         proxy_outbound_ = connect_result.outbound;
+        trace_store::instance().record_event(trace_event{
+            .trace_id = trace_id_,
+            .conn_id = conn_id_,
+            .stage = trace_stage::kOutboundConnectDone,
+            .result = trace_result::kOk,
+            .inbound_tag = inbound_tag_,
+            .inbound_type = "socks",
+            .target_host = has_last_target_ ? last_target_addr_ : "unknown",
+            .target_port = static_cast<uint16_t>(has_last_target_ ? last_target_port_ : 0U),
+            .outbound_tag = proxy_outbound_tag_,
+            .outbound_type = "proxy",
+            .local_host = udp_bind_host_,
+            .local_port = udp_bind_port_,
+            .remote_host = tcp_peer_host_,
+            .remote_port = tcp_peer_port_,
+        });
         LOG_INFO("{} trace {:016x} conn {} client {}:{} udp bind {}:{} target {}:{} proxy udp outbound ready bind {}:{}",
                  log_event::kSocks,
                  trace_id_,
@@ -1100,6 +1184,25 @@ boost::asio::awaitable<void> socks_udp_associate_session::udp_socket_loop()
 
         const auto decision = co_await decide_udp_route(udp_header);
         proxy_outbound_tag_ = decision.outbound_tag;
+        trace_store::instance().record_event(trace_event{
+            .trace_id = trace_id_,
+            .conn_id = conn_id_,
+            .stage = trace_stage::kRouteDecideDone,
+            .result = decision.route == route_type::kBlock ? trace_result::kFail : trace_result::kOk,
+            .inbound_tag = inbound_tag_,
+            .inbound_type = "socks",
+            .target_host = udp_header.addr,
+            .target_port = udp_header.port,
+            .route_type = relay::to_string(decision.route),
+            .match_type = decision.match_type,
+            .match_value = decision.match_value,
+            .outbound_tag = decision.outbound_tag,
+            .outbound_type = decision.outbound_type,
+            .local_host = udp_bind_host_,
+            .local_port = udp_bind_port_,
+            .remote_host = tcp_peer_host_,
+            .remote_port = tcp_peer_port_,
+        });
         if (decision.route == route_type::kBlock)
         {
             LOG_INFO("{} trace {:016x} conn {} client {}:{} udp bind {}:{} udp blocked {}:{}",
