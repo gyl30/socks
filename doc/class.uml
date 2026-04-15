@@ -152,8 +152,9 @@ package "Server Side" {
         + start(request)
         - run(request)
         - send_connect_reply()
-        - client_to_target()
-        - target_to_client()
+        - relay_target()
+        - client_to_outbound()
+        - outbound_to_client()
         - idle_watchdog()
     }
 
