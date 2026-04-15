@@ -151,7 +151,7 @@ boost::asio::awaitable<void> socks_tcp_connect_session::run(const std::string& h
         co_await reply_error(socks::kRepNotAllowed);
         co_return;
     }
-    const auto connect_result = co_await connect_backend(backend, host, port, decision.route);
+    const auto connect_result = co_await connect_backend(backend, host, port, decision.route, decision.outbound_type);
     if (connect_result.ec)
     {
         co_await backend->close();
@@ -277,7 +277,8 @@ std::shared_ptr<tcp_outbound_stream> socks_tcp_connect_session::create_backend(c
 boost::asio::awaitable<tcp_outbound_connect_result> socks_tcp_connect_session::connect_backend(const std::shared_ptr<tcp_outbound_stream>& backend,
                                                                                    const std::string& host,
                                                                                    uint16_t port,
-                                                                                   const route_type route)
+                                                                                   const route_type route,
+                                                                                   const std::string& outbound_type)
 {
     LOG_INFO("{} trace {:016x} conn {} client {}:{} local {}:{} target {}:{} route {} connecting",
              log_event::kConnInit,
@@ -301,7 +302,7 @@ boost::asio::awaitable<tcp_outbound_connect_result> socks_tcp_connect_session::c
         .target_port = port,
         .route_type = relay::to_string(route),
         .outbound_tag = route_name_,
-        .outbound_type = "unknown",
+        .outbound_type = outbound_type,
         .local_host = local_host_,
         .local_port = local_port_,
         .remote_host = client_host_,
@@ -321,7 +322,7 @@ boost::asio::awaitable<tcp_outbound_connect_result> socks_tcp_connect_session::c
             .target_port = port,
             .route_type = relay::to_string(route),
             .outbound_tag = route_name_,
-            .outbound_type = "unknown",
+            .outbound_type = outbound_type,
             .local_host = result.has_bind_endpoint ? result.bind_addr.to_string() : local_host_,
             .local_port = result.has_bind_endpoint ? result.bind_port : local_port_,
             .remote_host = host,
@@ -354,7 +355,7 @@ boost::asio::awaitable<tcp_outbound_connect_result> socks_tcp_connect_session::c
         .target_port = port,
         .route_type = relay::to_string(route),
         .outbound_tag = route_name_,
-        .outbound_type = "unknown",
+        .outbound_type = outbound_type,
         .local_host = local_host_,
         .local_port = local_port_,
         .remote_host = host,

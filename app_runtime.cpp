@@ -39,10 +39,22 @@ app_runtime::app_runtime(const config& cfg) : cfg_(cfg), pool_(resolve_worker_th
 void app_runtime::start()
 {
     start_outbounds();
+    start_web_server();
     for (const auto& inbound : cfg_.inbounds)
     {
         start_inbound(inbound);
     }
+}
+
+void app_runtime::start_web_server()
+{
+    if (!cfg_.web.enabled)
+    {
+        return;
+    }
+
+    web_server_ = std::make_shared<trace_web_server>(pool_, cfg_);
+    web_server_->start();
 }
 
 void app_runtime::start_outbounds()
@@ -150,6 +162,11 @@ void app_runtime::stop()
         {
             inbound_instance->stop();
         }
+    }
+
+    if (web_server_ != nullptr)
+    {
+        web_server_->stop();
     }
 
     pool_.emit_all(boost::asio::cancellation_type::all);

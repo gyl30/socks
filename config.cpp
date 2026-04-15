@@ -378,6 +378,27 @@ template <typename T>
     return true;
 }
 
+[[nodiscard]] bool parse_web_config(const rapidjson::Value& value, const std::string& filename, config::web_t& out)
+{
+    if (!value.IsObject())
+    {
+        return fail_config(filename, "web type invalid");
+    }
+    if (!parse_bool_field(value, "enabled", "web", out.enabled, filename, true))
+    {
+        return false;
+    }
+    if (!parse_string_field(value, "host", "web", out.host, filename, true))
+    {
+        return false;
+    }
+    if (!parse_unsigned_field(value, "port", "web", out.port, filename, true))
+    {
+        return false;
+    }
+    return true;
+}
+
 [[nodiscard]] bool parse_socks_settings(const rapidjson::Value& value,
                                         const std::string& filename,
                                         const std::string& path,
@@ -872,6 +893,16 @@ void write_timeout(rapidjson::PrettyWriter<rapidjson::StringBuffer>& writer, con
     writer.Uint(value.idle);
 }
 
+void write_web_settings(rapidjson::PrettyWriter<rapidjson::StringBuffer>& writer, const config::web_t& value)
+{
+    writer.Key("enabled");
+    writer.Bool(value.enabled);
+    writer.Key("host");
+    writer.String(value.host.c_str());
+    writer.Key("port");
+    writer.Uint(value.port);
+}
+
 void write_socks_settings(rapidjson::PrettyWriter<rapidjson::StringBuffer>& writer, const config::socks_t& value)
 {
     writer.Key("host");
@@ -1039,6 +1070,14 @@ std::optional<config> parse_config(const std::string& filename)
         return std::nullopt;
     }
 
+    if (const auto* web_value = find_member_object(document, "web"); web_value != nullptr)
+    {
+        if (!parse_web_config(*web_value, filename, cfg.web))
+        {
+            return std::nullopt;
+        }
+    }
+
     const auto* inbounds_value = find_member_object(document, "inbounds");
     if (inbounds_value == nullptr || !parse_inbounds(*inbounds_value, filename, cfg.inbounds))
     {
@@ -1078,6 +1117,14 @@ std::string dump_config(const config& cfg)
     writer.StartObject();
     write_timeout(writer, cfg.timeout);
     writer.EndObject();
+
+    if (cfg.web.enabled)
+    {
+        writer.Key("web");
+        writer.StartObject();
+        write_web_settings(writer, cfg.web);
+        writer.EndObject();
+    }
 
     writer.Key("inbounds");
     writer.StartArray();
@@ -1169,6 +1216,9 @@ std::string dump_default_config()
 {
     config cfg;
     cfg.workers = 1;
+    cfg.web.enabled = false;
+    cfg.web.host = "127.0.0.1";
+    cfg.web.port = 18080;
 
     uint8_t public_key[32] = {0};
     uint8_t private_key[32] = {0};

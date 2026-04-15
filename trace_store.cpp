@@ -12,17 +12,6 @@ namespace relay
 namespace
 {
 
-template <typename T>
-[[nodiscard]] bool contains_exact(const std::optional<T>& value, const T& expected)
-{
-    return value.has_value() && *value == expected;
-}
-
-[[nodiscard]] bool contains_exact(const std::optional<std::string>& value, const std::string& expected)
-{
-    return value.has_value() && *value == expected;
-}
-
 }    // namespace
 
 std::string_view to_string(const trace_status status)
@@ -414,23 +403,23 @@ bool trace_store::match_query(const trace_session_summary& summary, const trace_
     {
         return false;
     }
-    if (!contains_exact(query.inbound_tag, summary.inbound_tag))
+    if (query.inbound_tag.has_value() && summary.inbound_tag != *query.inbound_tag)
     {
         return false;
     }
-    if (!contains_exact(query.outbound_tag, summary.outbound_tag))
+    if (query.outbound_tag.has_value() && summary.outbound_tag != *query.outbound_tag)
     {
         return false;
     }
-    if (!contains_exact(query.target_host, summary.target_host))
+    if (query.target_host.has_value() && summary.target_host != *query.target_host)
     {
         return false;
     }
-    if (!contains_exact(query.route_type, summary.route_type))
+    if (query.route_type.has_value() && summary.route_type != *query.route_type)
     {
         return false;
     }
-    if (!contains_exact(query.match_type, summary.match_type))
+    if (query.match_type.has_value() && summary.match_type != *query.match_type)
     {
         return false;
     }
