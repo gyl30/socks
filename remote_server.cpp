@@ -23,6 +23,7 @@
 #include "context_pool.h"
 #include "replay_cache.h"
 #include "reality/types.h"
+#include "router.h"
 #include "remote_server.h"
 #include "proxy_protocol.h"
 #include "tls/crypto_util.h"
@@ -132,6 +133,7 @@ remote_server::remote_server(io_context_pool& pool, const config& cfg)
       pool_(pool),
       owner_worker_(pool.get_io_worker()),
       replay_cache_(static_cast<std::size_t>(cfg.reality.replay_cache_max_entries)),
+      router_(std::make_shared<router>(cfg_)),
       fallback_gate_(make_fallback_gate_dependencies()),
       fallback_executor_(owner_worker_.io_context, cfg)
 {
@@ -184,6 +186,12 @@ void remote_server::start()
                   private_key_.size(),
                   reality_cert_public_key_.size(),
                   reality_cert_template_.size());
+        std::exit(EXIT_FAILURE);
+    }
+
+    if (router_ == nullptr || !router_->load())
+    {
+        LOG_ERROR("{} stage start load router data failed", log_event::kConnInit);
         std::exit(EXIT_FAILURE);
     }
 
@@ -429,7 +437,7 @@ boost::asio::awaitable<void> remote_server::process_proxy_request(io_worker& wor
                  tcp_request.target_port,
                  packet.size());
         const auto session =
-            std::make_shared<remote_tcp_proxy_session>(worker.io_context, std::move(connection), reality_ctx.conn_id, tcp_request.trace_id, cfg_);
+            std::make_shared<remote_tcp_proxy_session>(worker.io_context, std::move(connection), router_, reality_ctx.conn_id, tcp_request.trace_id, cfg_);
         co_await session->start(tcp_request);
         co_return;
     }
