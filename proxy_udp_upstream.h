@@ -31,6 +31,10 @@ class proxy_udp_upstream : public std::enable_shared_from_this<proxy_udp_upstrea
 {
    public:
     proxy_udp_upstream(std::shared_ptr<proxy_reality_connection> connection, const config& cfg);
+    proxy_udp_upstream(std::shared_ptr<boost::asio::ip::tcp::socket> control_socket,
+                       std::shared_ptr<boost::asio::ip::udp::socket> udp_socket,
+                       boost::asio::ip::udp::endpoint udp_server_endpoint,
+                       const config& cfg);
 
     [[nodiscard]] static boost::asio::awaitable<proxy_udp_connect_result> connect(const boost::asio::any_io_executor& executor,
                                                                                   uint32_t conn_id,
@@ -47,13 +51,23 @@ class proxy_udp_upstream : public std::enable_shared_from_this<proxy_udp_upstrea
     [[nodiscard]] uint16_t bind_port() const { return bind_port_; }
 
    private:
+    enum class upstream_mode : uint8_t
+    {
+        kReality,
+        kSocks,
+    };
+
     [[nodiscard]] uint32_t associate_reply_timeout() const;
 
    private:
     const config& cfg_;
+    upstream_mode mode_ = upstream_mode::kReality;
     std::string bind_host_ = "unknown";
     uint16_t bind_port_ = 0;
     std::shared_ptr<proxy_reality_connection> connection_;
+    std::shared_ptr<boost::asio::ip::tcp::socket> socks_control_socket_;
+    std::shared_ptr<boost::asio::ip::udp::socket> socks_udp_socket_;
+    boost::asio::ip::udp::endpoint socks_udp_server_endpoint_;
 };
 
 }    // namespace relay
