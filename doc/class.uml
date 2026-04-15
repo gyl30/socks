@@ -94,7 +94,7 @@ package "Client Inbound" {
 }
 
 package "Upstream" {
-    abstract class upstream {
+    abstract class tcp_outbound_stream {
         + connect(host, port)
         + write(data, ec)
         + read(buf, ec)
@@ -102,11 +102,11 @@ package "Upstream" {
         + close()
     }
 
-    class direct_upstream
+    class direct_tcp_outbound
 
-    class proxy_upstream
+    class proxy_tcp_outbound
 
-    class proxy_udp_upstream {
+    class udp_proxy_outbound {
         + connect()
         + send_datagram()
         + receive_datagram()
@@ -176,9 +176,9 @@ socks_session ..> tcp_socks_session : CONNECT
 socks_session ..> udp_socks_session : UDP ASSOCIATE
 
 tcp_socks_session ..> router
-tcp_socks_session ..> upstream : create_backend
+tcp_socks_session ..> tcp_outbound_stream : create_backend
 udp_socks_session ..> router
-udp_socks_session ..> proxy_udp_upstream : ensure_proxy_upstream
+udp_socks_session ..> udp_proxy_outbound : ensure_proxy_upstream
 
 tproxy_inbound o-- io_context_pool
 tproxy_inbound *-- router
@@ -186,8 +186,8 @@ tproxy_inbound ..> tproxy_tcp_session : creates
 tproxy_inbound ..> tproxy_udp_session : creates
 
 tproxy_tcp_session ..> router
-tproxy_tcp_session ..> upstream : select_backend
-tproxy_udp_session ..> proxy_udp_upstream
+tproxy_tcp_session ..> tcp_outbound_stream : select_backend
+tproxy_udp_session ..> udp_proxy_outbound
 
 tun_inbound o-- tun_device
 tun_inbound *-- router
@@ -195,14 +195,14 @@ tun_inbound ..> tun_tcp_session : creates
 tun_inbound ..> tun_udp_session : creates
 
 tun_tcp_session ..> router
-tun_tcp_session ..> upstream : select_backend
+tun_tcp_session ..> tcp_outbound_stream : select_backend
 tun_udp_session ..> router
-tun_udp_session ..> proxy_udp_upstream
+tun_udp_session ..> udp_proxy_outbound
 
-upstream <|-- direct_upstream
-upstream <|-- proxy_upstream
-proxy_upstream ..> proxy_reality_connection
-proxy_udp_upstream ..> proxy_reality_connection
+tcp_outbound_stream <|-- direct_tcp_outbound
+tcp_outbound_stream <|-- proxy_tcp_outbound
+proxy_tcp_outbound ..> proxy_reality_connection
+udp_proxy_outbound ..> proxy_reality_connection
 
 proxy_reality_connection *-- reality_engine
 proxy_reality_connection ..> tcp_connect_request

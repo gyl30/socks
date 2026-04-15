@@ -14,9 +14,9 @@ package "Client Process" {
     [tun_udp_session] as TunUdpSession
 
     [Router] as Router
-    [direct_upstream] as DirectUpstream
-    [proxy_upstream] as ProxyUpstream
-    [proxy_udp_upstream] as ProxyUdpUpstream
+    [direct_tcp_outbound] as DirectUpstream
+    [proxy_tcp_outbound] as ProxyUpstream
+    [udp_proxy_outbound] as ProxyUdpUpstream
 
     [proxy_reality_connection (client)] as ClientConn
     [reality_engine (client)] as ClientReality
