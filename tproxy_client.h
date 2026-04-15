@@ -21,7 +21,7 @@ namespace relay
 class tproxy_inbound : public std::enable_shared_from_this<tproxy_inbound>
 {
    public:
-    tproxy_inbound(io_context_pool& pool, const config& cfg);
+    tproxy_inbound(io_context_pool& pool, const config& cfg, std::string inbound_tag, const config::tproxy_t& settings);
 
    public:
     void start();
@@ -61,7 +61,9 @@ class tproxy_inbound : public std::enable_shared_from_this<tproxy_inbound>
                                                           const boost::asio::ip::udp::endpoint& target_endpoint);
 
    private:
-    config cfg_;
+    const config& cfg_;
+    std::string inbound_tag_;
+    config::tproxy_t settings_;
     io_worker& owner_worker_;
     std::shared_ptr<router> router_;
     boost::asio::ip::tcp::acceptor tcp_acceptor_{owner_worker_.io_context};

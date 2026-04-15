@@ -47,14 +47,17 @@ bool secure_string_equals(const std::string& lhs, const std::string& rhs)
 
 }    // namespace
 
-socks_session::socks_session(boost::asio::ip::tcp::socket socket, io_worker& worker, std::shared_ptr<router> router, uint32_t sid, const config& cfg)
+socks_session::socks_session(boost::asio::ip::tcp::socket socket,
+                             io_worker& worker,
+                             std::shared_ptr<router> router,
+                             uint32_t sid,
+                             const config& cfg,
+                             const config::socks_t& settings)
     : sid_(sid),
       trace_id_(generate_trace_id()),
       conn_id_(sid),
-      username_(cfg.socks.username),
-      password_(cfg.socks.password),
-      auth_enabled_(cfg.socks.auth),
       cfg_(cfg),
+      settings_(settings),
       worker_(worker),
       socket_(std::move(socket)),
       router_(std::move(router))
@@ -267,7 +270,7 @@ boost::asio::awaitable<bool> socks_session::read_auth_methods(uint8_t method_cou
 
 uint8_t socks_session::select_auth_method(const std::vector<uint8_t>& methods) const
 {
-    if (auth_enabled_)
+    if (settings_.auth)
     {
         if (std::ranges::find(methods, socks::kMethodPassword) != methods.end())
         {
@@ -432,8 +435,8 @@ boost::asio::awaitable<bool> socks_session::read_auth_field(std::string& out, co
 
 bool socks_session::verify_credentials(const std::string& username, const std::string& password) const
 {
-    const bool user_match = secure_string_equals(username, username_);
-    const bool pass_match = secure_string_equals(password, password_);
+    const bool user_match = secure_string_equals(username, settings_.username);
+    const bool pass_match = secure_string_equals(password, settings_.password);
     return user_match && pass_match;
 }
 

@@ -27,17 +27,17 @@
 namespace relay
 {
 
-tun_inbound::tun_inbound(io_context_pool& pool, const config& cfg) : cfg_(cfg), owner_worker_(pool.get_io_worker()), router_(std::make_shared<router>(cfg_))
+tun_inbound::tun_inbound(io_context_pool& pool, const config& cfg, std::string inbound_tag, const config::tun_t& settings)
+    : cfg_(cfg),
+      inbound_tag_(std::move(inbound_tag)),
+      settings_(settings),
+      owner_worker_(pool.get_io_worker()),
+      router_(std::make_shared<router>(cfg_, inbound_tag_))
 {
 }
 
 void tun_inbound::start()
 {
-    if (!cfg_.tun.enabled)
-    {
-        LOG_INFO("{} stage start tun inbound disabled", log_event::kConnInit);
-        return;
-    }
     if (!router_->load())
     {
         LOG_ERROR("{} stage start load router data for tun inbound failed", log_event::kConnInit);
@@ -45,12 +45,12 @@ void tun_inbound::start()
     }
 
     boost::system::error_code ec;
-    if (!device_.open(cfg_.tun, ec))
+    if (!device_.open(settings_, ec))
     {
         LOG_ERROR("{} stage start open tun device name {} mtu {} failed {}",
                   log_event::kConnInit,
-                  cfg_.tun.name.empty() ? "auto" : cfg_.tun.name,
-                  cfg_.tun.mtu,
+                  settings_.name.empty() ? "auto" : settings_.name,
+                  settings_.mtu,
                   ec.message());
         std::exit(EXIT_FAILURE);
     }

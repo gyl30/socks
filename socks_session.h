@@ -22,7 +22,12 @@ namespace relay
 class socks_session : public std::enable_shared_from_this<socks_session>
 {
    public:
-    socks_session(boost::asio::ip::tcp::socket socket, io_worker& worker, std::shared_ptr<router> router, uint32_t sid, const config& cfg);
+    socks_session(boost::asio::ip::tcp::socket socket,
+                  io_worker& worker,
+                  std::shared_ptr<router> router,
+                  uint32_t sid,
+                  const config& cfg,
+                  const config::socks_t& settings);
     ~socks_session();
 
     void start();
@@ -103,11 +108,9 @@ class socks_session : public std::enable_shared_from_this<socks_session>
     uint16_t local_port_ = 0;
     std::string client_host_ = "unknown";
     uint16_t client_port_ = 0;
-    std::string username_;
-    std::string password_;
-    bool auth_enabled_ = false;
     bool peer_closed_before_greeting_ = false;
     const config& cfg_;
+    config::socks_t settings_;
     io_worker& worker_;
     boost::asio::ip::tcp::socket socket_;
     std::shared_ptr<router> router_;

@@ -212,7 +212,7 @@ boost::asio::awaitable<bool> tun_udp_session::open_direct_socket()
         co_return false;
     }
 
-    const auto connect_mark = cfg_.tproxy.enabled ? cfg_.tproxy.mark : 0U;
+    const auto connect_mark = resolve_socket_mark(cfg_);
     if (connect_mark != 0)
     {
         net::set_socket_mark(upstream_socket_.native_handle(), connect_mark, ec);

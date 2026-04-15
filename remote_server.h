@@ -26,7 +26,7 @@ namespace relay
 class reality_inbound : public std::enable_shared_from_this<reality_inbound>
 {
    public:
-    reality_inbound(io_context_pool& pool, const config& cfg);
+    reality_inbound(io_context_pool& pool, const config& cfg, std::string inbound_tag, const config::reality_inbound_t& settings);
     virtual ~reality_inbound();
 
    public:
@@ -43,6 +43,8 @@ class reality_inbound : public std::enable_shared_from_this<reality_inbound>
 
    private:
     const config& cfg_;
+    std::string inbound_tag_;
+    config::reality_inbound_t settings_;
     io_context_pool& pool_;
     io_worker& owner_worker_;
     boost::asio::ip::tcp::acceptor acceptor_{owner_worker_.io_context};

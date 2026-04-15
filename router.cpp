@@ -65,7 +65,7 @@ std::string to_string(const route_type& type)
     return "unknown";
 }
 
-router::router(const config& cfg) : cfg_(cfg), inbound_tag_(cfg.active_inbound_tag) {}
+router::router(const config& cfg, std::string inbound_tag) : cfg_(cfg), inbound_tag_(std::move(inbound_tag)) {}
 
 bool router::load()
 {
