@@ -24,7 +24,7 @@ struct udp_proxy_outbound_connect_result
     boost::asio::ip::address bind_addr;
     uint16_t bind_port = 0;
     bool has_bind_endpoint = false;
-    std::shared_ptr<class udp_proxy_outbound> upstream = nullptr;
+    std::shared_ptr<class udp_proxy_outbound> outbound = nullptr;
 };
 
 class udp_proxy_outbound : public std::enable_shared_from_this<udp_proxy_outbound>
