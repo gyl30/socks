@@ -155,7 +155,7 @@ def count_idle_events(tmp_dir):
         count_any_log_occurrences(
             tmp_dir / "client.log",
             (
-                "upstream_to_client read failed Connection timed out",
+                "outbound_to_client read failed Connection timed out",
                 "tcp session idle closing",
             ),
         )
@@ -510,7 +510,7 @@ def run_long_mode(repo_root, binary, keep_artifacts):
                 f"got idle_hits={idle_hits} connect_failfast_hits={connect_failfast_hits}"
             )
 
-        before_write_timeout = count_log_occurrences(tmp_dir / "client.log", "upstream_to_client write failed")
+        before_write_timeout = count_log_occurrences(tmp_dir / "client.log", "outbound_to_client write failed")
         print(
             run_client_case(
                 repo_root,
@@ -524,7 +524,7 @@ def run_long_mode(repo_root, binary, keep_artifacts):
             ).strip()
         )
         time.sleep(1.5)
-        after_write_timeout = count_log_occurrences(tmp_dir / "client.log", "upstream_to_client write failed")
+        after_write_timeout = count_log_occurrences(tmp_dir / "client.log", "outbound_to_client write failed")
         write_timeout_hits = after_write_timeout - before_write_timeout
         if write_timeout_hits < 1:
             raise RuntimeError("expected at least 1 write timeout hit")
