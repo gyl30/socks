@@ -15,13 +15,6 @@
 namespace relay
 {
 
-enum class socks_inbound_state : uint8_t
-{
-    kStopped,
-    kRunning,
-    kStopping,
-};
-
 class socks_inbound : public std::enable_shared_from_this<socks_inbound>
 {
    public:

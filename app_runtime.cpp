@@ -48,18 +48,18 @@ void app_runtime::start_inbound(const config::inbound_entry_t& inbound)
 {
     if (inbound.type == "reality" && inbound.reality.has_value())
     {
-        auto server = std::make_shared<reality_inbound>(pool_, cfg_, inbound.tag, *inbound.reality);
-        reality_inbounds_.push_back(server);
-        server->start();
+        auto inbound_instance = std::make_shared<reality_inbound>(pool_, cfg_, inbound.tag, *inbound.reality);
+        reality_inbounds_.push_back(inbound_instance);
+        inbound_instance->start();
         LOG_INFO("{} inbound_tag {} inbound_type {} stage start started", log_event::kConnInit, inbound.tag, inbound.type);
         return;
     }
 
     if (inbound.type == "socks" && inbound.socks.has_value())
     {
-        auto client = std::make_shared<socks_inbound>(pool_, cfg_, inbound.tag, *inbound.socks);
-        socks_inbounds_.push_back(client);
-        client->start();
+        auto inbound_instance = std::make_shared<socks_inbound>(pool_, cfg_, inbound.tag, *inbound.socks);
+        socks_inbounds_.push_back(inbound_instance);
+        inbound_instance->start();
         LOG_INFO("{} inbound_tag {} inbound_type {} stage start started", log_event::kConnInit, inbound.tag, inbound.type);
         return;
     }
@@ -67,9 +67,9 @@ void app_runtime::start_inbound(const config::inbound_entry_t& inbound)
 #if SOCKS_HAS_TPROXY
     if (inbound.type == "tproxy" && inbound.tproxy.has_value())
     {
-        auto client = std::make_shared<tproxy_inbound>(pool_, cfg_, inbound.tag, *inbound.tproxy);
-        tproxy_inbounds_.push_back(client);
-        client->start();
+        auto inbound_instance = std::make_shared<tproxy_inbound>(pool_, cfg_, inbound.tag, *inbound.tproxy);
+        tproxy_inbounds_.push_back(inbound_instance);
+        inbound_instance->start();
         LOG_INFO("{} inbound_tag {} inbound_type {} stage start started", log_event::kConnInit, inbound.tag, inbound.type);
         return;
     }
@@ -78,9 +78,9 @@ void app_runtime::start_inbound(const config::inbound_entry_t& inbound)
 #if SOCKS_HAS_TUN
     if (inbound.type == "tun" && inbound.tun.has_value())
     {
-        auto client = std::make_shared<tun_inbound>(pool_, cfg_, inbound.tag, *inbound.tun);
-        tun_inbounds_.push_back(client);
-        client->start();
+        auto inbound_instance = std::make_shared<tun_inbound>(pool_, cfg_, inbound.tag, *inbound.tun);
+        tun_inbounds_.push_back(inbound_instance);
+        inbound_instance->start();
         LOG_INFO("{} inbound_tag {} inbound_type {} stage start started", log_event::kConnInit, inbound.tag, inbound.type);
         return;
     }
@@ -95,36 +95,36 @@ void app_runtime::start_inbound(const config::inbound_entry_t& inbound)
 
 void app_runtime::stop()
 {
-    for (const auto& client : socks_inbounds_)
+    for (const auto& inbound_instance : socks_inbounds_)
     {
-        if (client != nullptr)
+        if (inbound_instance != nullptr)
         {
-            client->stop();
+            inbound_instance->stop();
         }
     }
 #if SOCKS_HAS_TPROXY
-    for (const auto& client : tproxy_inbounds_)
+    for (const auto& inbound_instance : tproxy_inbounds_)
     {
-        if (client != nullptr)
+        if (inbound_instance != nullptr)
         {
-            client->stop();
+            inbound_instance->stop();
         }
     }
 #endif
 #if SOCKS_HAS_TUN
-    for (const auto& client : tun_inbounds_)
+    for (const auto& inbound_instance : tun_inbounds_)
     {
-        if (client != nullptr)
+        if (inbound_instance != nullptr)
         {
-            client->stop();
+            inbound_instance->stop();
         }
     }
 #endif
-    for (const auto& server : reality_inbounds_)
+    for (const auto& inbound_instance : reality_inbounds_)
     {
-        if (server != nullptr)
+        if (inbound_instance != nullptr)
         {
-            server->stop();
+            inbound_instance->stop();
         }
     }
 
