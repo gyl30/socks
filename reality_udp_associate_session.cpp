@@ -24,17 +24,17 @@
 #include "net_utils.h"
 #include "proxy_protocol.h"
 #include "udp_proxy_outbound.h"
-#include "reality_udp_session.h"
+#include "reality_udp_associate_session.h"
 
 namespace relay
 {
 
-reality_udp_session::reality_udp_session(boost::asio::io_context& io_context,
-                                         std::shared_ptr<proxy_reality_connection> connection,
-                                         std::shared_ptr<router> router,
-                                         const uint32_t conn_id,
-                                         const uint64_t trace_id,
-                                         const config& cfg)
+reality_udp_associate_session::reality_udp_associate_session(boost::asio::io_context& io_context,
+                                                             std::shared_ptr<proxy_reality_connection> connection,
+                                                             std::shared_ptr<router> router,
+                                                             const uint32_t conn_id,
+                                                             const uint64_t trace_id,
+                                                             const config& cfg)
     : conn_id_(conn_id),
       trace_id_(trace_id),
       cfg_(cfg),
@@ -49,9 +49,9 @@ reality_udp_session::reality_udp_session(boost::asio::io_context& io_context,
     last_activity_time_ms_ = net::now_ms();
 }
 
-boost::asio::awaitable<void> reality_udp_session::start(const proxy::udp_associate_request& request) { co_await start_impl(request); }
+boost::asio::awaitable<void> reality_udp_associate_session::start(const proxy::udp_associate_request& request) { co_await start_impl(request); }
 
-boost::asio::awaitable<void> reality_udp_session::start_impl(const proxy::udp_associate_request&)
+boost::asio::awaitable<void> reality_udp_associate_session::start_impl(const proxy::udp_associate_request&)
 {
     boost::system::error_code ec;
     const auto close_socket = [&]()
@@ -183,7 +183,7 @@ boost::asio::awaitable<void> reality_udp_session::start_impl(const proxy::udp_as
              duration_ms);
 }
 
-boost::asio::awaitable<route_decision> reality_udp_session::decide_route(const proxy::udp_datagram& datagram) const
+boost::asio::awaitable<route_decision> reality_udp_associate_session::decide_route(const proxy::udp_datagram& datagram) const
 {
     route_decision decision;
     decision.route = route_type::kBlock;
@@ -212,7 +212,7 @@ boost::asio::awaitable<route_decision> reality_udp_session::decide_route(const p
     co_return decision;
 }
 
-boost::asio::awaitable<std::shared_ptr<udp_proxy_outbound>> reality_udp_session::get_proxy_outbound(const std::string& outbound_tag)
+boost::asio::awaitable<std::shared_ptr<udp_proxy_outbound>> reality_udp_associate_session::get_proxy_outbound(const std::string& outbound_tag)
 {
     if (stopping_.load())
     {
@@ -256,7 +256,7 @@ boost::asio::awaitable<std::shared_ptr<udp_proxy_outbound>> reality_udp_session:
     co_return connect_result.outbound;
 }
 
-boost::asio::awaitable<void> reality_udp_session::close_proxy_outbounds()
+boost::asio::awaitable<void> reality_udp_associate_session::close_proxy_outbounds()
 {
     std::vector<std::shared_ptr<udp_proxy_outbound>> outbounds;
     outbounds.reserve(proxy_outbounds_.size());
@@ -279,7 +279,7 @@ boost::asio::awaitable<void> reality_udp_session::close_proxy_outbounds()
     }
 }
 
-boost::asio::awaitable<void> reality_udp_session::connection_to_udp()
+boost::asio::awaitable<void> reality_udp_associate_session::connection_to_udp()
 {
     if (connection_ == nullptr)
     {
@@ -425,7 +425,7 @@ boost::asio::awaitable<void> reality_udp_session::connection_to_udp()
     }
 }
 
-boost::asio::awaitable<void> reality_udp_session::udp_to_connection()
+boost::asio::awaitable<void> reality_udp_associate_session::udp_to_connection()
 {
     if (connection_ == nullptr)
     {
@@ -478,7 +478,7 @@ boost::asio::awaitable<void> reality_udp_session::udp_to_connection()
     }
 }
 
-boost::asio::awaitable<void> reality_udp_session::proxy_to_connection(const std::string& outbound_tag,
+boost::asio::awaitable<void> reality_udp_associate_session::proxy_to_connection(const std::string& outbound_tag,
                                                                       const std::shared_ptr<udp_proxy_outbound>& outbound)
 {
     if (connection_ == nullptr || outbound == nullptr)
@@ -566,7 +566,7 @@ boost::asio::awaitable<void> reality_udp_session::proxy_to_connection(const std:
     }
 }
 
-boost::asio::awaitable<void> reality_udp_session::idle_watchdog()
+boost::asio::awaitable<void> reality_udp_associate_session::idle_watchdog()
 {
     if (cfg_.timeout.idle == 0)
     {
@@ -602,7 +602,7 @@ boost::asio::awaitable<void> reality_udp_session::idle_watchdog()
     }
 }
 
-boost::asio::awaitable<boost::asio::ip::udp::endpoint> reality_udp_session::resolve_target_endpoint(const std::string& host,
+boost::asio::awaitable<boost::asio::ip::udp::endpoint> reality_udp_associate_session::resolve_target_endpoint(const std::string& host,
                                                                                                     const uint16_t port,
                                                                                                     boost::system::error_code& ec)
 {

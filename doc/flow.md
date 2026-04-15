@@ -43,8 +43,8 @@ flowchart TD
   Network <--> ServerReality["reality_engine (server)"]
   ServerReality --> ServerConn["proxy_reality_connection (server)"]
   ServerConn --> RealityInbound[reality_inbound]
-  RealityInbound --> RealityTcp[reality_tcp_session]
-  RealityInbound --> RealityUdp[reality_udp_session]
+  RealityInbound --> RealityTcp[reality_tcp_connect_session]
+  RealityInbound --> RealityUdp[reality_udp_associate_session]
   RemoteTcp --> Target
   RemoteUdp --> Target
 
@@ -62,7 +62,7 @@ sequenceDiagram
   participant Up as direct_tcp_outbound / proxy_tcp_outbound
   participant Conn as proxy_reality_connection
   participant Server as reality_inbound
-  participant RTcp as reality_tcp_session
+  participant RTcp as reality_tcp_connect_session
   participant Target as Target
 
   App->>Inb: TCP connect / CONNECT
@@ -132,7 +132,7 @@ sequenceDiagram
   participant ProxyUdp as udp_proxy_outbound
   participant Conn as proxy_reality_connection
   participant Server as reality_inbound
-  participant RUdp as reality_udp_session
+  participant RUdp as reality_udp_associate_session
   participant Target as Target
 
   App->>Inb: UDP 数据包

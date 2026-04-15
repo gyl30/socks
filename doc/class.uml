@@ -148,7 +148,7 @@ package "Server Side" {
         - process_proxy_request()
     }
 
-    class reality_tcp_session {
+    class reality_tcp_connect_session {
         + start(request)
         - run(request)
         - send_connect_reply()
@@ -157,7 +157,7 @@ package "Server Side" {
         - idle_watchdog()
     }
 
-    class reality_udp_session {
+    class reality_udp_associate_session {
         + start(request)
         - start_impl(request)
         - connection_to_udp()
@@ -214,11 +214,11 @@ proxy_reality_connection ..> udp_datagram
 reality_inbound o-- io_context_pool
 reality_inbound *-- replay_cache
 reality_inbound ..> proxy_reality_connection : wraps accepted socket
-reality_inbound ..> reality_tcp_session : tcp_connect_request
-reality_inbound ..> reality_udp_session : udp_associate_request
+reality_inbound ..> reality_tcp_connect_session : tcp_connect_request
+reality_inbound ..> reality_udp_associate_session : udp_associate_request
 
-reality_tcp_session ..> proxy_reality_connection
-reality_udp_session ..> proxy_reality_connection
+reality_tcp_connect_session ..> proxy_reality_connection
+reality_udp_associate_session ..> proxy_reality_connection
 
 note right of proxy_reality_connection
   route=proxy 时：

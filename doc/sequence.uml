@@ -9,7 +9,7 @@ participant "router" as Router
 participant "tcp_outbound_stream" as Upstream
 participant "proxy_reality_connection" as ProxyConn
 participant "reality_inbound" as RemoteServer
-participant "reality_tcp_session" as RemoteTcp
+participant "reality_tcp_connect_session" as RemoteTcp
 participant "Target" as Target
 
 App -> SocksClient: TCP connect

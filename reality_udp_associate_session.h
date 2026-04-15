@@ -1,5 +1,5 @@
-#ifndef REALITY_UDP_SESSION_H
-#define REALITY_UDP_SESSION_H
+#ifndef REALITY_UDP_ASSOCIATE_SESSION_H
+#define REALITY_UDP_ASSOCIATE_SESSION_H
 
 #include <atomic>
 #include <chrono>
@@ -23,15 +23,15 @@
 namespace relay
 {
 
-class reality_udp_session : public std::enable_shared_from_this<reality_udp_session>
+class reality_udp_associate_session : public std::enable_shared_from_this<reality_udp_associate_session>
 {
    public:
-    reality_udp_session(boost::asio::io_context& io_context,
-                        std::shared_ptr<proxy_reality_connection> connection,
-                        std::shared_ptr<router> router,
-                        uint32_t conn_id,
-                        uint64_t trace_id,
-                        const config& cfg);
+    reality_udp_associate_session(boost::asio::io_context& io_context,
+                                  std::shared_ptr<proxy_reality_connection> connection,
+                                  std::shared_ptr<router> router,
+                                  uint32_t conn_id,
+                                  uint64_t trace_id,
+                                  const config& cfg);
 
     boost::asio::awaitable<void> start(const proxy::udp_associate_request& request);
 
