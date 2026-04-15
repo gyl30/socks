@@ -16,7 +16,7 @@
 #include "outbound.h"
 #include "router.h"
 #include "protocol.h"
-#include "upstream.h"
+#include "tcp_outbound_stream.h"
 #include "net_utils.h"
 #include "scoped_exit.h"
 #include "tcp_socks_session.h"

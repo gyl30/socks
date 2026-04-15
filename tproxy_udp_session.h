@@ -16,7 +16,7 @@
 #include "router.h"
 #include "lru_cache.h"
 #include "context_pool.h"
-#include "proxy_udp_upstream.h"
+#include "udp_proxy_outbound.h"
 
 namespace relay
 {

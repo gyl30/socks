@@ -12,7 +12,7 @@
 
 #include "config.h"
 #include "router.h"
-#include "upstream.h"
+#include "tcp_outbound_stream.h"
 #include "constants.h"
 
 namespace relay

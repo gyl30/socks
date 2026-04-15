@@ -16,7 +16,7 @@
 #include "outbound.h"
 #include "router.h"
 #include "trace_id.h"
-#include "upstream.h"
+#include "tcp_outbound_stream.h"
 #include "constants.h"
 #include "net_utils.h"
 #include "tproxy_tcp_session.h"

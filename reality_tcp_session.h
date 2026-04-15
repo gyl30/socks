@@ -11,7 +11,7 @@
 
 #include "config.h"
 #include "router.h"
-#include "upstream.h"
+#include "tcp_outbound_stream.h"
 #include "proxy_protocol.h"
 #include "proxy_reality_connection.h"
 

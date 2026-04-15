@@ -24,7 +24,7 @@
 #include "net_utils.h"
 #include "context_pool.h"
 #include "proxy_protocol.h"
-#include "proxy_udp_upstream.h"
+#include "udp_proxy_outbound.h"
 #include "tproxy_udp_session.h"
 
 namespace relay

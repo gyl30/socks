@@ -14,7 +14,7 @@
 #include "config.h"
 #include "router.h"
 #include "tun_lwip.h"
-#include "upstream.h"
+#include "tcp_outbound_stream.h"
 
 namespace relay
 {

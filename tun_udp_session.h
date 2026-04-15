@@ -18,7 +18,7 @@
 #include "router.h"
 #include "tun_lwip.h"
 #include "context_pool.h"
-#include "proxy_udp_upstream.h"
+#include "udp_proxy_outbound.h"
 
 namespace relay
 {

@@ -17,7 +17,7 @@
 #include "lru_cache.h"
 #include "net_utils.h"
 #include "run_loop_spawner.h"
-#include "proxy_udp_upstream.h"
+#include "udp_proxy_outbound.h"
 
 namespace relay
 {
