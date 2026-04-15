@@ -12,6 +12,7 @@
 #include <boost/asio/experimental/awaitable_operators.hpp>
 
 #include "log.h"
+#include "outbound.h"
 #include "protocol.h"
 #include "trace_id.h"
 #include "constants.h"
@@ -274,7 +275,8 @@ boost::asio::awaitable<bool> tun_udp_session::open_direct_socket()
 
 boost::asio::awaitable<bool> tun_udp_session::open_proxy_upstream()
 {
-    const auto connect_result = co_await proxy_udp_upstream::connect(worker_.io_context.get_executor(), conn_id_, trace_id_, cfg_, outbound_tag_);
+    const auto connect_result =
+        co_await connect_udp_proxy_outbound(worker_.io_context.get_executor(), conn_id_, trace_id_, cfg_, outbound_tag_);
     if (connect_result.ec || connect_result.upstream == nullptr)
     {
         auto ec = connect_result.ec;
