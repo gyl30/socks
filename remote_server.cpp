@@ -109,7 +109,7 @@ std::optional<fallback_target> resolve_fallback_target(const config& cfg)
 
 }    // namespace
 
-boost::asio::awaitable<void> remote_server::fallback_to_target_site(reality::fallback_request&& request, const char* reason)
+boost::asio::awaitable<void> reality_inbound::fallback_to_target_site(reality::fallback_request&& request, const char* reason)
 {
     const auto target = resolve_fallback_target(cfg_);
     if (!target.has_value())
@@ -128,7 +128,7 @@ boost::asio::awaitable<void> remote_server::fallback_to_target_site(reality::fal
     co_await fallback_executor_.run(request, target->host, target->port, reason, ec);
 }
 
-remote_server::remote_server(io_context_pool& pool, const config& cfg)
+reality_inbound::reality_inbound(io_context_pool& pool, const config& cfg)
     : cfg_(cfg),
       pool_(pool),
       owner_worker_(pool.get_io_worker()),
@@ -146,7 +146,7 @@ remote_server::remote_server(io_context_pool& pool, const config& cfg)
     boost::algorithm::unhex(cfg.reality.short_id, std::back_inserter(short_id_bytes_));
     boost::system::error_code ec;
     auto pub = tls::crypto_util::extract_public_key(private_key_, ec);
-    LOG_INFO("{} stage init server public key size {}", log_event::kConnInit, ec ? 0 : pub.size());
+    LOG_INFO("{} stage init reality inbound public key size {}", log_event::kConnInit, ec ? 0 : pub.size());
 
     uint8_t cert_public_key[32] = {};
     if (!tls::crypto_util::generate_ed25519_keypair(cert_public_key, reality_cert_private_key_.data()))
@@ -168,7 +168,7 @@ remote_server::remote_server(io_context_pool& pool, const config& cfg)
     reality_cert_template_ = std::move(cert_template);
 }
 
-remote_server::~remote_server()
+reality_inbound::~reality_inbound()
 {
     if (!private_key_.empty())
     {
@@ -177,7 +177,7 @@ remote_server::~remote_server()
     OPENSSL_cleanse(reality_cert_private_key_.data(), reality_cert_private_key_.size());
 }
 
-void remote_server::start()
+void reality_inbound::start()
 {
     if (private_key_.size() != 32 || reality_cert_public_key_.size() != 32 || reality_cert_template_.empty())
     {
@@ -249,12 +249,12 @@ void remote_server::start()
         std::exit(EXIT_FAILURE);
     }
 
-    LOG_INFO("{} listen {}:{} server listening", log_event::kConnInit, cfg_.inbound.host, cfg_.inbound.port);
+    LOG_INFO("{} listen {}:{} reality inbound listening", log_event::kConnInit, cfg_.inbound.host, cfg_.inbound.port);
 
     owner_worker_.group.spawn([self = shared_from_this()]() { return self->accept_loop(); });
 }
 
-void remote_server::stop()
+void reality_inbound::stop()
 {
     if (stopping_.exchange(true))
     {
@@ -277,7 +277,7 @@ void remote_server::stop()
                       });
 }
 
-boost::asio::awaitable<void> remote_server::accept_loop()
+boost::asio::awaitable<void> reality_inbound::accept_loop()
 {
     auto self = shared_from_this();
     while (true)
@@ -315,7 +315,7 @@ boost::asio::awaitable<void> remote_server::accept_loop()
     LOG_INFO("{} listen {}:{} accept loop exited", log_event::kConnClose, cfg_.inbound.host, cfg_.inbound.port);
 }
 
-boost::asio::awaitable<void> remote_server::handle(io_worker& worker, std::shared_ptr<boost::asio::ip::tcp::socket> s, uint32_t conn_id)
+boost::asio::awaitable<void> reality_inbound::handle(io_worker& worker, std::shared_ptr<boost::asio::ip::tcp::socket> s, uint32_t conn_id)
 {
     auto reality_ctx = build_handshake_context(s, conn_id);
     LOG_INFO("{} conn {} local {}:{} remote {}:{} accepted",
@@ -388,9 +388,9 @@ boost::asio::awaitable<void> remote_server::handle(io_worker& worker, std::share
     co_await process_proxy_request(worker, connection, reality_ctx);
 }
 
-boost::asio::awaitable<void> remote_server::process_proxy_request(io_worker& worker,
-                                                                  std::shared_ptr<proxy_reality_connection> connection,
-                                                                  const reality::server_handshake_context& reality_ctx) const
+boost::asio::awaitable<void> reality_inbound::process_proxy_request(io_worker& worker,
+                                                                    std::shared_ptr<proxy_reality_connection> connection,
+                                                                    const reality::server_handshake_context& reality_ctx) const
 {
     if (connection == nullptr)
     {
@@ -437,7 +437,7 @@ boost::asio::awaitable<void> remote_server::process_proxy_request(io_worker& wor
                  tcp_request.target_port,
                  packet.size());
         const auto session =
-            std::make_shared<remote_tcp_proxy_session>(worker.io_context, std::move(connection), router_, reality_ctx.conn_id, tcp_request.trace_id, cfg_);
+            std::make_shared<reality_tcp_session>(worker.io_context, std::move(connection), router_, reality_ctx.conn_id, tcp_request.trace_id, cfg_);
         co_await session->start(tcp_request);
         co_return;
     }
@@ -456,7 +456,7 @@ boost::asio::awaitable<void> remote_server::process_proxy_request(io_worker& wor
                  reality_ctx.sni.empty() ? "unknown" : reality_ctx.sni,
                  packet.size());
         const auto session =
-            std::make_shared<remote_udp_proxy_session>(worker.io_context, std::move(connection), router_, reality_ctx.conn_id, udp_request.trace_id, cfg_);
+            std::make_shared<reality_udp_session>(worker.io_context, std::move(connection), router_, reality_ctx.conn_id, udp_request.trace_id, cfg_);
         co_await session->start(udp_request);
         co_return;
     }

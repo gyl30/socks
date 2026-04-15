@@ -24,12 +24,12 @@
 namespace relay
 {
 
-remote_tcp_proxy_session::remote_tcp_proxy_session(boost::asio::io_context& io_context,
-                                                   std::shared_ptr<proxy_reality_connection> connection,
-                                                   std::shared_ptr<router> router,
-                                                   const uint32_t conn_id,
-                                                   const uint64_t trace_id,
-                                                   const config& cfg)
+reality_tcp_session::reality_tcp_session(boost::asio::io_context& io_context,
+                                         std::shared_ptr<proxy_reality_connection> connection,
+                                         std::shared_ptr<router> router,
+                                         const uint32_t conn_id,
+                                         const uint64_t trace_id,
+                                         const config& cfg)
     : conn_id_(conn_id),
       trace_id_(trace_id),
       cfg_(cfg),
@@ -41,9 +41,9 @@ remote_tcp_proxy_session::remote_tcp_proxy_session(boost::asio::io_context& io_c
     last_activity_time_ms_ = net::now_ms();
 }
 
-boost::asio::awaitable<void> remote_tcp_proxy_session::start(const proxy::tcp_connect_request& request) { co_await run(request); }
+boost::asio::awaitable<void> reality_tcp_session::start(const proxy::tcp_connect_request& request) { co_await run(request); }
 
-boost::asio::awaitable<void> remote_tcp_proxy_session::run(const proxy::tcp_connect_request& request)
+boost::asio::awaitable<void> reality_tcp_session::run(const proxy::tcp_connect_request& request)
 {
     target_host_ = request.target_host;
     target_port_ = request.target_port;
@@ -129,7 +129,7 @@ boost::asio::awaitable<void> remote_tcp_proxy_session::run(const proxy::tcp_conn
     log_close_summary();
 }
 
-std::shared_ptr<upstream> remote_tcp_proxy_session::create_backend(const route_type route, const std::string& outbound_tag) const
+std::shared_ptr<upstream> reality_tcp_session::create_backend(const route_type route, const std::string& outbound_tag) const
 {
     if (route == route_type::kDirect)
     {
@@ -142,10 +142,10 @@ std::shared_ptr<upstream> remote_tcp_proxy_session::create_backend(const route_t
     return nullptr;
 }
 
-boost::asio::awaitable<upstream_connect_result> remote_tcp_proxy_session::connect_backend(const std::shared_ptr<upstream>& backend,
-                                                                                          const std::string& host,
-                                                                                          const uint16_t port,
-                                                                                          const route_type route)
+boost::asio::awaitable<upstream_connect_result> reality_tcp_session::connect_backend(const std::shared_ptr<upstream>& backend,
+                                                                                     const std::string& host,
+                                                                                     const uint16_t port,
+                                                                                     const route_type route)
 {
     LOG_INFO("{} trace {:016x} conn {} target {}:{} route {} connecting",
              log_event::kConnInit,
@@ -178,7 +178,7 @@ boost::asio::awaitable<upstream_connect_result> remote_tcp_proxy_session::connec
     co_return result;
 }
 
-boost::asio::awaitable<bool> remote_tcp_proxy_session::send_connect_reply(const uint8_t socks_rep, const upstream_connect_result* connect_result)
+boost::asio::awaitable<bool> reality_tcp_session::send_connect_reply(const uint8_t socks_rep, const upstream_connect_result* connect_result)
 {
     if (connection_ == nullptr)
     {
@@ -236,7 +236,7 @@ boost::asio::awaitable<bool> remote_tcp_proxy_session::send_connect_reply(const 
     co_return true;
 }
 
-boost::asio::awaitable<void> remote_tcp_proxy_session::relay_target(const std::shared_ptr<upstream>& backend)
+boost::asio::awaitable<void> reality_tcp_session::relay_target(const std::shared_ptr<upstream>& backend)
 {
     using boost::asio::experimental::awaitable_operators::operator&&;
     using boost::asio::experimental::awaitable_operators::operator||;
@@ -250,7 +250,7 @@ boost::asio::awaitable<void> remote_tcp_proxy_session::relay_target(const std::s
     co_await ((client_to_upstream(backend) && upstream_to_client(backend)) || idle_watchdog(backend));
 }
 
-boost::asio::awaitable<void> remote_tcp_proxy_session::client_to_upstream(const std::shared_ptr<upstream>& backend)
+boost::asio::awaitable<void> reality_tcp_session::client_to_upstream(const std::shared_ptr<upstream>& backend)
 {
     if (connection_ == nullptr || backend == nullptr)
     {
@@ -308,7 +308,7 @@ boost::asio::awaitable<void> remote_tcp_proxy_session::client_to_upstream(const 
     }
 }
 
-boost::asio::awaitable<void> remote_tcp_proxy_session::upstream_to_client(const std::shared_ptr<upstream>& backend)
+boost::asio::awaitable<void> reality_tcp_session::upstream_to_client(const std::shared_ptr<upstream>& backend)
 {
     if (connection_ == nullptr || backend == nullptr)
     {
@@ -358,7 +358,7 @@ boost::asio::awaitable<void> remote_tcp_proxy_session::upstream_to_client(const 
     }
 }
 
-boost::asio::awaitable<void> remote_tcp_proxy_session::idle_watchdog(const std::shared_ptr<upstream>& backend)
+boost::asio::awaitable<void> reality_tcp_session::idle_watchdog(const std::shared_ptr<upstream>& backend)
 {
     const auto idle_timeout_ms = static_cast<uint64_t>(cfg_.timeout.idle) * 1000ULL;
     while (true)
@@ -395,7 +395,7 @@ boost::asio::awaitable<void> remote_tcp_proxy_session::idle_watchdog(const std::
     }
 }
 
-void remote_tcp_proxy_session::log_close_summary() const
+void reality_tcp_session::log_close_summary() const
 {
     const auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time_).count();
     LOG_INFO("{} trace {:016x} conn {} target {}:{} route {} bind {}:{} tx_bytes {} rx_bytes {} duration_ms {}",

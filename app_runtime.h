@@ -41,7 +41,7 @@ class app_runtime
     config cfg_;
     io_context_pool pool_;
     std::vector<std::shared_ptr<config>> runtime_configs_;
-    std::vector<std::shared_ptr<remote_server>> reality_inbounds_;
+    std::vector<std::shared_ptr<reality_inbound>> reality_inbounds_;
     std::vector<std::shared_ptr<socks_inbound>> socks_inbounds_;
 #if SOCKS_HAS_TPROXY
     std::vector<std::shared_ptr<tproxy_inbound>> tproxy_inbounds_;

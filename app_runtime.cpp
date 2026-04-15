@@ -56,7 +56,7 @@ void app_runtime::start_inbound(const config::inbound_entry_t& inbound)
 
     if (inbound.type == "reality")
     {
-        auto server = std::make_shared<remote_server>(pool_, *runtime_cfg);
+        auto server = std::make_shared<reality_inbound>(pool_, *runtime_cfg);
         reality_inbounds_.push_back(server);
         server->start();
         LOG_INFO("{} inbound_tag {} inbound_type {} stage start started", log_event::kConnInit, inbound.tag, inbound.type);
