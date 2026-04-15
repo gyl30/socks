@@ -65,7 +65,7 @@ void app_runtime::start_inbound(const config::inbound_entry_t& inbound)
 
     if (inbound.type == "socks")
     {
-        auto client = std::make_shared<socks_client>(pool_, *runtime_cfg);
+        auto client = std::make_shared<socks_inbound>(pool_, *runtime_cfg);
         socks_inbounds_.push_back(client);
         client->start();
         LOG_INFO("{} inbound_tag {} inbound_type {} stage start started", log_event::kConnInit, inbound.tag, inbound.type);
@@ -75,7 +75,7 @@ void app_runtime::start_inbound(const config::inbound_entry_t& inbound)
 #if SOCKS_HAS_TPROXY
     if (inbound.type == "tproxy")
     {
-        auto client = std::make_shared<tproxy_client>(pool_, *runtime_cfg);
+        auto client = std::make_shared<tproxy_inbound>(pool_, *runtime_cfg);
         tproxy_inbounds_.push_back(client);
         client->start();
         LOG_INFO("{} inbound_tag {} inbound_type {} stage start started", log_event::kConnInit, inbound.tag, inbound.type);
@@ -86,7 +86,7 @@ void app_runtime::start_inbound(const config::inbound_entry_t& inbound)
 #if SOCKS_HAS_TUN
     if (inbound.type == "tun")
     {
-        auto client = std::make_shared<tun_client>(pool_, *runtime_cfg);
+        auto client = std::make_shared<tun_inbound>(pool_, *runtime_cfg);
         tun_inbounds_.push_back(client);
         client->start();
         LOG_INFO("{} inbound_tag {} inbound_type {} stage start started", log_event::kConnInit, inbound.tag, inbound.type);

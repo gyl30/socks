@@ -42,12 +42,12 @@ class app_runtime
     io_context_pool pool_;
     std::vector<std::shared_ptr<config>> runtime_configs_;
     std::vector<std::shared_ptr<remote_server>> reality_inbounds_;
-    std::vector<std::shared_ptr<socks_client>> socks_inbounds_;
+    std::vector<std::shared_ptr<socks_inbound>> socks_inbounds_;
 #if SOCKS_HAS_TPROXY
-    std::vector<std::shared_ptr<tproxy_client>> tproxy_inbounds_;
+    std::vector<std::shared_ptr<tproxy_inbound>> tproxy_inbounds_;
 #endif
 #if SOCKS_HAS_TUN
-    std::vector<std::shared_ptr<tun_client>> tun_inbounds_;
+    std::vector<std::shared_ptr<tun_inbound>> tun_inbounds_;
 #endif
 };
 

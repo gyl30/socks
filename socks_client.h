@@ -15,17 +15,17 @@
 namespace relay
 {
 
-enum class socks_client_state : uint8_t
+enum class socks_inbound_state : uint8_t
 {
     kStopped,
     kRunning,
     kStopping,
 };
 
-class socks_client : public std::enable_shared_from_this<socks_client>
+class socks_inbound : public std::enable_shared_from_this<socks_inbound>
 {
    public:
-    socks_client(io_context_pool& pool, const config& cfg);
+    socks_inbound(io_context_pool& pool, const config& cfg);
 
     void start();
     void stop();
