@@ -141,7 +141,7 @@ std::shared_ptr<tcp_outbound_stream> reality_tcp_connect_session::create_backend
     {
         return nullptr;
     }
-    return handler->create_tcp_upstream(executor_, conn_id_, trace_id_, cfg_);
+    return handler->create_tcp_outbound(executor_, conn_id_, trace_id_, cfg_);
 }
 
 boost::asio::awaitable<tcp_outbound_connect_result> reality_tcp_connect_session::connect_backend(const std::shared_ptr<tcp_outbound_stream>& backend,

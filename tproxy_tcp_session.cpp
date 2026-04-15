@@ -244,7 +244,7 @@ boost::asio::awaitable<std::pair<route_decision, std::shared_ptr<tcp_outbound_st
                  decision.outbound_tag);
         co_return std::make_pair(decision, std::shared_ptr<tcp_outbound_stream>(nullptr));
     }
-    const auto backend = handler->create_tcp_upstream(socket_.get_executor(), conn_id_, trace_id_, cfg_);
+    const auto backend = handler->create_tcp_outbound(socket_.get_executor(), conn_id_, trace_id_, cfg_);
     co_return std::make_pair(decision, backend);
 }
 
