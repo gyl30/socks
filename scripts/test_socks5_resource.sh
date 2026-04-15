@@ -89,74 +89,105 @@ sni="www.example.com"
 
 cat >"$tmp_dir/server.json" <<EOF
 {
-  "mode": "server",
   "workers": $server_workers,
   "log": {
     "level": "info",
     "file": "$tmp_dir/server.log"
   },
-  "inbound": {
-    "host": "127.0.0.1",
-    "port": $server_port
-  },
-  "socks": {
-    "enabled": false
-  },
-  "reality": {
-    "sni": "$sni",
-    "max_handshake_records": $server_max_handshake_records,
-    "private_key": "$private_key",
-    "public_key": "$public_key",
-    "short_id": "$short_id"
-  },
+  "inbounds": [
+    {
+      "type": "reality",
+      "tag": "reality-in",
+      "settings": {
+        "host": "127.0.0.1",
+        "port": $server_port,
+        "sni": "$sni",
+        "private_key": "$private_key",
+        "public_key": "$public_key",
+        "short_id": "$short_id",
+        "replay_cache_max_entries": 100000
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "direct"
+    },
+    {
+      "type": "block",
+      "tag": "block"
+    }
+  ],
+  "routing": [
+    {
+      "type": "inbound",
+      "values": ["reality-in"],
+      "out": "direct"
+    }
+  ],
   "timeout": {
     "read": $read_timeout_sec,
     "write": $write_timeout_sec,
     "connect": $connect_timeout_sec,
     "idle": $idle_timeout_sec
-  },
   }
 }
 EOF
 
 cat >"$tmp_dir/client.json" <<EOF
 {
-  "mode": "client",
   "workers": $client_workers,
   "log": {
     "level": "info",
     "file": "$tmp_dir/client.log"
   },
-  "socks": {
-    "enabled": true,
-    "host": "127.0.0.1",
-    "port": $socks_port,
-    "auth": false
-  },
-  "tproxy": {
-    "enabled": false,
-    "listen_host": "::",
-    "tcp_port": 0,
-    "udp_port": 0,
-    "mark": 17
-  },
-  "outbound": {
-    "host": "127.0.0.1",
-    "port": $server_port
-  },
-  "reality": {
-    "sni": "$sni",
-    "fingerprint": "random",
-    "max_handshake_records": $client_max_handshake_records,
-    "public_key": "$public_key",
-    "short_id": "$short_id"
-  },
+  "inbounds": [
+    {
+      "type": "socks",
+      "tag": "socks-in",
+      "settings": {
+        "host": "127.0.0.1",
+        "port": $socks_port,
+        "auth": false
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "reality",
+      "tag": "reality-out",
+      "settings": {
+        "host": "127.0.0.1",
+        "port": $server_port,
+        "sni": "$sni",
+        "fingerprint": "random",
+        "public_key": "$public_key",
+        "short_id": "$short_id",
+        "max_handshake_records": $client_max_handshake_records
+      }
+    },
+    {
+      "type": "direct",
+      "tag": "direct"
+    },
+    {
+      "type": "block",
+      "tag": "block"
+    }
+  ],
+  "routing": [
+    {
+      "type": "inbound",
+      "values": ["socks-in"],
+      "out": "reality-out"
+    }
+  ],
   "timeout": {
     "read": $read_timeout_sec,
     "write": $write_timeout_sec,
     "connect": $connect_timeout_sec,
     "idle": $idle_timeout_sec
-  },
   }
 }
 EOF
