@@ -16,6 +16,7 @@
 
 #include "log.h"
 #include "config.h"
+#include "outbound.h"
 #include "router.h"
 #include "protocol.h"
 #include "trace_id.h"
@@ -285,7 +286,8 @@ boost::asio::awaitable<bool> tproxy_udp_session::open_direct_socket()
 
 boost::asio::awaitable<bool> tproxy_udp_session::open_proxy_upstream()
 {
-    const auto connect_result = co_await proxy_udp_upstream::connect(worker_.io_context.get_executor(), conn_id_, trace_id_, cfg_, outbound_tag_);
+    const auto connect_result =
+        co_await connect_udp_proxy_outbound(worker_.io_context.get_executor(), conn_id_, trace_id_, cfg_, outbound_tag_);
     if (connect_result.ec || connect_result.upstream == nullptr)
     {
         const auto ec = connect_result.ec ? connect_result.ec : boost::asio::error::operation_aborted;

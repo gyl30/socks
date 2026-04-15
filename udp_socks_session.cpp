@@ -16,6 +16,7 @@
 
 #include "log.h"
 #include "config.h"
+#include "outbound.h"
 #include "router.h"
 #include "protocol.h"
 #include "constants.h"
@@ -938,7 +939,7 @@ boost::asio::awaitable<bool> udp_socks_session::ensure_proxy_upstream(boost::sys
     if (proxy_upstream_ == nullptr)
     {
         const auto connect_result =
-            co_await proxy_udp_upstream::connect(worker_.io_context.get_executor(), conn_id_, trace_id_, cfg_, proxy_outbound_tag_);
+            co_await connect_udp_proxy_outbound(worker_.io_context.get_executor(), conn_id_, trace_id_, cfg_, proxy_outbound_tag_);
         if (connect_result.ec || connect_result.upstream == nullptr)
         {
             ec = connect_result.ec ? connect_result.ec : boost::asio::error::not_connected;

@@ -17,6 +17,7 @@
 
 #include "log.h"
 #include "config.h"
+#include "outbound.h"
 #include "router.h"
 #include "protocol.h"
 #include "constants.h"
@@ -223,7 +224,7 @@ boost::asio::awaitable<std::shared_ptr<proxy_udp_upstream>> reality_udp_session:
         co_return it->second;
     }
 
-    const auto connect_result = co_await proxy_udp_upstream::connect(udp_socket_.get_executor(), conn_id_, trace_id_, cfg_, outbound_tag);
+    const auto connect_result = co_await connect_udp_proxy_outbound(udp_socket_.get_executor(), conn_id_, trace_id_, cfg_, outbound_tag);
     if (connect_result.ec || connect_result.upstream == nullptr)
     {
         LOG_WARN("{} trace {:016x} conn {} out_tag {} open proxy udp upstream failed {} rep {}",
