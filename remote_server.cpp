@@ -456,7 +456,7 @@ boost::asio::awaitable<void> remote_server::process_proxy_request(io_worker& wor
                  reality_ctx.sni.empty() ? "unknown" : reality_ctx.sni,
                  packet.size());
         const auto session =
-            std::make_shared<remote_udp_proxy_session>(worker.io_context, std::move(connection), reality_ctx.conn_id, udp_request.trace_id, cfg_);
+            std::make_shared<remote_udp_proxy_session>(worker.io_context, std::move(connection), router_, reality_ctx.conn_id, udp_request.trace_id, cfg_);
         co_await session->start(udp_request);
         co_return;
     }
