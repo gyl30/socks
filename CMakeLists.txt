@@ -223,6 +223,7 @@ find_path(BROTLI_INCLUDE_DIR NAMES brotli/decode.h REQUIRED
           PATH_SUFFIXES include)
 
 set(SOCKS_SOURCES
+    app_runtime.cpp
     log.cpp
     config.cpp
     net_utils.cpp

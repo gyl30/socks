@@ -123,7 +123,7 @@ void open_udp_listener(boost::asio::ip::udp::socket& socket, const std::string& 
 }    // namespace
 
 tproxy_client::tproxy_client(io_context_pool& pool, const config& cfg)
-    : cfg_(cfg), owner_worker_(pool.get_io_worker()), router_(std::make_shared<router>()), tcp_acceptor_(owner_worker_.io_context)
+    : cfg_(cfg), owner_worker_(pool.get_io_worker()), router_(std::make_shared<router>(cfg_)), tcp_acceptor_(owner_worker_.io_context)
 {
 }
 
