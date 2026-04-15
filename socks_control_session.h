@@ -1,5 +1,5 @@
-#ifndef SOCKS_SESSION_H
-#define SOCKS_SESSION_H
+#ifndef SOCKS_CONTROL_SESSION_H
+#define SOCKS_CONTROL_SESSION_H
 
 #include <array>
 #include <memory>
@@ -19,16 +19,16 @@
 namespace relay
 {
 
-class socks_session : public std::enable_shared_from_this<socks_session>
+class socks_control_session : public std::enable_shared_from_this<socks_control_session>
 {
    public:
-    socks_session(boost::asio::ip::tcp::socket socket,
-                  io_worker& worker,
-                  std::shared_ptr<router> router,
-                  uint32_t sid,
-                  const config& cfg,
-                  const config::socks_t& settings);
-    ~socks_session();
+    socks_control_session(boost::asio::ip::tcp::socket socket,
+                          io_worker& worker,
+                          std::shared_ptr<router> router,
+                          uint32_t sid,
+                          const config& cfg,
+                          const config::socks_t& settings);
+    ~socks_control_session();
 
     void start();
 

@@ -14,8 +14,8 @@
 flowchart TD
   App[客户端应用] -->|TCP/UDP| Inbound{SOCKS5 / TPROXY / TUN}
 
-  Inbound -->|SOCKS5 TCP| SocksTcp["socks_session -> tcp_socks_session"]
-  Inbound -->|SOCKS5 UDP| SocksUdp["socks_session -> udp_socks_session"]
+  Inbound -->|SOCKS5 TCP| SocksTcp["socks_control_session -> socks_tcp_connect_session"]
+  Inbound -->|SOCKS5 UDP| SocksUdp["socks_control_session -> socks_udp_associate_session"]
   Inbound -->|TPROXY TCP| TproxyTcp["tproxy_inbound -> tproxy_tcp_session"]
   Inbound -->|TPROXY UDP| TproxyUdp["tproxy_inbound -> tproxy_udp_session"]
   Inbound -->|TUN TCP/UDP| TunInbound["tun_inbound -> tun_tcp_session / tun_udp_session"]

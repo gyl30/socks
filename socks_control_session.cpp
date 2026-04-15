@@ -22,10 +22,10 @@
 #include "constants.h"
 #include "net_utils.h"
 #include "context_pool.h"
-#include "socks_session.h"
+#include "socks_control_session.h"
 #include "run_loop_spawner.h"
-#include "tcp_socks_session.h"
-#include "udp_socks_session.h"
+#include "socks_tcp_connect_session.h"
+#include "socks_udp_associate_session.h"
 
 namespace relay
 {
@@ -47,12 +47,12 @@ bool secure_string_equals(const std::string& lhs, const std::string& rhs)
 
 }    // namespace
 
-socks_session::socks_session(boost::asio::ip::tcp::socket socket,
-                             io_worker& worker,
-                             std::shared_ptr<router> router,
-                             uint32_t sid,
-                             const config& cfg,
-                             const config::socks_t& settings)
+socks_control_session::socks_control_session(boost::asio::ip::tcp::socket socket,
+                                             io_worker& worker,
+                                             std::shared_ptr<router> router,
+                                             uint32_t sid,
+                                             const config& cfg,
+                                             const config::socks_t& settings)
     : sid_(sid),
       trace_id_(generate_trace_id()),
       conn_id_(sid),
@@ -65,11 +65,11 @@ socks_session::socks_session(boost::asio::ip::tcp::socket socket,
     net::load_tcp_socket_endpoints(socket_, local_host_, local_port_, client_host_, client_port_);
 }
 
-socks_session::~socks_session() = default;
+socks_control_session::~socks_control_session() = default;
 
-void socks_session::start() { run_loop_spawner::spawn(worker_, shared_from_this()); }
+void socks_control_session::start() { run_loop_spawner::spawn(worker_, shared_from_this()); }
 
-void socks_session::stop()
+void socks_control_session::stop()
 {
     boost::system::error_code ec;
     ec = socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
@@ -98,7 +98,7 @@ void socks_session::stop()
     }
 }
 
-boost::asio::awaitable<void> socks_session::run_loop()
+boost::asio::awaitable<void> socks_control_session::run_loop()
 {
     LOG_INFO("{} trace {:016x} conn {} local {}:{} remote {}:{} socks session started",
              log_event::kConnInit,
@@ -140,13 +140,15 @@ boost::asio::awaitable<void> socks_session::run_loop()
 
     if (cmd == socks::kCmdConnect)
     {
-        const auto tcp_sess = std::make_shared<tcp_socks_session>(std::move(socket_), router_, sid_, trace_id_, cfg_);
-        worker_.group.spawn([tcp_sess, host, port]() -> boost::asio::awaitable<void> { co_await tcp_sess->start(host, port); });
+        const auto tcp_connect_session = std::make_shared<socks_tcp_connect_session>(std::move(socket_), router_, sid_, trace_id_, cfg_);
+        worker_.group.spawn(
+            [tcp_connect_session, host, port]() -> boost::asio::awaitable<void> { co_await tcp_connect_session->start(host, port); });
     }
     else if (cmd == socks::kCmdUdpAssociate)
     {
-        const auto udp_sess = std::make_shared<udp_socks_session>(std::move(socket_), worker_, router_, sid_, trace_id_, cfg_);
-        udp_sess->start(host, port);
+        const auto udp_associate_session =
+            std::make_shared<socks_udp_associate_session>(std::move(socket_), worker_, router_, sid_, trace_id_, cfg_);
+        udp_associate_session->start(host, port);
     }
     else
     {
@@ -163,7 +165,7 @@ boost::asio::awaitable<void> socks_session::run_loop()
     }
 }
 
-boost::asio::awaitable<bool> socks_session::handshake()
+boost::asio::awaitable<bool> socks_control_session::handshake()
 {
     uint8_t method_count = 0;
     if (!(co_await read_socks_greeting(method_count)))
@@ -203,7 +205,7 @@ boost::asio::awaitable<bool> socks_session::handshake()
     co_return true;
 }
 
-boost::asio::awaitable<bool> socks_session::read_socks_greeting(uint8_t& method_count)
+boost::asio::awaitable<bool> socks_control_session::read_socks_greeting(uint8_t& method_count)
 {
     boost::system::error_code ec;
     uint8_t ver_nmethods[2] = {0};
@@ -248,7 +250,7 @@ boost::asio::awaitable<bool> socks_session::read_socks_greeting(uint8_t& method_
     co_return true;
 }
 
-boost::asio::awaitable<bool> socks_session::read_auth_methods(uint8_t method_count, std::vector<uint8_t>& methods)
+boost::asio::awaitable<bool> socks_control_session::read_auth_methods(uint8_t method_count, std::vector<uint8_t>& methods)
 {
     methods.assign(method_count, 0);
     boost::system::error_code ec;
@@ -268,7 +270,7 @@ boost::asio::awaitable<bool> socks_session::read_auth_methods(uint8_t method_cou
     co_return true;
 }
 
-uint8_t socks_session::select_auth_method(const std::vector<uint8_t>& methods) const
+uint8_t socks_control_session::select_auth_method(const std::vector<uint8_t>& methods) const
 {
     if (settings_.auth)
     {
@@ -287,7 +289,7 @@ uint8_t socks_session::select_auth_method(const std::vector<uint8_t>& methods) c
     return socks::kMethodNoAcceptable;
 }
 
-boost::asio::awaitable<bool> socks_session::write_selected_method(uint8_t method)
+boost::asio::awaitable<bool> socks_control_session::write_selected_method(uint8_t method)
 {
     uint8_t resp[] = {socks::kVer, method};
     boost::system::error_code ec;
@@ -307,7 +309,7 @@ boost::asio::awaitable<bool> socks_session::write_selected_method(uint8_t method
     co_return true;
 }
 
-boost::asio::awaitable<bool> socks_session::do_password_auth()
+boost::asio::awaitable<bool> socks_control_session::do_password_auth()
 {
     if (!(co_await read_auth_version()))
     {
@@ -351,7 +353,7 @@ boost::asio::awaitable<bool> socks_session::do_password_auth()
     co_return success;
 }
 
-boost::asio::awaitable<bool> socks_session::read_auth_version()
+boost::asio::awaitable<bool> socks_control_session::read_auth_version()
 {
     uint8_t ver = 0;
     boost::system::error_code ec;
@@ -384,7 +386,7 @@ boost::asio::awaitable<bool> socks_session::read_auth_version()
     co_return true;
 }
 
-boost::asio::awaitable<bool> socks_session::read_auth_field(std::string& out, const char* field_name)
+boost::asio::awaitable<bool> socks_control_session::read_auth_field(std::string& out, const char* field_name)
 {
     uint8_t field_len = 0;
     boost::system::error_code ec;
@@ -433,14 +435,14 @@ boost::asio::awaitable<bool> socks_session::read_auth_field(std::string& out, co
     co_return true;
 }
 
-bool socks_session::verify_credentials(const std::string& username, const std::string& password) const
+bool socks_control_session::verify_credentials(const std::string& username, const std::string& password) const
 {
     const bool user_match = secure_string_equals(username, settings_.username);
     const bool pass_match = secure_string_equals(password, settings_.password);
     return user_match && pass_match;
 }
 
-boost::asio::awaitable<bool> socks_session::write_auth_result(bool success)
+boost::asio::awaitable<bool> socks_control_session::write_auth_result(bool success)
 {
     uint8_t result[] = {0x01, success ? static_cast<uint8_t>(0x00) : static_cast<uint8_t>(0x01)};
     boost::system::error_code ec;
@@ -460,7 +462,7 @@ boost::asio::awaitable<bool> socks_session::write_auth_result(bool success)
     co_return true;
 }
 
-boost::asio::awaitable<void> socks_session::delay_invalid_request() const
+boost::asio::awaitable<void> socks_control_session::delay_invalid_request() const
 {
     static thread_local std::mt19937 delay_gen(std::random_device{}());
     std::uniform_int_distribution<uint32_t> delay_dist(10, 50);
@@ -468,9 +470,9 @@ boost::asio::awaitable<void> socks_session::delay_invalid_request() const
     (void)delay_ec;
 }
 
-bool socks_session::is_supported_cmd(uint8_t cmd) { return cmd == socks::kCmdConnect || cmd == socks::kCmdUdpAssociate; }
+bool socks_control_session::is_supported_cmd(uint8_t cmd) { return cmd == socks::kCmdConnect || cmd == socks::kCmdUdpAssociate; }
 
-bool socks_session::is_supported_atyp(uint8_t cmd, uint8_t atyp)
+bool socks_control_session::is_supported_atyp(uint8_t cmd, uint8_t atyp)
 {
     if (atyp == socks::kAtypIpv4 || atyp == socks::kAtypIpv6)
     {
@@ -480,7 +482,7 @@ bool socks_session::is_supported_atyp(uint8_t cmd, uint8_t atyp)
 }
 
 template <typename Address>
-boost::asio::awaitable<bool> socks_session::read_request_ip(std::string& host, const char* address_type_name)
+boost::asio::awaitable<bool> socks_control_session::read_request_ip(std::string& host, const char* address_type_name)
 {
     using bytes_type = typename Address::bytes_type;
     boost::system::error_code ec;
@@ -504,12 +506,12 @@ boost::asio::awaitable<bool> socks_session::read_request_ip(std::string& host, c
     co_return true;
 }
 
-boost::asio::awaitable<bool> socks_session::read_request_ipv4(std::string& host)
+boost::asio::awaitable<bool> socks_control_session::read_request_ipv4(std::string& host)
 {
     co_return co_await read_request_ip<boost::asio::ip::address_v4>(host, "ipv4");
 }
 
-boost::asio::awaitable<bool> socks_session::read_request_domain(std::string& host)
+boost::asio::awaitable<bool> socks_control_session::read_request_domain(std::string& host)
 {
     uint8_t domain_len = 0;
     boost::system::error_code ec;
@@ -581,12 +583,12 @@ boost::asio::awaitable<bool> socks_session::read_request_domain(std::string& hos
     co_return true;
 }
 
-boost::asio::awaitable<bool> socks_session::read_request_ipv6(std::string& host)
+boost::asio::awaitable<bool> socks_control_session::read_request_ipv6(std::string& host)
 {
     co_return co_await read_request_ip<boost::asio::ip::address_v6>(host, "ipv6");
 }
 
-boost::asio::awaitable<bool> socks_session::read_request_host(uint8_t atyp, uint8_t cmd, std::string& host)
+boost::asio::awaitable<bool> socks_control_session::read_request_host(uint8_t atyp, uint8_t cmd, std::string& host)
 {
     if (atyp == socks::kAtypIpv4)
     {
@@ -613,16 +615,16 @@ boost::asio::awaitable<bool> socks_session::read_request_host(uint8_t atyp, uint
     co_return false;
 }
 
-socks_session::request_info socks_session::make_invalid_request(uint8_t cmd) { return request_info{.ok = false, .host = "", .port = 0, .cmd = cmd}; }
+socks_control_session::request_info socks_control_session::make_invalid_request(uint8_t cmd) { return request_info{.ok = false, .host = "", .port = 0, .cmd = cmd}; }
 
-boost::asio::awaitable<socks_session::request_info> socks_session::reject_request(uint8_t cmd, uint8_t rep)
+boost::asio::awaitable<socks_control_session::request_info> socks_control_session::reject_request(uint8_t cmd, uint8_t rep)
 {
     co_await delay_invalid_request();
     co_await reply_error(rep);
     co_return make_invalid_request(cmd);
 }
 
-boost::asio::awaitable<bool> socks_session::read_request_header(std::array<uint8_t, 4>& head)
+boost::asio::awaitable<bool> socks_control_session::read_request_header(std::array<uint8_t, 4>& head)
 {
     boost::system::error_code ec;
     co_await net::wait_read_with_timeout(socket_, boost::asio::buffer(head), cfg_.timeout.read, ec);
@@ -642,7 +644,7 @@ boost::asio::awaitable<bool> socks_session::read_request_header(std::array<uint8
     co_return true;
 }
 
-boost::asio::awaitable<bool> socks_session::read_request_port(uint16_t& port)
+boost::asio::awaitable<bool> socks_control_session::read_request_port(uint16_t& port)
 {
     uint16_t port_n = 0;
     boost::system::error_code ec;
@@ -664,7 +666,7 @@ boost::asio::awaitable<bool> socks_session::read_request_port(uint16_t& port)
     co_return true;
 }
 
-boost::asio::awaitable<std::optional<socks_session::request_info>> socks_session::validate_request_head(const std::array<uint8_t, 4>& head)
+boost::asio::awaitable<std::optional<socks_control_session::request_info>> socks_control_session::validate_request_head(const std::array<uint8_t, 4>& head)
 {
     if (head[0] != socks::kVer || head[2] != 0)
     {
@@ -710,7 +712,7 @@ boost::asio::awaitable<std::optional<socks_session::request_info>> socks_session
     co_return std::nullopt;
 }
 
-boost::asio::awaitable<socks_session::request_info> socks_session::read_request_target(uint8_t cmd, uint8_t atyp)
+boost::asio::awaitable<socks_control_session::request_info> socks_control_session::read_request_target(uint8_t cmd, uint8_t atyp)
 {
     std::string host;
     if (!co_await read_request_host(atyp, cmd, host))
@@ -761,7 +763,7 @@ boost::asio::awaitable<socks_session::request_info> socks_session::read_request_
     co_return request_info{.ok = true, .host = host, .port = port, .cmd = cmd};
 }
 
-boost::asio::awaitable<socks_session::request_info> socks_session::read_request()
+boost::asio::awaitable<socks_control_session::request_info> socks_control_session::read_request()
 {
     std::array<uint8_t, 4> head = {0};
     if (!(co_await read_request_header(head)))
@@ -778,7 +780,7 @@ boost::asio::awaitable<socks_session::request_info> socks_session::read_request(
     co_return co_await read_request_target(head[1], head[3]);
 }
 
-boost::asio::awaitable<void> socks_session::reply_error(uint8_t code)
+boost::asio::awaitable<void> socks_control_session::reply_error(uint8_t code)
 {
     uint8_t err[] = {socks::kVer, code, 0, socks::kAtypIpv4, 0, 0, 0, 0, 0, 0};
 

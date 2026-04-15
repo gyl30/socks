@@ -16,7 +16,7 @@
 #include "net_utils.h"
 #include "context_pool.h"
 #include "socks_inbound.h"
-#include "socks_session.h"
+#include "socks_control_session.h"
 
 namespace relay
 {
@@ -180,7 +180,7 @@ boost::asio::awaitable<void> socks_inbound::accept_loop()
                      remote_port,
                      ec.message());
         }
-        std::make_shared<socks_session>(std::move(socket), socket_worker, router_, sid, cfg_, settings_)->start();
+        std::make_shared<socks_control_session>(std::move(socket), socket_worker, router_, sid, cfg_, settings_)->start();
     }
     LOG_INFO("{} inbound_tag {} listen {}:{} accept loop exited", log_event::kConnClose, inbound_tag_, settings_.host, settings_.port);
 }

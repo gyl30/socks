@@ -21,19 +21,19 @@ package "Client Inbound" {
         - accept_loop()
     }
 
-    class socks_session {
+    class socks_control_session {
         + start()
         - handshake()
         - read_request()
     }
 
-    class tcp_socks_session {
+    class socks_tcp_connect_session {
         + start(host, port)
         - run(host, port)
         - idle_watchdog()
     }
 
-    class udp_socks_session {
+    class socks_udp_associate_session {
         + start(host, port)
         - run(host, port)
         - ensure_proxy_outbound()
@@ -170,15 +170,15 @@ package "Server Side" {
 
 socks_inbound o-- io_context_pool
 socks_inbound *-- router
-socks_inbound ..> socks_session : creates
+socks_inbound ..> socks_control_session : creates
 
-socks_session ..> tcp_socks_session : CONNECT
-socks_session ..> udp_socks_session : UDP ASSOCIATE
+socks_control_session ..> socks_tcp_connect_session : CONNECT
+socks_control_session ..> socks_udp_associate_session : UDP ASSOCIATE
 
-tcp_socks_session ..> router
-tcp_socks_session ..> tcp_outbound_stream : create_backend
-udp_socks_session ..> router
-udp_socks_session ..> udp_proxy_outbound : ensure_proxy_outbound
+socks_tcp_connect_session ..> router
+socks_tcp_connect_session ..> tcp_outbound_stream : create_backend
+socks_udp_associate_session ..> router
+socks_udp_associate_session ..> udp_proxy_outbound : ensure_proxy_outbound
 
 tproxy_inbound o-- io_context_pool
 tproxy_inbound *-- router

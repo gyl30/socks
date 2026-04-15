@@ -1,5 +1,5 @@
-#ifndef UDP_SOCKS_SESSION_H
-#define UDP_SOCKS_SESSION_H
+#ifndef SOCKS_UDP_ASSOCIATE_SESSION_H
+#define SOCKS_UDP_ASSOCIATE_SESSION_H
 
 #include <atomic>
 #include <chrono>
@@ -27,10 +27,10 @@ namespace detail
 std::vector<uint8_t> build_udp_associate_reply(const boost::asio::ip::address& local_addr, uint16_t udp_bind_port);
 }
 
-class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
+class socks_udp_associate_session : public std::enable_shared_from_this<socks_udp_associate_session>
 {
    public:
-    udp_socks_session(
+    socks_udp_associate_session(
         boost::asio::ip::tcp::socket socket, io_worker& worker, std::shared_ptr<router> router, uint32_t sid, uint64_t trace_id, const config& cfg);
 
     void start(const std::string& host, uint16_t port);
