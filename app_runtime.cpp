@@ -38,9 +38,33 @@ app_runtime::app_runtime(const config& cfg) : cfg_(cfg), pool_(resolve_worker_th
 
 void app_runtime::start()
 {
+    start_outbounds();
     for (const auto& inbound : cfg_.inbounds)
     {
         start_inbound(inbound);
+    }
+}
+
+void app_runtime::start_outbounds()
+{
+    outbounds_.clear();
+    outbounds_.reserve(cfg_.outbounds.size());
+    for (const auto& outbound : cfg_.outbounds)
+    {
+        const auto handler = make_outbound_handler(cfg_, outbound.tag);
+        if (handler == nullptr)
+        {
+            LOG_ERROR("{} outbound_tag {} outbound_type {} stage start unsupported outbound",
+                      log_event::kConnInit,
+                      outbound.tag,
+                      outbound.type);
+            std::exit(EXIT_FAILURE);
+        }
+        outbounds_.push_back(handler);
+        LOG_INFO("{} outbound_tag {} outbound_type {} stage start loaded",
+                 log_event::kConnInit,
+                 outbound.tag,
+                 outbound.type);
     }
 }
 

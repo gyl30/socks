@@ -7,6 +7,7 @@
 #include <boost/asio/awaitable.hpp>
 
 #include "config.h"
+#include "outbound.h"
 #include "context_pool.h"
 #include "reality_inbound.h"
 #include "socks_inbound.h"
@@ -35,11 +36,13 @@ class app_runtime
     [[nodiscard]] boost::asio::awaitable<void> async_wait_stopped();
 
    private:
+    void start_outbounds();
     void start_inbound(const config::inbound_entry_t& inbound);
 
    private:
     config cfg_;
     io_context_pool pool_;
+    std::vector<std::shared_ptr<outbound_handler>> outbounds_;
     std::vector<std::shared_ptr<reality_inbound>> reality_inbounds_;
     std::vector<std::shared_ptr<socks_inbound>> socks_inbounds_;
 #if SOCKS_HAS_TPROXY
