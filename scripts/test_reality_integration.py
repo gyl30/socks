@@ -318,26 +318,43 @@ def main():
         helper_processes.append(udp_process)
 
         server_cfg = {
-            "mode": "server",
             "workers": 1,
             "log": {
                 "level": "debug",
                 "file": str(server_log),
             },
-            "inbound": {
-                "host": "127.0.0.1",
-                "port": server_port,
-            },
-            "socks": {
-                "enabled": False,
-            },
-            "reality": {
-                "sni": reality_sni,
-                "max_handshake_records": 256,
-                "private_key": private_key,
-                "public_key": public_key,
-                "short_id": "0102030405060708",
-            },
+            "inbounds": [
+                {
+                    "type": "reality",
+                    "tag": "reality-in",
+                    "settings": {
+                        "host": "127.0.0.1",
+                        "port": server_port,
+                        "sni": reality_sni,
+                        "private_key": private_key,
+                        "public_key": public_key,
+                        "short_id": "0102030405060708",
+                        "replay_cache_max_entries": 100000,
+                    },
+                }
+            ],
+            "outbounds": [
+                {
+                    "type": "direct",
+                    "tag": "direct",
+                },
+                {
+                    "type": "block",
+                    "tag": "block",
+                },
+            ],
+            "routing": [
+                {
+                    "type": "inbound",
+                    "values": ["reality-in"],
+                    "out": "direct",
+                }
+            ],
             "timeout": {
                 "read": 5,
                 "write": 5,
@@ -347,36 +364,52 @@ def main():
         }
 
         client_cfg = {
-            "mode": "client",
             "workers": 1,
             "log": {
                 "level": "debug",
                 "file": str(client_log),
             },
-            "socks": {
-                "enabled": True,
-                "host": socks_host,
-                "port": socks_port,
-                "auth": False,
-            },
-            "tproxy": {
-                "enabled": False,
-                "listen_host": "::",
-                "tcp_port": 0,
-                "udp_port": 0,
-                "mark": 17,
-            },
-            "outbound": {
-                "host": "127.0.0.1",
-                "port": server_port,
-            },
-            "reality": {
-                "sni": reality_sni,
-                "fingerprint": "random",
-                "max_handshake_records": 256,
-                "public_key": public_key,
-                "short_id": "0102030405060708",
-            },
+            "inbounds": [
+                {
+                    "type": "socks",
+                    "tag": "socks-in",
+                    "settings": {
+                        "host": socks_host,
+                        "port": socks_port,
+                        "auth": False,
+                    },
+                }
+            ],
+            "outbounds": [
+                {
+                    "type": "reality",
+                    "tag": "reality-out",
+                    "settings": {
+                        "host": "127.0.0.1",
+                        "port": server_port,
+                        "sni": reality_sni,
+                        "fingerprint": "random",
+                        "public_key": public_key,
+                        "short_id": "0102030405060708",
+                        "max_handshake_records": 256,
+                    },
+                },
+                {
+                    "type": "direct",
+                    "tag": "direct",
+                },
+                {
+                    "type": "block",
+                    "tag": "block",
+                },
+            ],
+            "routing": [
+                {
+                    "type": "inbound",
+                    "values": ["socks-in"],
+                    "out": "reality-out",
+                }
+            ],
             "timeout": {
                 "read": 5,
                 "write": 5,
@@ -402,7 +435,7 @@ def main():
         )
         helper_processes.append(client_process)
 
-        wait_for_log_text(server_log, f"listen 127.0.0.1:{server_port} server listening", 20, "server log")
+        wait_for_log_text(server_log, f"listen 127.0.0.1:{server_port} reality inbound listening", 20, "server log")
         wait_for_log_text(client_log, f"listen {socks_host}:{socks_port} socks listening", 20, "client log")
         wait_for_port(socks_host, socks_port, 20, "socks5 proxy")
 
