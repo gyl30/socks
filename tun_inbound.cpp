@@ -367,6 +367,7 @@ void tun_inbound::on_tcp_accept(tcp_pcb* pcb)
                                                      router_,
                                                      pcb,
                                                      conn_id,
+                                                     inbound_tag_,
                                                      cfg_,
                                                      [weak_self, conn_id]()
                                                      {
@@ -411,6 +412,7 @@ void tun_inbound::on_udp_accept(udp_pcb* pcb, pbuf* packet, const ip_addr_t* add
                                                      client_endpoint,
                                                      target_endpoint,
                                                      conn_id,
+                                                     inbound_tag_,
                                                      cfg_,
                                                      [weak_self, conn_id]()
                                                      {

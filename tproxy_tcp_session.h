@@ -24,6 +24,7 @@ class tproxy_tcp_session : public std::enable_shared_from_this<tproxy_tcp_sessio
     tproxy_tcp_session(boost::asio::ip::tcp::socket socket,
                        std::shared_ptr<router> router,
                        uint32_t sid,
+                       std::string inbound_tag,
                        const config& cfg,
                        const config::tproxy_t& settings);
 
@@ -43,7 +44,8 @@ class tproxy_tcp_session : public std::enable_shared_from_this<tproxy_tcp_sessio
                                   const boost::asio::ip::tcp::endpoint& peer_ep);
     void log_redirected_connection() const;
     [[nodiscard]] boost::asio::awaitable<std::pair<route_decision, std::shared_ptr<tcp_outbound_stream>>> select_backend(const boost::asio::ip::address& addr);
-    [[nodiscard]] boost::asio::awaitable<bool> connect_backend(route_type route, const std::shared_ptr<tcp_outbound_stream>& backend);
+    [[nodiscard]] boost::asio::awaitable<bool> connect_backend(const route_decision& decision,
+                                                               const std::shared_ptr<tcp_outbound_stream>& backend);
     [[nodiscard]] boost::asio::awaitable<void> relay_backend(const std::shared_ptr<tcp_outbound_stream>& backend);
     [[nodiscard]] boost::asio::awaitable<void> client_to_outbound(std::shared_ptr<tcp_outbound_stream> backend);
     [[nodiscard]] boost::asio::awaitable<void> outbound_to_client(std::shared_ptr<tcp_outbound_stream> backend);
@@ -54,6 +56,7 @@ class tproxy_tcp_session : public std::enable_shared_from_this<tproxy_tcp_sessio
    private:
     uint64_t trace_id_ = 0;
     uint32_t conn_id_ = 0;
+    std::string inbound_tag_;
     std::string client_addr_;
     uint16_t client_port_ = 0;
     std::string local_addr_;

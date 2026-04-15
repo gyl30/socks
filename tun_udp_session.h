@@ -34,6 +34,7 @@ class tun_udp_session : public std::enable_shared_from_this<tun_udp_session>
                     boost::asio::ip::udp::endpoint client_endpoint,
                     boost::asio::ip::udp::endpoint target_endpoint,
                     uint32_t conn_id,
+                    std::string inbound_tag,
                     const config& cfg,
                     std::function<void()> on_close);
 
@@ -64,12 +65,14 @@ class tun_udp_session : public std::enable_shared_from_this<tun_udp_session>
    private:
     uint64_t trace_id_ = 0;
     uint32_t conn_id_ = 0;
+    std::string inbound_tag_;
     const config& cfg_;
     io_worker& worker_;
     std::shared_ptr<router> router_;
     udp_pcb* pcb_ = nullptr;
     route_type route_ = route_type::kBlock;
     std::string outbound_tag_;
+    std::string outbound_type_;
     std::atomic<bool> stopped_{false};
     uint64_t last_activity_time_ms_ = 0;
     boost::asio::steady_timer idle_timer_;
