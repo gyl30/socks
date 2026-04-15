@@ -277,7 +277,7 @@ boost::asio::awaitable<bool> tun_udp_session::open_proxy_outbound()
 {
     const auto connect_result =
         co_await connect_udp_proxy_outbound(worker_.io_context.get_executor(), conn_id_, trace_id_, cfg_, outbound_tag_);
-    if (connect_result.ec || connect_result.upstream == nullptr)
+    if (connect_result.ec || connect_result.outbound == nullptr)
     {
         auto ec = connect_result.ec;
         if (!ec)
@@ -297,7 +297,7 @@ boost::asio::awaitable<bool> tun_udp_session::open_proxy_outbound()
         co_return false;
     }
 
-    proxy_outbound_ = connect_result.upstream;
+    proxy_outbound_ = connect_result.outbound;
     LOG_INFO("{} trace {:016x} conn {} opened tun proxy udp outbound client {}:{} target {}:{} bind {}:{}",
              log_event::kConnInit,
              trace_id_,
@@ -592,7 +592,7 @@ void tun_udp_session::close_impl()
     packet_channel_.close();
     if (proxy_outbound_ != nullptr)
     {
-        worker_.group.spawn([upstream = proxy_outbound_]() -> boost::asio::awaitable<void> { co_await upstream->close(); });
+        worker_.group.spawn([outbound = proxy_outbound_]() -> boost::asio::awaitable<void> { co_await outbound->close(); });
         proxy_outbound_.reset();
     }
     upstream_socket_.close(ec);

@@ -441,7 +441,7 @@ boost::asio::awaitable<udp_proxy_outbound_connect_result> udp_proxy_outbound::co
             upstream->bind_host_ = result.bind_addr.to_string();
             upstream->bind_port_ = result.bind_port;
         }
-        result.upstream = std::move(upstream);
+        result.outbound = std::move(upstream);
         co_return result;
     }
 
@@ -553,7 +553,7 @@ boost::asio::awaitable<udp_proxy_outbound_connect_result> udp_proxy_outbound::co
         result.bind_port = bind_port;
         result.has_bind_endpoint = true;
     }
-    result.upstream = std::move(upstream);
+    result.outbound = std::move(upstream);
     co_return result;
 }
 
