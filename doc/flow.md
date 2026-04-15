@@ -4,7 +4,7 @@
 
 - `route=proxy` 时不再复用隧道。
 - 一个 TCP 代理请求对应一条 `proxy_reality_connection`。
-- 一个 UDP 代理会话对应一条 `proxy_udp_upstream -> proxy_reality_connection`。
+- 一个 UDP 代理会话对应一条 `udp_proxy_outbound -> proxy_reality_connection`。
 - 服务端通过 `reality_inbound` 完成 REALITY 认证后，只处理一个代理会话。
 - UDP 仍保留 `udp_datagram` framing，用来保存报文边界；它只负责报文边界，不承担连接复用。
 
@@ -26,10 +26,10 @@ flowchart TD
   TproxyUdp --> Router
   TunInbound --> Router
 
-  Router -->|direct,tcp| DirectTcp[direct_upstream]
+  Router -->|direct,tcp| DirectTcp[direct_tcp_outbound]
   Router -->|direct,udp| DirectUdp[direct UDP socket]
-  Router -->|proxy,tcp| ProxyTcp[proxy_upstream]
-  Router -->|proxy,udp| ProxyUdp[proxy_udp_upstream]
+  Router -->|proxy,tcp| ProxyTcp[proxy_tcp_outbound]
+  Router -->|proxy,udp| ProxyUdp[udp_proxy_outbound]
   Router -->|block| Block[拒绝 / 丢弃]
 
   DirectTcp --> Target[目标服务]
@@ -59,7 +59,7 @@ sequenceDiagram
   participant App as Client App
   participant Inb as Inbound
   participant Router as router
-  participant Up as direct_upstream / proxy_upstream
+  participant Up as direct_tcp_outbound / proxy_tcp_outbound
   participant Conn as proxy_reality_connection
   participant Server as reality_inbound
   participant RTcp as reality_tcp_session
@@ -69,7 +69,7 @@ sequenceDiagram
   Inb->>Router: decide_ip / decide_domain
 
   alt route=direct
-    Inb->>Up: direct_upstream.connect
+    Inb->>Up: direct_tcp_outbound.connect
     Up->>Target: TCP connect
     Target-->>Up: connected
     Up-->>Inb: success
@@ -82,7 +82,7 @@ sequenceDiagram
       Inb->>App: data
     end
   else route=proxy
-    Inb->>Up: proxy_upstream.connect
+    Inb->>Up: proxy_tcp_outbound.connect
     Up->>Conn: connect()
     Conn->>Server: REALITY handshake
     Up->>Conn: tcp_connect_request
@@ -129,7 +129,7 @@ sequenceDiagram
   participant Inb as Inbound
   participant Router as router
   participant Direct as direct UDP socket
-  participant ProxyUdp as proxy_udp_upstream
+  participant ProxyUdp as udp_proxy_outbound
   participant Conn as proxy_reality_connection
   participant Server as reality_inbound
   participant RUdp as reality_udp_session
@@ -213,9 +213,9 @@ flowchart TD
   TunTcp --> Router[router]
   TunUdp --> Router
 
-  Router -->|direct| Direct[direct_upstream / direct UDP socket]
-  Router -->|proxy,tcp| ProxyTcp[proxy_upstream]
-  Router -->|proxy,udp| ProxyUdp[proxy_udp_upstream]
+  Router -->|direct| Direct[direct_tcp_outbound / direct UDP socket]
+  Router -->|proxy,tcp| ProxyTcp[proxy_tcp_outbound]
+  Router -->|proxy,udp| ProxyUdp[udp_proxy_outbound]
   Router -->|block| Block[丢弃 / RST / ICMP]
 
   Direct --> Target[目标服务]

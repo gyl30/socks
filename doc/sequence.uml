@@ -6,7 +6,7 @@ participant "User App" as App
 participant "socks_inbound" as SocksClient
 participant "socks_session" as SocksSession
 participant "router" as Router
-participant "upstream" as Upstream
+participant "tcp_outbound_stream" as Upstream
 participant "proxy_reality_connection" as ProxyConn
 participant "reality_inbound" as RemoteServer
 participant "reality_tcp_session" as RemoteTcp
@@ -25,7 +25,7 @@ App -> SocksSession: CONNECT host:port
 SocksSession -> Router: decide_ip / decide_domain(host)
 
 alt route = direct
-  SocksSession -> Upstream: direct_upstream.connect(host, port)
+  SocksSession -> Upstream: direct_tcp_outbound.connect(host, port)
   Upstream -> Target: TCP connect
   Target --> Upstream: connected
   Upstream --> SocksSession: success
@@ -38,7 +38,7 @@ alt route = direct
     SocksSession -> App: data
   end
 else route = proxy
-  SocksSession -> Upstream: proxy_upstream.connect(host, port)
+  SocksSession -> Upstream: proxy_tcp_outbound.connect(host, port)
   Upstream -> ProxyConn: connect()
   ProxyConn -> RemoteServer: TCP connect + REALITY handshake
 
