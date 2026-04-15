@@ -1,5 +1,5 @@
-#ifndef SOCKS_CLIENT_H
-#define SOCKS_CLIENT_H
+#ifndef SOCKS_INBOUND_H
+#define SOCKS_INBOUND_H
 
 #include <atomic>
 #include <memory>

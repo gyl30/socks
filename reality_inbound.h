@@ -1,5 +1,5 @@
-#ifndef REMOTE_SERVER_H
-#define REMOTE_SERVER_H
+#ifndef REALITY_INBOUND_H
+#define REALITY_INBOUND_H
 
 #include <array>
 #include <atomic>

@@ -1,5 +1,5 @@
-#ifndef TPROXY_CLIENT_H
-#define TPROXY_CLIENT_H
+#ifndef TPROXY_INBOUND_H
+#define TPROXY_INBOUND_H
 
 #include <list>
 #include <atomic>

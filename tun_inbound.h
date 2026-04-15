@@ -1,5 +1,5 @@
-#ifndef TUN_CLIENT_H
-#define TUN_CLIENT_H
+#ifndef TUN_INBOUND_H
+#define TUN_INBOUND_H
 
 #include <atomic>
 #include <memory>

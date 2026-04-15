@@ -227,8 +227,8 @@ set(SOCKS_SOURCES
     log.cpp
     config.cpp
     net_utils.cpp
-    remote_server.cpp
-    socks_client.cpp
+    reality_inbound.cpp
+    socks_inbound.cpp
     router.cpp
     socks_session.cpp
     tcp_socks_session.cpp
@@ -242,8 +242,8 @@ set(SOCKS_SOURCES
     tls/record_layer.cpp
     tls/key_schedule.cpp
     ip_matcher.cpp
-    remote_tcp_proxy_session.cpp
-    remote_udp_proxy_session.cpp
+    reality_tcp_session.cpp
+    reality_udp_session.cpp
     proxy_udp_upstream.cpp
     upstream.cpp
     proxy_protocol.cpp
@@ -269,7 +269,7 @@ set(SOCKS_SOURCES
     tls/certificate_compression.cpp)
 
 if(SOCKS_HAS_TPROXY)
-  list(APPEND SOCKS_SOURCES tproxy_client.cpp tproxy_tcp_session.cpp
+  list(APPEND SOCKS_SOURCES tproxy_inbound.cpp tproxy_tcp_session.cpp
        tproxy_udp_session.cpp)
 endif()
 
@@ -278,7 +278,7 @@ if(SOCKS_HAS_TUN)
        tun_lwip.cpp
        tun_device.cpp
        tun_device_windows_helper.c
-       tun_client.cpp
+       tun_inbound.cpp
        tun_tcp_session.cpp
        tun_udp_session.cpp)
 endif()

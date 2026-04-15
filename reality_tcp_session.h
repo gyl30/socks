@@ -1,5 +1,5 @@
-#ifndef REMOTE_TCP_PROXY_SESSION_H
-#define REMOTE_TCP_PROXY_SESSION_H
+#ifndef REALITY_TCP_SESSION_H
+#define REALITY_TCP_SESSION_H
 
 #include <chrono>
 #include <memory>

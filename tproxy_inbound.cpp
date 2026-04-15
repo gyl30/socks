@@ -22,7 +22,7 @@
 #include "constants.h"
 #include "net_utils.h"
 #include "context_pool.h"
-#include "tproxy_client.h"
+#include "tproxy_inbound.h"
 #include "tproxy_tcp_session.h"
 #include "tproxy_udp_session.h"
 
