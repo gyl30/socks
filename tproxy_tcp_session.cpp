@@ -34,13 +34,18 @@ std::string describe_endpoint_error(const boost::system::error_code& ec) { retur
 
 }    // namespace
 
-tproxy_tcp_session::tproxy_tcp_session(boost::asio::ip::tcp::socket socket, std::shared_ptr<router> router, uint32_t sid, const config& cfg)
+tproxy_tcp_session::tproxy_tcp_session(boost::asio::ip::tcp::socket socket,
+                                       std::shared_ptr<router> router,
+                                       uint32_t sid,
+                                       const config& cfg,
+                                       const config::tproxy_t& settings)
     : trace_id_(generate_trace_id()),
       conn_id_(sid),
       socket_(std::move(socket)),
       idle_timer_(socket_.get_executor()),
       router_(std::move(router)),
-      cfg_(cfg)
+      cfg_(cfg),
+      settings_(settings)
 {
     last_activity_time_ms_ = net::now_ms();
 }
@@ -150,14 +155,14 @@ bool tproxy_tcp_session::detect_routing_loop(const boost::asio::ip::tcp::endpoin
                                              const boost::system::error_code& local_ec,
                                              const boost::asio::ip::tcp::endpoint& local_ep) const
 {
-    if (cfg_.tproxy.tcp_port == 0 || local_ec)
+    if (settings_.tcp_port == 0 || local_ec)
     {
         return false;
     }
 
     const auto target_addr = net::normalize_address(target_ep.address());
     const auto local_addr = net::normalize_address(local_ep.address());
-    if (target_ep.port() != cfg_.tproxy.tcp_port || target_addr != local_addr)
+    if (target_ep.port() != settings_.tcp_port || target_addr != local_addr)
     {
         return false;
     }

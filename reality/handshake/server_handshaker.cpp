@@ -103,9 +103,9 @@ bool equal_server_name_ascii(const std::string& lhs, const std::string& rhs)
     return true;
 }
 
-bool verify_client_hello_sni(const tls::client_hello_info& client_hello, const relay::config& cfg)
+bool verify_client_hello_sni(const tls::client_hello_info& client_hello, const relay::config::reality_inbound_t& settings)
 {
-    if (cfg.reality.sni.empty())
+    if (settings.sni.empty())
     {
         return true;
     }
@@ -114,7 +114,7 @@ bool verify_client_hello_sni(const tls::client_hello_info& client_hello, const r
         return false;
     }
 
-    return equal_server_name_ascii(client_hello.sni, cfg.reality.sni);
+    return equal_server_name_ascii(client_hello.sni, settings.sni);
 }
 
 [[nodiscard]] bool is_invalid_sni(const std::string& sni) { return !tls::valid_sni_hostname(sni); }
@@ -1420,7 +1420,7 @@ boost::asio::awaitable<bool> read_client_hello_or_decide(const server_handshake_
 
 std::optional<server_accept_result> validate_client_hello_sni_and_extensions(server_handshake_context& handshake_ctx,
                                                                              server_handshake_state& state,
-                                                                             const relay::config& cfg)
+                                                                             const relay::config::reality_inbound_t& settings)
 {
     if (state.client_hello.malformed_sni)
     {
@@ -1461,7 +1461,7 @@ std::optional<server_accept_result> validate_client_hello_sni_and_extensions(ser
                   server_log_sni(state.log_context));
         return make_decision_result(accept_mode::kFallbackToTarget, "malformed_extensions", state);
     }
-    if (!verify_client_hello_sni(state.client_hello, cfg))
+    if (!verify_client_hello_sni(state.client_hello, settings))
     {
         const auto client_sni = state.client_hello.sni.empty() ? std::string("empty") : state.client_hello.sni;
         LOG_WARN("{} conn {} local {}:{} remote {}:{} sni {} auth fail server name mismatch client {} expected {}",
@@ -1473,7 +1473,7 @@ std::optional<server_accept_result> validate_client_hello_sni_and_extensions(ser
                  state.log_context.remote_port,
                  server_log_sni(state.log_context),
                  client_sni,
-                 cfg.reality.sni);
+                 settings.sni);
         return make_decision_result(accept_mode::kFallbackToTarget, "server_name_mismatch", state);
     }
     if (state.client_hello.malformed_key_share)
@@ -1723,12 +1723,13 @@ std::optional<server_accept_result> finalize_client_hello_authentication(server_
 std::optional<server_accept_result> validate_client_hello_and_authenticate(server_handshake_context& handshake_ctx,
                                                                            server_handshake_state& state,
                                                                            const relay::config& cfg,
+                                                                           const relay::config::reality_inbound_t& settings,
                                                                            const std::vector<uint8_t>& private_key,
                                                                            const std::vector<uint8_t>& short_id_bytes,
                                                                            relay::replay_cache& replay_cache,
                                                                            boost::system::error_code& ec)
 {
-    if (auto result = validate_client_hello_sni_and_extensions(handshake_ctx, state, cfg); result.has_value())
+    if (auto result = validate_client_hello_sni_and_extensions(handshake_ctx, state, settings); result.has_value())
     {
         return result;
     }
@@ -2078,6 +2079,7 @@ boost::asio::awaitable<bool> complete_authenticated_handshake(const server_hands
 
 server_handshaker::server_handshaker(const dependencies& deps)
     : cfg_(deps.cfg),
+      settings_(deps.settings),
       private_key_(deps.private_key),
       short_id_bytes_(deps.short_id_bytes),
       replay_cache_(deps.replay_cache),
@@ -2099,7 +2101,8 @@ boost::asio::awaitable<server_accept_result> server_handshaker::accept(server_ha
         co_return result;
     }
 
-    const auto decision = validate_client_hello_and_authenticate(handshake_ctx, state, cfg_, private_key_, short_id_bytes_, replay_cache_, ec);
+    const auto decision =
+        validate_client_hello_and_authenticate(handshake_ctx, state, cfg_, settings_, private_key_, short_id_bytes_, replay_cache_, ec);
     if (decision.has_value())
     {
         co_return *decision;

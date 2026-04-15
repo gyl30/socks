@@ -224,9 +224,10 @@ boost::asio::awaitable<bool> tproxy_udp_session::open_direct_socket()
         co_return false;
     }
 
-    if (cfg_.tproxy.mark != 0)
+    const auto connect_mark = resolve_socket_mark(cfg_);
+    if (connect_mark != 0)
     {
-        net::set_socket_mark(upstream_socket_.native_handle(), cfg_.tproxy.mark, ec);
+        net::set_socket_mark(upstream_socket_.native_handle(), connect_mark, ec);
         if (ec)
         {
             LOG_WARN("{} trace {:016x} conn {} client {}:{} target {}:{} set direct udp mark failed {}",
@@ -564,9 +565,10 @@ std::shared_ptr<boost::asio::ip::udp::socket> tproxy_udp_session::get_or_create_
         return nullptr;
     }
 
-    if (cfg_.tproxy.mark != 0)
+    const auto connect_mark = resolve_socket_mark(cfg_);
+    if (connect_mark != 0)
     {
-        net::set_socket_mark(socket->native_handle(), cfg_.tproxy.mark, ec);
+        net::set_socket_mark(socket->native_handle(), connect_mark, ec);
         if (ec)
         {
             return nullptr;

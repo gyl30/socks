@@ -225,7 +225,7 @@ boost::asio::awaitable<upstream_connect_result> direct_upstream::connect(const s
             last_ec = op_ec;
             continue;
         }
-        const auto connect_mark = cfg_.tproxy.enabled ? cfg_.tproxy.mark : 0U;
+        const auto connect_mark = resolve_socket_mark(cfg_);
         if (connect_mark != 0)
         {
             net::set_socket_mark(socket_.native_handle(), connect_mark, op_ec);
@@ -371,9 +371,10 @@ boost::asio::awaitable<bool> socks_upstream::connect_server(const config::socks_
         {
             continue;
         }
-        if (cfg_.tproxy.enabled && cfg_.tproxy.mark != 0)
+        const auto connect_mark = resolve_socket_mark(cfg_);
+        if (connect_mark != 0)
         {
-            net::set_socket_mark(socket_.native_handle(), cfg_.tproxy.mark, ec);
+            net::set_socket_mark(socket_.native_handle(), connect_mark, ec);
             if (ec)
             {
                 continue;

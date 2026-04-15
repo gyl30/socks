@@ -39,7 +39,7 @@ class domain_matcher;
 class router
 {
    public:
-    explicit router(const config& cfg);
+    router(const config& cfg, std::string inbound_tag);
     ~router() = default;
 
     router(const router&) = delete;

@@ -18,18 +18,6 @@ struct config
         std::string file = "app.log";
     };
 
-    struct inbound_t
-    {
-        std::string host = "0.0.0.0";
-        uint16_t port = 8844;
-    };
-
-    struct outbound_t
-    {
-        std::string host = "0.0.0.0";
-        uint16_t port = 8844;
-    };
-
     struct socks_t
     {
         bool enabled = true;
@@ -66,17 +54,6 @@ struct config
         uint32_t write = 100;
         uint32_t connect = 10;
         uint32_t idle = 300;
-    };
-
-    struct reality_t
-    {
-        std::string sni = "www.apple.com";
-        std::string fingerprint = "random";
-        uint32_t replay_cache_max_entries = 100000;
-        uint32_t max_handshake_records = 256;
-        std::string private_key;
-        std::string public_key;
-        std::string short_id;
     };
 
     struct reality_inbound_t
@@ -134,21 +111,11 @@ struct config
     std::vector<inbound_entry_t> inbounds;
     std::vector<outbound_entry_t> outbounds;
     std::vector<route_rule_t> routing;
-
-    std::string active_inbound_tag;
-    inbound_t inbound;
-    outbound_t outbound;
-    socks_t socks;
-    tproxy_t tproxy;
-    tun_t tun;
-    reality_t reality;
 };
 
 [[nodiscard]] const config::inbound_entry_t* find_inbound_entry(const config& cfg, std::string_view tag);
 [[nodiscard]] const config::outbound_entry_t* find_outbound_entry(const config& cfg, std::string_view tag);
-[[nodiscard]] const config::inbound_entry_t* find_first_inbound_entry(const config& cfg, std::string_view type);
-[[nodiscard]] const config::outbound_entry_t* find_first_outbound_entry(const config& cfg, std::string_view type);
-[[nodiscard]] config make_runtime_config(const config& cfg, const config::inbound_entry_t& inbound);
+[[nodiscard]] uint32_t resolve_socket_mark(const config& cfg);
 
 [[nodiscard]] std::optional<config> parse_config(const std::string& filename);
 [[nodiscard]] std::string dump_config(const config& cfg);

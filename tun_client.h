@@ -27,7 +27,7 @@ namespace relay
 class tun_inbound : public std::enable_shared_from_this<tun_inbound>
 {
    public:
-    tun_inbound(io_context_pool& pool, const config& cfg);
+    tun_inbound(io_context_pool& pool, const config& cfg, std::string inbound_tag, const config::tun_t& settings);
 
     void start();
     void stop();
@@ -50,7 +50,9 @@ class tun_inbound : public std::enable_shared_from_this<tun_inbound>
     static void udp_recv_handler(void* arg, udp_pcb* pcb, pbuf* packet, const ip_addr_t* addr, u16_t port);
 
    private:
-    config cfg_;
+    const config& cfg_;
+    std::string inbound_tag_;
+    config::tun_t settings_;
     io_worker& owner_worker_;
     std::shared_ptr<router> router_;
     tun_device device_;

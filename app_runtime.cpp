@@ -46,26 +46,18 @@ void app_runtime::start()
 
 void app_runtime::start_inbound(const config::inbound_entry_t& inbound)
 {
-    auto runtime_cfg = std::make_shared<config>(make_runtime_config(cfg_, inbound));
-    runtime_configs_.push_back(runtime_cfg);
-
-    LOG_INFO("{} inbound_tag {} inbound_type {} stage start create_runtime_config",
-             log_event::kConnInit,
-             inbound.tag,
-             inbound.type);
-
-    if (inbound.type == "reality")
+    if (inbound.type == "reality" && inbound.reality.has_value())
     {
-        auto server = std::make_shared<reality_inbound>(pool_, *runtime_cfg);
+        auto server = std::make_shared<reality_inbound>(pool_, cfg_, inbound.tag, *inbound.reality);
         reality_inbounds_.push_back(server);
         server->start();
         LOG_INFO("{} inbound_tag {} inbound_type {} stage start started", log_event::kConnInit, inbound.tag, inbound.type);
         return;
     }
 
-    if (inbound.type == "socks")
+    if (inbound.type == "socks" && inbound.socks.has_value())
     {
-        auto client = std::make_shared<socks_inbound>(pool_, *runtime_cfg);
+        auto client = std::make_shared<socks_inbound>(pool_, cfg_, inbound.tag, *inbound.socks);
         socks_inbounds_.push_back(client);
         client->start();
         LOG_INFO("{} inbound_tag {} inbound_type {} stage start started", log_event::kConnInit, inbound.tag, inbound.type);
@@ -73,9 +65,9 @@ void app_runtime::start_inbound(const config::inbound_entry_t& inbound)
     }
 
 #if SOCKS_HAS_TPROXY
-    if (inbound.type == "tproxy")
+    if (inbound.type == "tproxy" && inbound.tproxy.has_value())
     {
-        auto client = std::make_shared<tproxy_inbound>(pool_, *runtime_cfg);
+        auto client = std::make_shared<tproxy_inbound>(pool_, cfg_, inbound.tag, *inbound.tproxy);
         tproxy_inbounds_.push_back(client);
         client->start();
         LOG_INFO("{} inbound_tag {} inbound_type {} stage start started", log_event::kConnInit, inbound.tag, inbound.type);
@@ -84,14 +76,21 @@ void app_runtime::start_inbound(const config::inbound_entry_t& inbound)
 #endif
 
 #if SOCKS_HAS_TUN
-    if (inbound.type == "tun")
+    if (inbound.type == "tun" && inbound.tun.has_value())
     {
-        auto client = std::make_shared<tun_inbound>(pool_, *runtime_cfg);
+        auto client = std::make_shared<tun_inbound>(pool_, cfg_, inbound.tag, *inbound.tun);
         tun_inbounds_.push_back(client);
         client->start();
         LOG_INFO("{} inbound_tag {} inbound_type {} stage start started", log_event::kConnInit, inbound.tag, inbound.type);
+        return;
     }
 #endif
+
+    LOG_ERROR("{} inbound_tag {} inbound_type {} stage start unsupported inbound settings missing",
+              log_event::kConnInit,
+              inbound.tag,
+              inbound.type);
+    std::exit(EXIT_FAILURE);
 }
 
 void app_runtime::stop()

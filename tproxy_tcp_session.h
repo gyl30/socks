@@ -21,7 +21,11 @@ namespace relay
 class tproxy_tcp_session : public std::enable_shared_from_this<tproxy_tcp_session>
 {
    public:
-    tproxy_tcp_session(boost::asio::ip::tcp::socket socket, std::shared_ptr<router> router, uint32_t sid, const config& cfg);
+    tproxy_tcp_session(boost::asio::ip::tcp::socket socket,
+                       std::shared_ptr<router> router,
+                       uint32_t sid,
+                       const config& cfg,
+                       const config::tproxy_t& settings);
 
     [[nodiscard]] boost::asio::awaitable<void> start();
     void stop();
@@ -63,6 +67,7 @@ class tproxy_tcp_session : public std::enable_shared_from_this<tproxy_tcp_sessio
     boost::asio::steady_timer idle_timer_;
     std::shared_ptr<router> router_;
     const config& cfg_;
+    config::tproxy_t settings_;
     uint64_t last_activity_time_ms_{0};
     std::atomic<bool> backend_closed_{false};
 };

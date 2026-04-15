@@ -12,9 +12,9 @@
 namespace reality
 {
 
-site_material load_site_material(const relay::config& cfg, boost::system::error_code& ec)
+site_material load_site_material(const relay::config::reality_inbound_t& settings, boost::system::error_code& ec)
 {
-    const std::string target_host = cfg.reality.sni;
+    const std::string target_host = settings.sni;
     if (target_host.empty())
     {
         LOG_ERROR(

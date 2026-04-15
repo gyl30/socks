@@ -25,7 +25,7 @@ enum class socks_inbound_state : uint8_t
 class socks_inbound : public std::enable_shared_from_this<socks_inbound>
 {
    public:
-    socks_inbound(io_context_pool& pool, const config& cfg);
+    socks_inbound(io_context_pool& pool, const config& cfg, std::string inbound_tag, const config::socks_t& settings);
 
     void start();
     void stop();
@@ -36,6 +36,8 @@ class socks_inbound : public std::enable_shared_from_this<socks_inbound>
 
    private:
     const config& cfg_;
+    std::string inbound_tag_;
+    config::socks_t settings_;
     io_context_pool& pool_;
     io_worker& owner_worker_;
     boost::asio::ip::tcp::acceptor acceptor_{owner_worker_.io_context};

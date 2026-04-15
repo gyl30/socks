@@ -506,7 +506,7 @@ void udp_socks_session::open_direct_udp_socket(boost::asio::ip::udp::socket& dir
                  ec.message());
         return;
     }
-    const auto connect_mark = cfg_.tproxy.enabled ? cfg_.tproxy.mark : 0U;
+    const auto connect_mark = resolve_socket_mark(cfg_);
     if (connect_mark != 0)
     {
         net::set_socket_mark(direct_socket.native_handle(), connect_mark, ec);

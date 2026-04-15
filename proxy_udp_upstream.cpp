@@ -93,9 +93,10 @@ boost::asio::awaitable<bool> connect_socks_server(boost::asio::ip::tcp::socket& 
         {
             continue;
         }
-        if (cfg.tproxy.enabled && cfg.tproxy.mark != 0)
+        const auto connect_mark = resolve_socket_mark(cfg);
+        if (connect_mark != 0)
         {
-            net::set_socket_mark(socket.native_handle(), cfg.tproxy.mark, ec);
+            net::set_socket_mark(socket.native_handle(), connect_mark, ec);
             if (ec)
             {
                 continue;
@@ -522,9 +523,10 @@ boost::asio::awaitable<proxy_udp_connect_result> proxy_udp_upstream::connect(con
         result.socks_rep = socks::map_connect_error_to_socks_rep(ec);
         co_return result;
     }
-    if (cfg.tproxy.enabled && cfg.tproxy.mark != 0)
+    const auto connect_mark = resolve_socket_mark(cfg);
+    if (connect_mark != 0)
     {
-        net::set_socket_mark(udp_socket->native_handle(), cfg.tproxy.mark, ec);
+        net::set_socket_mark(udp_socket->native_handle(), connect_mark, ec);
         if (ec)
         {
             result.ec = ec;

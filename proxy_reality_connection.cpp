@@ -110,7 +110,7 @@ bool build_connect_options(const config& cfg, const std::string& outbound_tag, c
     options.remote_host = settings.host;
     options.remote_port = std::to_string(settings.port);
     options.max_handshake_records = settings.max_handshake_records;
-    options.connect_mark = cfg.tproxy.enabled ? cfg.tproxy.mark : 0U;
+    options.connect_mark = resolve_socket_mark(cfg);
     boost::algorithm::unhex(settings.public_key, std::back_inserter(options.server_pub_key));
     boost::algorithm::unhex(settings.short_id, std::back_inserter(options.short_id_bytes));
     options.fingerprint_type = parse_fingerprint_type(settings.fingerprint);

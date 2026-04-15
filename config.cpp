@@ -956,36 +956,6 @@ void write_reality_outbound_settings(rapidjson::PrettyWriter<rapidjson::StringBu
     writer.Uint(value.max_handshake_records);
 }
 
-void materialize_client_runtime(config& runtime_cfg)
-{
-    const auto* reality_outbound = find_first_outbound_entry(runtime_cfg, "reality");
-    if (reality_outbound != nullptr && reality_outbound->reality.has_value())
-    {
-        const auto& outbound = *reality_outbound->reality;
-        runtime_cfg.outbound.host = outbound.host;
-        runtime_cfg.outbound.port = outbound.port;
-        runtime_cfg.reality.sni = outbound.sni;
-        runtime_cfg.reality.fingerprint = outbound.fingerprint;
-        runtime_cfg.reality.public_key = outbound.public_key;
-        runtime_cfg.reality.short_id = outbound.short_id;
-        runtime_cfg.reality.max_handshake_records = outbound.max_handshake_records;
-    }
-
-    const auto* first_tproxy = find_first_inbound_entry(runtime_cfg, "tproxy");
-    if (first_tproxy != nullptr && first_tproxy->tproxy.has_value())
-    {
-        runtime_cfg.tproxy = *first_tproxy->tproxy;
-        runtime_cfg.tproxy.enabled = true;
-    }
-
-    const auto* first_tun = find_first_inbound_entry(runtime_cfg, "tun");
-    if (first_tun != nullptr && first_tun->tun.has_value())
-    {
-        runtime_cfg.tun = *first_tun->tun;
-        runtime_cfg.tun.enabled = true;
-    }
-}
-
 }    // namespace
 
 const config::inbound_entry_t* find_inbound_entry(const config& cfg, const std::string_view tag)
@@ -1012,73 +982,16 @@ const config::outbound_entry_t* find_outbound_entry(const config& cfg, const std
     return nullptr;
 }
 
-const config::inbound_entry_t* find_first_inbound_entry(const config& cfg, const std::string_view type)
+uint32_t resolve_socket_mark(const config& cfg)
 {
     for (const auto& inbound : cfg.inbounds)
     {
-        if (inbound.type == type)
+        if (inbound.type == "tproxy" && inbound.tproxy.has_value())
         {
-            return &inbound;
+            return inbound.tproxy->mark;
         }
     }
-    return nullptr;
-}
-
-const config::outbound_entry_t* find_first_outbound_entry(const config& cfg, const std::string_view type)
-{
-    for (const auto& outbound : cfg.outbounds)
-    {
-        if (outbound.type == type)
-        {
-            return &outbound;
-        }
-    }
-    return nullptr;
-}
-
-config make_runtime_config(const config& cfg, const config::inbound_entry_t& inbound)
-{
-    config runtime_cfg = cfg;
-    runtime_cfg.active_inbound_tag = inbound.tag;
-    runtime_cfg.inbound = config::inbound_t{};
-    runtime_cfg.outbound = config::outbound_t{};
-    runtime_cfg.socks = config::socks_t{};
-    runtime_cfg.socks.enabled = false;
-    runtime_cfg.tproxy = config::tproxy_t{};
-    runtime_cfg.tproxy.enabled = false;
-    runtime_cfg.tun = config::tun_t{};
-    runtime_cfg.tun.enabled = false;
-    runtime_cfg.reality = config::reality_t{};
-    materialize_client_runtime(runtime_cfg);
-
-    if (inbound.type == "socks" && inbound.socks.has_value())
-    {
-        runtime_cfg.socks = *inbound.socks;
-        runtime_cfg.socks.enabled = true;
-    }
-    else if (inbound.type == "tproxy" && inbound.tproxy.has_value())
-    {
-        runtime_cfg.tproxy = *inbound.tproxy;
-        runtime_cfg.tproxy.enabled = true;
-    }
-    else if (inbound.type == "tun" && inbound.tun.has_value())
-    {
-        runtime_cfg.tun = *inbound.tun;
-        runtime_cfg.tun.enabled = true;
-    }
-    else if (inbound.type == "reality" && inbound.reality.has_value())
-    {
-        const auto& reality = *inbound.reality;
-        runtime_cfg.inbound.host = reality.host;
-        runtime_cfg.inbound.port = reality.port;
-        runtime_cfg.reality.sni = reality.sni;
-        runtime_cfg.reality.private_key = reality.private_key;
-        runtime_cfg.reality.public_key = reality.public_key;
-        runtime_cfg.reality.short_id = reality.short_id;
-        runtime_cfg.reality.replay_cache_max_entries = reality.replay_cache_max_entries;
-    }
-
-    return runtime_cfg;
+    return 0;
 }
 
 std::optional<config> parse_config(const std::string& filename)
