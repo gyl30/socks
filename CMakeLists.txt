@@ -225,6 +225,7 @@ find_path(BROTLI_INCLUDE_DIR NAMES brotli/decode.h REQUIRED
 set(SOCKS_SOURCES
     app_runtime.cpp
     log.cpp
+    outbound.cpp
     config.cpp
     net_utils.cpp
     reality_inbound.cpp
