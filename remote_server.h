@@ -19,7 +19,7 @@
 #include "reality/policy/fallback_executor.h"
 #include "reality/handshake/server_handshake_context.h"
 
-namespace mux
+namespace relay
 {
 
 class remote_server : public std::enable_shared_from_this<remote_server>
@@ -58,6 +58,6 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     std::atomic<bool> stopping_{false};
 };
 
-}    // namespace mux
+}    // namespace relay
 
 #endif

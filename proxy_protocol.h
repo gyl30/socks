@@ -7,7 +7,7 @@
 #include <cstdint>
 #include <string_view>
 
-namespace mux::proxy
+namespace relay::proxy
 {
 
 constexpr uint32_t kMaxPacketSize = 1024U * 1024U;
@@ -76,6 +76,6 @@ struct udp_datagram
 
 [[nodiscard]] bool decode_udp_datagram(const uint8_t* data, std::size_t len, udp_datagram& out);
 
-}    // namespace mux::proxy
+}    // namespace relay::proxy
 
 #endif

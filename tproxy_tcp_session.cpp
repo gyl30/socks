@@ -20,7 +20,7 @@
 #include "net_utils.h"
 #include "tproxy_tcp_session.h"
 
-namespace mux
+namespace relay
 {
 
 namespace
@@ -112,7 +112,7 @@ boost::asio::awaitable<void> tproxy_tcp_session::run()
              conn_id_,
              target_addr_,
              target_port_,
-             mux::to_string(route));
+             relay::to_string(route));
     if (!(co_await connect_backend(route, backend)))
     {
         co_return;
@@ -246,7 +246,7 @@ boost::asio::awaitable<bool> tproxy_tcp_session::connect_backend(route_type rout
                  conn_id_,
                  target_addr_,
                  target_port_,
-                 mux::to_string(route),
+                 relay::to_string(route),
                  connect_result.ec.message(),
                  connect_result.socks_rep);
         co_await backend->close();
@@ -259,7 +259,7 @@ boost::asio::awaitable<bool> tproxy_tcp_session::connect_backend(route_type rout
              conn_id_,
              target_addr_,
              target_port_,
-             mux::to_string(route));
+             relay::to_string(route));
     co_return true;
 }
 
@@ -536,4 +536,4 @@ void tproxy_tcp_session::log_close_summary() const
              duration_ms);
 }
 
-}    // namespace mux
+}    // namespace relay

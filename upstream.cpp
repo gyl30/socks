@@ -21,7 +21,7 @@
 #include "proxy_protocol.h"
 #include "proxy_reality_connection.h"
 
-namespace mux
+namespace relay
 {
 
 class direct_upstream final : public upstream
@@ -538,4 +538,4 @@ boost::asio::awaitable<void> proxy_upstream::close()
     co_return;
 }
 
-}    // namespace mux
+}    // namespace relay

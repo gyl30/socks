@@ -34,13 +34,13 @@ namespace
 
 struct runtime_services
 {
-    std::shared_ptr<mux::remote_server> server = nullptr;
-    std::shared_ptr<mux::socks_client> socks = nullptr;
+    std::shared_ptr<relay::remote_server> server = nullptr;
+    std::shared_ptr<relay::socks_client> socks = nullptr;
 #if SOCKS_HAS_TUN
-    std::shared_ptr<mux::tun_client> tun = nullptr;
+    std::shared_ptr<relay::tun_client> tun = nullptr;
 #endif
 #if SOCKS_HAS_TPROXY
-    std::shared_ptr<mux::tproxy_client> tproxy = nullptr;
+    std::shared_ptr<relay::tproxy_client> tproxy = nullptr;
 #endif
 };
 
@@ -74,13 +74,13 @@ int register_signal(boost::asio::signal_set& signals, int signal, const char* si
     ec = signals.add(signal, ec);
     if (ec)
     {
-        LOG_ERROR("{} stage register_signal signal {} error {}", mux::log_event::kConnInit, signal_name, ec.message());
+        LOG_ERROR("{} stage register_signal signal {} error {}", relay::log_event::kConnInit, signal_name, ec.message());
         return -1;
     }
     return 0;
 }
 
-uint32_t resolve_worker_threads(const mux::config& cfg)
+uint32_t resolve_worker_threads(const relay::config& cfg)
 {
     if (cfg.workers > 0)
     {
@@ -95,40 +95,40 @@ uint32_t resolve_worker_threads(const mux::config& cfg)
     return 4;
 }
 
-runtime_services start_services(mux::io_context_pool& pool, const mux::config& cfg)
+runtime_services start_services(relay::io_context_pool& pool, const relay::config& cfg)
 {
     runtime_services services;
     const bool is_client_mode = (cfg.mode == "client");
 
     if (cfg.mode == "server")
     {
-        services.server = std::make_shared<mux::remote_server>(pool, cfg);
+        services.server = std::make_shared<relay::remote_server>(pool, cfg);
         services.server->start();
     }
 
     if (is_client_mode && cfg.socks.enabled)
     {
-        services.socks = std::make_shared<mux::socks_client>(pool, cfg);
+        services.socks = std::make_shared<relay::socks_client>(pool, cfg);
         services.socks->start();
     }
 #if SOCKS_HAS_TUN
     if (is_client_mode && cfg.tun.enabled)
     {
-        services.tun = std::make_shared<mux::tun_client>(pool, cfg);
+        services.tun = std::make_shared<relay::tun_client>(pool, cfg);
         services.tun->start();
     }
 #endif
 #if SOCKS_HAS_TPROXY
     if (is_client_mode && cfg.tproxy.enabled)
     {
-        services.tproxy = std::make_shared<mux::tproxy_client>(pool, cfg);
+        services.tproxy = std::make_shared<relay::tproxy_client>(pool, cfg);
         services.tproxy->start();
     }
 #endif
     return services;
 }
 
-void stop_services(const runtime_services& services, const mux::io_context_pool& pool)
+void stop_services(const runtime_services& services, const relay::io_context_pool& pool)
 {
     if (services.socks != nullptr)
     {
@@ -154,7 +154,7 @@ void stop_services(const runtime_services& services, const mux::io_context_pool&
     pool.emit_all(boost::asio::cancellation_type::all);
 }
 
-boost::asio::awaitable<void> wait_services_stopped(mux::io_context_pool& pool)
+boost::asio::awaitable<void> wait_services_stopped(relay::io_context_pool& pool)
 {
     co_await pool.async_wait_all();
     pool.shutdown();
@@ -163,7 +163,7 @@ boost::asio::awaitable<void> wait_services_stopped(mux::io_context_pool& pool)
 int run_with_config(const char* prog, const char* config_path)
 {
     auto usage = make_scoped_exit([prog]() { print_usage(prog); });
-    auto cfg = mux::parse_config(config_path);
+    auto cfg = relay::parse_config(config_path);
     if (!cfg.has_value())
     {
         return -1;
@@ -176,10 +176,10 @@ int run_with_config(const char* prog, const char* config_path)
 
     if (cfg->mode != "client" && cfg->mode != "server")
     {
-        LOG_ERROR("{} stage start invalid_mode {}", mux::log_event::kConnInit, cfg->mode);
+        LOG_ERROR("{} stage start invalid_mode {}", relay::log_event::kConnInit, cfg->mode);
         return -1;
     }
-    mux::io_context_pool pool(resolve_worker_threads(*cfg));
+    relay::io_context_pool pool(resolve_worker_threads(*cfg));
 
     auto services = start_services(pool, *cfg);
 
@@ -203,7 +203,7 @@ int run_with_config(const char* prog, const char* config_path)
         });
 
     pool.run();
-    LOG_INFO("{} mode {} shutdown", mux::log_event::kConnClose, cfg->mode);
+    LOG_INFO("{} mode {} shutdown", relay::log_event::kConnClose, cfg->mode);
     return 0;
 }
 
@@ -226,7 +226,7 @@ int main(int argc, char** argv)
 
     if (std::strcmp(mode, "config") == 0)
     {
-        const std::string default_config = mux::dump_default_config();
+        const std::string default_config = relay::dump_default_config();
         std::fputs(default_config.c_str(), stdout);
         std::fputc('\n', stdout);
         return 0;

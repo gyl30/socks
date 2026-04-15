@@ -34,7 +34,7 @@
 #include "reality/policy/fallback_executor.h"
 #include "reality/material/material_provider.h"
 #include "reality/handshake/server_handshaker.h"
-namespace mux
+namespace relay
 {
 
 namespace
@@ -464,4 +464,4 @@ boost::asio::awaitable<void> remote_server::process_proxy_request(io_worker& wor
              packet.size());
 }
 
-}    // namespace mux
+}    // namespace relay

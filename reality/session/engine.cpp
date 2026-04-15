@@ -16,7 +16,7 @@ extern "C"
 #include "constants.h"
 #include "tls/record_layer.h"
 #include "reality/session/engine.h"
-namespace mux
+namespace relay
 {
 
 reality_engine::reality_engine(reality::reality_record_context context) : context_(std::move(context)) { tx_buf_.reserve(kMaxBufSize); }
@@ -77,7 +77,7 @@ std::span<const uint8_t> reality_engine::encrypt_record(const std::vector<uint8_
     return std::span<const uint8_t>{tx_buf_.data(), tx_buf_.size()};
 }
 
-std::optional<mux::tls_record> reality_engine::decrypt_record(boost::system::error_code& ec)
+std::optional<relay::tls_record> reality_engine::decrypt_record(boost::system::error_code& ec)
 {
     uint8_t content_type = 0;
     std::size_t payload_len = 0;
@@ -93,7 +93,7 @@ std::optional<mux::tls_record> reality_engine::decrypt_record(boost::system::err
         return std::nullopt;
     }
 
-    return mux::tls_record{.content_type = content_type, .payload = std::span<const uint8_t>(scratch_buf_.data(), payload_len)};
+    return relay::tls_record{.content_type = content_type, .payload = std::span<const uint8_t>(scratch_buf_.data(), payload_len)};
 }
 
 void reality_engine::decrypt_tls_record(uint8_t& content_type, std::size_t& payload_len, boost::system::error_code& ec)
@@ -143,4 +143,4 @@ void reality_engine::decrypt_tls_record(uint8_t& content_type, std::size_t& payl
     }
 }
 
-}    // namespace mux
+}    // namespace relay

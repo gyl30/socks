@@ -7,7 +7,7 @@
 
 #include "context_pool.h"
 
-namespace mux
+namespace relay
 {
 
 struct run_loop_spawner
@@ -19,6 +19,6 @@ struct run_loop_spawner
     }
 };
 
-}    // namespace mux
+}    // namespace relay
 
 #endif

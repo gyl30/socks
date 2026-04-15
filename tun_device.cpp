@@ -51,7 +51,7 @@
 #endif
 
 #include "tun_device.h"
-namespace mux
+namespace relay
 {
 
 namespace
@@ -742,4 +742,4 @@ bool tun_device::set_ipv6(const std::string& address, const uint8_t prefix, boos
 }
 #endif
 
-}    // namespace mux
+}    // namespace relay

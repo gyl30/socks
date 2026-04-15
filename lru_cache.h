@@ -8,7 +8,7 @@
 #include <functional>
 #include <unordered_map>
 
-namespace mux
+namespace relay
 {
 
 // Simple LRU cache (not thread-safe; caller must lock externally).
@@ -191,6 +191,6 @@ class lru_cache
     std::unordered_map<Key, typename std::list<node>::iterator, Hash, KeyEqual> index_;
 };
 
-}    // namespace mux
+}    // namespace relay
 
 #endif

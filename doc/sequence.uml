@@ -85,8 +85,8 @@ Upstream -> ProxyConn: shutdown_send / close
 
 note over Upstream, ProxyConn
   route=proxy 时，一次 TCP 代理请求独占一条 REALITY 连接。
-  不再存在预建隧道、多路 stream、
-  stream_id、旧式控制帧或保活帧。
+  不再存在预建隧道、复用子会话标识、
+  旧式控制帧或额外保活层。
   也不再依赖 connection_tracker。
 end note
 

@@ -9,7 +9,7 @@
 namespace reality
 {
 
-[[nodiscard]] site_material load_site_material(const mux::config& cfg, boost::system::error_code& ec);
+[[nodiscard]] site_material load_site_material(const relay::config& cfg, boost::system::error_code& ec);
 
 }    // namespace reality
 

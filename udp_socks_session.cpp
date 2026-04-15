@@ -23,7 +23,7 @@
 #include "context_pool.h"
 #include "udp_socks_session.h"
 
-namespace mux
+namespace relay
 {
 
 namespace detail
@@ -1366,4 +1366,4 @@ boost::asio::awaitable<void> udp_socks_session::idle_watchdog()
     }
 }
 
-}    // namespace mux
+}    // namespace relay

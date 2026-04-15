@@ -21,7 +21,7 @@
 #include "context_pool.h"
 #include "tun_tcp_session.h"
 #include "tun_udp_session.h"
-namespace mux
+namespace relay
 {
 
 class tun_client : public std::enable_shared_from_this<tun_client>
@@ -69,6 +69,6 @@ class tun_client : public std::enable_shared_from_this<tun_client>
     bool stack_ready_ = false;
 };
 
-}    // namespace mux
+}    // namespace relay
 
 #endif

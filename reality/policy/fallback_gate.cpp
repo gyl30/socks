@@ -58,7 +58,7 @@ fallback_gate::fallback_gate(dependencies deps) : options_(deps.opts), now_secon
 {
     if (!now_seconds_fn_)
     {
-        now_seconds_fn_ = []() { return mux::net::now_second(); };
+        now_seconds_fn_ = []() { return relay::net::now_second(); };
     }
 }
 
@@ -72,7 +72,7 @@ fallback_gate::budget_ticket fallback_gate::try_acquire(const fallback_request& 
     if (active_fallbacks_ >= options_.max_concurrent)
     {
         LOG_WARN("{} conn {} remote {}:{} reason {} stage rate_limit mode concurrency active {} limit {}",
-                 mux::log_event::kFallback,
+                 relay::log_event::kFallback,
                  request.conn_id,
                  remote_addr,
                  request.remote_port,
@@ -102,7 +102,7 @@ fallback_gate::budget_ticket fallback_gate::try_acquire(const fallback_request& 
         if (fallback_attempts_by_remote_.size() >= options_.max_tracker_entries)
         {
             LOG_WARN("{} conn {} remote {}:{} reason {} stage rate_limit mode tracker_capacity entries {} limit {}",
-                     mux::log_event::kFallback,
+                     relay::log_event::kFallback,
                      request.conn_id,
                      remote_addr,
                      request.remote_port,
@@ -126,7 +126,7 @@ fallback_gate::budget_ticket fallback_gate::try_acquire(const fallback_request& 
     if (attempts.size() >= options_.max_attempts_per_window_per_source)
     {
         LOG_WARN("{} conn {} remote {}:{} reason {} stage rate_limit mode per_source attempts {} window_sec {} limit {}",
-                 mux::log_event::kFallback,
+                 relay::log_event::kFallback,
                  request.conn_id,
                  remote_addr,
                  request.remote_port,

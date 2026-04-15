@@ -19,7 +19,7 @@
 #include "run_loop_spawner.h"
 #include "proxy_udp_upstream.h"
 
-namespace mux
+namespace relay
 {
 
 namespace detail
@@ -123,6 +123,6 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
     proxy_upstream_channel_type proxy_upstream_channel_;
 };
 
-}    // namespace mux
+}    // namespace relay
 
 #endif

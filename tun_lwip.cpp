@@ -8,7 +8,7 @@
 
 #include "tun_lwip.h"
 
-namespace mux::tun
+namespace relay::tun
 {
 
 boost::asio::ip::address lwip_to_address(const ip_addr_t& addr)
@@ -89,4 +89,4 @@ std::string lwip_error_message(const err_t err)
 #endif
 }
 
-}    // namespace mux::tun
+}    // namespace relay::tun

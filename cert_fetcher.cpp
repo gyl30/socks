@@ -125,7 +125,7 @@ boost::system::error_code derive_server_record_protection(fetch_context& ctx,
     if (ec)
     {
         LOG_ERROR("{} target {}:{} sni {} fingerprint {} x25519 derive failed",
-                  mux::log_event::kCert,
+                  relay::log_event::kCert,
                   ctx.host,
                   ctx.port,
                   cert_log_sni(ctx),
@@ -137,7 +137,7 @@ boost::system::error_code derive_server_record_protection(fetch_context& ctx,
     if (ec)
     {
         LOG_ERROR("{} target {}:{} sni {} fingerprint {} derive keys failed",
-                  mux::log_event::kCert,
+                  relay::log_event::kCert,
                   ctx.host,
                   ctx.port,
                   cert_log_sni(ctx),
@@ -150,7 +150,7 @@ boost::system::error_code derive_server_record_protection(fetch_context& ctx,
     if (ec)
     {
         LOG_ERROR("{} target {}:{} sni {} fingerprint {} derive traffic keys failed",
-                  mux::log_event::kCert,
+                  relay::log_event::kCert,
                   ctx.host,
                   ctx.port,
                   cert_log_sni(ctx),
@@ -171,7 +171,7 @@ void connect(fetch_context& ctx, boost::system::error_code& ec)
     if (ec)
     {
         LOG_ERROR("{} target {}:{} sni {} fingerprint {} stage resolve error {}",
-                  mux::log_event::kCert,
+                  relay::log_event::kCert,
                   ctx.host,
                   ctx.port,
                   cert_log_sni(ctx),
@@ -183,7 +183,7 @@ void connect(fetch_context& ctx, boost::system::error_code& ec)
     if (ec)
     {
         LOG_ERROR("{} target {}:{} sni {} fingerprint {} stage connect error {}",
-                  mux::log_event::kCert,
+                  relay::log_event::kCert,
                   ctx.host,
                   ctx.port,
                   cert_log_sni(ctx),
@@ -214,7 +214,7 @@ boost::system::error_code send_client_hello_record(fetch_context& ctx, const std
     if (client_hello.size() > std::numeric_limits<uint16_t>::max())
     {
         LOG_ERROR("{} target {}:{} sni {} fingerprint {} client hello too large {}",
-                  mux::log_event::kCert,
+                  relay::log_event::kCert,
                   ctx.host,
                   ctx.port,
                   cert_log_sni(ctx),
@@ -231,7 +231,7 @@ boost::system::error_code send_client_hello_record(fetch_context& ctx, const std
     if (write_ec)
     {
         LOG_ERROR("{} target {}:{} sni {} fingerprint {} write ch failed {}",
-                  mux::log_event::kCert,
+                  relay::log_event::kCert,
                   ctx.host,
                   ctx.port,
                   cert_log_sni(ctx),
@@ -242,7 +242,7 @@ boost::system::error_code send_client_hello_record(fetch_context& ctx, const std
     if (written != client_hello_record.size())
     {
         LOG_ERROR("{} target {}:{} sni {} fingerprint {} write ch short write {} of {}",
-                  mux::log_event::kCert,
+                  relay::log_event::kCert,
                   ctx.host,
                   ctx.port,
                   cert_log_sni(ctx),
@@ -261,7 +261,7 @@ bool validate_server_hello_body(fetch_context& ctx, const std::vector<uint8_t>& 
         return true;
     }
     LOG_ERROR("{} target {}:{} sni {} fingerprint {} server hello empty",
-              mux::log_event::kCert,
+              relay::log_event::kCert,
               ctx.host,
               ctx.port,
               cert_log_sni(ctx),
@@ -289,7 +289,7 @@ std::pair<boost::system::error_code, std::vector<uint8_t>> read_record_plaintext
         if (ec)
         {
             LOG_ERROR("{} target {}:{} sni {} fingerprint {} read header failed {}",
-                      mux::log_event::kCert,
+                      relay::log_event::kCert,
                       ctx.host,
                       ctx.port,
                       cert_log_sni(ctx),
@@ -300,7 +300,7 @@ std::pair<boost::system::error_code, std::vector<uint8_t>> read_record_plaintext
         if (header_size != sizeof(header))
         {
             LOG_ERROR("{} target {}:{} sni {} fingerprint {} short read header {} of {}",
-                      mux::log_event::kCert,
+                      relay::log_event::kCert,
                       ctx.host,
                       ctx.port,
                       cert_log_sni(ctx),
@@ -316,7 +316,7 @@ std::pair<boost::system::error_code, std::vector<uint8_t>> read_record_plaintext
         if (len_ec)
         {
             LOG_ERROR("{} target {}:{} sni {} fingerprint {} plaintext record too large {}",
-                      mux::log_event::kCert,
+                      relay::log_event::kCert,
                       ctx.host,
                       ctx.port,
                       cert_log_sni(ctx),
@@ -331,7 +331,7 @@ std::pair<boost::system::error_code, std::vector<uint8_t>> read_record_plaintext
         if (body_ec)
         {
             LOG_ERROR("{} target {}:{} sni {} fingerprint {} read body failed {}",
-                      mux::log_event::kCert,
+                      relay::log_event::kCert,
                       ctx.host,
                       ctx.port,
                       cert_log_sni(ctx),
@@ -342,7 +342,7 @@ std::pair<boost::system::error_code, std::vector<uint8_t>> read_record_plaintext
         if (body_size != body.size())
         {
             LOG_ERROR("{} target {}:{} sni {} fingerprint {} short read body {} of {}",
-                      mux::log_event::kCert,
+                      relay::log_event::kCert,
                       ctx.host,
                       ctx.port,
                       cert_log_sni(ctx),
@@ -357,7 +357,7 @@ std::pair<boost::system::error_code, std::vector<uint8_t>> read_record_plaintext
             if (len != 1 || body[0] != 0x01)
             {
                 LOG_ERROR("{} target {}:{} sni {} fingerprint {} invalid tls13 compat ccs len {}",
-                          mux::log_event::kCert,
+                          relay::log_event::kCert,
                           ctx.host,
                           ctx.port,
                           cert_log_sni(ctx),
@@ -368,7 +368,7 @@ std::pair<boost::system::error_code, std::vector<uint8_t>> read_record_plaintext
             if (ccs_count >= constants::tls_limits::kMaxCompatCcsRecords)
             {
                 LOG_ERROR("{} target {}:{} sni {} fingerprint {} too many tls13 compat ccs before server hello {}",
-                          mux::log_event::kCert,
+                          relay::log_event::kCert,
                           ctx.host,
                           ctx.port,
                           cert_log_sni(ctx),
@@ -380,7 +380,7 @@ std::pair<boost::system::error_code, std::vector<uint8_t>> read_record_plaintext
             ++ccs_count;
             ctx.material.sends_change_cipher_spec = true;
             LOG_DEBUG("{} target {}:{} sni {} fingerprint {} skip tls13 compat ccs before server hello count {}",
-                      mux::log_event::kCert,
+                      relay::log_event::kCert,
                       ctx.host,
                       ctx.port,
                       cert_log_sni(ctx),
@@ -392,7 +392,7 @@ std::pair<boost::system::error_code, std::vector<uint8_t>> read_record_plaintext
         if (header[0] != tls::kContentTypeHandshake)
         {
             LOG_ERROR("{} target {}:{} sni {} fingerprint {} expected handshake type {}",
-                      mux::log_event::kCert,
+                      relay::log_event::kCert,
                       ctx.host,
                       ctx.port,
                       cert_log_sni(ctx),
@@ -411,7 +411,7 @@ boost::system::error_code process_server_hello(fetch_context& ctx, const std::ve
     if (!tls::extract_handshake_message(server_hello_body, server_hello))
     {
         LOG_ERROR("{} target {}:{} sni {} fingerprint {} server hello too short {}",
-                  mux::log_event::kCert,
+                  relay::log_event::kCert,
                   ctx.host,
                   ctx.port,
                   cert_log_sni(ctx),
@@ -439,7 +439,7 @@ boost::system::error_code process_server_hello(fetch_context& ctx, const std::ve
     else
     {
         LOG_WARN("{} target {}:{} sni {} fingerprint {} parse server hello extensions failed",
-                 mux::log_event::kCert,
+                 relay::log_event::kCert,
                  ctx.host,
                  ctx.port,
                  cert_log_sni(ctx),
@@ -456,7 +456,7 @@ boost::system::error_code process_server_hello(fetch_context& ctx, const std::ve
     if (!suite.has_value())
     {
         LOG_ERROR("{} target {}:{} sni {} fingerprint {} unsupported cipher suite 0x{:04x}",
-                  mux::log_event::kCert,
+                  relay::log_event::kCert,
                   ctx.host,
                   ctx.port,
                   cert_log_sni(ctx),
@@ -465,7 +465,7 @@ boost::system::error_code process_server_hello(fetch_context& ctx, const std::ve
         return boost::asio::error::no_protocol_option;
     }
     LOG_INFO("{} target {}:{} sni {} fingerprint {} selected tls13 cipher suite 0x{:04x}",
-             mux::log_event::kCert,
+             relay::log_event::kCert,
              ctx.host,
              ctx.port,
              cert_log_sni(ctx),
@@ -491,7 +491,7 @@ boost::system::error_code perform_handshake_start(fetch_context& ctx)
     if (client_hello.empty())
     {
         LOG_ERROR("{} target {}:{} sni {} fingerprint {} invalid client hello",
-                  mux::log_event::kCert,
+                  relay::log_event::kCert,
                   ctx.host,
                   ctx.port,
                   cert_log_sni(ctx),
@@ -534,7 +534,7 @@ void read_record_body(fetch_context& ctx, uint16_t len, std::vector<uint8_t>& re
     if (body_size != len)
     {
         LOG_ERROR("{} target {}:{} sni {} fingerprint {} short read record body {} of {}",
-                  mux::log_event::kCert,
+                  relay::log_event::kCert,
                   ctx.host,
                   ctx.port,
                   cert_log_sni(ctx),
@@ -578,7 +578,7 @@ std::pair<uint8_t, std::span<uint8_t>> handle_record_by_content_type(fetch_conte
 
         case tls::kContentTypeAlert:
             LOG_WARN("{} target {}:{} sni {} fingerprint {} received plaintext alert",
-                     mux::log_event::kCert,
+                     relay::log_event::kCert,
                      ctx.host,
                      ctx.port,
                      cert_log_sni(ctx),
@@ -603,7 +603,7 @@ std::pair<uint8_t, std::span<uint8_t>> read_record(fetch_context& ctx, std::vect
     if (header_size != sizeof(header))
     {
         LOG_ERROR("{} target {}:{} sni {} fingerprint {} short read record header {} of {}",
-                  mux::log_event::kCert,
+                  relay::log_event::kCert,
                   ctx.host,
                   ctx.port,
                   cert_log_sni(ctx),
@@ -636,7 +636,7 @@ bool process_handshake_message(fetch_context& ctx, const std::vector<uint8_t>& m
     const uint32_t message_len =
         (static_cast<uint32_t>(message[1]) << 16) | (static_cast<uint32_t>(message[2]) << 8) | static_cast<uint32_t>(message[3]);
     LOG_INFO("{} target {}:{} sni {} fingerprint {} found handshake 0x{:02x} len {}",
-             mux::log_event::kCert,
+             relay::log_event::kCert,
              ctx.host,
              ctx.port,
              cert_log_sni(ctx),
@@ -649,7 +649,7 @@ bool process_handshake_message(fetch_context& ctx, const std::vector<uint8_t>& m
         if (auto alpn = tls::extract_alpn_from_encrypted_extensions(message); alpn)
         {
             LOG_INFO("{} target {}:{} sni {} fingerprint {} learned alpn {}",
-                     mux::log_event::kCert,
+                     relay::log_event::kCert,
                      ctx.host,
                      ctx.port,
                      cert_log_sni(ctx),
@@ -666,7 +666,7 @@ bool process_handshake_message(fetch_context& ctx, const std::vector<uint8_t>& m
         else
         {
             LOG_WARN("{} target {}:{} sni {} fingerprint {} parse encrypted extensions layout failed",
-                     mux::log_event::kCert,
+                     relay::log_event::kCert,
                      ctx.host,
                      ctx.port,
                      cert_log_sni(ctx),
@@ -676,7 +676,7 @@ bool process_handshake_message(fetch_context& ctx, const std::vector<uint8_t>& m
     else if (message_type == 0x0b)
     {
         LOG_INFO("{} target {}:{} sni {} fingerprint {} found certificate len {}",
-                 mux::log_event::kCert,
+                 relay::log_event::kCert,
                  ctx.host,
                  ctx.port,
                  cert_log_sni(ctx),
@@ -686,7 +686,7 @@ bool process_handshake_message(fetch_context& ctx, const std::vector<uint8_t>& m
         if (!tls::parse_certificate_chain(message, ctx.material.certificate_chain))
         {
             LOG_ERROR("{} target {}:{} sni {} fingerprint {} parse certificate chain failed",
-                      mux::log_event::kCert,
+                      relay::log_event::kCert,
                       ctx.host,
                       ctx.port,
                       cert_log_sni(ctx),
@@ -702,7 +702,7 @@ bool process_handshake_message(fetch_context& ctx, const std::vector<uint8_t>& m
         if (!tls::decompress_certificate_message(message, constants::tls_limits::kMaxHandshakeMessageSize, certificate_message, ec))
         {
             LOG_ERROR("{} target {}:{} sni {} fingerprint {} decompress certificate failed {}",
-                      mux::log_event::kCert,
+                      relay::log_event::kCert,
                       ctx.host,
                       ctx.port,
                       cert_log_sni(ctx),
@@ -711,7 +711,7 @@ bool process_handshake_message(fetch_context& ctx, const std::vector<uint8_t>& m
             return false;
         }
         LOG_INFO("{} target {}:{} sni {} fingerprint {} found compressed certificate len {} decompressed_len {}",
-                 mux::log_event::kCert,
+                 relay::log_event::kCert,
                  ctx.host,
                  ctx.port,
                  cert_log_sni(ctx),
@@ -722,7 +722,7 @@ bool process_handshake_message(fetch_context& ctx, const std::vector<uint8_t>& m
         if (!tls::parse_certificate_chain(ctx.material.certificate_message, ctx.material.certificate_chain))
         {
             LOG_ERROR("{} target {}:{} sni {} fingerprint {} parse decompressed certificate chain failed",
-                      mux::log_event::kCert,
+                      relay::log_event::kCert,
                       ctx.host,
                       ctx.port,
                       cert_log_sni(ctx),
@@ -734,7 +734,7 @@ bool process_handshake_message(fetch_context& ctx, const std::vector<uint8_t>& m
     else if (message_type == 0x14)
     {
         LOG_INFO("{} target {}:{} sni {} fingerprint {} observed server finished",
-                 mux::log_event::kCert,
+                 relay::log_event::kCert,
                  ctx.host,
                  ctx.port,
                  cert_log_sni(ctx),
@@ -780,7 +780,7 @@ void append_next_handshake_record(fetch_context& ctx,
     if (ec)
     {
         LOG_ERROR("{} target {}:{} sni {} fingerprint {} read record {} failed {}",
-                  mux::log_event::kCert,
+                  relay::log_event::kCert,
                   ctx.host,
                   ctx.port,
                   cert_log_sni(ctx),
@@ -820,7 +820,7 @@ bool collect_site_material(fetch_context& ctx)
         if (ec)
         {
             LOG_ERROR("{} target {}:{} sni {} fingerprint {} append record failed {}",
-                      mux::log_event::kCert,
+                      relay::log_event::kCert,
                       ctx.host,
                       ctx.port,
                       cert_log_sni(ctx),
@@ -836,7 +836,7 @@ bool collect_site_material(fetch_context& ctx)
         if (ec)
         {
             LOG_ERROR("{} target {}:{} sni {} fingerprint {} consume failed {}",
-                      mux::log_event::kCert,
+                      relay::log_event::kCert,
                       ctx.host,
                       ctx.port,
                       cert_log_sni(ctx),
@@ -849,7 +849,7 @@ bool collect_site_material(fetch_context& ctx)
     if (ctx.saw_certificate)
     {
         LOG_WARN("{} target {}:{} sni {} fingerprint {} server finished not observed before fetch stopped",
-                 mux::log_event::kCert,
+                 relay::log_event::kCert,
                  ctx.host,
                  ctx.port,
                  cert_log_sni(ctx),
@@ -858,7 +858,7 @@ bool collect_site_material(fetch_context& ctx)
     else
     {
         LOG_WARN("{} target {}:{} sni {} fingerprint {} certificate not found",
-                 mux::log_event::kCert,
+                 relay::log_event::kCert,
                  ctx.host,
                  ctx.port,
                  cert_log_sni(ctx),
@@ -876,7 +876,7 @@ site_material fetch_once(std::string host, uint16_t port, std::string sni, const
     ctx.fingerprint = fingerprint;
 
     LOG_INFO("{} target {}:{} sni {} fingerprint {} starting fetch",
-             mux::log_event::kCert,
+             relay::log_event::kCert,
              ctx.host,
              ctx.port,
              cert_log_sni(ctx),

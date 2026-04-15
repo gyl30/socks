@@ -23,7 +23,7 @@
 #include "reality/handshake/fingerprint.h"
 #include "reality/handshake/client_handshaker.h"
 
-namespace mux
+namespace relay
 {
 
 namespace
@@ -533,4 +533,4 @@ void proxy_reality_connection::close(boost::system::error_code& ec)
     }
 }
 
-}    // namespace mux
+}    // namespace relay

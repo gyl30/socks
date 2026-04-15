@@ -5,7 +5,7 @@
 #include <cstdint>
 #include <optional>
 
-namespace mux
+namespace relay
 {
 
 struct config
@@ -85,6 +85,6 @@ struct config
 [[nodiscard]] std::string dump_config(const config& cfg);
 [[nodiscard]] std::string dump_default_config();
 
-}    // namespace mux
+}    // namespace relay
 
 #endif

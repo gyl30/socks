@@ -22,10 +22,10 @@ class server_handshaker
    public:
     struct dependencies
     {
-        const mux::config& cfg;
+        const relay::config& cfg;
         const std::vector<uint8_t>& private_key;
         const std::vector<uint8_t>& short_id_bytes;
-        mux::replay_cache& replay_cache;
+        relay::replay_cache& replay_cache;
         const site_material* site_material_ptr = nullptr;
         const std::array<uint8_t, 32>& reality_cert_private_key;
         const std::vector<uint8_t>& reality_cert_public_key;
@@ -37,10 +37,10 @@ class server_handshaker
     [[nodiscard]] boost::asio::awaitable<server_accept_result> accept(server_handshake_context& handshake_ctx, boost::system::error_code& ec) const;
 
    private:
-    const mux::config& cfg_;
+    const relay::config& cfg_;
     const std::vector<uint8_t>& private_key_;
     const std::vector<uint8_t>& short_id_bytes_;
-    mux::replay_cache& replay_cache_;
+    relay::replay_cache& replay_cache_;
     const site_material* site_material_ = nullptr;
     const std::array<uint8_t, 32>& reality_cert_private_key_;
     const std::vector<uint8_t>& reality_cert_public_key_;

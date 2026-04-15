@@ -1296,7 +1296,7 @@ void verify_tls13_signature(EVP_PKEY* pub_key,
     if (pub_key == nullptr || signature.empty())
     {
         LOG_ERROR("{} stage verify_tls13_signature pub_key_null {} signature_len {} invalid_input",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   pub_key == nullptr,
                   signature.size());
         ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
@@ -1304,7 +1304,7 @@ void verify_tls13_signature(EVP_PKEY* pub_key,
     }
     if (!tls13_signature_scheme_matches_key(signature_scheme, pub_key))
     {
-        LOG_ERROR("{} stage verify_tls13_signature scheme 0x{:04x} error key_mismatch", mux::log_event::kHandshake, signature_scheme);
+        LOG_ERROR("{} stage verify_tls13_signature scheme 0x{:04x} error key_mismatch", relay::log_event::kHandshake, signature_scheme);
         ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
         return;
     }
@@ -1312,7 +1312,7 @@ void verify_tls13_signature(EVP_PKEY* pub_key,
     if (ec)
     {
         LOG_ERROR("{} stage verify_tls13_signature scheme 0x{:04x} error digest_unavailable {}",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   signature_scheme,
                   ec.message());
         return;
@@ -1330,7 +1330,7 @@ void verify_tls13_signature(EVP_PKEY* pub_key,
     const openssl_ptrs::evp_md_ctx_ptr mctx(EVP_MD_CTX_new());
     if (mctx == nullptr)
     {
-        LOG_ERROR("{} stage verify_tls13_signature scheme 0x{:04x} error no_memory", mux::log_event::kHandshake, signature_scheme);
+        LOG_ERROR("{} stage verify_tls13_signature scheme 0x{:04x} error no_memory", relay::log_event::kHandshake, signature_scheme);
         ec = boost::system::errc::make_error_code(boost::system::errc::not_enough_memory);
         return;
     }
@@ -1338,7 +1338,7 @@ void verify_tls13_signature(EVP_PKEY* pub_key,
     EVP_PKEY_CTX* pctx = nullptr;
     if (EVP_DigestVerifyInit(mctx.get(), &pctx, md, nullptr, pub_key) <= 0)
     {
-        LOG_ERROR("{} stage verify_tls13_signature scheme 0x{:04x} error verify_init_failed", mux::log_event::kHandshake, signature_scheme);
+        LOG_ERROR("{} stage verify_tls13_signature scheme 0x{:04x} error verify_init_failed", relay::log_event::kHandshake, signature_scheme);
         ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
         return;
     }
@@ -1346,20 +1346,20 @@ void verify_tls13_signature(EVP_PKEY* pub_key,
     {
         if (pctx == nullptr)
         {
-            LOG_ERROR("{} stage verify_tls13_signature scheme 0x{:04x} error missing_pkey_ctx", mux::log_event::kHandshake, signature_scheme);
+            LOG_ERROR("{} stage verify_tls13_signature scheme 0x{:04x} error missing_pkey_ctx", relay::log_event::kHandshake, signature_scheme);
             ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
             return;
         }
         if (EVP_PKEY_CTX_set_rsa_padding(pctx, RSA_PKCS1_PSS_PADDING) <= 0)
         {
-            LOG_ERROR("{} stage verify_tls13_signature scheme 0x{:04x} error set_rsa_padding_failed", mux::log_event::kHandshake, signature_scheme);
+            LOG_ERROR("{} stage verify_tls13_signature scheme 0x{:04x} error set_rsa_padding_failed", relay::log_event::kHandshake, signature_scheme);
             ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
             return;
         }
         if (EVP_PKEY_CTX_set_rsa_pss_saltlen(pctx, RSA_PSS_SALTLEN_DIGEST) <= 0)
         {
             LOG_ERROR(
-                "{} stage verify_tls13_signature scheme 0x{:04x} error set_rsa_pss_saltlen_failed", mux::log_event::kHandshake, signature_scheme);
+                "{} stage verify_tls13_signature scheme 0x{:04x} error set_rsa_pss_saltlen_failed", relay::log_event::kHandshake, signature_scheme);
             ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
             return;
         }
@@ -1370,7 +1370,7 @@ void verify_tls13_signature(EVP_PKEY* pub_key,
     if (res != 1)
     {
         LOG_ERROR("{} stage verify_tls13_signature scheme 0x{:04x} signature_len {} transcript_hash_len {} result {}",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   signature_scheme,
                   signature.size(),
                   transcript_hash.size(),

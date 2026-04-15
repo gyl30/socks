@@ -12,7 +12,7 @@
 #include "router.h"
 #include "context_pool.h"
 
-namespace mux
+namespace relay
 {
 
 enum class socks_client_state : uint8_t
@@ -39,11 +39,11 @@ class socks_client : public std::enable_shared_from_this<socks_client>
     io_context_pool& pool_;
     io_worker& owner_worker_;
     boost::asio::ip::tcp::acceptor acceptor_{owner_worker_.io_context};
-    std::shared_ptr<mux::router> router_;
+    std::shared_ptr<relay::router> router_;
     std::atomic<uint32_t> next_session_id_{1};
     std::atomic<bool> stopping_{false};
 };
 
-}    // namespace mux
+}    // namespace relay
 
 #endif

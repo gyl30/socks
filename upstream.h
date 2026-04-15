@@ -11,7 +11,7 @@
 
 #include "config.h"
 
-namespace mux
+namespace relay
 {
 
 struct upstream_connect_result
@@ -45,6 +45,6 @@ class upstream
                                                             uint64_t trace_id,
                                                             const config& cfg);
 
-}    // namespace mux
+}    // namespace relay
 
 #endif

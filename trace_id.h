@@ -13,7 +13,7 @@ extern "C"
 }
 #endif
 
-namespace mux
+namespace relay
 {
 
 [[nodiscard]] inline uint64_t generate_trace_id()
@@ -31,6 +31,6 @@ namespace mux
     return trace_id;
 }
 
-}    // namespace mux
+}    // namespace relay
 
 #endif

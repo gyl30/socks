@@ -14,7 +14,7 @@
 #include "tls/cipher_context.h"
 #include "reality/session/session.h"
 
-namespace mux
+namespace relay
 {
 
 struct tls_record
@@ -56,6 +56,6 @@ class reality_engine
     std::array<uint8_t, kMaxBufSize> scratch_buf_{};
 };
 
-}    // namespace mux
+}    // namespace relay
 
 #endif

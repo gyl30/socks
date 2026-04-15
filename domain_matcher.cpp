@@ -9,7 +9,7 @@
 #include "domain_matcher.h"
 #include "rule_file_utils.h"
 
-namespace mux
+namespace relay
 {
 
 namespace
@@ -86,4 +86,4 @@ bool domain_matcher::match(std::string domain) const
     return false;
 }
 
-}    // namespace mux
+}    // namespace relay

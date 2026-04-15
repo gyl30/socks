@@ -17,7 +17,7 @@
 #include "proxy_udp_upstream.h"
 #include "proxy_reality_connection.h"
 
-namespace mux
+namespace relay
 {
 
 namespace
@@ -194,4 +194,4 @@ boost::asio::awaitable<proxy::udp_datagram> proxy_udp_upstream::receive_datagram
     co_return datagram;
 }
 
-}    // namespace mux
+}    // namespace relay

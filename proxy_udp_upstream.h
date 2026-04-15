@@ -14,7 +14,7 @@
 #include "proxy_protocol.h"
 #include "proxy_reality_connection.h"
 
-namespace mux
+namespace relay
 {
 
 struct proxy_udp_connect_result
@@ -55,6 +55,6 @@ class proxy_udp_upstream : public std::enable_shared_from_this<proxy_udp_upstrea
     std::shared_ptr<proxy_reality_connection> connection_;
 };
 
-}    // namespace mux
+}    // namespace relay
 
 #endif

@@ -23,7 +23,7 @@ extern "C"
 }
 #include <boost/asio/ip/udp.hpp>
 #include <boost/asio/ip/address.hpp>
-namespace mux::tun
+namespace relay::tun
 {
 
 [[nodiscard]] boost::asio::ip::address lwip_to_address(const ip_addr_t& addr);
@@ -40,6 +40,6 @@ namespace mux::tun
 
 [[nodiscard]] std::string lwip_error_message(err_t err);
 
-}    // namespace mux::tun
+}    // namespace relay::tun
 
 #endif

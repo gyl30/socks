@@ -9,7 +9,7 @@
 #include <cstdint>
 #include <unordered_set>
 
-namespace mux
+namespace relay
 {
 
 class replay_cache
@@ -32,6 +32,6 @@ class replay_cache
     std::unordered_set<std::string> previous_;
 };
 
-}    // namespace mux
+}    // namespace relay
 
 #endif

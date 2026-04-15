@@ -18,7 +18,7 @@ namespace reality
 class fallback_executor
 {
    public:
-    explicit fallback_executor(boost::asio::io_context& io_context, const mux::config& cfg);
+    explicit fallback_executor(boost::asio::io_context& io_context, const relay::config& cfg);
 
     [[nodiscard]] boost::asio::awaitable<void> run(
         fallback_request& request, const std::string& host, uint16_t port, const char* reason, boost::system::error_code& ec) const;
@@ -47,7 +47,7 @@ class fallback_executor
                                                                    const fallback_request& request) const;
 
     boost::asio::io_context& io_context_;
-    const mux::config& cfg_;
+    const relay::config& cfg_;
 };
 
 }    // namespace reality

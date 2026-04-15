@@ -222,7 +222,7 @@ void append_ipv6_address(std::vector<uint8_t>& out, const boost::asio::ip::addre
     return read_u16(data, len, pos, port);
 }
 
-[[nodiscard]] bool has_message_type(const uint8_t* data, std::size_t len, mux::proxy::message_type expected, std::size_t& pos)
+[[nodiscard]] bool has_message_type(const uint8_t* data, std::size_t len, relay::proxy::message_type expected, std::size_t& pos)
 {
     pos = 0;
     uint8_t raw_type = 0;
@@ -235,7 +235,7 @@ void append_ipv6_address(std::vector<uint8_t>& out, const boost::asio::ip::addre
 
 }    // namespace
 
-namespace mux::proxy
+namespace relay::proxy
 {
 
 std::string_view message_name(const message_type type)
@@ -394,4 +394,4 @@ bool decode_udp_datagram(const uint8_t* data, const std::size_t len, udp_datagra
     return true;
 }
 
-}    // namespace mux::proxy
+}    // namespace relay::proxy

@@ -20,7 +20,7 @@ namespace reality
 class client_handshaker
 {
    public:
-    client_handshaker(const mux::config& cfg,
+    client_handshaker(const relay::config& cfg,
                       std::string_view sni,
                       const std::vector<uint8_t>& server_public_key,
                       const std::vector<uint8_t>& short_id_bytes,
@@ -32,7 +32,7 @@ class client_handshaker
                                                                       boost::system::error_code& ec) const;
 
    private:
-    const mux::config& cfg_;
+    const relay::config& cfg_;
     std::string sni_;
     std::vector<uint8_t> server_public_key_;
     std::vector<uint8_t> short_id_bytes_;

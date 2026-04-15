@@ -15,7 +15,7 @@
 #include "upstream.h"
 #include "constants.h"
 
-namespace mux
+namespace relay
 {
 
 class tcp_socks_session : public std::enable_shared_from_this<tcp_socks_session>
@@ -65,6 +65,6 @@ class tcp_socks_session : public std::enable_shared_from_this<tcp_socks_session>
     std::shared_ptr<router> router_;
 };
 
-}    // namespace mux
+}    // namespace relay
 
 #endif

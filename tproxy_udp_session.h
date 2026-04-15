@@ -18,7 +18,7 @@
 #include "context_pool.h"
 #include "proxy_udp_upstream.h"
 
-namespace mux
+namespace relay
 {
 
 enum class udp_enqueue_result : uint8_t
@@ -86,6 +86,6 @@ class tproxy_udp_session : public std::enable_shared_from_this<tproxy_udp_sessio
     lru_cache<std::string, std::shared_ptr<boost::asio::ip::udp::socket>> reply_sockets_;
 };
 
-}    // namespace mux
+}    // namespace relay
 
 #endif

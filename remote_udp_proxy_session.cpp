@@ -21,7 +21,7 @@
 #include "proxy_protocol.h"
 #include "remote_udp_proxy_session.h"
 
-namespace mux
+namespace relay
 {
 
 remote_udp_proxy_session::remote_udp_proxy_session(boost::asio::io_context& io_context,
@@ -381,4 +381,4 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> remote_udp_proxy_session:
     co_return endpoint;
 }
 
-}    // namespace mux
+}    // namespace relay

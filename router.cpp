@@ -14,7 +14,7 @@
 #include "ip_matcher.h"
 #include "domain_matcher.h"
 
-namespace mux
+namespace relay
 {
 
 std::string to_string(const route_type& t)
@@ -147,4 +147,4 @@ boost::asio::awaitable<route_type> router::decide_domain(const std::string& host
     co_return route_type::kDirect;
 }
 
-}    // namespace mux
+}    // namespace relay

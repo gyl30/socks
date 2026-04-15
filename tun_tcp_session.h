@@ -16,7 +16,7 @@
 #include "tun_lwip.h"
 #include "upstream.h"
 
-namespace mux
+namespace relay
 {
 
 class tun_tcp_session : public std::enable_shared_from_this<tun_tcp_session>
@@ -77,6 +77,6 @@ class tun_tcp_session : public std::enable_shared_from_this<tun_tcp_session>
     bool stopped_ = false;
 };
 
-}    // namespace mux
+}    // namespace relay
 
 #endif

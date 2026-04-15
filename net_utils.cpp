@@ -46,7 +46,7 @@
 #include "constants.h"
 #include "log.h"
 #include "net_utils.h"
-namespace mux::net
+namespace relay::net
 {
 
 namespace
@@ -550,4 +550,4 @@ bool get_original_tcp_dst(boost::asio::ip::tcp::socket& socket, boost::asio::ip:
 #endif
 }
 
-}    // namespace mux::net
+}    // namespace relay::net

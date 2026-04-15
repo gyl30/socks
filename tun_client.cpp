@@ -24,7 +24,7 @@
 #include "constants.h"
 #include "net_utils.h"
 #include "tun_client.h"
-namespace mux
+namespace relay
 {
 
 tun_client::tun_client(io_context_pool& pool, const config& cfg) : cfg_(cfg), owner_worker_(pool.get_io_worker()), router_(std::make_shared<router>())
@@ -490,4 +490,4 @@ void tun_client::udp_recv_handler(void* arg, udp_pcb* pcb, pbuf* packet, const i
     self->on_udp_accept(pcb, packet, addr, port);
 }
 
-}    // namespace mux
+}    // namespace relay

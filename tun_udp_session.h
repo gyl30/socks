@@ -20,7 +20,7 @@
 #include "context_pool.h"
 #include "proxy_udp_upstream.h"
 
-namespace mux
+namespace relay
 {
 
 class tun_udp_session : public std::enable_shared_from_this<tun_udp_session>
@@ -83,6 +83,6 @@ class tun_udp_session : public std::enable_shared_from_this<tun_udp_session>
     packet_channel_type packet_channel_;
 };
 
-}    // namespace mux
+}    // namespace relay
 
 #endif

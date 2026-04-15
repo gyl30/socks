@@ -19,7 +19,7 @@
 #include "proxy_protocol.h"
 #include "remote_tcp_proxy_session.h"
 
-namespace mux
+namespace relay
 {
 
 remote_tcp_proxy_session::remote_tcp_proxy_session(boost::asio::io_context& io_context,
@@ -378,4 +378,4 @@ void remote_tcp_proxy_session::log_close_summary() const
              duration_ms);
 }
 
-}    // namespace mux
+}    // namespace relay
