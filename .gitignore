@@ -30,5 +30,6 @@ Testing/
 .tasks
 __pycache__/
 *.pyc
+.tmp-*/
 all
 1
