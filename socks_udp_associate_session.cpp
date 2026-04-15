@@ -22,7 +22,7 @@
 #include "constants.h"
 #include "net_utils.h"
 #include "context_pool.h"
-#include "udp_socks_session.h"
+#include "socks_udp_associate_session.h"
 
 namespace relay
 {
@@ -238,12 +238,12 @@ void bind_local_udp_address(const boost::asio::ip::tcp::socket& tcp_socket,
 
 }    // namespace
 
-udp_socks_session::udp_socks_session(boost::asio::ip::tcp::socket socket,
-                                     io_worker& worker,
-                                     std::shared_ptr<router> router,
-                                     const uint32_t sid,
-                                     const uint64_t trace_id,
-                                     const config& cfg)
+socks_udp_associate_session::socks_udp_associate_session(boost::asio::ip::tcp::socket socket,
+                                                         io_worker& worker,
+                                                         std::shared_ptr<router> router,
+                                                         const uint32_t sid,
+                                                         const uint64_t trace_id,
+                                                         const config& cfg)
     : trace_id_(trace_id),
       conn_id_(sid),
       cfg_(cfg),
@@ -262,12 +262,12 @@ udp_socks_session::udp_socks_session(boost::asio::ip::tcp::socket socket,
     last_activity_time_ms_ = net::now_ms();
 }
 
-void udp_socks_session::start(const std::string& host, const uint16_t port)
+void socks_udp_associate_session::start(const std::string& host, const uint16_t port)
 {
     worker_.group.spawn([self = shared_from_this(), host, port]() -> boost::asio::awaitable<void> { co_await self->run(host, port); });
 }
 
-void udp_socks_session::close_impl()
+void socks_udp_associate_session::close_impl()
 {
     if (stopped_)
     {
@@ -332,7 +332,7 @@ void udp_socks_session::close_impl()
     }
 }
 
-boost::asio::awaitable<void> udp_socks_session::run(const std::string& host, const uint16_t port)
+boost::asio::awaitable<void> socks_udp_associate_session::run(const std::string& host, const uint16_t port)
 {
     apply_request_peer_constraint(host, port);
 
@@ -430,7 +430,7 @@ boost::asio::awaitable<void> udp_socks_session::run(const std::string& host, con
              duration_ms);
 }
 
-void udp_socks_session::apply_request_peer_constraint(const std::string& host, const uint16_t port) const
+void socks_udp_associate_session::apply_request_peer_constraint(const std::string& host, const uint16_t port) const
 {
     if (!host.empty() || port != 0)
     {
@@ -465,7 +465,7 @@ void udp_socks_session::apply_request_peer_constraint(const std::string& host, c
     }
 }
 
-std::string udp_socks_session::current_client_host() const
+std::string socks_udp_associate_session::current_client_host() const
 {
     if (has_client_addr_)
     {
@@ -478,7 +478,7 @@ std::string udp_socks_session::current_client_host() const
     return tcp_peer_host_;
 }
 
-uint16_t udp_socks_session::current_client_port() const
+uint16_t socks_udp_associate_session::current_client_port() const
 {
     if (has_client_addr_)
     {
@@ -487,7 +487,7 @@ uint16_t udp_socks_session::current_client_port() const
     return tcp_peer_port_;
 }
 
-void udp_socks_session::open_direct_udp_socket(boost::asio::ip::udp::socket& direct_socket,
+void socks_udp_associate_session::open_direct_udp_socket(boost::asio::ip::udp::socket& direct_socket,
                                                const boost::asio::ip::udp& protocol,
                                                const char* family,
                                                boost::system::error_code& ec) const
@@ -549,7 +549,7 @@ void udp_socks_session::open_direct_udp_socket(boost::asio::ip::udp::socket& dir
     }
 }
 
-boost::asio::ip::udp::socket* udp_socks_session::select_direct_udp_socket(const boost::asio::ip::udp::endpoint& target)
+boost::asio::ip::udp::socket* socks_udp_associate_session::select_direct_udp_socket(const boost::asio::ip::udp::endpoint& target)
 {
     if (target.address().is_v6())
     {
@@ -584,7 +584,7 @@ boost::asio::ip::udp::socket* udp_socks_session::select_direct_udp_socket(const 
     return &direct_udp_socket_v4_;
 }
 
-boost::asio::awaitable<route_decision> udp_socks_session::decide_udp_route(const socks_udp_header& header) const
+boost::asio::awaitable<route_decision> socks_udp_associate_session::decide_udp_route(const socks_udp_header& header) const
 {
     if (router_ == nullptr)
     {
@@ -603,7 +603,7 @@ boost::asio::awaitable<route_decision> udp_socks_session::decide_udp_route(const
     co_return co_await router_->decide_ip_detail(socks_codec::normalize_ip_address(addr));
 }
 
-boost::asio::awaitable<boost::asio::ip::udp::endpoint> udp_socks_session::resolve_target_endpoint(const std::string& host,
+boost::asio::awaitable<boost::asio::ip::udp::endpoint> socks_udp_associate_session::resolve_target_endpoint(const std::string& host,
                                                                                                   const uint16_t port,
                                                                                                   boost::system::error_code& ec)
 {
@@ -717,7 +717,7 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> udp_socks_session::resolv
     co_return target;
 }
 
-boost::asio::awaitable<void> udp_socks_session::forward_direct_packet(const socks_udp_header& header,
+boost::asio::awaitable<void> socks_udp_associate_session::forward_direct_packet(const socks_udp_header& header,
                                                                       const uint8_t* payload,
                                                                       const std::size_t payload_len,
                                                                       boost::system::error_code& ec)
@@ -783,7 +783,7 @@ boost::asio::awaitable<void> udp_socks_session::forward_direct_packet(const sock
     last_activity_time_ms_ = now_ms_value;
 }
 
-boost::asio::awaitable<void> udp_socks_session::direct_udp_socket_loop(boost::asio::ip::udp::socket& direct_socket)
+boost::asio::awaitable<void> socks_udp_associate_session::direct_udp_socket_loop(boost::asio::ip::udp::socket& direct_socket)
 {
     std::vector<uint8_t> buf(65535);
     boost::asio::ip::udp::endpoint sender;
@@ -847,7 +847,7 @@ boost::asio::awaitable<void> udp_socks_session::direct_udp_socket_loop(boost::as
     }
 }
 
-void udp_socks_session::start_direct_udp_socket_loops()
+void socks_udp_associate_session::start_direct_udp_socket_loops()
 {
     const auto self = shared_from_this();
     if (direct_udp_socket_v4_.is_open())
@@ -878,7 +878,7 @@ void udp_socks_session::start_direct_udp_socket_loops()
     }
 }
 
-boost::asio::awaitable<void> udp_socks_session::forward_direct_reply_to_client(const boost::asio::ip::udp::endpoint& sender,
+boost::asio::awaitable<void> socks_udp_associate_session::forward_direct_reply_to_client(const boost::asio::ip::udp::endpoint& sender,
                                                                                const uint8_t* payload,
                                                                                const std::size_t payload_len,
                                                                                boost::system::error_code& ec)
@@ -934,7 +934,7 @@ boost::asio::awaitable<void> udp_socks_session::forward_direct_reply_to_client(c
     rx_bytes_ += packet_len;
 }
 
-boost::asio::awaitable<bool> udp_socks_session::ensure_proxy_outbound(boost::system::error_code& ec)
+boost::asio::awaitable<bool> socks_udp_associate_session::ensure_proxy_outbound(boost::system::error_code& ec)
 {
     if (proxy_outbound_ == nullptr)
     {
@@ -1005,7 +1005,7 @@ boost::asio::awaitable<bool> udp_socks_session::ensure_proxy_outbound(boost::sys
     co_return true;
 }
 
-void udp_socks_session::clear_proxy_outbound_if_current(const std::shared_ptr<udp_proxy_outbound>& outbound)
+void socks_udp_associate_session::clear_proxy_outbound_if_current(const std::shared_ptr<udp_proxy_outbound>& outbound)
 {
     if (outbound == nullptr || proxy_outbound_ != outbound)
     {
@@ -1016,7 +1016,7 @@ void udp_socks_session::clear_proxy_outbound_if_current(const std::shared_ptr<ud
     proxy_outbound_started_ = false;
 }
 
-boost::asio::awaitable<void> udp_socks_session::udp_socket_loop()
+boost::asio::awaitable<void> socks_udp_associate_session::udp_socket_loop()
 {
     std::vector<uint8_t> buf(65535);
     boost::asio::ip::udp::endpoint sender;
@@ -1163,7 +1163,7 @@ boost::asio::awaitable<void> udp_socks_session::udp_socket_loop()
     }
 }
 
-boost::asio::awaitable<void> udp_socks_session::wait_and_proxy_to_udp_sock()
+boost::asio::awaitable<void> socks_udp_associate_session::wait_and_proxy_to_udp_sock()
 {
     while (true)
     {
@@ -1181,7 +1181,7 @@ boost::asio::awaitable<void> udp_socks_session::wait_and_proxy_to_udp_sock()
     }
 }
 
-boost::asio::awaitable<void> udp_socks_session::proxy_to_udp_sock(std::shared_ptr<udp_proxy_outbound> outbound)
+boost::asio::awaitable<void> socks_udp_associate_session::proxy_to_udp_sock(std::shared_ptr<udp_proxy_outbound> outbound)
 {
     const auto read_timeout = (cfg_.timeout.idle == 0) ? cfg_.timeout.read : std::max(cfg_.timeout.read, cfg_.timeout.idle + 2);
     boost::system::error_code ec;
@@ -1274,7 +1274,7 @@ boost::asio::awaitable<void> udp_socks_session::proxy_to_udp_sock(std::shared_pt
     }
 }
 
-boost::asio::awaitable<void> udp_socks_session::keep_tcp_alive()
+boost::asio::awaitable<void> socks_udp_associate_session::keep_tcp_alive()
 {
     std::array<char, constants::udp::kTcpControlReadBufferSize> buf{};
     std::size_t ignored_bytes = 0;
@@ -1336,7 +1336,7 @@ boost::asio::awaitable<void> udp_socks_session::keep_tcp_alive()
     }
 }
 
-boost::asio::awaitable<void> udp_socks_session::idle_watchdog()
+boost::asio::awaitable<void> socks_udp_associate_session::idle_watchdog()
 {
     if (cfg_.timeout.idle == 0)
     {

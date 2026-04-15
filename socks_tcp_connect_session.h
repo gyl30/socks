@@ -1,5 +1,5 @@
-#ifndef TCP_SOCKS_SESSION_H
-#define TCP_SOCKS_SESSION_H
+#ifndef SOCKS_TCP_CONNECT_SESSION_H
+#define SOCKS_TCP_CONNECT_SESSION_H
 
 #include <atomic>
 #include <chrono>
@@ -18,10 +18,10 @@
 namespace relay
 {
 
-class tcp_socks_session : public std::enable_shared_from_this<tcp_socks_session>
+class socks_tcp_connect_session : public std::enable_shared_from_this<socks_tcp_connect_session>
 {
    public:
-    tcp_socks_session(boost::asio::ip::tcp::socket socket, std::shared_ptr<router> router, uint32_t sid, uint64_t trace_id, const config& cfg);
+    socks_tcp_connect_session(boost::asio::ip::tcp::socket socket, std::shared_ptr<router> router, uint32_t sid, uint64_t trace_id, const config& cfg);
 
     [[nodiscard]] boost::asio::awaitable<void> start(const std::string& host, uint16_t port);
     void stop();

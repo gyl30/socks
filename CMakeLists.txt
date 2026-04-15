@@ -231,9 +231,9 @@ set(SOCKS_SOURCES
     reality_inbound.cpp
     socks_inbound.cpp
     router.cpp
-    socks_session.cpp
-    tcp_socks_session.cpp
-    udp_socks_session.cpp
+    socks_control_session.cpp
+    socks_tcp_connect_session.cpp
+    socks_udp_associate_session.cpp
     reality/handshake/client_hello_builder.cpp
     tls/cipher_suite.cpp
     tls/record_validation.cpp
