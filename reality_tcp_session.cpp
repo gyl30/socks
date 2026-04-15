@@ -13,6 +13,7 @@
 
 #include "log.h"
 #include "config.h"
+#include "outbound.h"
 #include "router.h"
 #include "upstream.h"
 #include "constants.h"
@@ -131,15 +132,16 @@ boost::asio::awaitable<void> reality_tcp_session::run(const proxy::tcp_connect_r
 
 std::shared_ptr<upstream> reality_tcp_session::create_backend(const route_type route, const std::string& outbound_tag) const
 {
-    if (route == route_type::kDirect)
+    if (route != route_type::kDirect && route != route_type::kProxy)
     {
-        return make_direct_upstream(executor_, conn_id_, trace_id_, cfg_);
+        return nullptr;
     }
-    if (route == route_type::kProxy)
+    const auto handler = make_outbound_handler(cfg_, outbound_tag);
+    if (handler == nullptr)
     {
-        return make_proxy_upstream(executor_, conn_id_, trace_id_, cfg_, outbound_tag);
+        return nullptr;
     }
-    return nullptr;
+    return handler->create_tcp_upstream(executor_, conn_id_, trace_id_, cfg_);
 }
 
 boost::asio::awaitable<upstream_connect_result> reality_tcp_session::connect_backend(const std::shared_ptr<upstream>& backend,

@@ -13,6 +13,7 @@
 #include <boost/asio/experimental/awaitable_operators.hpp>
 
 #include "log.h"
+#include "outbound.h"
 #include "trace_id.h"
 #include "constants.h"
 #include "net_utils.h"
@@ -182,15 +183,26 @@ boost::asio::awaitable<std::pair<route_decision, std::shared_ptr<upstream>>> tun
                  target_port_);
         co_return std::make_pair(decision, std::shared_ptr<upstream>(nullptr));
     }
-    if (decision.route == route_type::kDirect)
+    if (decision.route != route_type::kDirect && decision.route != route_type::kProxy)
     {
-        co_return std::make_pair(decision, make_direct_upstream(idle_timer_.get_executor(), conn_id_, trace_id_, cfg_));
+        co_return std::make_pair(route_decision{}, std::shared_ptr<upstream>(nullptr));
     }
-    if (decision.route == route_type::kProxy)
+    const auto handler = make_outbound_handler(cfg_, decision.outbound_tag);
+    if (handler == nullptr)
     {
-        co_return std::make_pair(decision, make_proxy_upstream(idle_timer_.get_executor(), conn_id_, trace_id_, cfg_, decision.outbound_tag));
+        LOG_WARN("{} trace {:016x} conn {} client {}:{} target {}:{} out_tag {} outbound handler unavailable",
+                 log_event::kRoute,
+                 trace_id_,
+                 conn_id_,
+                 client_addr_,
+                 client_port_,
+                 target_addr_,
+                 target_port_,
+                 decision.outbound_tag);
+        co_return std::make_pair(decision, std::shared_ptr<upstream>(nullptr));
     }
-    co_return std::make_pair(route_decision{}, std::shared_ptr<upstream>(nullptr));
+    const auto backend = handler->create_tcp_upstream(idle_timer_.get_executor(), conn_id_, trace_id_, cfg_);
+    co_return std::make_pair(decision, backend);
 }
 
 boost::asio::awaitable<void> tun_tcp_session::client_to_upstream(const std::shared_ptr<upstream>& backend)

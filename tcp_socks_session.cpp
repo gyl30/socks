@@ -13,6 +13,7 @@
 
 #include "log.h"
 #include "config.h"
+#include "outbound.h"
 #include "router.h"
 #include "protocol.h"
 #include "upstream.h"
@@ -145,15 +146,16 @@ boost::asio::awaitable<void> tcp_socks_session::run(const std::string& host, uin
 
 std::shared_ptr<upstream> tcp_socks_session::create_backend(const route_type route, const std::string& outbound_tag)
 {
-    if (route == route_type::kDirect)
+    if (route != route_type::kDirect && route != route_type::kProxy)
     {
-        return make_direct_upstream(socket_.get_executor(), conn_id_, trace_id_, cfg_);
+        return nullptr;
     }
-    if (route == route_type::kProxy)
+    const auto handler = make_outbound_handler(cfg_, outbound_tag);
+    if (handler == nullptr)
     {
-        return make_proxy_upstream(socket_.get_executor(), conn_id_, trace_id_, cfg_, outbound_tag);
+        return nullptr;
     }
-    return nullptr;
+    return handler->create_tcp_upstream(socket_.get_executor(), conn_id_, trace_id_, cfg_);
 }
 
 boost::asio::awaitable<upstream_connect_result> tcp_socks_session::connect_backend(const std::shared_ptr<upstream>& backend,

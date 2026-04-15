@@ -13,6 +13,7 @@
 
 #include "log.h"
 #include "config.h"
+#include "outbound.h"
 #include "router.h"
 #include "trace_id.h"
 #include "upstream.h"
@@ -227,17 +228,24 @@ boost::asio::awaitable<std::pair<route_decision, std::shared_ptr<upstream>>> tpr
         LOG_WARN("{} trace {:016x} conn {} target {}:{} blocked", log_event::kRoute, trace_id_, conn_id_, addr.to_string(), target_port_);
         co_return std::make_pair(decision, std::shared_ptr<upstream>(nullptr));
     }
-    if (decision.route == route_type::kDirect)
+    if (decision.route != route_type::kDirect && decision.route != route_type::kProxy)
     {
-        const std::shared_ptr<upstream> backend = make_direct_upstream(socket_.get_executor(), conn_id_, trace_id_, cfg_);
-        co_return std::make_pair(decision, backend);
+        co_return std::make_pair(route_decision{}, std::shared_ptr<upstream>(nullptr));
     }
-    if (decision.route == route_type::kProxy)
+    const auto handler = make_outbound_handler(cfg_, decision.outbound_tag);
+    if (handler == nullptr)
     {
-        const std::shared_ptr<upstream> backend = make_proxy_upstream(socket_.get_executor(), conn_id_, trace_id_, cfg_, decision.outbound_tag);
-        co_return std::make_pair(decision, backend);
+        LOG_WARN("{} trace {:016x} conn {} target {}:{} out_tag {} outbound handler unavailable",
+                 log_event::kRoute,
+                 trace_id_,
+                 conn_id_,
+                 addr.to_string(),
+                 target_port_,
+                 decision.outbound_tag);
+        co_return std::make_pair(decision, std::shared_ptr<upstream>(nullptr));
     }
-    co_return std::make_pair(route_decision{}, std::shared_ptr<upstream>(nullptr));
+    const auto backend = handler->create_tcp_upstream(socket_.get_executor(), conn_id_, trace_id_, cfg_);
+    co_return std::make_pair(decision, backend);
 }
 
 boost::asio::awaitable<bool> tproxy_tcp_session::connect_backend(route_type route, const std::shared_ptr<upstream>& backend)
