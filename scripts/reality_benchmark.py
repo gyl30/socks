@@ -240,26 +240,43 @@ def start_client_server_pair(repo_root, temp_root, binary, socks_port, server_po
     reality_sni = "www.example.com"
 
     server_cfg = {
-        "mode": "server",
         "workers": 1,
         "log": {
             "level": "info",
             "file": str(server_log),
         },
-        "inbound": {
-            "host": "127.0.0.1",
-            "port": server_port,
-        },
-        "socks": {
-            "enabled": False,
-        },
-        "reality": {
-            "sni": reality_sni,
-            "max_handshake_records": 256,
-            "private_key": private_key,
-            "public_key": public_key,
-            "short_id": "0102030405060708",
-        },
+        "inbounds": [
+            {
+                "type": "reality",
+                "tag": "reality-in",
+                "settings": {
+                    "host": "127.0.0.1",
+                    "port": server_port,
+                    "sni": reality_sni,
+                    "private_key": private_key,
+                    "public_key": public_key,
+                    "short_id": "0102030405060708",
+                    "replay_cache_max_entries": 100000,
+                },
+            }
+        ],
+        "outbounds": [
+            {
+                "type": "direct",
+                "tag": "direct",
+            },
+            {
+                "type": "block",
+                "tag": "block",
+            },
+        ],
+        "routing": [
+            {
+                "type": "inbound",
+                "values": ["reality-in"],
+                "out": "direct",
+            }
+        ],
         "timeout": {
             "read": 5,
             "write": 5,
@@ -269,36 +286,52 @@ def start_client_server_pair(repo_root, temp_root, binary, socks_port, server_po
     }
 
     client_cfg = {
-        "mode": "client",
         "workers": 1,
         "log": {
             "level": "info",
             "file": str(client_log),
         },
-        "socks": {
-            "enabled": True,
-            "host": "127.0.0.1",
-            "port": socks_port,
-            "auth": False,
-        },
-        "tproxy": {
-            "enabled": False,
-            "listen_host": "::",
-            "tcp_port": 0,
-            "udp_port": 0,
-            "mark": 17,
-        },
-        "outbound": {
-            "host": "127.0.0.1",
-            "port": server_port,
-        },
-        "reality": {
-            "sni": reality_sni,
-            "fingerprint": fingerprint,
-            "max_handshake_records": 256,
-            "public_key": public_key,
-            "short_id": "0102030405060708",
-        },
+        "inbounds": [
+            {
+                "type": "socks",
+                "tag": "socks-in",
+                "settings": {
+                    "host": "127.0.0.1",
+                    "port": socks_port,
+                    "auth": False,
+                },
+            }
+        ],
+        "outbounds": [
+            {
+                "type": "reality",
+                "tag": "reality-out",
+                "settings": {
+                    "host": "127.0.0.1",
+                    "port": server_port,
+                    "sni": reality_sni,
+                    "fingerprint": fingerprint,
+                    "public_key": public_key,
+                    "short_id": "0102030405060708",
+                    "max_handshake_records": 256,
+                },
+            },
+            {
+                "type": "direct",
+                "tag": "direct",
+            },
+            {
+                "type": "block",
+                "tag": "block",
+            },
+        ],
+        "routing": [
+            {
+                "type": "inbound",
+                "values": ["socks-in"],
+                "out": "reality-out",
+            }
+        ],
         "timeout": {
             "read": 5,
             "write": 5,
@@ -312,8 +345,8 @@ def start_client_server_pair(repo_root, temp_root, binary, socks_port, server_po
 
     server_process = ManagedProcess([str(binary), "-c", str(temp_root / f"server-{fingerprint}.json")], str(server_log))
     client_process = ManagedProcess([str(binary), "-c", str(temp_root / f"client-{fingerprint}.json")], str(client_log))
-    wait_for_log_text(server_log, f"remote server listening on 127.0.0.1:{server_port}", 20, "server log")
-    wait_for_log_text(client_log, f"local socks5 listening on 127.0.0.1:{socks_port}", 20, "client log")
+    wait_for_log_text(server_log, f"listen 127.0.0.1:{server_port} reality inbound listening", 20, "server log")
+    wait_for_log_text(client_log, f"listen 127.0.0.1:{socks_port} socks listening", 20, "client log")
     wait_for_port("127.0.0.1", socks_port, 20, "socks5 proxy")
     return {
         "server": server_process,

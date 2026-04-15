@@ -408,40 +408,115 @@ sni="localhost"
 
 cat >"$tmp_dir/server.json" <<EOF
 {
-  "mode": "server",
   "workers": 1,
   "log": {"level": "info", "file": "$tmp_dir/server.log"},
-  "inbound": {"host": "$host_ip", "port": $server_port},
-  "socks": {"enabled": false},
-  "reality": {"sni": "$sni", "max_handshake_records": 256, "private_key": "$private_key", "public_key": "$public_key", "short_id": "$short_id"},
+  "inbounds": [
+    {
+      "type": "reality",
+      "tag": "reality-in",
+      "settings": {
+        "host": "$host_ip",
+        "port": $server_port,
+        "sni": "$sni",
+        "private_key": "$private_key",
+        "public_key": "$public_key",
+        "short_id": "$short_id",
+        "replay_cache_max_entries": 100000
+      }
+    }
+  ],
+  "outbounds": [
+    {"type": "direct", "tag": "direct"},
+    {"type": "block", "tag": "block"}
+  ],
+  "routing": [
+    {"type": "inbound", "values": ["reality-in"], "out": "direct"}
+  ],
   "timeout": {"read": 5, "write": 5, "connect": 5, "idle": 30}
 }
 EOF
 
 cat >"$tmp_dir/client-direct.json" <<EOF
 {
-  "mode": "client",
   "workers": 1,
   "log": {"level": "info", "file": "$tmp_dir/client-direct.log"},
-  "socks": {"enabled": false},
-  "tproxy": {"enabled": false, "listen_host": "::", "tcp_port": 0, "udp_port": 0, "mark": 17},
-  "tun": {"enabled": true, "name": "$tun_direct", "mtu": 1400, "ipv4": "198.18.0.1", "ipv4_prefix": 32, "ipv6": "fd00::1", "ipv6_prefix": 128},
-  "outbound": {"host": "$host_ip", "port": $server_port},
-  "reality": {"sni": "$sni", "fingerprint": "random", "max_handshake_records": 256, "public_key": "$public_key", "short_id": "$short_id"},
+  "inbounds": [
+    {
+      "type": "tun",
+      "tag": "tun-in",
+      "settings": {
+        "name": "$tun_direct",
+        "mtu": 1400,
+        "ipv4": "198.18.0.1",
+        "ipv4_prefix": 32,
+        "ipv6": "fd00::1",
+        "ipv6_prefix": 128
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "reality",
+      "tag": "reality-out",
+      "settings": {
+        "host": "$host_ip",
+        "port": $server_port,
+        "sni": "$sni",
+        "fingerprint": "random",
+        "public_key": "$public_key",
+        "short_id": "$short_id",
+        "max_handshake_records": 256
+      }
+    },
+    {"type": "direct", "tag": "direct"},
+    {"type": "block", "tag": "block"}
+  ],
+  "routing": [
+    {"type": "ip", "file": "$tmp_dir/rules_direct/direct_ip.txt", "out": "direct"},
+    {"type": "inbound", "values": ["tun-in"], "out": "reality-out"}
+  ],
   "timeout": {"read": 5, "write": 5, "connect": 5, "idle": 30}
 }
 EOF
 
 cat >"$tmp_dir/client-proxy.json" <<EOF
 {
-  "mode": "client",
   "workers": 1,
   "log": {"level": "info", "file": "$tmp_dir/client-proxy.log"},
-  "socks": {"enabled": false},
-  "tproxy": {"enabled": false, "listen_host": "::", "tcp_port": 0, "udp_port": 0, "mark": 17},
-  "tun": {"enabled": true, "name": "$tun_proxy", "mtu": 1400, "ipv4": "198.18.0.1", "ipv4_prefix": 32, "ipv6": "fd00::1", "ipv6_prefix": 128},
-  "outbound": {"host": "$host_ip", "port": $server_port},
-  "reality": {"sni": "$sni", "fingerprint": "random", "max_handshake_records": 256, "public_key": "$public_key", "short_id": "$short_id"},
+  "inbounds": [
+    {
+      "type": "tun",
+      "tag": "tun-in",
+      "settings": {
+        "name": "$tun_proxy",
+        "mtu": 1400,
+        "ipv4": "198.18.0.1",
+        "ipv4_prefix": 32,
+        "ipv6": "fd00::1",
+        "ipv6_prefix": 128
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "reality",
+      "tag": "reality-out",
+      "settings": {
+        "host": "$host_ip",
+        "port": $server_port,
+        "sni": "$sni",
+        "fingerprint": "random",
+        "public_key": "$public_key",
+        "short_id": "$short_id",
+        "max_handshake_records": 256
+      }
+    },
+    {"type": "direct", "tag": "direct"},
+    {"type": "block", "tag": "block"}
+  ],
+  "routing": [
+    {"type": "inbound", "values": ["tun-in"], "out": "reality-out"}
+  ],
   "timeout": {"read": 5, "write": 5, "connect": 5, "idle": 30}
 }
 EOF
@@ -508,7 +583,7 @@ ip netns exec "$ns_target" python3 "$repo_root/scripts/socks5_udp_echo_server.py
 pids+=("$!")
 wait_for_port "$target_ip" "$http_port" target_http
 
-env LD_LIBRARY_PATH="$runtime_ld_library_path" SOCKS_CONFIG_DIR="$tmp_dir/rules_proxy" "$binary" -c "$tmp_dir/server.json" >"$tmp_dir/server.stdout.log" 2>&1 &
+env LD_LIBRARY_PATH="$runtime_ld_library_path" "$binary" -c "$tmp_dir/server.json" >"$tmp_dir/server.stdout.log" 2>&1 &
 server_pid=$!
 pids+=("$server_pid")
 wait_for_port "$host_ip" "$server_port" reality_server
@@ -524,10 +599,10 @@ if [[ "$run_root" == "1" ]]; then
 fi
 
 if [[ "$run_direct" == "1" ]]; then
-    ip netns exec "$ns_client" env LD_LIBRARY_PATH="$runtime_ld_library_path" SOCKS_CONFIG_DIR="$tmp_dir/rules_direct" "$binary" -c "$tmp_dir/client-direct.json" >"$tmp_dir/client-direct.stdout.log" 2>&1 &
+    ip netns exec "$ns_client" env LD_LIBRARY_PATH="$runtime_ld_library_path" "$binary" -c "$tmp_dir/client-direct.json" >"$tmp_dir/client-direct.stdout.log" 2>&1 &
     client_direct_pid=$!
     pids+=("$client_direct_pid")
-    wait_for_log "$tmp_dir/client-direct.log" "tun client started name $tun_direct" 20
+    wait_for_log "$tmp_dir/client-direct.log" "tun inbound started" 20
     ip netns exec "$ns_client" ip link show "$tun_direct" >/dev/null
     /usr/bin/bash "$repo_root/scripts/tun_linux_route.sh" --netns "$ns_client" --from "$app_cidr" --table 100 up "$tun_direct" "$target_cidr" >/dev/null
     ip netns exec "$ns_client" ip rule show >"$tmp_dir/client-direct.policy-rule.log" 2>&1 || true
@@ -558,10 +633,10 @@ if [[ "$run_direct" == "1" ]]; then
 fi
 
 if [[ "$run_proxy" == "1" ]]; then
-    ip netns exec "$ns_client" env LD_LIBRARY_PATH="$runtime_ld_library_path" SOCKS_CONFIG_DIR="$tmp_dir/rules_proxy" "$binary" -c "$tmp_dir/client-proxy.json" >"$tmp_dir/client-proxy.stdout.log" 2>&1 &
+    ip netns exec "$ns_client" env LD_LIBRARY_PATH="$runtime_ld_library_path" "$binary" -c "$tmp_dir/client-proxy.json" >"$tmp_dir/client-proxy.stdout.log" 2>&1 &
     client_proxy_pid=$!
     pids+=("$client_proxy_pid")
-    wait_for_log "$tmp_dir/client-proxy.log" "tun client started name $tun_proxy" 20
+    wait_for_log "$tmp_dir/client-proxy.log" "tun inbound started" 20
     ip netns exec "$ns_client" ip link show "$tun_proxy" >/dev/null
     /usr/bin/bash "$repo_root/scripts/tun_linux_route.sh" --netns "$ns_client" --from "$app_cidr" --table 100 up "$tun_proxy" "$target_cidr" >/dev/null
     ip netns exec "$ns_client" ip rule show >"$tmp_dir/client-proxy.policy-rule.log" 2>&1 || true
