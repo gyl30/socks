@@ -164,7 +164,7 @@ boost::asio::awaitable<void> reality_udp_session::start_impl(const proxy::udp_as
 
     stopping_.store(true);
     close_socket();
-    co_await close_proxy_upstreams();
+    co_await close_proxy_outbounds();
     if (connection_ != nullptr)
     {
         boost::system::error_code close_ec;
@@ -212,14 +212,14 @@ boost::asio::awaitable<route_decision> reality_udp_session::decide_route(const p
     co_return decision;
 }
 
-boost::asio::awaitable<std::shared_ptr<udp_proxy_outbound>> reality_udp_session::get_proxy_upstream(const std::string& outbound_tag)
+boost::asio::awaitable<std::shared_ptr<udp_proxy_outbound>> reality_udp_session::get_proxy_outbound(const std::string& outbound_tag)
 {
     if (stopping_.load())
     {
         co_return nullptr;
     }
 
-    if (const auto it = proxy_upstreams_.find(outbound_tag); it != proxy_upstreams_.end())
+    if (const auto it = proxy_outbounds_.find(outbound_tag); it != proxy_outbounds_.end())
     {
         co_return it->second;
     }
@@ -227,7 +227,7 @@ boost::asio::awaitable<std::shared_ptr<udp_proxy_outbound>> reality_udp_session:
     const auto connect_result = co_await connect_udp_proxy_outbound(udp_socket_.get_executor(), conn_id_, trace_id_, cfg_, outbound_tag);
     if (connect_result.ec || connect_result.upstream == nullptr)
     {
-        LOG_WARN("{} trace {:016x} conn {} out_tag {} open proxy udp upstream failed {} rep {}",
+        LOG_WARN("{} trace {:016x} conn {} out_tag {} open proxy udp outbound failed {} rep {}",
                  log_event::kRoute,
                  trace_id_,
                  conn_id_,
@@ -237,8 +237,8 @@ boost::asio::awaitable<std::shared_ptr<udp_proxy_outbound>> reality_udp_session:
         co_return nullptr;
     }
 
-    proxy_upstreams_.insert_or_assign(outbound_tag, connect_result.upstream);
-    LOG_INFO("{} trace {:016x} conn {} out_tag {} proxy udp upstream ready bind {}:{}",
+    proxy_outbounds_.insert_or_assign(outbound_tag, connect_result.upstream);
+    LOG_INFO("{} trace {:016x} conn {} out_tag {} proxy udp outbound ready bind {}:{}",
              log_event::kRoute,
              trace_id_,
              conn_id_,
@@ -256,11 +256,11 @@ boost::asio::awaitable<std::shared_ptr<udp_proxy_outbound>> reality_udp_session:
     co_return connect_result.upstream;
 }
 
-boost::asio::awaitable<void> reality_udp_session::close_proxy_upstreams()
+boost::asio::awaitable<void> reality_udp_session::close_proxy_outbounds()
 {
     std::vector<std::shared_ptr<udp_proxy_outbound>> upstreams;
-    upstreams.reserve(proxy_upstreams_.size());
-    for (const auto& [outbound_tag, upstream] : proxy_upstreams_)
+    upstreams.reserve(proxy_outbounds_.size());
+    for (const auto& [outbound_tag, upstream] : proxy_outbounds_)
     {
         (void)outbound_tag;
         if (upstream != nullptr)
@@ -268,7 +268,7 @@ boost::asio::awaitable<void> reality_udp_session::close_proxy_upstreams()
             upstreams.push_back(upstream);
         }
     }
-    proxy_upstreams_.clear();
+    proxy_outbounds_.clear();
 
     for (const auto& upstream : upstreams)
     {
@@ -389,7 +389,7 @@ boost::asio::awaitable<void> reality_udp_session::connection_to_udp()
             continue;
         }
 
-        const auto upstream = co_await get_proxy_upstream(decision.outbound_tag);
+        const auto upstream = co_await get_proxy_outbound(decision.outbound_tag);
         if (upstream == nullptr)
         {
             continue;
@@ -556,9 +556,9 @@ boost::asio::awaitable<void> reality_udp_session::proxy_to_connection(const std:
                  datagram.payload.size());
     }
 
-    if (const auto it = proxy_upstreams_.find(outbound_tag); it != proxy_upstreams_.end() && it->second == upstream)
+    if (const auto it = proxy_outbounds_.find(outbound_tag); it != proxy_outbounds_.end() && it->second == upstream)
     {
-        proxy_upstreams_.erase(it);
+        proxy_outbounds_.erase(it);
     }
     if (!stopping_.load())
     {

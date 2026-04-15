@@ -185,7 +185,7 @@ boost::asio::awaitable<bool> tproxy_udp_session::run_proxy_mode()
 {
     using boost::asio::experimental::awaitable_operators::operator||;
 
-    if (!(co_await open_proxy_upstream()))
+    if (!(co_await open_proxy_outbound()))
     {
         co_return false;
     }
@@ -198,10 +198,10 @@ boost::asio::awaitable<bool> tproxy_udp_session::run_proxy_mode()
     {
         co_await (packets_to_proxy() || proxy_to_client() || idle_watchdog());
     }
-    if (proxy_upstream_ != nullptr)
+    if (proxy_outbound_ != nullptr)
     {
-        co_await proxy_upstream_->close();
-        proxy_upstream_.reset();
+        co_await proxy_outbound_->close();
+        proxy_outbound_.reset();
     }
     co_return true;
 }
@@ -284,14 +284,14 @@ boost::asio::awaitable<bool> tproxy_udp_session::open_direct_socket()
     co_return true;
 }
 
-boost::asio::awaitable<bool> tproxy_udp_session::open_proxy_upstream()
+boost::asio::awaitable<bool> tproxy_udp_session::open_proxy_outbound()
 {
     const auto connect_result =
         co_await connect_udp_proxy_outbound(worker_.io_context.get_executor(), conn_id_, trace_id_, cfg_, outbound_tag_);
     if (connect_result.ec || connect_result.upstream == nullptr)
     {
         const auto ec = connect_result.ec ? connect_result.ec : boost::asio::error::operation_aborted;
-        LOG_WARN("{} trace {:016x} conn {} client {}:{} target {}:{} open proxy udp upstream failed {} rep {}",
+        LOG_WARN("{} trace {:016x} conn {} client {}:{} target {}:{} open proxy udp outbound failed {} rep {}",
                  log_event::kConnInit,
                  trace_id_,
                  conn_id_,
@@ -303,8 +303,8 @@ boost::asio::awaitable<bool> tproxy_udp_session::open_proxy_upstream()
                  connect_result.socks_rep);
         co_return false;
     }
-    proxy_upstream_ = connect_result.upstream;
-    LOG_INFO("{} trace {:016x} conn {} opened proxy udp upstream client {}:{} target {}:{} bind {}:{}",
+    proxy_outbound_ = connect_result.upstream;
+    LOG_INFO("{} trace {:016x} conn {} opened proxy udp outbound client {}:{} target {}:{} bind {}:{}",
              log_event::kConnInit,
              trace_id_,
              conn_id_,
@@ -312,8 +312,8 @@ boost::asio::awaitable<bool> tproxy_udp_session::open_proxy_upstream()
              client_endpoint_.port(),
              target_endpoint_.address().to_string(),
              target_endpoint_.port(),
-             proxy_upstream_->bind_host(),
-             proxy_upstream_->bind_port());
+             proxy_outbound_->bind_host(),
+             proxy_outbound_->bind_port());
     co_return true;
 }
 
@@ -373,7 +373,7 @@ boost::asio::awaitable<void> tproxy_udp_session::direct_to_client()
 
 boost::asio::awaitable<void> tproxy_udp_session::packets_to_proxy()
 {
-    if (proxy_upstream_ == nullptr)
+    if (proxy_outbound_ == nullptr)
     {
         co_return;
     }
@@ -386,7 +386,7 @@ boost::asio::awaitable<void> tproxy_udp_session::packets_to_proxy()
         {
             break;
         }
-        co_await proxy_upstream_->send_datagram(target_endpoint_.address().to_string(), target_endpoint_.port(), payload.data(), payload.size(), ec);
+        co_await proxy_outbound_->send_datagram(target_endpoint_.address().to_string(), target_endpoint_.port(), payload.data(), payload.size(), ec);
         if (ec)
         {
             LOG_WARN("{} trace {:016x} conn {} client {}:{} target {}:{} send proxy udp payload failed {}",
@@ -407,7 +407,7 @@ boost::asio::awaitable<void> tproxy_udp_session::packets_to_proxy()
 
 boost::asio::awaitable<void> tproxy_udp_session::proxy_to_client()
 {
-    if (proxy_upstream_ == nullptr)
+    if (proxy_outbound_ == nullptr)
     {
         co_return;
     }
@@ -415,7 +415,7 @@ boost::asio::awaitable<void> tproxy_udp_session::proxy_to_client()
     for (;;)
     {
         boost::system::error_code ec;
-        const auto datagram = co_await proxy_upstream_->receive_datagram(cfg_.timeout.read, ec);
+        const auto datagram = co_await proxy_outbound_->receive_datagram(cfg_.timeout.read, ec);
         if (ec)
         {
             if (ec == boost::asio::error::timed_out)
@@ -607,10 +607,10 @@ void tproxy_udp_session::close_impl()
 
     idle_timer_.cancel();
     packet_channel_.close();
-    if (proxy_upstream_ != nullptr)
+    if (proxy_outbound_ != nullptr)
     {
-        worker_.group.spawn([upstream = proxy_upstream_]() -> boost::asio::awaitable<void> { co_await upstream->close(); });
-        proxy_upstream_.reset();
+        worker_.group.spawn([upstream = proxy_outbound_]() -> boost::asio::awaitable<void> { co_await upstream->close(); });
+        proxy_outbound_.reset();
     }
 
     boost::system::error_code ec;

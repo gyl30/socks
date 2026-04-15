@@ -47,7 +47,7 @@ class tun_udp_session : public std::enable_shared_from_this<tun_udp_session>
     [[nodiscard]] boost::asio::awaitable<bool> run();
     [[nodiscard]] boost::asio::awaitable<route_decision> decide_route() const;
     [[nodiscard]] boost::asio::awaitable<bool> open_direct_socket();
-    [[nodiscard]] boost::asio::awaitable<bool> open_proxy_upstream();
+    [[nodiscard]] boost::asio::awaitable<bool> open_proxy_outbound();
     [[nodiscard]] boost::asio::awaitable<bool> run_direct_mode();
     [[nodiscard]] boost::asio::awaitable<bool> run_proxy_mode();
     [[nodiscard]] boost::asio::awaitable<void> packets_to_direct();
@@ -74,7 +74,7 @@ class tun_udp_session : public std::enable_shared_from_this<tun_udp_session>
     uint64_t last_activity_time_ms_ = 0;
     boost::asio::steady_timer idle_timer_;
     boost::asio::ip::udp::socket upstream_socket_;
-    std::shared_ptr<udp_proxy_outbound> proxy_upstream_;
+    std::shared_ptr<udp_proxy_outbound> proxy_outbound_;
     uint64_t tx_bytes_ = 0;
     uint64_t rx_bytes_ = 0;
     std::chrono::steady_clock::time_point start_time_ = std::chrono::steady_clock::now();

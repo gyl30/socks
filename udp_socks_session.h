@@ -43,7 +43,7 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
     [[nodiscard]] std::string current_client_host() const;
     [[nodiscard]] uint16_t current_client_port() const;
     [[nodiscard]] boost::asio::awaitable<route_decision> decide_udp_route(const socks_udp_header& header) const;
-    [[nodiscard]] boost::asio::awaitable<bool> ensure_proxy_upstream(boost::system::error_code& ec);
+    [[nodiscard]] boost::asio::awaitable<bool> ensure_proxy_outbound(boost::system::error_code& ec);
     [[nodiscard]] boost::asio::awaitable<boost::asio::ip::udp::endpoint> resolve_target_endpoint(const std::string& host,
                                                                                                  uint16_t port,
                                                                                                  boost::system::error_code& ec);
@@ -63,7 +63,7 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
                                 const char* family,
                                 boost::system::error_code& ec) const;
     [[nodiscard]] boost::asio::ip::udp::socket* select_direct_udp_socket(const boost::asio::ip::udp::endpoint& target);
-    void clear_proxy_upstream_if_current(const std::shared_ptr<udp_proxy_outbound>& upstream);
+    void clear_proxy_outbound_if_current(const std::shared_ptr<udp_proxy_outbound>& upstream);
     boost::asio::awaitable<void> wait_and_proxy_to_udp_sock();
     boost::asio::awaitable<void> proxy_to_udp_sock(std::shared_ptr<udp_proxy_outbound> upstream);
     boost::asio::awaitable<void> keep_tcp_alive();
@@ -84,7 +84,7 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
         uint64_t expires_at = 0;
     };
 
-    using proxy_upstream_channel_type =
+    using proxy_outbound_channel_type =
         boost::asio::experimental::concurrent_channel<void(boost::system::error_code, std::shared_ptr<udp_proxy_outbound>)>;
 
     uint64_t trace_id_ = 0;
@@ -101,11 +101,11 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
     boost::asio::ip::udp::socket direct_udp_socket_v4_;
     boost::asio::ip::udp::socket direct_udp_socket_v6_;
     std::shared_ptr<router> router_;
-    std::shared_ptr<udp_proxy_outbound> proxy_upstream_;
+    std::shared_ptr<udp_proxy_outbound> proxy_outbound_;
     std::string proxy_outbound_tag_;
     uint64_t last_activity_time_ms_{0};
     bool stopped_ = false;
-    bool proxy_upstream_started_ = false;
+    bool proxy_outbound_started_ = false;
     bool has_client_ip_ = false;
     bool has_client_addr_ = false;
     bool has_last_target_ = false;
@@ -121,7 +121,7 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
     uint16_t last_target_port_ = 0;
     lru_cache<std::string, endpoint_cache_entry> resolved_targets_;
     lru_cache<boost::asio::ip::udp::endpoint, peer_cache_entry, net::udp_endpoint_hash, net::udp_endpoint_equal> direct_peers_;
-    proxy_upstream_channel_type proxy_upstream_channel_;
+    proxy_outbound_channel_type proxy_outbound_channel_;
 };
 
 }    // namespace relay

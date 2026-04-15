@@ -666,7 +666,7 @@ run_step "udp proxy echo" \
     --port "$proxy_udp_port" \
     --payload-size 1200 \
     --expect-echo
-wait_log_pattern_since "$client_log" "$start_line" "opened proxy udp upstream" 8 || {
+wait_log_pattern_since "$client_log" "$start_line" "opened proxy udp outbound" 8 || {
     echo "missing proxy udp open log" >&2
     exit 1
 }
@@ -790,7 +790,7 @@ fi
 print_log_count "client_route_direct" "$client_log" " route direct"
 print_log_count "client_route_proxy" "$client_log" " route proxy"
 print_log_count "client_udp_direct_open" "$client_log" "opened direct udp socket"
-print_log_count "client_udp_proxy_open" "$client_log" "opened proxy udp upstream"
+print_log_count "client_udp_proxy_open" "$client_log" "opened proxy udp outbound"
 print_log_count "client_tcp_idle_timeout" "$client_log" "tcp session idle closing"
 print_log_count "client_udp_idle_timeout" "$client_log" "udp session idle timeout"
 print_log_count "client_write_timeout" "$client_log" "failed to write to client"
