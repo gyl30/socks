@@ -20,7 +20,7 @@
 #include "scoped_exit.h"
 #include "tcp_socks_session.h"
 
-namespace mux
+namespace relay
 {
 
 tcp_socks_session::tcp_socks_session(
@@ -68,7 +68,7 @@ boost::asio::awaitable<void> tcp_socks_session::run(const std::string& host, uin
     }
     target_host_ = host;
     target_port_ = port;
-    route_name_ = mux::to_string(route);
+    route_name_ = relay::to_string(route);
 
     const auto backend = create_backend(route);
     if (backend == nullptr)
@@ -169,7 +169,7 @@ boost::asio::awaitable<upstream_connect_result> tcp_socks_session::connect_backe
              local_port_,
              host,
              port,
-             mux::to_string(route));
+             relay::to_string(route));
     const auto result = co_await backend->connect(host, port);
     if (!result.ec)
     {
@@ -186,7 +186,7 @@ boost::asio::awaitable<upstream_connect_result> tcp_socks_session::connect_backe
              local_port_,
              host,
              port,
-             mux::to_string(route),
+             relay::to_string(route),
              result.ec.message(),
              result.socks_rep);
     co_await reply_error(result.socks_rep);
@@ -526,4 +526,4 @@ boost::asio::awaitable<void> tcp_socks_session::idle_watchdog(std::shared_ptr<up
     }
 }
 
-}    // namespace mux
+}    // namespace relay

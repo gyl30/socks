@@ -26,7 +26,7 @@
 #include <boost/asio/experimental/concurrent_channel.hpp>
 #include <boost/asio/experimental/awaitable_operators.hpp>
 
-namespace mux::net
+namespace relay::net
 {
 
 #ifdef _WIN32
@@ -392,6 +392,6 @@ inline boost::asio::awaitable<void> wait_send_with_timeout(
         });
 }
 
-}    // namespace mux::net
+}    // namespace relay::net
 
 #endif

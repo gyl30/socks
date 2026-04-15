@@ -15,7 +15,7 @@
 #include "context_pool.h"
 #include "tproxy_udp_session.h"
 
-namespace mux
+namespace relay
 {
 
 class tproxy_client : public std::enable_shared_from_this<tproxy_client>
@@ -71,6 +71,6 @@ class tproxy_client : public std::enable_shared_from_this<tproxy_client>
     std::atomic<bool> stopping_{false};
 };
 
-}    // namespace mux
+}    // namespace relay
 
 #endif

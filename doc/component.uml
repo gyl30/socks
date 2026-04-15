@@ -79,12 +79,12 @@ RemoteUdp --> Target : UDP relay
 
 note right of ProxyUpstream
   每个代理 TCP 请求独占一条 REALITY 连接。
-  不再有连接池和 stream 复用层。
+  不再有连接池和子会话复用层。
 end note
 
 note right of ProxyUdpUpstream
   UDP 保留报文 framing，
-  但不再有 mux stream。
+  但不再有复用子会话。
   也不再依赖连接跟踪残留逻辑。
 end note
 
@@ -95,9 +95,9 @@ end note
 
 note bottom of Router
   当前运行时基线：
-  无 client_tunnel_pool、
+  无预建隧道池、
   无 connection_tracker、
-  无 mux stream 管理器。
+  无子会话复用管理器。
 end note
 
 @enduml

@@ -13,7 +13,7 @@
 #include "proxy_protocol.h"
 #include "proxy_reality_connection.h"
 
-namespace mux
+namespace relay
 {
 
 class remote_tcp_proxy_session : public std::enable_shared_from_this<remote_tcp_proxy_session>
@@ -56,6 +56,6 @@ class remote_tcp_proxy_session : public std::enable_shared_from_this<remote_tcp_
     uint64_t last_activity_time_ms_{0};
 };
 
-}    // namespace mux
+}    // namespace relay
 
 #endif

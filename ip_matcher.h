@@ -11,7 +11,7 @@
 
 #include <boost/asio.hpp>
 
-namespace mux
+namespace relay
 {
 
 class ip_matcher
@@ -54,6 +54,6 @@ class ip_matcher
     static void optimize_node(const std::unique_ptr<trie_node>& node);
 };
 
-}    // namespace mux
+}    // namespace relay
 
 #endif

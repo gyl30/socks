@@ -6,7 +6,7 @@
 - 一个 TCP 代理请求对应一条 `proxy_reality_connection`。
 - 一个 UDP 代理会话对应一条 `proxy_udp_upstream -> proxy_reality_connection`。
 - 服务端通过 `remote_server` 完成 REALITY 认证后，只处理一个代理会话。
-- UDP 仍保留 `udp_datagram` framing，用来保存报文边界；这不是 mux。
+- UDP 仍保留 `udp_datagram` framing，用来保存报文边界；它只负责报文边界，不承担连接复用。
 
 ## 2. 总体架构与数据流
 
@@ -194,7 +194,7 @@ flowchart TD
   UdpRelay -->|idle timeout| CloseConn
   UdpRelay -->|非法报文 / payload 过大| DropOrClose[丢弃或关闭]
 
-  note1["没有 stream_id、旧式控制帧、预建隧道恢复逻辑"]
+  note1["没有复用会话标识、旧式控制帧、预建隧道恢复逻辑"]
   CloseConn -.-> note1
 ```
 
@@ -228,18 +228,18 @@ flowchart TD
 ## 7. 与旧架构的区别
 
 - 客户端不再预建长期 REALITY 隧道。
-- 服务端不再在一条连接上承载多个 stream。
+- 服务端不再在一条连接上承载多个并发子会话。
 - TCP 关闭语义回到“连接即会话”，半关闭直接依赖 `shutdown_send`。
 - UDP 仍然有内部报文封装，但只保留 `udp_associate_reply` 和 `udp_datagram` 这类单会话协议消息。
 
 ## 8. 当前运行时清理基线
 
-- 已删除 `client_tunnel_pool`、`mux_connection`、`mux_stream`、`mux_protocol`、`mux_codec`。
+- 已删除旧的预建隧道、连接复用和控制帧实现。
 - 已删除旧的 `connection_tracker` 和只增减不读取的连接守卫。
 - `route=proxy` 时，TCP 请求和 UDP 会话都直接新建 `proxy_reality_connection`，不再存在预建隧道槽位。
 - 连接关闭和正常收尾错误判断统一收敛到 `net_utils`：
   `is_basic_close_error`、`is_socket_close_error`、`is_socket_shutdown_error`、`is_channel_close_error`。
-- 旧的 `log_event::kMux` 已替换为 `log_event::kRelay`，日志语义和当前架构一致。
+- 日志统一使用 `log_event::kRelay`，语义与当前架构一致。
 
 ## 9. 严格告警验证
 

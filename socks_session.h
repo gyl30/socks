@@ -16,7 +16,7 @@
 #include "constants.h"
 #include "run_loop_spawner.h"
 
-namespace mux
+namespace relay
 {
 
 class socks_session : public std::enable_shared_from_this<socks_session>
@@ -113,6 +113,6 @@ class socks_session : public std::enable_shared_from_this<socks_session>
     std::shared_ptr<router> router_;
 };
 
-}    // namespace mux
+}    // namespace relay
 
 #endif

@@ -7,7 +7,7 @@
 #include "constants.h"
 #include "replay_cache.h"
 
-namespace mux
+namespace relay
 {
 
 replay_cache::replay_cache(std::size_t max_entries) : replay_cache(max_entries, constants::replay::kWindow) {}
@@ -79,4 +79,4 @@ void replay_cache::rotate_if_needed(const std::chrono::steady_clock::time_point 
     current_start_ = now;
 }
 
-}    // namespace mux
+}    // namespace relay

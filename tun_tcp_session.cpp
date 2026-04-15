@@ -18,7 +18,7 @@
 #include "net_utils.h"
 #include "tun_tcp_session.h"
 
-namespace mux
+namespace relay
 {
 
 namespace
@@ -108,7 +108,7 @@ boost::asio::awaitable<void> tun_tcp_session::run()
              client_port_,
              target_addr_,
              target_port_,
-             mux::to_string(route));
+             relay::to_string(route));
 
     const auto connect_result = co_await backend->connect(target_addr_, target_port_);
     if (connect_result.ec)
@@ -121,7 +121,7 @@ boost::asio::awaitable<void> tun_tcp_session::run()
                  client_port_,
                  target_addr_,
                  target_port_,
-                 mux::to_string(route),
+                 relay::to_string(route),
                  connect_result.ec.message());
         co_await backend->close();
         close_client_connection(true);
@@ -136,7 +136,7 @@ boost::asio::awaitable<void> tun_tcp_session::run()
              client_port_,
              target_addr_,
              target_port_,
-             mux::to_string(route));
+             relay::to_string(route));
 
     using boost::asio::experimental::awaitable_operators::operator&&;
     using boost::asio::experimental::awaitable_operators::operator||;
@@ -555,4 +555,4 @@ err_t tun_tcp_session::on_poll(void* arg, tcp_pcb* pcb)
     return ERR_OK;
 }
 
-}    // namespace mux
+}    // namespace relay

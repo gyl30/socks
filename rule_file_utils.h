@@ -5,7 +5,7 @@
 #include <fstream>
 #include <string_view>
 
-namespace mux::rule_file_util
+namespace relay::rule_file_util
 {
 
 inline void trim_ascii_whitespace(std::string& line)
@@ -42,6 +42,6 @@ inline bool read_rule_line(std::ifstream& file, std::string& line)
     return true;
 }
 
-}    // namespace mux::rule_file_util
+}    // namespace relay::rule_file_util
 
 #endif

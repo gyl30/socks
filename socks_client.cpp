@@ -18,7 +18,7 @@
 #include "socks_client.h"
 #include "socks_session.h"
 
-namespace mux
+namespace relay
 {
 
 namespace
@@ -66,7 +66,7 @@ void setup_acceptor(boost::asio::ip::tcp::acceptor& acceptor, const std::string&
 }    // namespace
 
 socks_client::socks_client(io_context_pool& pool, const config& cfg)
-    : cfg_(cfg), pool_(pool), owner_worker_(pool.get_io_worker()), router_(std::make_shared<mux::router>())
+    : cfg_(cfg), pool_(pool), owner_worker_(pool.get_io_worker()), router_(std::make_shared<relay::router>())
 {
 }
 
@@ -183,4 +183,4 @@ void socks_client::stop()
         });
 }
 
-}    // namespace mux
+}    // namespace relay

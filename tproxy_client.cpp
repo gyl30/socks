@@ -26,7 +26,7 @@
 #include "tproxy_tcp_session.h"
 #include "tproxy_udp_session.h"
 
-namespace mux
+namespace relay
 {
 
 namespace
@@ -491,7 +491,7 @@ boost::asio::awaitable<route_type> tproxy_client::decide_udp_route(uint32_t conn
              conn_id,
              target_endpoint.address().to_string(),
              target_endpoint.port(),
-             mux::to_string(route));
+             relay::to_string(route));
     if (route == route_type::kBlock)
     {
         LOG_INFO("{} conn {} target {}:{} blocked", log_event::kRoute, conn_id, target_endpoint.address().to_string(), target_endpoint.port());
@@ -567,7 +567,7 @@ bool tproxy_client::register_udp_session(const std::string& key,
                  client_endpoint.port(),
                  target_endpoint.address().to_string(),
                  target_endpoint.port(),
-                 mux::to_string(route),
+                 relay::to_string(route),
                  udp_sessions_.size(),
                  constants::udp::kMaxSessions);
         return false;
@@ -582,7 +582,7 @@ bool tproxy_client::register_udp_session(const std::string& key,
              client_endpoint.port(),
              target_endpoint.address().to_string(),
              target_endpoint.port(),
-             mux::to_string(route),
+             relay::to_string(route),
              udp_sessions_.size());
     touch_udp_session(key);
     return true;
@@ -649,4 +649,4 @@ std::string tproxy_client::make_udp_session_key(const boost::asio::ip::udp::endp
            "|" + std::to_string(normalized_target.port());
 }
 
-}    // namespace mux
+}    // namespace relay

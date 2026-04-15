@@ -7,19 +7,19 @@
 namespace reflect
 {
 
-REFLECT_STRUCT(mux::config::log_t, (level)(file));
-REFLECT_STRUCT(mux::config::inbound_t, (host)(port));
-REFLECT_STRUCT(mux::config::outbound_t, (host)(port));
-REFLECT_STRUCT(mux::config::socks_t, (enabled)(host)(port)(auth)(username)(password));
-REFLECT_STRUCT(mux::config::tproxy_t, (enabled)(listen_host)(tcp_port)(udp_port)(mark));
-REFLECT_STRUCT(mux::config::tun_t, (enabled)(name)(mtu)(ipv4)(ipv4_prefix)(ipv6)(ipv6_prefix));
-REFLECT_STRUCT(mux::config::timeout_t, (read)(write)(connect)(idle));
-REFLECT_STRUCT(mux::config::reality_t, (sni)(fingerprint)(replay_cache_max_entries)(max_handshake_records)(private_key)(public_key)(short_id));
-REFLECT_STRUCT(mux::config, (mode)(workers)(log)(inbound)(outbound)(socks)(tproxy)(tun)(timeout)(reality));
+REFLECT_STRUCT(relay::config::log_t, (level)(file));
+REFLECT_STRUCT(relay::config::inbound_t, (host)(port));
+REFLECT_STRUCT(relay::config::outbound_t, (host)(port));
+REFLECT_STRUCT(relay::config::socks_t, (enabled)(host)(port)(auth)(username)(password));
+REFLECT_STRUCT(relay::config::tproxy_t, (enabled)(listen_host)(tcp_port)(udp_port)(mark));
+REFLECT_STRUCT(relay::config::tun_t, (enabled)(name)(mtu)(ipv4)(ipv4_prefix)(ipv6)(ipv6_prefix));
+REFLECT_STRUCT(relay::config::timeout_t, (read)(write)(connect)(idle));
+REFLECT_STRUCT(relay::config::reality_t, (sni)(fingerprint)(replay_cache_max_entries)(max_handshake_records)(private_key)(public_key)(short_id));
+REFLECT_STRUCT(relay::config, (mode)(workers)(log)(inbound)(outbound)(socks)(tproxy)(tun)(timeout)(reality));
 
 }    // namespace reflect
 
-namespace mux
+namespace relay
 {
 
 static std::string read_file_to_string(const char* filename, std::size_t read_size)
@@ -100,4 +100,4 @@ std::string dump_default_config()
     return dump_config(cfg);
 }
 
-}    // namespace mux
+}    // namespace relay

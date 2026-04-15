@@ -107,7 +107,7 @@ constexpr std::array<reality::fingerprint_type, 4> kFetchFingerprints = {
 
 }    // namespace constants
 
-namespace mux
+namespace relay
 {
 
 namespace log_event
@@ -129,6 +129,6 @@ constexpr const char* kCert = "cert";
 
 }    // namespace log_event
 
-}    // namespace mux
+}    // namespace relay
 
 #endif

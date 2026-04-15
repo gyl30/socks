@@ -27,7 +27,7 @@
 #include "tcp_socks_session.h"
 #include "udp_socks_session.h"
 
-namespace mux
+namespace relay
 {
 
 namespace
@@ -794,4 +794,4 @@ boost::asio::awaitable<void> socks_session::reply_error(uint8_t code)
     }
 }
 
-}    // namespace mux
+}    // namespace relay

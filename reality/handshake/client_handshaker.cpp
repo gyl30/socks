@@ -97,7 +97,7 @@ void compact_handshake_buffer(std::vector<uint8_t>& handshake_buffer, std::size_
     if (handshake_buffer_pos > handshake_buffer.size())
     {
         LOG_ERROR("{} conn {} sni {} handshake buffer position invalid {} {}",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   log_context.conn_id,
                   handshake_log_sni(log_context),
                   handshake_buffer_pos,
@@ -222,7 +222,7 @@ void validate_encrypted_extensions_message(const std::vector<uint8_t>& msg_data,
     if (!encrypted_extensions.has_value())
     {
         LOG_ERROR("{} conn {} sni {} encrypted extensions parse failed",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   log_context.conn_id,
                   handshake_log_sni(log_context));
         ec = boost::asio::error::invalid_argument;
@@ -235,7 +235,7 @@ void validate_encrypted_extensions_message(const std::vector<uint8_t>& msg_data,
     if (client_hello.alpn_protocols.empty())
     {
         LOG_ERROR("{} conn {} sni {} server advertised unrequested alpn",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   log_context.conn_id,
                   handshake_log_sni(log_context));
         ec = boost::asio::error::invalid_argument;
@@ -244,7 +244,7 @@ void validate_encrypted_extensions_message(const std::vector<uint8_t>& msg_data,
     if (!client_offers_alpn(client_hello, encrypted_extensions->alpn))
     {
         LOG_ERROR("{} conn {} sni {} server selected unadvertised alpn {}",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   log_context.conn_id,
                   handshake_log_sni(log_context),
                   encrypted_extensions->alpn);
@@ -263,7 +263,7 @@ void verify_reality_bound_certificate(const std::vector<uint8_t>& cert_der,
     if (ec || server_pub_key == nullptr)
     {
         LOG_ERROR("{} conn {} sni {} extract server pubkey failed",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   validation_state.log_context.conn_id,
                   handshake_log_sni(validation_state.log_context));
         if (!ec)
@@ -275,7 +275,7 @@ void verify_reality_bound_certificate(const std::vector<uint8_t>& cert_der,
     if (EVP_PKEY_base_id(server_pub_key.get()) != EVP_PKEY_ED25519)
     {
         LOG_ERROR("{} conn {} sni {} server certificate pubkey is not ed25519",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   validation_state.log_context.conn_id,
                   handshake_log_sni(validation_state.log_context));
         ec = boost::system::errc::make_error_code(boost::system::errc::permission_denied);
@@ -301,7 +301,7 @@ void verify_reality_bound_certificate(const std::vector<uint8_t>& cert_der,
         CRYPTO_memcmp(expected_signature.data(), cert_signature.data(), expected_signature.size()) != 0)
     {
         LOG_ERROR("{} conn {} sni {} server certificate reality binding mismatch",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   validation_state.log_context.conn_id,
                   handshake_log_sni(validation_state.log_context));
         ec = boost::system::errc::make_error_code(boost::system::errc::permission_denied);
@@ -424,7 +424,7 @@ void load_server_public_key_from_certificate(const std::vector<uint8_t>& msg_dat
                                              boost::system::error_code& ec)
 {
     LOG_DEBUG("{} conn {} sni {} received certificate message size {}",
-              mux::log_event::kHandshake,
+              relay::log_event::kHandshake,
               validation_state.log_context.conn_id,
               handshake_log_sni(validation_state.log_context),
               msg_data.size());
@@ -437,7 +437,7 @@ void load_server_public_key_from_certificate(const std::vector<uint8_t>& msg_dat
     if (!cert_der.has_value())
     {
         LOG_ERROR("{} conn {} sni {} certificate message parse failed",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   validation_state.log_context.conn_id,
                   handshake_log_sni(validation_state.log_context));
         ec = boost::asio::error::invalid_argument;
@@ -456,7 +456,7 @@ void load_server_public_key_from_certificate(const std::vector<uint8_t>& msg_dat
     if (!real_cert_ec)
     {
         LOG_WARN("{} conn {} sni {} received real certificate",
-                 mux::log_event::kHandshake,
+                 relay::log_event::kHandshake,
                  validation_state.log_context.conn_id,
                  handshake_log_sni(validation_state.log_context));
         validation_state.cert_checked = true;
@@ -473,7 +473,7 @@ void load_server_public_key_from_certificate(const std::vector<uint8_t>& msg_dat
         ec = boost::system::errc::make_error_code(boost::system::errc::permission_denied);
     }
     LOG_ERROR("{} conn {} sni {} server certificate verification failed on reality and real certificate path",
-              mux::log_event::kHandshake,
+              relay::log_event::kHandshake,
               validation_state.log_context.conn_id,
               handshake_log_sni(validation_state.log_context));
 }
@@ -486,7 +486,7 @@ void verify_server_certificate_verify_message(const std::vector<uint8_t>& msg_da
     if (!validation_state.cert_checked)
     {
         LOG_ERROR("{} conn {} sni {} certificate verify received before certificate",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   validation_state.log_context.conn_id,
                   handshake_log_sni(validation_state.log_context));
         ec = boost::asio::error::invalid_argument;
@@ -497,7 +497,7 @@ void verify_server_certificate_verify_message(const std::vector<uint8_t>& msg_da
     if (!cert_verify.has_value())
     {
         LOG_ERROR("{} conn {} sni {} certificate verify parse failed",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   validation_state.log_context.conn_id,
                   handshake_log_sni(validation_state.log_context));
         ec = boost::asio::error::invalid_argument;
@@ -506,7 +506,7 @@ void verify_server_certificate_verify_message(const std::vector<uint8_t>& msg_da
     if (!tls::is_supported_certificate_verify_scheme(cert_verify->scheme))
     {
         LOG_ERROR("{} conn {} sni {} unsupported certificate verify scheme {:x}",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   validation_state.log_context.conn_id,
                   handshake_log_sni(validation_state.log_context),
                   cert_verify->scheme);
@@ -516,7 +516,7 @@ void verify_server_certificate_verify_message(const std::vector<uint8_t>& msg_da
     if (validation_state.client_hello == nullptr || validation_state.client_hello->signature_algorithms.empty())
     {
         LOG_ERROR("{} conn {} sni {} certificate verify validation missing client signature algorithms",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   validation_state.log_context.conn_id,
                   handshake_log_sni(validation_state.log_context));
         ec = boost::asio::error::invalid_argument;
@@ -525,7 +525,7 @@ void verify_server_certificate_verify_message(const std::vector<uint8_t>& msg_da
     if (!client_offers_signature_scheme(*validation_state.client_hello, cert_verify->scheme))
     {
         LOG_ERROR("{} conn {} sni {} server selected certificate verify scheme {:x} not advertised by client",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   validation_state.log_context.conn_id,
                   handshake_log_sni(validation_state.log_context),
                   cert_verify->scheme);
@@ -541,7 +541,7 @@ void verify_server_certificate_verify_message(const std::vector<uint8_t>& msg_da
         if (ec)
         {
             LOG_DEBUG("{} conn {} sni {} certificate verify signature check failed code {} message {}",
-                      mux::log_event::kHandshake,
+                      relay::log_event::kHandshake,
                       validation_state.log_context.conn_id,
                       handshake_log_sni(validation_state.log_context),
                       ec.value(),
@@ -571,7 +571,7 @@ void verify_server_finished_message(const std::vector<uint8_t>& msg_data,
     if (ec)
     {
         LOG_ERROR("{} conn {} sni {} server finished verify derive failed {}",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   log_context.conn_id,
                   handshake_log_sni(log_context),
                   ec.message());
@@ -581,7 +581,7 @@ void verify_server_finished_message(const std::vector<uint8_t>& msg_data,
     if (expected_verify_data.size() != msg_len)
     {
         LOG_ERROR("{} conn {} sni {} server finished verify size mismatch {} {}",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   log_context.conn_id,
                   handshake_log_sni(log_context),
                   expected_verify_data.size(),
@@ -593,7 +593,7 @@ void verify_server_finished_message(const std::vector<uint8_t>& msg_data,
     if (CRYPTO_memcmp(msg_data.data() + 4, expected_verify_data.data(), expected_verify_data.size()) != 0)
     {
         LOG_ERROR(
-            "{} conn {} sni {} server finished verify mismatch", mux::log_event::kHandshake, log_context.conn_id, handshake_log_sni(log_context));
+            "{} conn {} sni {} server finished verify mismatch", relay::log_event::kHandshake, log_context.conn_id, handshake_log_sni(log_context));
         ec = boost::system::errc::make_error_code(boost::system::errc::permission_denied);
         return;
     }
@@ -622,21 +622,21 @@ boost::asio::awaitable<encrypted_record> read_encrypted_record(boost::asio::ip::
                                                                boost::system::error_code& ec)
 {
     std::array<uint8_t, 5> record_header{};
-    const auto header_timeout = mux::net::remaining_timeout_seconds(handshake_start_ms, timeout_sec, ec);
+    const auto header_timeout = relay::net::remaining_timeout_seconds(handshake_start_ms, timeout_sec, ec);
     if (ec)
     {
         LOG_ERROR("{} conn {} sni {} handshake overall timeout {}",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   log_context.conn_id,
                   handshake_log_sni(log_context),
                   ec.message());
         co_return encrypted_record{};
     }
-    auto read_size = co_await mux::net::wait_read_with_timeout(socket, boost::asio::buffer(record_header), header_timeout, ec);
+    auto read_size = co_await relay::net::wait_read_with_timeout(socket, boost::asio::buffer(record_header), header_timeout, ec);
     if (ec)
     {
         LOG_ERROR("{} conn {} sni {} error reading record header {}",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   log_context.conn_id,
                   handshake_log_sni(log_context),
                   ec.message());
@@ -647,7 +647,7 @@ boost::asio::awaitable<encrypted_record> read_encrypted_record(boost::asio::ip::
     {
         ec = boost::asio::error::fault;
         LOG_ERROR("{} conn {} sni {} short read record header {} of {}",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   log_context.conn_id,
                   handshake_log_sni(log_context),
                   read_size,
@@ -659,7 +659,7 @@ boost::asio::awaitable<encrypted_record> read_encrypted_record(boost::asio::ip::
     if (record_body_size > constants::tls_limits::kMaxCiphertextRecordLen)
     {
         LOG_ERROR("{} conn {} sni {} record body too large {}",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   log_context.conn_id,
                   handshake_log_sni(log_context),
                   record_body_size);
@@ -667,21 +667,21 @@ boost::asio::awaitable<encrypted_record> read_encrypted_record(boost::asio::ip::
         co_return encrypted_record{};
     }
     std::vector<uint8_t> record_body(record_body_size);
-    const auto body_timeout = mux::net::remaining_timeout_seconds(handshake_start_ms, timeout_sec, ec);
+    const auto body_timeout = relay::net::remaining_timeout_seconds(handshake_start_ms, timeout_sec, ec);
     if (ec)
     {
         LOG_ERROR("{} conn {} sni {} handshake overall timeout {}",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   log_context.conn_id,
                   handshake_log_sni(log_context),
                   ec.message());
         co_return encrypted_record{};
     }
-    read_size = co_await mux::net::wait_read_with_timeout(socket, boost::asio::buffer(record_body), body_timeout, ec);
+    read_size = co_await relay::net::wait_read_with_timeout(socket, boost::asio::buffer(record_body), body_timeout, ec);
     if (ec)
     {
         LOG_ERROR("{} conn {} sni {} error reading record payload {}",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   log_context.conn_id,
                   handshake_log_sni(log_context),
                   ec.message());
@@ -691,7 +691,7 @@ boost::asio::awaitable<encrypted_record> read_encrypted_record(boost::asio::ip::
     {
         ec = boost::asio::error::fault;
         LOG_ERROR("{} conn {} sni {} short read record payload {} of {}",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   log_context.conn_id,
                   handshake_log_sni(log_context),
                   read_size,
@@ -704,7 +704,7 @@ boost::asio::awaitable<encrypted_record> read_encrypted_record(boost::asio::ip::
         if (!tls::is_valid_tls13_compat_ccs(record_header, ccs_body))
         {
             LOG_ERROR("{} conn {} sni {} invalid tls13 compat ccs len {} body {}",
-                      mux::log_event::kHandshake,
+                      relay::log_event::kHandshake,
                       log_context.conn_id,
                       handshake_log_sni(log_context),
                       record_body_size,
@@ -716,7 +716,7 @@ boost::asio::awaitable<encrypted_record> read_encrypted_record(boost::asio::ip::
     else if (record_header[0] != tls::kContentTypeApplicationData)
     {
         LOG_ERROR("{} conn {} sni {} unexpected encrypted record type {}",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   log_context.conn_id,
                   handshake_log_sni(log_context),
                   static_cast<int>(record_header[0]));
@@ -733,7 +733,7 @@ boost::asio::awaitable<encrypted_record> read_encrypted_record(boost::asio::ip::
 void reject_unexpected_handshake_message(const handshake_validation_state& validation_state, const char* reason, boost::system::error_code& ec)
 {
     LOG_ERROR("{} conn {} sni {} {}",
-              mux::log_event::kHandshake,
+              relay::log_event::kHandshake,
               validation_state.log_context.conn_id,
               handshake_log_sni(validation_state.log_context),
               reason);
@@ -750,7 +750,7 @@ bool validate_encrypted_extensions_order(const handshake_validation_state& valid
     if (validation_state.client_hello == nullptr)
     {
         LOG_ERROR("{} conn {} sni {} missing client hello for encrypted extensions",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   validation_state.log_context.conn_id,
                   handshake_log_sni(validation_state.log_context));
         ec = boost::asio::error::fault;
@@ -861,7 +861,7 @@ void handle_compressed_certificate_message(const std::vector<uint8_t>& msg_data,
     if (!tls::decompress_certificate_message(msg_data, constants::reality_limits::kMaxHandshakeMessageSize, certificate_msg, ec))
     {
         LOG_ERROR("{} conn {} sni {} compressed certificate decode failed {}",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   validation_state.log_context.conn_id,
                   handshake_log_sni(validation_state.log_context),
                   ec.message());
@@ -897,7 +897,7 @@ void handle_finished_message(const std::vector<uint8_t>& msg_data,
 void handle_unknown_handshake_message(const uint8_t msg_type, const handshake_validation_state& validation_state, boost::system::error_code& ec)
 {
     LOG_ERROR("{} conn {} sni {} unexpected handshake message type {}",
-              mux::log_event::kHandshake,
+              relay::log_event::kHandshake,
               validation_state.log_context.conn_id,
               handshake_log_sni(validation_state.log_context),
               msg_type);
@@ -969,7 +969,7 @@ void consume_handshake_buffer(std::vector<uint8_t>& handshake_buffer,
     if (handshake_buffer_pos > handshake_buffer.size())
     {
         LOG_ERROR("{} conn {} sni {} handshake buffer position invalid {} {}",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   validation_state.log_context.conn_id,
                   handshake_log_sni(validation_state.log_context),
                   handshake_buffer_pos,
@@ -990,7 +990,7 @@ void consume_handshake_buffer(std::vector<uint8_t>& handshake_buffer,
         if (msg_len > constants::reality_limits::kMaxHandshakeMessageSize)
         {
             LOG_ERROR("{} conn {} sni {} handshake message too large {}",
-                      mux::log_event::kHandshake,
+                      relay::log_event::kHandshake,
                       validation_state.log_context.conn_id,
                       handshake_log_sni(validation_state.log_context),
                       msg_len);
@@ -1032,7 +1032,7 @@ void consume_handshake_plaintext(const std::vector<uint8_t>& plaintext,
     if (handshake_buffer_pos > handshake_buffer.size())
     {
         LOG_ERROR("{} conn {} sni {} handshake buffer position invalid {} {}",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   validation_state.log_context.conn_id,
                   handshake_log_sni(validation_state.log_context),
                   handshake_buffer_pos,
@@ -1050,7 +1050,7 @@ void consume_handshake_plaintext(const std::vector<uint8_t>& plaintext,
         active_size > constants::reality_limits::kMaxHandshakeBufferSize - plaintext.size())
     {
         LOG_ERROR("{} conn {} sni {} handshake buffer too large {} {}",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   validation_state.log_context.conn_id,
                   handshake_log_sni(validation_state.log_context),
                   active_size,
@@ -1072,7 +1072,7 @@ void validate_server_handshake_chain(const handshake_validation_state& validatio
     if (!validation_state.cert_checked || !validation_state.cert_verify_checked)
     {
         LOG_ERROR("{} conn {} sni {} server auth chain incomplete",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   validation_state.log_context.conn_id,
                   handshake_log_sni(validation_state.log_context));
         ec = boost::system::errc::make_error_code(boost::system::errc::permission_denied);
@@ -1081,7 +1081,7 @@ void validate_server_handshake_chain(const handshake_validation_state& validatio
     if (!validation_state.reality_cert_verified && !validation_state.real_cert_chain_verified)
     {
         LOG_ERROR("{} conn {} sni {} server certificate verification failed on all supported path",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   validation_state.log_context.conn_id,
                   handshake_log_sni(validation_state.log_context));
         ec = boost::system::errc::make_error_code(boost::system::errc::permission_denied);
@@ -1090,7 +1090,7 @@ void validate_server_handshake_chain(const handshake_validation_state& validatio
     if (!validation_state.cert_verify_signature_checked)
     {
         LOG_ERROR("{} conn {} sni {} server certificate verify signature check failed",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   validation_state.log_context.conn_id,
                   handshake_log_sni(validation_state.log_context));
         ec = boost::system::errc::make_error_code(boost::system::errc::permission_denied);
@@ -1109,14 +1109,14 @@ boost::asio::awaitable<bool> read_handshake_bytes(boost::asio::ip::tcp::socket& 
     std::size_t total_read = 0;
     while (total_read < size)
     {
-        const auto read_timeout = mux::net::remaining_timeout_seconds(handshake_start_ms, timeout_sec, ec);
+        const auto read_timeout = relay::net::remaining_timeout_seconds(handshake_start_ms, timeout_sec, ec);
         if (ec)
         {
             co_return false;
         }
 
         const auto read_size =
-            co_await mux::net::wait_read_with_timeout(socket, boost::asio::buffer(data + total_read, size - total_read), read_timeout, ec);
+            co_await relay::net::wait_read_with_timeout(socket, boost::asio::buffer(data + total_read, size - total_read), read_timeout, ec);
         if (ec)
         {
             co_return false;
@@ -1140,7 +1140,7 @@ bool validate_handshake_record_header(const std::array<uint8_t, 5>& header,
     if (header[1] != 0x03 || header[2] != 0x03)
     {
         LOG_ERROR("{} conn {} sni {} invalid tls record version for {} {} {}",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   log_context.conn_id,
                   handshake_log_sni(log_context),
                   step,
@@ -1154,7 +1154,7 @@ bool validate_handshake_record_header(const std::array<uint8_t, 5>& header,
     if (body_len > tls::kMaxTlsPlaintextLen)
     {
         LOG_ERROR("{} conn {} sni {} oversized {} body {}",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   log_context.conn_id,
                   handshake_log_sni(log_context),
                   step,
@@ -1178,7 +1178,7 @@ boost::asio::awaitable<bool> read_handshake_record(boost::asio::ip::tcp::socket&
     if (!(co_await read_handshake_bytes(socket, handshake_start_ms, timeout_sec, boost::asio::buffer(header), ec)))
     {
         LOG_ERROR("{} conn {} sni {} error reading {} header {}",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   log_context.conn_id,
                   handshake_log_sni(log_context),
                   step,
@@ -1195,7 +1195,7 @@ boost::asio::awaitable<bool> read_handshake_record(boost::asio::ip::tcp::socket&
     if (!(co_await read_handshake_bytes(socket, handshake_start_ms, timeout_sec, boost::asio::buffer(body), ec)))
     {
         LOG_ERROR("{} conn {} sni {} error reading {} body {}",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   log_context.conn_id,
                   handshake_log_sni(log_context),
                   step,
@@ -1223,7 +1223,7 @@ bool try_skip_tls13_compat_ccs_record(const std::array<uint8_t, 5>& header,
     if (!handshake_data.empty())
     {
         LOG_ERROR("{} conn {} sni {} unexpected ccs during fragmented {}",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   log_context.conn_id,
                   handshake_log_sni(log_context),
                   step);
@@ -1233,7 +1233,7 @@ bool try_skip_tls13_compat_ccs_record(const std::array<uint8_t, 5>& header,
     if (!tls::is_valid_tls13_compat_ccs(header, ccs_body))
     {
         LOG_ERROR("{} conn {} sni {} invalid tls13 compat ccs before {}",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   log_context.conn_id,
                   handshake_log_sni(log_context),
                   step);
@@ -1243,7 +1243,7 @@ bool try_skip_tls13_compat_ccs_record(const std::array<uint8_t, 5>& header,
     if (tls13_compat_ccs_count >= constants::tls_limits::kMaxCompatCcsRecords)
     {
         LOG_ERROR("{} conn {} sni {} too many tls13 compat ccs before {}",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   log_context.conn_id,
                   handshake_log_sni(log_context),
                   step);
@@ -1253,7 +1253,7 @@ bool try_skip_tls13_compat_ccs_record(const std::array<uint8_t, 5>& header,
 
     tls13_compat_ccs_count++;
     LOG_DEBUG("{} conn {} sni {} skip tls13 compat ccs before {} count {}",
-              mux::log_event::kHandshake,
+              relay::log_event::kHandshake,
               log_context.conn_id,
               handshake_log_sni(log_context),
               step,
@@ -1272,7 +1272,7 @@ bool try_complete_handshake_message(const std::array<uint8_t, 5>& header,
     if (header[0] != tls::kContentTypeHandshake)
     {
         LOG_ERROR("{} conn {} sni {} unexpected record type for {} {}",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   log_context.conn_id,
                   handshake_log_sni(log_context),
                   step,
@@ -1289,7 +1289,7 @@ bool try_complete_handshake_message(const std::array<uint8_t, 5>& header,
     if (handshake_data[0] != 0x02)
     {
         LOG_ERROR("{} conn {} sni {} unexpected handshake type for {} {}",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   log_context.conn_id,
                   handshake_log_sni(log_context),
                   step,
@@ -1303,7 +1303,7 @@ bool try_complete_handshake_message(const std::array<uint8_t, 5>& header,
     if (msg_len > constants::reality_limits::kMaxHandshakeMessageSize)
     {
         LOG_ERROR("{} conn {} sni {} oversized {} message {}",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   log_context.conn_id,
                   handshake_log_sni(log_context),
                   step,
@@ -1322,7 +1322,7 @@ bool try_complete_handshake_message(const std::array<uint8_t, 5>& header,
         extra_handshake_data.assign(handshake_data.begin() + static_cast<std::ptrdiff_t>(total_len), handshake_data.end());
         handshake_data.resize(total_len);
         LOG_DEBUG("{} conn {} sni {} extra handshake bytes in {} {}",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   log_context.conn_id,
                   handshake_log_sni(log_context),
                   step,
@@ -1341,7 +1341,7 @@ boost::asio::awaitable<std::vector<uint8_t>> read_handshake_record_body(boost::a
                                                                         boost::system::error_code& ec)
 {
     extra_handshake_data.clear();
-    const auto handshake_start_ms = mux::net::now_ms();
+    const auto handshake_start_ms = relay::net::now_ms();
     std::vector<uint8_t> handshake_data;
     while (true)
     {
@@ -1379,7 +1379,7 @@ std::pair<std::vector<uint8_t>, std::vector<uint8_t>> derive_client_auth_key_mat
 {
     auto shared = tls::crypto_util::x25519_derive(std::vector<uint8_t>(private_key, private_key + 32), server_pub_key, ec);
     LOG_DEBUG("{} conn {} sni {} using server pub key size {}",
-              mux::log_event::kHandshake,
+              relay::log_event::kHandshake,
               log_context.conn_id,
               handshake_log_sni(log_context),
               server_pub_key.size());
@@ -1408,7 +1408,7 @@ std::pair<std::vector<uint8_t>, std::vector<uint8_t>> derive_client_auth_key_mat
         return {};
     }
     LOG_DEBUG("{} conn {} sni {} client auth material ready random {} bytes eph pub {} bytes",
-              mux::log_event::kHandshake,
+              relay::log_event::kHandshake,
               log_context.conn_id,
               handshake_log_sni(log_context),
               client_random.size(),
@@ -1432,7 +1432,7 @@ void build_client_hello_with_placeholder_sid(const fingerprint_template& spec,
     if (hello_body.empty())
     {
         LOG_ERROR("{} conn {} sni {} generated client hello body invalid for configured sni",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   log_context.conn_id,
                   handshake_log_sni(log_context));
         ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
@@ -1441,7 +1441,7 @@ void build_client_hello_with_placeholder_sid(const fingerprint_template& spec,
     if (hello_body.size() > std::numeric_limits<uint16_t>::max())
     {
         LOG_ERROR("{} conn {} sni {} generated client hello body too large {}",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   log_context.conn_id,
                   handshake_log_sni(log_context),
                   hello_body.size());
@@ -1453,7 +1453,7 @@ void build_client_hello_with_placeholder_sid(const fingerprint_template& spec,
     if (ch_info.sid_offset == 0)
     {
         LOG_ERROR("{} conn {} sni {} generated client hello session id offset invalid {}",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   log_context.conn_id,
                   handshake_log_sni(log_context),
                   ch_info.sid_offset);
@@ -1464,7 +1464,7 @@ void build_client_hello_with_placeholder_sid(const fingerprint_template& spec,
         !client_offers_signature_scheme(ch_info, tls::consts::sig_alg::kEd25519))
     {
         LOG_ERROR("{} conn {} sni {} generated client hello missing usable signature algorithms",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   log_context.conn_id,
                   handshake_log_sni(log_context));
         ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
@@ -1475,7 +1475,7 @@ void build_client_hello_with_placeholder_sid(const fingerprint_template& spec,
     if (absolute_sid_offset + 32 > hello_body.size())
     {
         LOG_ERROR("{} conn {} sni {} session id offset out of bounds {} {}",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   log_context.conn_id,
                   handshake_log_sni(log_context),
                   absolute_sid_offset,
@@ -1501,7 +1501,7 @@ std::vector<uint8_t> encrypt_client_session_id(const std::vector<uint8_t>& auth_
     if (ec || sid.size() != 32)
     {
         LOG_ERROR("{} conn {} sni {} auth encryption failed ct size {}",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   log_context.conn_id,
                   handshake_log_sni(log_context),
                   sid.size());
@@ -1640,7 +1640,7 @@ void log_selected_client_key_share(uint32_t conn_id, const std::string_view sni,
     if (keys.use_hybrid)
     {
         LOG_INFO("{} conn {} sni {} client hello keep fingerprint hybrid key share group 0x{:04x} {} hybrid share len {} mlkem768 pub len {}",
-                 mux::log_event::kHandshake,
+                 relay::log_event::kHandshake,
                  conn_id,
                  sni,
                  tls::consts::group::kX25519MLKEM768,
@@ -1650,7 +1650,7 @@ void log_selected_client_key_share(uint32_t conn_id, const std::string_view sni,
         return;
     }
 
-    LOG_INFO("{} conn {} sni {} client hello preserve fingerprint without forced hybrid key share", mux::log_event::kHandshake, conn_id, sni);
+    LOG_INFO("{} conn {} sni {} client hello preserve fingerprint without forced hybrid key share", relay::log_event::kHandshake, conn_id, sni);
 }
 
 struct handshake_traffic_keys
@@ -1700,7 +1700,7 @@ void prepare_server_hello_crypto(const std::vector<uint8_t>& sh_data,
     const auto parsed_server_hello = tls::parse_server_hello(sh_data);
     if (!parsed_server_hello.has_value())
     {
-        LOG_ERROR("{} conn {} sni {} bad server hello", mux::log_event::kHandshake, log_context.conn_id, handshake_log_sni(log_context));
+        LOG_ERROR("{} conn {} sni {} bad server hello", relay::log_event::kHandshake, log_context.conn_id, handshake_log_sni(log_context));
         ec = boost::asio::error::invalid_argument;
         return;
     }
@@ -1708,7 +1708,7 @@ void prepare_server_hello_crypto(const std::vector<uint8_t>& sh_data,
     if (server_hello.is_hello_retry_request)
     {
         LOG_ERROR("{} conn {} sni {} hello retry request not supported",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   log_context.conn_id,
                   handshake_log_sni(log_context));
         ec = boost::asio::error::operation_not_supported;
@@ -1717,7 +1717,7 @@ void prepare_server_hello_crypto(const std::vector<uint8_t>& sh_data,
     if (!server_hello.has_supported_version)
     {
         LOG_ERROR("{} conn {} sni {} server hello missing supported version",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   log_context.conn_id,
                   handshake_log_sni(log_context));
         ec = boost::asio::error::invalid_argument;
@@ -1726,7 +1726,7 @@ void prepare_server_hello_crypto(const std::vector<uint8_t>& sh_data,
     if (server_hello.supported_version != tls::consts::kVer13)
     {
         LOG_ERROR("{} conn {} sni {} server hello selected invalid tls version {:x}",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   log_context.conn_id,
                   handshake_log_sni(log_context),
                   server_hello.supported_version);
@@ -1736,7 +1736,7 @@ void prepare_server_hello_crypto(const std::vector<uint8_t>& sh_data,
     if (server_hello.legacy_version != tls::consts::kVer12)
     {
         LOG_ERROR("{} conn {} sni {} server hello legacy version invalid {:x}",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   log_context.conn_id,
                   handshake_log_sni(log_context),
                   server_hello.legacy_version);
@@ -1746,14 +1746,14 @@ void prepare_server_hello_crypto(const std::vector<uint8_t>& sh_data,
     if (server_hello.session_id != client_hello.session_id)
     {
         LOG_ERROR(
-            "{} conn {} sni {} server hello session id mismatch", mux::log_event::kHandshake, log_context.conn_id, handshake_log_sni(log_context));
+            "{} conn {} sni {} server hello session id mismatch", relay::log_event::kHandshake, log_context.conn_id, handshake_log_sni(log_context));
         ec = boost::asio::error::invalid_argument;
         return;
     }
     if (server_hello.compression_method != 0x00)
     {
         LOG_ERROR("{} conn {} sni {} server hello compression method invalid {:x}",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   log_context.conn_id,
                   handshake_log_sni(log_context),
                   server_hello.compression_method);
@@ -1763,7 +1763,7 @@ void prepare_server_hello_crypto(const std::vector<uint8_t>& sh_data,
     if (server_hello.has_forbidden_tls13_extension)
     {
         LOG_ERROR("{} conn {} sni {} server hello has forbidden tls13 extension",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   log_context.conn_id,
                   handshake_log_sni(log_context));
         ec = boost::asio::error::invalid_argument;
@@ -1771,7 +1771,7 @@ void prepare_server_hello_crypto(const std::vector<uint8_t>& sh_data,
     }
     if (!server_hello.has_key_share)
     {
-        LOG_ERROR("{} conn {} sni {} bad server hello key share", mux::log_event::kHandshake, log_context.conn_id, handshake_log_sni(log_context));
+        LOG_ERROR("{} conn {} sni {} bad server hello key share", relay::log_event::kHandshake, log_context.conn_id, handshake_log_sni(log_context));
         ec = boost::asio::error::invalid_argument;
         return;
     }
@@ -1781,7 +1781,7 @@ void prepare_server_hello_crypto(const std::vector<uint8_t>& sh_data,
     if (!suite.has_value())
     {
         LOG_ERROR("{} conn {} sni {} unsupported server hello cipher suite {:x}",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   log_context.conn_id,
                   handshake_log_sni(log_context),
                   cipher_suite);
@@ -1791,7 +1791,7 @@ void prepare_server_hello_crypto(const std::vector<uint8_t>& sh_data,
     if (std::find(client_hello.cipher_suites.begin(), client_hello.cipher_suites.end(), cipher_suite) == client_hello.cipher_suites.end())
     {
         LOG_ERROR("{} conn {} sni {} server hello selected unoffered cipher suite {:x}",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   log_context.conn_id,
                   handshake_log_sni(log_context),
                   cipher_suite);
@@ -1816,7 +1816,7 @@ std::vector<uint8_t> derive_server_hello_shared_secret(const uint8_t* private_ke
         if (key_share_data.size() != 32)
         {
             LOG_ERROR("{} conn {} sni {} invalid x25519 key share length {}",
-                      mux::log_event::kHandshake,
+                      relay::log_event::kHandshake,
                       log_context.conn_id,
                       handshake_log_sni(log_context),
                       key_share_data.size());
@@ -1828,7 +1828,7 @@ std::vector<uint8_t> derive_server_hello_shared_secret(const uint8_t* private_ke
         if (ec)
         {
             LOG_ERROR("{} conn {} sni {} handshake shared secret failed {}",
-                      mux::log_event::kHandshake,
+                      relay::log_event::kHandshake,
                       log_context.conn_id,
                       handshake_log_sni(log_context),
                       ec.message());
@@ -1839,7 +1839,7 @@ std::vector<uint8_t> derive_server_hello_shared_secret(const uint8_t* private_ke
     if (key_share_group != tls::consts::group::kX25519MLKEM768)
     {
         LOG_ERROR("{} conn {} sni {} unsupported key share group {}",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   log_context.conn_id,
                   handshake_log_sni(log_context),
                   key_share_group);
@@ -1849,7 +1849,7 @@ std::vector<uint8_t> derive_server_hello_shared_secret(const uint8_t* private_ke
     if (key_share_data.size() != tls::kMlkem768CiphertextSize + 32)
     {
         LOG_ERROR("{} conn {} sni {} invalid x25519 mlkem768 key share length {}",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   log_context.conn_id,
                   handshake_log_sni(log_context),
                   key_share_data.size());
@@ -1859,7 +1859,7 @@ std::vector<uint8_t> derive_server_hello_shared_secret(const uint8_t* private_ke
     if (mlkem768_private_key.empty())
     {
         LOG_ERROR(
-            "{} conn {} sni {} missing mlkem768 private key", mux::log_event::kHandshake, log_context.conn_id, handshake_log_sni(log_context));
+            "{} conn {} sni {} missing mlkem768 private key", relay::log_event::kHandshake, log_context.conn_id, handshake_log_sni(log_context));
         ec = boost::asio::error::operation_not_supported;
         return {};
     }
@@ -1869,7 +1869,7 @@ std::vector<uint8_t> derive_server_hello_shared_secret(const uint8_t* private_ke
     if (ec)
     {
         LOG_ERROR("{} conn {} sni {} mlkem768 decapsulate failed {}",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   log_context.conn_id,
                   handshake_log_sni(log_context),
                   ec.message());
@@ -1881,7 +1881,7 @@ std::vector<uint8_t> derive_server_hello_shared_secret(const uint8_t* private_ke
     if (ec)
     {
         LOG_ERROR("{} conn {} sni {} x25519 derive failed {}",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   log_context.conn_id,
                   handshake_log_sni(log_context),
                   ec.message());
@@ -1920,7 +1920,7 @@ boost::asio::awaitable<void> process_handshake_record(boost::asio::ip::tcp::sock
         if (tls13_compat_ccs_count >= constants::tls_limits::kMaxCompatCcsRecords)
         {
             LOG_ERROR("{} conn {} sni {} received too many tls13 compat ccs records {}",
-                      mux::log_event::kHandshake,
+                      relay::log_event::kHandshake,
                       log_context.conn_id,
                       handshake_log_sni(log_context),
                       tls13_compat_ccs_count);
@@ -1929,7 +1929,7 @@ boost::asio::awaitable<void> process_handshake_record(boost::asio::ip::tcp::sock
         }
         tls13_compat_ccs_count++;
         LOG_DEBUG("{} conn {} sni {} received change cipher spec skip count {}",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   log_context.conn_id,
                   handshake_log_sni(log_context),
                   tls13_compat_ccs_count);
@@ -1941,7 +1941,7 @@ boost::asio::awaitable<void> process_handshake_record(boost::asio::ip::tcp::sock
     if (ec)
     {
         LOG_ERROR("{} conn {} sni {} error decrypting record {}",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   log_context.conn_id,
                   handshake_log_sni(log_context),
                   ec.message());
@@ -1950,14 +1950,14 @@ boost::asio::awaitable<void> process_handshake_record(boost::asio::ip::tcp::sock
     if (type == tls::kContentTypeAlert)
     {
         LOG_ERROR(
-            "{} conn {} sni {} received alert during handshake", mux::log_event::kHandshake, log_context.conn_id, handshake_log_sni(log_context));
+            "{} conn {} sni {} received alert during handshake", relay::log_event::kHandshake, log_context.conn_id, handshake_log_sni(log_context));
         ec = boost::asio::error::eof;
         co_return;
     }
     if (type != tls::kContentTypeHandshake)
     {
         LOG_ERROR("{} conn {} sni {} unexpected record content type during handshake {}",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   log_context.conn_id,
                   handshake_log_sni(log_context),
                   type);
@@ -2003,7 +2003,7 @@ boost::asio::awaitable<void> generate_and_send_client_hello(boost::asio::ip::tcp
     if (hello_body.size() > std::numeric_limits<uint16_t>::max())
     {
         LOG_ERROR("{} conn {} sni {} client hello too large {}",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   log_context.conn_id,
                   handshake_log_sni(log_context),
                   hello_body.size());
@@ -2013,11 +2013,11 @@ boost::asio::awaitable<void> generate_and_send_client_hello(boost::asio::ip::tcp
 
     auto client_hello_record = tls::write_record_header(tls::kContentTypeHandshake, static_cast<uint16_t>(hello_body.size()));
     client_hello_record.insert(client_hello_record.end(), hello_body.begin(), hello_body.end());
-    const auto write_size = co_await mux::net::wait_write_with_timeout(socket, boost::asio::buffer(client_hello_record), write_timeout_sec, ec);
+    const auto write_size = co_await relay::net::wait_write_with_timeout(socket, boost::asio::buffer(client_hello_record), write_timeout_sec, ec);
     if (ec)
     {
         LOG_ERROR("{} conn {} sni {} error sending client hello {}",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   log_context.conn_id,
                   handshake_log_sni(log_context),
                   ec.message());
@@ -2026,7 +2026,7 @@ boost::asio::awaitable<void> generate_and_send_client_hello(boost::asio::ip::tcp
     if (write_size != client_hello_record.size())
     {
         LOG_ERROR("{} conn {} sni {} short write client hello {} of {}",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   log_context.conn_id,
                   handshake_log_sni(log_context),
                   write_size,
@@ -2035,7 +2035,7 @@ boost::asio::awaitable<void> generate_and_send_client_hello(boost::asio::ip::tcp
         co_return;
     }
     LOG_DEBUG("{} conn {} sni {} sending client hello record size {}",
-              mux::log_event::kHandshake,
+              relay::log_event::kHandshake,
               log_context.conn_id,
               handshake_log_sni(log_context),
               client_hello_record.size());
@@ -2062,7 +2062,7 @@ boost::asio::awaitable<server_hello_res> process_server_hello(boost::asio::ip::t
         co_return server_hello_res{};
     }
     LOG_DEBUG("{} conn {} sni {} server hello received size {}",
-              mux::log_event::kHandshake,
+              relay::log_event::kHandshake,
               log_context.conn_id,
               handshake_log_sni(log_context),
               sh_data.size());
@@ -2088,7 +2088,7 @@ boost::asio::awaitable<server_hello_res> process_server_hello(boost::asio::ip::t
     if (ec)
     {
         LOG_ERROR("{} conn {} sni {} derive handshake keys failed {}",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   log_context.conn_id,
                   handshake_log_sni(log_context),
                   ec.message());
@@ -2118,7 +2118,7 @@ boost::asio::awaitable<client_handshake_read_result> handshake_read_loop(boost::
                                                                          uint32_t read_timeout_sec,
                                                                          boost::system::error_code& ec)
 {
-    const auto handshake_start_ms = mux::net::now_ms();
+    const auto handshake_start_ms = relay::net::now_ms();
     bool handshake_fin = false;
     handshake_validation_state validation_state;
     validation_state.log_context = log_context;
@@ -2144,7 +2144,7 @@ boost::asio::awaitable<client_handshake_read_result> handshake_read_loop(boost::
         if (handshake_record_count >= max_handshake_records)
         {
             LOG_ERROR("{} conn {} sni {} too many handshake records {} limit {}",
-                      mux::log_event::kHandshake,
+                      relay::log_event::kHandshake,
                       log_context.conn_id,
                       handshake_log_sni(log_context),
                       handshake_record_count,
@@ -2186,7 +2186,7 @@ boost::asio::awaitable<client_handshake_read_result> handshake_read_loop(boost::
     if (ec)
     {
         LOG_ERROR("{} conn {} sni {} derive app secrets failed {}",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   log_context.conn_id,
                   handshake_log_sni(log_context),
                   ec.message());
@@ -2233,18 +2233,18 @@ boost::asio::awaitable<void> send_client_finished(boost::asio::ip::tcp::socket& 
         co_return;
     }
 
-    const auto write_res = co_await mux::net::wait_write_with_timeout(socket, boost::asio::buffer(out_flight), write_timeout_sec, ec);
+    const auto write_res = co_await relay::net::wait_write_with_timeout(socket, boost::asio::buffer(out_flight), write_timeout_sec, ec);
     if (ec)
     {
         LOG_ERROR("{} conn {} sni {} send client finished flight error {}",
-                  mux::log_event::kHandshake,
+                  relay::log_event::kHandshake,
                   log_context.conn_id,
                   handshake_log_sni(log_context),
                   ec.message());
         co_return;
     }
     LOG_DEBUG("{} conn {} sni {} sending client finished flight size {}",
-              mux::log_event::kHandshake,
+              relay::log_event::kHandshake,
               log_context.conn_id,
               handshake_log_sni(log_context),
               write_res);
@@ -2315,7 +2315,7 @@ boost::asio::awaitable<client_handshake_result> execute_client_handshake(boost::
         co_return client_handshake_result{};
     }
     LOG_INFO("{} conn {} sni {} server hello key share group 0x{:04x} {}",
-             mux::log_event::kHandshake,
+             relay::log_event::kHandshake,
              conn_id,
              sni,
              server_hello_result.key_share_group,
@@ -2365,7 +2365,7 @@ boost::asio::awaitable<client_handshake_result> execute_client_handshake(boost::
 
 }    // namespace
 
-client_handshaker::client_handshaker(const mux::config& cfg,
+client_handshaker::client_handshaker(const relay::config& cfg,
                                      std::string_view sni,
                                      const std::vector<uint8_t>& server_public_key,
                                      const std::vector<uint8_t>& short_id_bytes,

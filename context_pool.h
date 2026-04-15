@@ -13,7 +13,7 @@
 
 #include "task_group.h"
 
-namespace mux
+namespace relay
 {
 struct io_worker
 {
@@ -47,6 +47,6 @@ class io_context_pool
     alignas(sizeof(std::size_t)) std::atomic<std::size_t> next_io_context_ = {0};
 };
 
-}    // namespace mux
+}    // namespace relay
 
 #endif

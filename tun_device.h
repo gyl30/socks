@@ -13,7 +13,7 @@
 #include "tun_device_windows_helper.h"
 #endif
 
-namespace mux
+namespace relay
 {
 
 class tun_device
@@ -61,6 +61,6 @@ class tun_device
 #endif
 };
 
-}    // namespace mux
+}    // namespace relay
 
 #endif

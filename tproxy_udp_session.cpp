@@ -26,7 +26,7 @@
 #include "proxy_udp_upstream.h"
 #include "tproxy_udp_session.h"
 
-namespace mux
+namespace relay
 {
 
 namespace
@@ -136,7 +136,7 @@ boost::asio::awaitable<void> tproxy_udp_session::run()
              client_endpoint_.port(),
              target_endpoint_.address().to_string(),
              target_endpoint_.port(),
-             mux::to_string(route_));
+             relay::to_string(route_));
     const bool completed = (route_ == route_type::kDirect) ? co_await run_direct_mode() : co_await run_proxy_mode();
     notify_closed();
     if (!completed)
@@ -152,7 +152,7 @@ boost::asio::awaitable<void> tproxy_udp_session::run()
              client_endpoint_.port(),
              target_endpoint_.address().to_string(),
              target_endpoint_.port(),
-             mux::to_string(route_),
+             relay::to_string(route_),
              tx_bytes_,
              rx_bytes_,
              duration_ms);
@@ -634,4 +634,4 @@ void tproxy_udp_session::notify_closed()
     }
 }
 
-}    // namespace mux
+}    // namespace relay

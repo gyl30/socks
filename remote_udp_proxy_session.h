@@ -17,7 +17,7 @@
 #include "proxy_protocol.h"
 #include "proxy_reality_connection.h"
 
-namespace mux
+namespace relay
 {
 
 class remote_udp_proxy_session : public std::enable_shared_from_this<remote_udp_proxy_session>
@@ -71,6 +71,6 @@ class remote_udp_proxy_session : public std::enable_shared_from_this<remote_udp_
     lru_cache<boost::asio::ip::udp::endpoint, peer_cache_entry, net::udp_endpoint_hash, net::udp_endpoint_equal> allowed_reply_peers_;
 };
 
-}    // namespace mux
+}    // namespace relay
 
 #endif

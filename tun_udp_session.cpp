@@ -21,7 +21,7 @@
 #include "tun_udp_session.h"
 #include "proxy_udp_upstream.h"
 
-namespace mux
+namespace relay
 {
 
 tun_udp_session::tun_udp_session(io_worker& worker,
@@ -67,7 +67,7 @@ boost::asio::awaitable<void> tun_udp_session::start()
              client_endpoint_.port(),
              target_endpoint_.address().to_string(),
              target_endpoint_.port(),
-             mux::to_string(route_),
+             relay::to_string(route_),
              tx_bytes_,
              rx_bytes_,
              duration_ms);
@@ -173,7 +173,7 @@ boost::asio::awaitable<bool> tun_udp_session::run()
              client_endpoint_.port(),
              target_endpoint_.address().to_string(),
              target_endpoint_.port(),
-             mux::to_string(route_));
+             relay::to_string(route_));
 
     if (route_ == route_type::kDirect)
     {
@@ -611,4 +611,4 @@ void tun_udp_session::notify_closed()
     }
 }
 
-}    // namespace mux
+}    // namespace relay

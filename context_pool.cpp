@@ -13,7 +13,7 @@
 #include "constants.h"
 #include "context_pool.h"
 
-namespace mux
+namespace relay
 {
 
 io_context_pool::io_context_pool(std::size_t pool_size) : next_io_context_(0)
@@ -86,4 +86,4 @@ boost::asio::awaitable<void> io_context_pool::async_wait_all() const
     }
 }
 
-}    // namespace mux
+}    // namespace relay

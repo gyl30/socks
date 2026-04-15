@@ -15,7 +15,7 @@
 #include "router.h"
 #include "upstream.h"
 
-namespace mux
+namespace relay
 {
 
 class tproxy_tcp_session : public std::enable_shared_from_this<tproxy_tcp_session>
@@ -67,6 +67,6 @@ class tproxy_tcp_session : public std::enable_shared_from_this<tproxy_tcp_sessio
     std::atomic<bool> backend_closed_{false};
 };
 
-}    // namespace mux
+}    // namespace relay
 
 #endif

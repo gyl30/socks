@@ -4,7 +4,7 @@
 #include <string>
 #include <unordered_set>
 
-namespace mux
+namespace relay
 {
 
 class domain_matcher
@@ -22,6 +22,6 @@ class domain_matcher
     std::unordered_set<std::string> domains_;
 };
 
-}    // namespace mux
+}    // namespace relay
 
 #endif

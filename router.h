@@ -11,7 +11,7 @@
 #include "ip_matcher.h"
 #include "domain_matcher.h"
 
-namespace mux
+namespace relay
 {
 
 enum class route_type : uint8_t
@@ -50,6 +50,6 @@ class router
     std::shared_ptr<domain_matcher> direct_domain_matcher_;
 };
 
-}    // namespace mux
+}    // namespace relay
 
 #endif

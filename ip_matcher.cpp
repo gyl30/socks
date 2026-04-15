@@ -15,7 +15,7 @@
 #include "ip_matcher.h"
 #include "rule_file_utils.h"
 
-namespace mux
+namespace relay
 {
 
 namespace
@@ -382,4 +382,4 @@ void ip_matcher::optimize_node(const std::unique_ptr<trie_node>& node)
     }
 }
 
-}    // namespace mux
+}    // namespace relay

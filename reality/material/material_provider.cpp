@@ -12,13 +12,13 @@
 namespace reality
 {
 
-site_material load_site_material(const mux::config& cfg, boost::system::error_code& ec)
+site_material load_site_material(const relay::config& cfg, boost::system::error_code& ec)
 {
     const std::string target_host = cfg.reality.sni;
     if (target_host.empty())
     {
         LOG_ERROR(
-            "{} target {}:{} stage load_site_material error empty_sni", mux::log_event::kCert, "unknown", constants::reality_limits::kDefaultTlsPort);
+            "{} target {}:{} stage load_site_material error empty_sni", relay::log_event::kCert, "unknown", constants::reality_limits::kDefaultTlsPort);
         ec = boost::asio::error::invalid_argument;
         return {};
     }
@@ -27,7 +27,7 @@ site_material load_site_material(const mux::config& cfg, boost::system::error_co
     if (ec)
     {
         LOG_ERROR("{} target {}:{} sni {} stage load_site_material error {}",
-                  mux::log_event::kCert,
+                  relay::log_event::kCert,
                   target_host,
                   constants::reality_limits::kDefaultTlsPort,
                   target_host,
@@ -38,7 +38,7 @@ site_material load_site_material(const mux::config& cfg, boost::system::error_co
     LOG_INFO(
         "{} target {}:{} sni {} certs {} cert_msg {} alpn '{}' cipher 0x{:04x} sh_exts {} ee_exts {} ee_padding {} ccs {} hs_records {} groups "
         "{}",
-        mux::log_event::kCert,
+        relay::log_event::kCert,
         target_host,
         constants::reality_limits::kDefaultTlsPort,
         target_host,

@@ -15,7 +15,7 @@
 #include "reality/session/engine.h"
 #include "reality/session/session.h"
 
-namespace mux
+namespace relay
 {
 
 class proxy_reality_connection
@@ -63,6 +63,6 @@ class proxy_reality_connection
     std::vector<uint8_t> pending_plaintext_;
 };
 
-}    // namespace mux
+}    // namespace relay
 
 #endif
