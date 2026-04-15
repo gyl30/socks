@@ -20,13 +20,13 @@ class direct_outbound final : public outbound_handler
    public:
     explicit direct_outbound(std::string tag) : outbound_handler(std::move(tag), "direct") {}
 
-    [[nodiscard]] std::shared_ptr<tcp_outbound_stream> create_tcp_upstream(
+    [[nodiscard]] std::shared_ptr<tcp_outbound_stream> create_tcp_outbound(
         const boost::asio::any_io_executor& executor, uint32_t conn_id, uint64_t trace_id, const config& cfg) const override
     {
         return make_direct_tcp_outbound_stream(executor, conn_id, trace_id, cfg);
     }
 
-    [[nodiscard]] boost::asio::awaitable<udp_proxy_outbound_connect_result> connect_udp_upstream(
+    [[nodiscard]] boost::asio::awaitable<udp_proxy_outbound_connect_result> connect_udp_outbound(
         const boost::asio::any_io_executor&, uint32_t, uint64_t, const config&) const override
     {
         udp_proxy_outbound_connect_result result;
@@ -41,13 +41,13 @@ class block_outbound final : public outbound_handler
    public:
     explicit block_outbound(std::string tag) : outbound_handler(std::move(tag), "block") {}
 
-    [[nodiscard]] std::shared_ptr<tcp_outbound_stream> create_tcp_upstream(
+    [[nodiscard]] std::shared_ptr<tcp_outbound_stream> create_tcp_outbound(
         const boost::asio::any_io_executor&, uint32_t, uint64_t, const config&) const override
     {
         return nullptr;
     }
 
-    [[nodiscard]] boost::asio::awaitable<udp_proxy_outbound_connect_result> connect_udp_upstream(
+    [[nodiscard]] boost::asio::awaitable<udp_proxy_outbound_connect_result> connect_udp_outbound(
         const boost::asio::any_io_executor&, uint32_t, uint64_t, const config&) const override
     {
         udp_proxy_outbound_connect_result result;
@@ -62,13 +62,13 @@ class proxy_outbound final : public outbound_handler
    public:
     proxy_outbound(std::string tag, std::string type) : outbound_handler(std::move(tag), std::move(type)) {}
 
-    [[nodiscard]] std::shared_ptr<tcp_outbound_stream> create_tcp_upstream(
+    [[nodiscard]] std::shared_ptr<tcp_outbound_stream> create_tcp_outbound(
         const boost::asio::any_io_executor& executor, uint32_t conn_id, uint64_t trace_id, const config& cfg) const override
     {
         return make_proxy_tcp_outbound_stream(executor, conn_id, trace_id, cfg, tag());
     }
 
-    [[nodiscard]] boost::asio::awaitable<udp_proxy_outbound_connect_result> connect_udp_upstream(
+    [[nodiscard]] boost::asio::awaitable<udp_proxy_outbound_connect_result> connect_udp_outbound(
         const boost::asio::any_io_executor& executor, uint32_t conn_id, uint64_t trace_id, const config& cfg) const override
     {
         co_return co_await udp_proxy_outbound::connect(executor, conn_id, trace_id, cfg, tag());
@@ -115,7 +115,7 @@ boost::asio::awaitable<udp_proxy_outbound_connect_result> connect_udp_proxy_outb
         result.socks_rep = socks::map_connect_error_to_socks_rep(result.ec);
         co_return result;
     }
-    co_return co_await handler->connect_udp_upstream(executor, conn_id, trace_id, cfg);
+    co_return co_await handler->connect_udp_outbound(executor, conn_id, trace_id, cfg);
 }
 
 }    // namespace relay

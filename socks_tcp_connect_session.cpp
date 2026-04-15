@@ -155,7 +155,7 @@ std::shared_ptr<tcp_outbound_stream> socks_tcp_connect_session::create_backend(c
     {
         return nullptr;
     }
-    return handler->create_tcp_upstream(socket_.get_executor(), conn_id_, trace_id_, cfg_);
+    return handler->create_tcp_outbound(socket_.get_executor(), conn_id_, trace_id_, cfg_);
 }
 
 boost::asio::awaitable<tcp_outbound_connect_result> socks_tcp_connect_session::connect_backend(const std::shared_ptr<tcp_outbound_stream>& backend,
