@@ -26,6 +26,7 @@
 #include "router.h"
 #include "reality_inbound.h"
 #include "proxy_protocol.h"
+#include "trace_store.h"
 #include "tls/crypto_util.h"
 #include "reality/session/session.h"
 #include "reality_tcp_connect_session.h"
@@ -439,8 +440,23 @@ boost::asio::awaitable<void> reality_inbound::process_proxy_request(io_worker& w
                  tcp_request.target_host,
                  tcp_request.target_port,
                  packet.size());
+        trace_store::instance().record_event(trace_event{
+            .trace_id = tcp_request.trace_id,
+            .conn_id = reality_ctx.conn_id,
+            .stage = trace_stage::kRequestDone,
+            .result = trace_result::kOk,
+            .inbound_tag = inbound_tag_,
+            .inbound_type = "reality",
+            .target_host = tcp_request.target_host,
+            .target_port = tcp_request.target_port,
+            .local_host = reality_ctx.local_addr,
+            .local_port = reality_ctx.local_port,
+            .remote_host = reality_ctx.remote_addr,
+            .remote_port = reality_ctx.remote_port,
+            .extra = {{"type", "tcp"}},
+        });
         const auto tcp_connect_session = std::make_shared<reality_tcp_connect_session>(
-            worker.io_context, std::move(connection), router_, reality_ctx.conn_id, tcp_request.trace_id, cfg_);
+            worker.io_context, std::move(connection), router_, reality_ctx.conn_id, tcp_request.trace_id, inbound_tag_, cfg_);
         co_await tcp_connect_session->start(tcp_request);
         co_return;
     }
@@ -458,8 +474,21 @@ boost::asio::awaitable<void> reality_inbound::process_proxy_request(io_worker& w
                  reality_ctx.remote_port,
                  reality_ctx.sni.empty() ? "unknown" : reality_ctx.sni,
                  packet.size());
+        trace_store::instance().record_event(trace_event{
+            .trace_id = udp_request.trace_id,
+            .conn_id = reality_ctx.conn_id,
+            .stage = trace_stage::kRequestDone,
+            .result = trace_result::kOk,
+            .inbound_tag = inbound_tag_,
+            .inbound_type = "reality",
+            .local_host = reality_ctx.local_addr,
+            .local_port = reality_ctx.local_port,
+            .remote_host = reality_ctx.remote_addr,
+            .remote_port = reality_ctx.remote_port,
+            .extra = {{"type", "udp"}},
+        });
         const auto udp_associate_session = std::make_shared<reality_udp_associate_session>(
-            worker.io_context, std::move(connection), router_, reality_ctx.conn_id, udp_request.trace_id, cfg_);
+            worker.io_context, std::move(connection), router_, reality_ctx.conn_id, udp_request.trace_id, inbound_tag_, cfg_);
         co_await udp_associate_session->start(udp_request);
         co_return;
     }

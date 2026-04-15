@@ -31,6 +31,7 @@ class reality_udp_associate_session : public std::enable_shared_from_this<realit
                                   std::shared_ptr<router> router,
                                   uint32_t conn_id,
                                   uint64_t trace_id,
+                                  std::string inbound_tag,
                                   const config& cfg);
 
     boost::asio::awaitable<void> start(const proxy::udp_associate_request& request);
@@ -64,6 +65,8 @@ class reality_udp_associate_session : public std::enable_shared_from_this<realit
 
     uint32_t conn_id_ = 0;
     uint64_t trace_id_ = 0;
+    std::string inbound_tag_;
+    std::string inbound_type_ = "reality";
     const config& cfg_;
     std::string bind_host_ = "unknown";
     uint16_t bind_port_ = 0;
