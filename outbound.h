@@ -9,8 +9,8 @@
 #include <boost/asio/awaitable.hpp>
 
 #include "config.h"
-#include "proxy_udp_upstream.h"
-#include "upstream.h"
+#include "udp_proxy_outbound.h"
+#include "tcp_outbound_stream.h"
 
 namespace relay
 {

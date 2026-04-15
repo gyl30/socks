@@ -20,7 +20,7 @@
 #include "context_pool.h"
 #include "proxy_protocol.h"
 #include "tun_udp_session.h"
-#include "proxy_udp_upstream.h"
+#include "udp_proxy_outbound.h"
 
 namespace relay
 {

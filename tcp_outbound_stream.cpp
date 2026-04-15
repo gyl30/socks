@@ -15,7 +15,7 @@
 #include "log.h"
 #include "config.h"
 #include "protocol.h"
-#include "upstream.h"
+#include "tcp_outbound_stream.h"
 #include "constants.h"
 #include "net_utils.h"
 #include "proxy_protocol.h"

@@ -245,8 +245,8 @@ set(SOCKS_SOURCES
     ip_matcher.cpp
     reality_tcp_session.cpp
     reality_udp_session.cpp
-    proxy_udp_upstream.cpp
-    upstream.cpp
+    udp_proxy_outbound.cpp
+    tcp_outbound_stream.cpp
     proxy_protocol.cpp
     proxy_reality_connection.cpp
     protocol.cpp
