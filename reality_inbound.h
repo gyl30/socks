@@ -27,7 +27,7 @@ class reality_inbound : public std::enable_shared_from_this<reality_inbound>
 {
    public:
     reality_inbound(io_context_pool& pool, const config& cfg, std::string inbound_tag, const config::reality_inbound_t& settings);
-    virtual ~reality_inbound();
+    ~reality_inbound();
 
    public:
     void start();
