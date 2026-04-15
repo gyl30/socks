@@ -15,7 +15,7 @@ package "Infrastructure" {
 }
 
 package "Client Inbound" {
-    class socks_client {
+    class socks_inbound {
         + start()
         + stop()
         - accept_loop()
@@ -40,7 +40,7 @@ package "Client Inbound" {
         - idle_watchdog()
     }
 
-    class tproxy_client {
+    class tproxy_inbound {
         + start()
         + stop()
         - accept_tcp_loop()
@@ -61,7 +61,7 @@ package "Client Inbound" {
         - idle_watchdog()
     }
 
-    class tun_client {
+    class tun_inbound {
         + start()
         + stop()
         - read_loop()
@@ -140,7 +140,7 @@ package "Proxy Protocol + Reality" {
 }
 
 package "Server Side" {
-    class remote_server {
+    class reality_inbound {
         + start()
         + stop()
         - accept_loop()
@@ -148,7 +148,7 @@ package "Server Side" {
         - process_proxy_request()
     }
 
-    class remote_tcp_proxy_session {
+    class reality_tcp_session {
         + start(request)
         - run(request)
         - send_connect_reply()
@@ -157,7 +157,7 @@ package "Server Side" {
         - idle_watchdog()
     }
 
-    class remote_udp_proxy_session {
+    class reality_udp_session {
         + start(request)
         - start_impl(request)
         - connection_to_udp()
@@ -168,9 +168,9 @@ package "Server Side" {
     class replay_cache
 }
 
-socks_client o-- io_context_pool
-socks_client *-- router
-socks_client ..> socks_session : creates
+socks_inbound o-- io_context_pool
+socks_inbound *-- router
+socks_inbound ..> socks_session : creates
 
 socks_session ..> tcp_socks_session : CONNECT
 socks_session ..> udp_socks_session : UDP ASSOCIATE
@@ -180,19 +180,19 @@ tcp_socks_session ..> upstream : create_backend
 udp_socks_session ..> router
 udp_socks_session ..> proxy_udp_upstream : ensure_proxy_upstream
 
-tproxy_client o-- io_context_pool
-tproxy_client *-- router
-tproxy_client ..> tproxy_tcp_session : creates
-tproxy_client ..> tproxy_udp_session : creates
+tproxy_inbound o-- io_context_pool
+tproxy_inbound *-- router
+tproxy_inbound ..> tproxy_tcp_session : creates
+tproxy_inbound ..> tproxy_udp_session : creates
 
 tproxy_tcp_session ..> router
 tproxy_tcp_session ..> upstream : select_backend
 tproxy_udp_session ..> proxy_udp_upstream
 
-tun_client o-- tun_device
-tun_client *-- router
-tun_client ..> tun_tcp_session : creates
-tun_client ..> tun_udp_session : creates
+tun_inbound o-- tun_device
+tun_inbound *-- router
+tun_inbound ..> tun_tcp_session : creates
+tun_inbound ..> tun_udp_session : creates
 
 tun_tcp_session ..> router
 tun_tcp_session ..> upstream : select_backend
@@ -211,14 +211,14 @@ proxy_reality_connection ..> udp_associate_request
 proxy_reality_connection ..> udp_associate_reply
 proxy_reality_connection ..> udp_datagram
 
-remote_server o-- io_context_pool
-remote_server *-- replay_cache
-remote_server ..> proxy_reality_connection : wraps accepted socket
-remote_server ..> remote_tcp_proxy_session : tcp_connect_request
-remote_server ..> remote_udp_proxy_session : udp_associate_request
+reality_inbound o-- io_context_pool
+reality_inbound *-- replay_cache
+reality_inbound ..> proxy_reality_connection : wraps accepted socket
+reality_inbound ..> reality_tcp_session : tcp_connect_request
+reality_inbound ..> reality_udp_session : udp_associate_request
 
-remote_tcp_proxy_session ..> proxy_reality_connection
-remote_udp_proxy_session ..> proxy_reality_connection
+reality_tcp_session ..> proxy_reality_connection
+reality_udp_session ..> proxy_reality_connection
 
 note right of proxy_reality_connection
   route=proxy 时：
@@ -228,7 +228,7 @@ note right of proxy_reality_connection
   不再回收到连接池。
 end note
 
-note right of remote_server
+note right of reality_inbound
   服务端不再接收多路 stream。
   认证成功后只处理一个代理会话。
 end note

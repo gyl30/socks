@@ -5,7 +5,7 @@
 - `route=proxy` 时不再复用隧道。
 - 一个 TCP 代理请求对应一条 `proxy_reality_connection`。
 - 一个 UDP 代理会话对应一条 `proxy_udp_upstream -> proxy_reality_connection`。
-- 服务端通过 `remote_server` 完成 REALITY 认证后，只处理一个代理会话。
+- 服务端通过 `reality_inbound` 完成 REALITY 认证后，只处理一个代理会话。
 - UDP 仍保留 `udp_datagram` framing，用来保存报文边界；它只负责报文边界，不承担连接复用。
 
 ## 2. 总体架构与数据流
@@ -16,9 +16,9 @@ flowchart TD
 
   Inbound -->|SOCKS5 TCP| SocksTcp["socks_session -> tcp_socks_session"]
   Inbound -->|SOCKS5 UDP| SocksUdp["socks_session -> udp_socks_session"]
-  Inbound -->|TPROXY TCP| TproxyTcp["tproxy_client -> tproxy_tcp_session"]
-  Inbound -->|TPROXY UDP| TproxyUdp["tproxy_client -> tproxy_udp_session"]
-  Inbound -->|TUN TCP/UDP| TunInbound["tun_client -> tun_tcp_session / tun_udp_session"]
+  Inbound -->|TPROXY TCP| TproxyTcp["tproxy_inbound -> tproxy_tcp_session"]
+  Inbound -->|TPROXY UDP| TproxyUdp["tproxy_inbound -> tproxy_udp_session"]
+  Inbound -->|TUN TCP/UDP| TunInbound["tun_inbound -> tun_tcp_session / tun_udp_session"]
 
   SocksTcp --> Router[router]
   SocksUdp --> Router
@@ -42,9 +42,9 @@ flowchart TD
   ClientReality <--> Network[公网 TCP 连接]
   Network <--> ServerReality["reality_engine (server)"]
   ServerReality --> ServerConn["proxy_reality_connection (server)"]
-  ServerConn --> RemoteServer[remote_server]
-  RemoteServer --> RemoteTcp[remote_tcp_proxy_session]
-  RemoteServer --> RemoteUdp[remote_udp_proxy_session]
+  ServerConn --> RealityInbound[reality_inbound]
+  RealityInbound --> RealityTcp[reality_tcp_session]
+  RealityInbound --> RealityUdp[reality_udp_session]
   RemoteTcp --> Target
   RemoteUdp --> Target
 
@@ -61,8 +61,8 @@ sequenceDiagram
   participant Router as router
   participant Up as direct_upstream / proxy_upstream
   participant Conn as proxy_reality_connection
-  participant Server as remote_server
-  participant RTcp as remote_tcp_proxy_session
+  participant Server as reality_inbound
+  participant RTcp as reality_tcp_session
   participant Target as Target
 
   App->>Inb: TCP connect / CONNECT
@@ -131,8 +131,8 @@ sequenceDiagram
   participant Direct as direct UDP socket
   participant ProxyUdp as proxy_udp_upstream
   participant Conn as proxy_reality_connection
-  participant Server as remote_server
-  participant RUdp as remote_udp_proxy_session
+  participant Server as reality_inbound
+  participant RUdp as reality_udp_session
   participant Target as Target
 
   App->>Inb: UDP 数据包
@@ -204,8 +204,8 @@ flowchart TD
 flowchart TD
   App[客户端应用] --> Kernel[内核路由]
   Kernel --> TunDev[TUN 设备]
-  TunDev --> TunClient["tun_client.read_loop"]
-  TunClient --> Lwip["tun_lwip / lwIP"]
+  TunDev --> TunInbound["tun_inbound.read_loop"]
+  TunInbound --> Lwip["tun_lwip / lwIP"]
 
   Lwip -->|TCP| TunTcp[tun_tcp_session]
   Lwip -->|UDP| TunUdp[tun_udp_session]
