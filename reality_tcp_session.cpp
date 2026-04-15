@@ -130,7 +130,7 @@ boost::asio::awaitable<void> reality_tcp_session::run(const proxy::tcp_connect_r
     log_close_summary();
 }
 
-std::shared_ptr<upstream> reality_tcp_session::create_backend(const route_type route, const std::string& outbound_tag) const
+std::shared_ptr<tcp_outbound_stream> reality_tcp_session::create_backend(const route_type route, const std::string& outbound_tag) const
 {
     if (route != route_type::kDirect && route != route_type::kProxy)
     {
@@ -144,7 +144,7 @@ std::shared_ptr<upstream> reality_tcp_session::create_backend(const route_type r
     return handler->create_tcp_upstream(executor_, conn_id_, trace_id_, cfg_);
 }
 
-boost::asio::awaitable<upstream_connect_result> reality_tcp_session::connect_backend(const std::shared_ptr<upstream>& backend,
+boost::asio::awaitable<tcp_outbound_connect_result> reality_tcp_session::connect_backend(const std::shared_ptr<tcp_outbound_stream>& backend,
                                                                                      const std::string& host,
                                                                                      const uint16_t port,
                                                                                      const route_type route)
@@ -180,7 +180,7 @@ boost::asio::awaitable<upstream_connect_result> reality_tcp_session::connect_bac
     co_return result;
 }
 
-boost::asio::awaitable<bool> reality_tcp_session::send_connect_reply(const uint8_t socks_rep, const upstream_connect_result* connect_result)
+boost::asio::awaitable<bool> reality_tcp_session::send_connect_reply(const uint8_t socks_rep, const tcp_outbound_connect_result* connect_result)
 {
     if (connection_ == nullptr)
     {
@@ -238,7 +238,7 @@ boost::asio::awaitable<bool> reality_tcp_session::send_connect_reply(const uint8
     co_return true;
 }
 
-boost::asio::awaitable<void> reality_tcp_session::relay_target(const std::shared_ptr<upstream>& backend)
+boost::asio::awaitable<void> reality_tcp_session::relay_target(const std::shared_ptr<tcp_outbound_stream>& backend)
 {
     using boost::asio::experimental::awaitable_operators::operator&&;
     using boost::asio::experimental::awaitable_operators::operator||;
@@ -252,7 +252,7 @@ boost::asio::awaitable<void> reality_tcp_session::relay_target(const std::shared
     co_await ((client_to_upstream(backend) && upstream_to_client(backend)) || idle_watchdog(backend));
 }
 
-boost::asio::awaitable<void> reality_tcp_session::client_to_upstream(const std::shared_ptr<upstream>& backend)
+boost::asio::awaitable<void> reality_tcp_session::client_to_upstream(const std::shared_ptr<tcp_outbound_stream>& backend)
 {
     if (connection_ == nullptr || backend == nullptr)
     {
@@ -310,7 +310,7 @@ boost::asio::awaitable<void> reality_tcp_session::client_to_upstream(const std::
     }
 }
 
-boost::asio::awaitable<void> reality_tcp_session::upstream_to_client(const std::shared_ptr<upstream>& backend)
+boost::asio::awaitable<void> reality_tcp_session::upstream_to_client(const std::shared_ptr<tcp_outbound_stream>& backend)
 {
     if (connection_ == nullptr || backend == nullptr)
     {
@@ -360,7 +360,7 @@ boost::asio::awaitable<void> reality_tcp_session::upstream_to_client(const std::
     }
 }
 
-boost::asio::awaitable<void> reality_tcp_session::idle_watchdog(const std::shared_ptr<upstream>& backend)
+boost::asio::awaitable<void> reality_tcp_session::idle_watchdog(const std::shared_ptr<tcp_outbound_stream>& backend)
 {
     const auto idle_timeout_ms = static_cast<uint64_t>(cfg_.timeout.idle) * 1000ULL;
     while (true)

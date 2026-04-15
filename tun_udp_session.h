@@ -74,7 +74,7 @@ class tun_udp_session : public std::enable_shared_from_this<tun_udp_session>
     uint64_t last_activity_time_ms_ = 0;
     boost::asio::steady_timer idle_timer_;
     boost::asio::ip::udp::socket upstream_socket_;
-    std::shared_ptr<proxy_udp_upstream> proxy_upstream_;
+    std::shared_ptr<udp_proxy_outbound> proxy_upstream_;
     uint64_t tx_bytes_ = 0;
     uint64_t rx_bytes_ = 0;
     std::chrono::steady_clock::time_point start_time_ = std::chrono::steady_clock::now();

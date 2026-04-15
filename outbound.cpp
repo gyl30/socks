@@ -20,16 +20,16 @@ class direct_outbound final : public outbound_handler
    public:
     explicit direct_outbound(std::string tag) : outbound_handler(std::move(tag), "direct") {}
 
-    [[nodiscard]] std::shared_ptr<upstream> create_tcp_upstream(
+    [[nodiscard]] std::shared_ptr<tcp_outbound_stream> create_tcp_upstream(
         const boost::asio::any_io_executor& executor, uint32_t conn_id, uint64_t trace_id, const config& cfg) const override
     {
-        return make_direct_upstream(executor, conn_id, trace_id, cfg);
+        return make_direct_tcp_outbound_stream(executor, conn_id, trace_id, cfg);
     }
 
-    [[nodiscard]] boost::asio::awaitable<proxy_udp_connect_result> connect_udp_upstream(
+    [[nodiscard]] boost::asio::awaitable<udp_proxy_outbound_connect_result> connect_udp_upstream(
         const boost::asio::any_io_executor&, uint32_t, uint64_t, const config&) const override
     {
-        proxy_udp_connect_result result;
+        udp_proxy_outbound_connect_result result;
         result.ec = boost::asio::error::operation_not_supported;
         result.socks_rep = socks::map_connect_error_to_socks_rep(result.ec);
         co_return result;
@@ -41,16 +41,16 @@ class block_outbound final : public outbound_handler
    public:
     explicit block_outbound(std::string tag) : outbound_handler(std::move(tag), "block") {}
 
-    [[nodiscard]] std::shared_ptr<upstream> create_tcp_upstream(
+    [[nodiscard]] std::shared_ptr<tcp_outbound_stream> create_tcp_upstream(
         const boost::asio::any_io_executor&, uint32_t, uint64_t, const config&) const override
     {
         return nullptr;
     }
 
-    [[nodiscard]] boost::asio::awaitable<proxy_udp_connect_result> connect_udp_upstream(
+    [[nodiscard]] boost::asio::awaitable<udp_proxy_outbound_connect_result> connect_udp_upstream(
         const boost::asio::any_io_executor&, uint32_t, uint64_t, const config&) const override
     {
-        proxy_udp_connect_result result;
+        udp_proxy_outbound_connect_result result;
         result.ec = boost::system::errc::make_error_code(boost::system::errc::permission_denied);
         result.socks_rep = socks::map_connect_error_to_socks_rep(result.ec);
         co_return result;
@@ -62,16 +62,16 @@ class proxy_outbound final : public outbound_handler
    public:
     proxy_outbound(std::string tag, std::string type) : outbound_handler(std::move(tag), std::move(type)) {}
 
-    [[nodiscard]] std::shared_ptr<upstream> create_tcp_upstream(
+    [[nodiscard]] std::shared_ptr<tcp_outbound_stream> create_tcp_upstream(
         const boost::asio::any_io_executor& executor, uint32_t conn_id, uint64_t trace_id, const config& cfg) const override
     {
-        return make_proxy_upstream(executor, conn_id, trace_id, cfg, tag());
+        return make_proxy_tcp_outbound_stream(executor, conn_id, trace_id, cfg, tag());
     }
 
-    [[nodiscard]] boost::asio::awaitable<proxy_udp_connect_result> connect_udp_upstream(
+    [[nodiscard]] boost::asio::awaitable<udp_proxy_outbound_connect_result> connect_udp_upstream(
         const boost::asio::any_io_executor& executor, uint32_t conn_id, uint64_t trace_id, const config& cfg) const override
     {
-        co_return co_await proxy_udp_upstream::connect(executor, conn_id, trace_id, cfg, tag());
+        co_return co_await udp_proxy_outbound::connect(executor, conn_id, trace_id, cfg, tag());
     }
 };
 
@@ -101,7 +101,7 @@ std::shared_ptr<outbound_handler> make_outbound_handler(const config& cfg, const
     return nullptr;
 }
 
-boost::asio::awaitable<proxy_udp_connect_result> connect_udp_proxy_outbound(const boost::asio::any_io_executor& executor,
+boost::asio::awaitable<udp_proxy_outbound_connect_result> connect_udp_proxy_outbound(const boost::asio::any_io_executor& executor,
                                                                              uint32_t conn_id,
                                                                              uint64_t trace_id,
                                                                              const config& cfg,
@@ -110,7 +110,7 @@ boost::asio::awaitable<proxy_udp_connect_result> connect_udp_proxy_outbound(cons
     const auto handler = make_outbound_handler(cfg, outbound_tag);
     if (handler == nullptr)
     {
-        proxy_udp_connect_result result;
+        udp_proxy_outbound_connect_result result;
         result.ec = boost::asio::error::operation_not_supported;
         result.socks_rep = socks::map_connect_error_to_socks_rep(result.ec);
         co_return result;

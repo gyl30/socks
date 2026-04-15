@@ -1,5 +1,5 @@
-#ifndef PROXY_UDP_UPSTREAM_H
-#define PROXY_UDP_UPSTREAM_H
+#ifndef UDP_PROXY_OUTBOUND_H
+#define UDP_PROXY_OUTBOUND_H
 
 #include <memory>
 #include <string>
@@ -17,30 +17,30 @@
 namespace relay
 {
 
-struct proxy_udp_connect_result
+struct udp_proxy_outbound_connect_result
 {
     boost::system::error_code ec;
     uint8_t socks_rep = 0;
     boost::asio::ip::address bind_addr;
     uint16_t bind_port = 0;
     bool has_bind_endpoint = false;
-    std::shared_ptr<class proxy_udp_upstream> upstream = nullptr;
+    std::shared_ptr<class udp_proxy_outbound> upstream = nullptr;
 };
 
-class proxy_udp_upstream : public std::enable_shared_from_this<proxy_udp_upstream>
+class udp_proxy_outbound : public std::enable_shared_from_this<udp_proxy_outbound>
 {
    public:
-    proxy_udp_upstream(std::shared_ptr<proxy_reality_connection> connection, const config& cfg);
-    proxy_udp_upstream(std::shared_ptr<boost::asio::ip::tcp::socket> control_socket,
+    udp_proxy_outbound(std::shared_ptr<proxy_reality_connection> connection, const config& cfg);
+    udp_proxy_outbound(std::shared_ptr<boost::asio::ip::tcp::socket> control_socket,
                        std::shared_ptr<boost::asio::ip::udp::socket> udp_socket,
                        boost::asio::ip::udp::endpoint udp_server_endpoint,
                        const config& cfg);
 
-    [[nodiscard]] static boost::asio::awaitable<proxy_udp_connect_result> connect(const boost::asio::any_io_executor& executor,
-                                                                                  uint32_t conn_id,
-                                                                                  uint64_t trace_id,
-                                                                                  const config& cfg,
-                                                                                  const std::string& outbound_tag);
+    [[nodiscard]] static boost::asio::awaitable<udp_proxy_outbound_connect_result> connect(const boost::asio::any_io_executor& executor,
+                                                                                           uint32_t conn_id,
+                                                                                           uint64_t trace_id,
+                                                                                           const config& cfg,
+                                                                                           const std::string& outbound_tag);
 
     boost::asio::awaitable<void> close();
     boost::asio::awaitable<void> send_datagram(

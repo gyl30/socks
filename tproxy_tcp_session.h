@@ -42,11 +42,11 @@ class tproxy_tcp_session : public std::enable_shared_from_this<tproxy_tcp_sessio
                                   const boost::system::error_code& peer_ec,
                                   const boost::asio::ip::tcp::endpoint& peer_ep);
     void log_redirected_connection() const;
-    [[nodiscard]] boost::asio::awaitable<std::pair<route_decision, std::shared_ptr<upstream>>> select_backend(const boost::asio::ip::address& addr);
-    [[nodiscard]] boost::asio::awaitable<bool> connect_backend(route_type route, const std::shared_ptr<upstream>& backend);
-    [[nodiscard]] boost::asio::awaitable<void> relay_backend(const std::shared_ptr<upstream>& backend);
-    [[nodiscard]] boost::asio::awaitable<void> client_to_upstream(std::shared_ptr<upstream> backend);
-    [[nodiscard]] boost::asio::awaitable<void> upstream_to_client(std::shared_ptr<upstream> backend);
+    [[nodiscard]] boost::asio::awaitable<std::pair<route_decision, std::shared_ptr<tcp_outbound_stream>>> select_backend(const boost::asio::ip::address& addr);
+    [[nodiscard]] boost::asio::awaitable<bool> connect_backend(route_type route, const std::shared_ptr<tcp_outbound_stream>& backend);
+    [[nodiscard]] boost::asio::awaitable<void> relay_backend(const std::shared_ptr<tcp_outbound_stream>& backend);
+    [[nodiscard]] boost::asio::awaitable<void> client_to_upstream(std::shared_ptr<tcp_outbound_stream> backend);
+    [[nodiscard]] boost::asio::awaitable<void> upstream_to_client(std::shared_ptr<tcp_outbound_stream> backend);
     [[nodiscard]] boost::asio::awaitable<void> idle_watchdog();
     void close_client_socket();
     void log_close_summary() const;

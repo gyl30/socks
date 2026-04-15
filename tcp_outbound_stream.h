@@ -1,5 +1,5 @@
-#ifndef UPSTREAM_H
-#define UPSTREAM_H
+#ifndef TCP_OUTBOUND_STREAM_H
+#define TCP_OUTBOUND_STREAM_H
 
 #include <memory>
 #include <string>
@@ -14,7 +14,7 @@
 namespace relay
 {
 
-struct upstream_connect_result
+struct tcp_outbound_connect_result
 {
     boost::system::error_code ec;
     boost::asio::ip::address bind_addr;
@@ -23,28 +23,28 @@ struct upstream_connect_result
     bool has_bind_endpoint = false;
 };
 
-class upstream
+class tcp_outbound_stream
 {
    public:
-    virtual ~upstream() = default;
+    virtual ~tcp_outbound_stream() = default;
 
    public:
     virtual boost::asio::awaitable<void> close() = 0;
     virtual boost::asio::awaitable<void> shutdown_send(boost::system::error_code& ec) = 0;
-    [[nodiscard]] virtual boost::asio::awaitable<upstream_connect_result> connect(const std::string& host, uint16_t port) = 0;
+    [[nodiscard]] virtual boost::asio::awaitable<tcp_outbound_connect_result> connect(const std::string& host, uint16_t port) = 0;
     virtual boost::asio::awaitable<void> write(const std::vector<uint8_t>& data, boost::system::error_code& ec) = 0;
     [[nodiscard]] virtual boost::asio::awaitable<std::size_t> read(std::vector<uint8_t>& buf, boost::system::error_code& ec) = 0;
 };
 
-[[nodiscard]] std::shared_ptr<upstream> make_direct_upstream(const boost::asio::any_io_executor& executor,
-                                                             uint32_t conn_id,
-                                                             uint64_t trace_id,
-                                                             const config& cfg);
-[[nodiscard]] std::shared_ptr<upstream> make_proxy_upstream(const boost::asio::any_io_executor& executor,
-                                                            uint32_t conn_id,
-                                                            uint64_t trace_id,
-                                                            const config& cfg,
-                                                            const std::string& outbound_tag);
+[[nodiscard]] std::shared_ptr<tcp_outbound_stream> make_direct_tcp_outbound_stream(const boost::asio::any_io_executor& executor,
+                                                                                    uint32_t conn_id,
+                                                                                    uint64_t trace_id,
+                                                                                    const config& cfg);
+[[nodiscard]] std::shared_ptr<tcp_outbound_stream> make_proxy_tcp_outbound_stream(const boost::asio::any_io_executor& executor,
+                                                                                   uint32_t conn_id,
+                                                                                   uint64_t trace_id,
+                                                                                   const config& cfg,
+                                                                                   const std::string& outbound_tag);
 
 }    // namespace relay
 

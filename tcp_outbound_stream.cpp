@@ -24,17 +24,17 @@
 namespace relay
 {
 
-class direct_upstream final : public upstream
+class direct_tcp_outbound final : public tcp_outbound_stream
 {
    public:
-    explicit direct_upstream(const boost::asio::any_io_executor& executor, uint32_t conn_id, uint64_t trace_id, const config& cfg)
+    explicit direct_tcp_outbound(const boost::asio::any_io_executor& executor, uint32_t conn_id, uint64_t trace_id, const config& cfg)
         : cfg_(cfg), conn_id_(conn_id), trace_id_(trace_id), socket_(executor), resolver_(executor)
     {
     }
 
     boost::asio::awaitable<void> close() override;
     boost::asio::awaitable<void> shutdown_send(boost::system::error_code& ec) override;
-    [[nodiscard]] boost::asio::awaitable<upstream_connect_result> connect(const std::string& host, uint16_t port) override;
+    [[nodiscard]] boost::asio::awaitable<tcp_outbound_connect_result> connect(const std::string& host, uint16_t port) override;
     boost::asio::awaitable<void> write(const std::vector<uint8_t>& data, boost::system::error_code& ec) override;
     [[nodiscard]] boost::asio::awaitable<std::size_t> read(std::vector<uint8_t>& buf, boost::system::error_code& ec) override;
 
@@ -50,10 +50,10 @@ class direct_upstream final : public upstream
     boost::asio::ip::tcp::resolver resolver_;
 };
 
-class proxy_upstream final : public upstream
+class proxy_tcp_outbound final : public tcp_outbound_stream
 {
    public:
-    explicit proxy_upstream(const boost::asio::any_io_executor& executor,
+    explicit proxy_tcp_outbound(const boost::asio::any_io_executor& executor,
                             uint32_t conn_id,
                             uint64_t trace_id,
                             const config& cfg,
@@ -61,13 +61,13 @@ class proxy_upstream final : public upstream
 
     boost::asio::awaitable<void> close() override;
     boost::asio::awaitable<void> shutdown_send(boost::system::error_code& ec) override;
-    [[nodiscard]] boost::asio::awaitable<upstream_connect_result> connect(const std::string& host, uint16_t port) override;
+    [[nodiscard]] boost::asio::awaitable<tcp_outbound_connect_result> connect(const std::string& host, uint16_t port) override;
     boost::asio::awaitable<void> write(const std::vector<uint8_t>& data, boost::system::error_code& ec) override;
     [[nodiscard]] boost::asio::awaitable<std::size_t> read(std::vector<uint8_t>& buf, boost::system::error_code& ec) override;
 
    private:
     boost::asio::awaitable<void> send_connect_request(const std::string& host, uint16_t port, boost::system::error_code& ec) const;
-    boost::asio::awaitable<void> wait_connect_reply(const std::string& host, uint16_t port, upstream_connect_result& result) const;
+    boost::asio::awaitable<void> wait_connect_reply(const std::string& host, uint16_t port, tcp_outbound_connect_result& result) const;
     [[nodiscard]] uint32_t connect_ack_timeout() const;
 
    private:
@@ -84,10 +84,10 @@ class proxy_upstream final : public upstream
     bool send_shutdown_ = false;
 };
 
-class socks_upstream final : public upstream
+class socks_tcp_outbound final : public tcp_outbound_stream
 {
    public:
-    explicit socks_upstream(const boost::asio::any_io_executor& executor,
+    explicit socks_tcp_outbound(const boost::asio::any_io_executor& executor,
                             uint32_t conn_id,
                             uint64_t trace_id,
                             const config& cfg,
@@ -98,7 +98,7 @@ class socks_upstream final : public upstream
 
     boost::asio::awaitable<void> close() override;
     boost::asio::awaitable<void> shutdown_send(boost::system::error_code& ec) override;
-    [[nodiscard]] boost::asio::awaitable<upstream_connect_result> connect(const std::string& host, uint16_t port) override;
+    [[nodiscard]] boost::asio::awaitable<tcp_outbound_connect_result> connect(const std::string& host, uint16_t port) override;
     boost::asio::awaitable<void> write(const std::vector<uint8_t>& data, boost::system::error_code& ec) override;
     [[nodiscard]] boost::asio::awaitable<std::size_t> read(std::vector<uint8_t>& buf, boost::system::error_code& ec) override;
 
@@ -108,7 +108,7 @@ class socks_upstream final : public upstream
     [[nodiscard]] boost::asio::awaitable<bool> negotiate_method(const config::socks_t& settings, boost::system::error_code& ec);
     [[nodiscard]] boost::asio::awaitable<bool> do_password_auth(const config::socks_t& settings, boost::system::error_code& ec);
     [[nodiscard]] boost::asio::awaitable<bool> send_connect_request(const std::string& host, uint16_t port, boost::system::error_code& ec);
-    [[nodiscard]] boost::asio::awaitable<bool> read_connect_reply(upstream_connect_result& result, boost::system::error_code& ec);
+    [[nodiscard]] boost::asio::awaitable<bool> read_connect_reply(tcp_outbound_connect_result& result, boost::system::error_code& ec);
 
    private:
     const config& cfg_;
@@ -191,9 +191,9 @@ bool append_socks_target_address(std::vector<uint8_t>& packet, const std::string
     return true;
 }
 
-boost::asio::awaitable<upstream_connect_result> direct_upstream::connect(const std::string& host, uint16_t port)
+boost::asio::awaitable<tcp_outbound_connect_result> direct_tcp_outbound::connect(const std::string& host, uint16_t port)
 {
-    upstream_connect_result result;
+    tcp_outbound_connect_result result;
     result.socks_rep = socks::kRepSuccess;
     target_host_ = host;
     target_port_ = port;
@@ -287,18 +287,18 @@ boost::asio::awaitable<upstream_connect_result> direct_upstream::connect(const s
     co_return result;
 }
 
-boost::asio::awaitable<std::size_t> direct_upstream::read(std::vector<uint8_t>& buf, boost::system::error_code& ec)
+boost::asio::awaitable<std::size_t> direct_tcp_outbound::read(std::vector<uint8_t>& buf, boost::system::error_code& ec)
 {
     auto n = co_await socket_.async_read_some(boost::asio::buffer(buf), boost::asio::redirect_error(boost::asio::use_awaitable, ec));
     co_return n;
 }
 
-boost::asio::awaitable<void> direct_upstream::write(const std::vector<uint8_t>& data, boost::system::error_code& ec)
+boost::asio::awaitable<void> direct_tcp_outbound::write(const std::vector<uint8_t>& data, boost::system::error_code& ec)
 {
     co_await net::wait_write_with_timeout(socket_, boost::asio::buffer(data), cfg_.timeout.write, ec);
 }
 
-boost::asio::awaitable<void> direct_upstream::close()
+boost::asio::awaitable<void> direct_tcp_outbound::close()
 {
     boost::system::error_code ec;
     ec = socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
@@ -330,7 +330,7 @@ boost::asio::awaitable<void> direct_upstream::close()
     co_return;
 }
 
-boost::asio::awaitable<void> direct_upstream::shutdown_send(boost::system::error_code& ec)
+boost::asio::awaitable<void> direct_tcp_outbound::shutdown_send(boost::system::error_code& ec)
 {
     ec = socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
     if (ec == boost::asio::error::not_connected)
@@ -340,9 +340,9 @@ boost::asio::awaitable<void> direct_upstream::shutdown_send(boost::system::error
     co_return;
 }
 
-const config::socks_t* socks_upstream::settings() const { return find_socks_outbound_settings(cfg_, outbound_tag_); }
+const config::socks_t* socks_tcp_outbound::settings() const { return find_socks_outbound_settings(cfg_, outbound_tag_); }
 
-boost::asio::awaitable<bool> socks_upstream::connect_server(const config::socks_t& settings, boost::system::error_code& ec)
+boost::asio::awaitable<bool> socks_tcp_outbound::connect_server(const config::socks_t& settings, boost::system::error_code& ec)
 {
     auto endpoints = co_await net::wait_resolve_with_timeout(resolver_, settings.host, std::to_string(settings.port), cfg_.timeout.connect, ec);
     if (ec)
@@ -404,7 +404,7 @@ boost::asio::awaitable<bool> socks_upstream::connect_server(const config::socks_
     co_return false;
 }
 
-boost::asio::awaitable<bool> socks_upstream::do_password_auth(const config::socks_t& settings, boost::system::error_code& ec)
+boost::asio::awaitable<bool> socks_tcp_outbound::do_password_auth(const config::socks_t& settings, boost::system::error_code& ec)
 {
     if (settings.username.size() > 255 || settings.password.size() > 255)
     {
@@ -439,7 +439,7 @@ boost::asio::awaitable<bool> socks_upstream::do_password_auth(const config::sock
     co_return true;
 }
 
-boost::asio::awaitable<bool> socks_upstream::negotiate_method(const config::socks_t& settings, boost::system::error_code& ec)
+boost::asio::awaitable<bool> socks_tcp_outbound::negotiate_method(const config::socks_t& settings, boost::system::error_code& ec)
 {
     const uint8_t method = settings.auth ? socks::kMethodPassword : socks::kMethodNoAuth;
     const uint8_t request[] = {socks::kVer, 0x01, method};
@@ -472,7 +472,7 @@ boost::asio::awaitable<bool> socks_upstream::negotiate_method(const config::sock
     co_return true;
 }
 
-boost::asio::awaitable<bool> socks_upstream::send_connect_request(const std::string& host, const uint16_t port, boost::system::error_code& ec)
+boost::asio::awaitable<bool> socks_tcp_outbound::send_connect_request(const std::string& host, const uint16_t port, boost::system::error_code& ec)
 {
     std::vector<uint8_t> request = {socks::kVer, socks::kCmdConnect, 0x00};
     if (!append_socks_target_address(request, host))
@@ -486,7 +486,7 @@ boost::asio::awaitable<bool> socks_upstream::send_connect_request(const std::str
     co_return !ec;
 }
 
-boost::asio::awaitable<bool> socks_upstream::read_connect_reply(upstream_connect_result& result, boost::system::error_code& ec)
+boost::asio::awaitable<bool> socks_tcp_outbound::read_connect_reply(tcp_outbound_connect_result& result, boost::system::error_code& ec)
 {
     uint8_t header[4] = {0};
     co_await net::wait_read_with_timeout(socket_, boost::asio::buffer(header), cfg_.timeout.read, ec);
@@ -568,9 +568,9 @@ boost::asio::awaitable<bool> socks_upstream::read_connect_reply(upstream_connect
     co_return true;
 }
 
-boost::asio::awaitable<upstream_connect_result> socks_upstream::connect(const std::string& host, uint16_t port)
+boost::asio::awaitable<tcp_outbound_connect_result> socks_tcp_outbound::connect(const std::string& host, uint16_t port)
 {
-    upstream_connect_result result;
+    tcp_outbound_connect_result result;
     result.socks_rep = socks::kRepSuccess;
     target_host_ = host;
     target_port_ = port;
@@ -629,18 +629,18 @@ boost::asio::awaitable<upstream_connect_result> socks_upstream::connect(const st
     co_return result;
 }
 
-boost::asio::awaitable<std::size_t> socks_upstream::read(std::vector<uint8_t>& buf, boost::system::error_code& ec)
+boost::asio::awaitable<std::size_t> socks_tcp_outbound::read(std::vector<uint8_t>& buf, boost::system::error_code& ec)
 {
     const auto bytes = co_await socket_.async_read_some(boost::asio::buffer(buf), boost::asio::redirect_error(boost::asio::use_awaitable, ec));
     co_return bytes;
 }
 
-boost::asio::awaitable<void> socks_upstream::write(const std::vector<uint8_t>& data, boost::system::error_code& ec)
+boost::asio::awaitable<void> socks_tcp_outbound::write(const std::vector<uint8_t>& data, boost::system::error_code& ec)
 {
     co_await net::wait_write_with_timeout(socket_, boost::asio::buffer(data), cfg_.timeout.write, ec);
 }
 
-boost::asio::awaitable<void> socks_upstream::close()
+boost::asio::awaitable<void> socks_tcp_outbound::close()
 {
     boost::system::error_code ec;
     ec = socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
@@ -648,7 +648,7 @@ boost::asio::awaitable<void> socks_upstream::close()
     co_return;
 }
 
-boost::asio::awaitable<void> socks_upstream::shutdown_send(boost::system::error_code& ec)
+boost::asio::awaitable<void> socks_tcp_outbound::shutdown_send(boost::system::error_code& ec)
 {
     ec = socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
     if (ec == boost::asio::error::not_connected)
@@ -658,12 +658,15 @@ boost::asio::awaitable<void> socks_upstream::shutdown_send(boost::system::error_
     co_return;
 }
 
-std::shared_ptr<upstream> make_direct_upstream(const boost::asio::any_io_executor& executor, uint32_t conn_id, uint64_t trace_id, const config& cfg)
+std::shared_ptr<tcp_outbound_stream> make_direct_tcp_outbound_stream(const boost::asio::any_io_executor& executor,
+                                                                     uint32_t conn_id,
+                                                                     uint64_t trace_id,
+                                                                     const config& cfg)
 {
-    return std::make_shared<direct_upstream>(executor, conn_id, trace_id, cfg);
+    return std::make_shared<direct_tcp_outbound>(executor, conn_id, trace_id, cfg);
 }
 
-proxy_upstream::proxy_upstream(const boost::asio::any_io_executor& executor,
+proxy_tcp_outbound::proxy_tcp_outbound(const boost::asio::any_io_executor& executor,
                                uint32_t conn_id,
                                uint64_t trace_id,
                                const config& cfg,
@@ -672,11 +675,11 @@ proxy_upstream::proxy_upstream(const boost::asio::any_io_executor& executor,
 {
 }
 
-std::shared_ptr<upstream> make_proxy_upstream(const boost::asio::any_io_executor& executor,
-                                              uint32_t conn_id,
-                                              uint64_t trace_id,
-                                              const config& cfg,
-                                              const std::string& outbound_tag)
+std::shared_ptr<tcp_outbound_stream> make_proxy_tcp_outbound_stream(const boost::asio::any_io_executor& executor,
+                                                                    uint32_t conn_id,
+                                                                    uint64_t trace_id,
+                                                                    const config& cfg,
+                                                                    const std::string& outbound_tag)
 {
     const auto* outbound = find_outbound_entry(cfg, outbound_tag);
     if (outbound == nullptr)
@@ -685,16 +688,16 @@ std::shared_ptr<upstream> make_proxy_upstream(const boost::asio::any_io_executor
     }
     if (outbound->type == "reality")
     {
-        return std::make_shared<proxy_upstream>(executor, conn_id, trace_id, cfg, outbound_tag);
+        return std::make_shared<proxy_tcp_outbound>(executor, conn_id, trace_id, cfg, outbound_tag);
     }
     if (outbound->type == "socks")
     {
-        return std::make_shared<socks_upstream>(executor, conn_id, trace_id, cfg, outbound_tag);
+        return std::make_shared<socks_tcp_outbound>(executor, conn_id, trace_id, cfg, outbound_tag);
     }
     return nullptr;
 }
 
-uint32_t proxy_upstream::connect_ack_timeout() const
+uint32_t proxy_tcp_outbound::connect_ack_timeout() const
 {
     if (cfg_.timeout.connect == 0)
     {
@@ -704,7 +707,7 @@ uint32_t proxy_upstream::connect_ack_timeout() const
     return std::max(cfg_.timeout.read, cfg_.timeout.connect + 1);
 }
 
-boost::asio::awaitable<void> proxy_upstream::send_connect_request(const std::string& host, const uint16_t port, boost::system::error_code& ec) const
+boost::asio::awaitable<void> proxy_tcp_outbound::send_connect_request(const std::string& host, const uint16_t port, boost::system::error_code& ec) const
 {
     if (connection_ == nullptr)
     {
@@ -751,7 +754,7 @@ boost::asio::awaitable<void> proxy_upstream::send_connect_request(const std::str
     }
 }
 
-boost::asio::awaitable<void> proxy_upstream::wait_connect_reply(const std::string& host, const uint16_t port, upstream_connect_result& result) const
+boost::asio::awaitable<void> proxy_tcp_outbound::wait_connect_reply(const std::string& host, const uint16_t port, tcp_outbound_connect_result& result) const
 {
     if (connection_ == nullptr)
     {
@@ -833,9 +836,9 @@ boost::asio::awaitable<void> proxy_upstream::wait_connect_reply(const std::strin
              reply.bind_port);
 }
 
-boost::asio::awaitable<upstream_connect_result> proxy_upstream::connect(const std::string& host, uint16_t port)
+boost::asio::awaitable<tcp_outbound_connect_result> proxy_tcp_outbound::connect(const std::string& host, uint16_t port)
 {
-    upstream_connect_result result;
+    tcp_outbound_connect_result result;
     result.socks_rep = socks::kRepSuccess;
     target_host_ = host;
     target_port_ = port;
@@ -904,7 +907,7 @@ boost::asio::awaitable<upstream_connect_result> proxy_upstream::connect(const st
     co_return result;
 }
 
-boost::asio::awaitable<std::size_t> proxy_upstream::read(std::vector<uint8_t>& buf, boost::system::error_code& ec)
+boost::asio::awaitable<std::size_t> proxy_tcp_outbound::read(std::vector<uint8_t>& buf, boost::system::error_code& ec)
 {
     if (connection_ == nullptr)
     {
@@ -927,7 +930,7 @@ boost::asio::awaitable<std::size_t> proxy_upstream::read(std::vector<uint8_t>& b
     co_return bytes_read;
 }
 
-boost::asio::awaitable<void> proxy_upstream::write(const std::vector<uint8_t>& data, boost::system::error_code& ec)
+boost::asio::awaitable<void> proxy_tcp_outbound::write(const std::vector<uint8_t>& data, boost::system::error_code& ec)
 {
     if (connection_ == nullptr)
     {
@@ -937,7 +940,7 @@ boost::asio::awaitable<void> proxy_upstream::write(const std::vector<uint8_t>& d
     co_return co_await connection_->write(std::span<const uint8_t>(data.data(), data.size()), ec);
 }
 
-boost::asio::awaitable<void> proxy_upstream::shutdown_send(boost::system::error_code& ec)
+boost::asio::awaitable<void> proxy_tcp_outbound::shutdown_send(boost::system::error_code& ec)
 {
     if (connection_ == nullptr || send_shutdown_)
     {
@@ -954,7 +957,7 @@ boost::asio::awaitable<void> proxy_upstream::shutdown_send(boost::system::error_
     }
 }
 
-boost::asio::awaitable<void> proxy_upstream::close()
+boost::asio::awaitable<void> proxy_tcp_outbound::close()
 {
     if (connection_ != nullptr)
     {

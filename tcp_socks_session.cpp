@@ -144,7 +144,7 @@ boost::asio::awaitable<void> tcp_socks_session::run(const std::string& host, uin
              duration_ms);
 }
 
-std::shared_ptr<upstream> tcp_socks_session::create_backend(const route_type route, const std::string& outbound_tag)
+std::shared_ptr<tcp_outbound_stream> tcp_socks_session::create_backend(const route_type route, const std::string& outbound_tag)
 {
     if (route != route_type::kDirect && route != route_type::kProxy)
     {
@@ -158,7 +158,7 @@ std::shared_ptr<upstream> tcp_socks_session::create_backend(const route_type rou
     return handler->create_tcp_upstream(socket_.get_executor(), conn_id_, trace_id_, cfg_);
 }
 
-boost::asio::awaitable<upstream_connect_result> tcp_socks_session::connect_backend(const std::shared_ptr<upstream>& backend,
+boost::asio::awaitable<tcp_outbound_connect_result> tcp_socks_session::connect_backend(const std::shared_ptr<tcp_outbound_stream>& backend,
                                                                                    const std::string& host,
                                                                                    uint16_t port,
                                                                                    const route_type route)
@@ -220,7 +220,7 @@ boost::asio::awaitable<void> tcp_socks_session::reply_error(uint8_t code)
              ec.message());
 }
 
-boost::asio::awaitable<bool> tcp_socks_session::reply_success(const upstream_connect_result& connect_result)
+boost::asio::awaitable<bool> tcp_socks_session::reply_success(const tcp_outbound_connect_result& connect_result)
 {
     std::vector<uint8_t> rep;
     rep.reserve(22);
@@ -323,7 +323,7 @@ void tcp_socks_session::close_client_socket()
     }
 }
 
-boost::asio::awaitable<void> tcp_socks_session::client_to_upstream(std::shared_ptr<upstream> backend)
+boost::asio::awaitable<void> tcp_socks_session::client_to_upstream(std::shared_ptr<tcp_outbound_stream> backend)
 {
     boost::system::error_code ec;
     std::vector<uint8_t> buf(8192);
@@ -410,7 +410,7 @@ boost::asio::awaitable<void> tcp_socks_session::client_to_upstream(std::shared_p
              tx_bytes_);
 }
 
-boost::asio::awaitable<void> tcp_socks_session::upstream_to_client(std::shared_ptr<upstream> backend)
+boost::asio::awaitable<void> tcp_socks_session::upstream_to_client(std::shared_ptr<tcp_outbound_stream> backend)
 {
     boost::system::error_code ec;
     std::vector<uint8_t> buf(8192);
@@ -494,7 +494,7 @@ boost::asio::awaitable<void> tcp_socks_session::upstream_to_client(std::shared_p
              rx_bytes_);
 }
 
-boost::asio::awaitable<void> tcp_socks_session::idle_watchdog(std::shared_ptr<upstream> backend)
+boost::asio::awaitable<void> tcp_socks_session::idle_watchdog(std::shared_ptr<tcp_outbound_stream> backend)
 {
     const auto idle_timeout_ms = static_cast<uint64_t>(cfg_.timeout.idle) * 1000ULL;
 

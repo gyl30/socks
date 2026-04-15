@@ -30,17 +30,17 @@ class tcp_socks_session : public std::enable_shared_from_this<tcp_socks_session>
     [[nodiscard]] boost::asio::awaitable<void> run(const std::string& host, uint16_t port);
 
     [[nodiscard]] boost::asio::awaitable<void> reply_error(uint8_t code);
-    [[nodiscard]] boost::asio::awaitable<upstream_connect_result> connect_backend(const std::shared_ptr<upstream>& backend,
+    [[nodiscard]] boost::asio::awaitable<tcp_outbound_connect_result> connect_backend(const std::shared_ptr<tcp_outbound_stream>& backend,
                                                                                   const std::string& host,
                                                                                   uint16_t port,
                                                                                   route_type route);
-    [[nodiscard]] boost::asio::awaitable<bool> reply_success(const upstream_connect_result& connect_result);
+    [[nodiscard]] boost::asio::awaitable<bool> reply_success(const tcp_outbound_connect_result& connect_result);
 
-    [[nodiscard]] boost::asio::awaitable<void> client_to_upstream(std::shared_ptr<upstream> backend);
+    [[nodiscard]] boost::asio::awaitable<void> client_to_upstream(std::shared_ptr<tcp_outbound_stream> backend);
 
-    [[nodiscard]] boost::asio::awaitable<void> upstream_to_client(std::shared_ptr<upstream> backend);
-    [[nodiscard]] boost::asio::awaitable<void> idle_watchdog(std::shared_ptr<upstream> backend);
-    [[nodiscard]] std::shared_ptr<upstream> create_backend(route_type route, const std::string& outbound_tag);
+    [[nodiscard]] boost::asio::awaitable<void> upstream_to_client(std::shared_ptr<tcp_outbound_stream> backend);
+    [[nodiscard]] boost::asio::awaitable<void> idle_watchdog(std::shared_ptr<tcp_outbound_stream> backend);
+    [[nodiscard]] std::shared_ptr<tcp_outbound_stream> create_backend(route_type route, const std::string& outbound_tag);
 
     void close_client_socket();
 

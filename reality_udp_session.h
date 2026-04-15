@@ -39,10 +39,10 @@ class reality_udp_session : public std::enable_shared_from_this<reality_udp_sess
     boost::asio::awaitable<void> start_impl(const proxy::udp_associate_request& request);
     boost::asio::awaitable<void> connection_to_udp();
     boost::asio::awaitable<void> udp_to_connection();
-    boost::asio::awaitable<void> proxy_to_connection(const std::string& outbound_tag, const std::shared_ptr<proxy_udp_upstream>& upstream);
+    boost::asio::awaitable<void> proxy_to_connection(const std::string& outbound_tag, const std::shared_ptr<udp_proxy_outbound>& upstream);
     boost::asio::awaitable<void> idle_watchdog();
     [[nodiscard]] boost::asio::awaitable<route_decision> decide_route(const proxy::udp_datagram& datagram) const;
-    [[nodiscard]] boost::asio::awaitable<std::shared_ptr<proxy_udp_upstream>> get_proxy_upstream(const std::string& outbound_tag);
+    [[nodiscard]] boost::asio::awaitable<std::shared_ptr<udp_proxy_outbound>> get_proxy_upstream(const std::string& outbound_tag);
     boost::asio::awaitable<void> close_proxy_upstreams();
     [[nodiscard]] boost::asio::awaitable<boost::asio::ip::udp::endpoint> resolve_target_endpoint(const std::string& host,
                                                                                                  uint16_t port,
@@ -76,7 +76,7 @@ class reality_udp_session : public std::enable_shared_from_this<reality_udp_sess
     std::shared_ptr<proxy_reality_connection> connection_;
     std::shared_ptr<router> router_;
     uint64_t last_activity_time_ms_{0};
-    std::unordered_map<std::string, std::shared_ptr<proxy_udp_upstream>> proxy_upstreams_;
+    std::unordered_map<std::string, std::shared_ptr<udp_proxy_outbound>> proxy_upstreams_;
     lru_cache<std::string, endpoint_cache_entry> resolved_targets_;
     lru_cache<boost::asio::ip::udp::endpoint, peer_cache_entry, net::udp_endpoint_hash, net::udp_endpoint_equal> allowed_reply_peers_;
     std::atomic<bool> stopping_{false};
