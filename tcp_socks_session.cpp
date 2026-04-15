@@ -119,11 +119,11 @@ boost::asio::awaitable<void> tcp_socks_session::run(const std::string& host, uin
     using boost::asio::experimental::awaitable_operators::operator||;
     if (cfg_.timeout.idle == 0)
     {
-        co_await (client_to_upstream(backend) && upstream_to_client(backend));
+        co_await (client_to_outbound(backend) && outbound_to_client(backend));
     }
     else
     {
-        co_await ((client_to_upstream(backend) && upstream_to_client(backend)) || idle_watchdog(backend));
+        co_await ((client_to_outbound(backend) && outbound_to_client(backend)) || idle_watchdog(backend));
     }
 
     co_await backend->close();
@@ -323,7 +323,7 @@ void tcp_socks_session::close_client_socket()
     }
 }
 
-boost::asio::awaitable<void> tcp_socks_session::client_to_upstream(std::shared_ptr<tcp_outbound_stream> backend)
+boost::asio::awaitable<void> tcp_socks_session::client_to_outbound(std::shared_ptr<tcp_outbound_stream> backend)
 {
     boost::system::error_code ec;
     std::vector<uint8_t> buf(8192);
@@ -339,7 +339,7 @@ boost::asio::awaitable<void> tcp_socks_session::client_to_upstream(std::shared_p
                 if (shutdown_ec)
                 {
                     LOG_WARN(
-                        "{} trace {:016x} conn {} client {}:{} local {}:{} target {}:{} route {} stage client_to_upstream shutdown "
+                        "{} trace {:016x} conn {} client {}:{} local {}:{} target {}:{} route {} stage client_to_outbound shutdown "
                         "backend send failed {}",
                         log_event::kSocks,
                         trace_id_,
@@ -356,7 +356,7 @@ boost::asio::awaitable<void> tcp_socks_session::client_to_upstream(std::shared_p
             }
             else
             {
-                LOG_WARN("{} trace {:016x} conn {} client {}:{} local {}:{} target {}:{} route {} stage client_to_upstream read failed {}",
+                LOG_WARN("{} trace {:016x} conn {} client {}:{} local {}:{} target {}:{} route {} stage client_to_outbound read failed {}",
                          log_event::kSocks,
                          trace_id_,
                          conn_id_,
@@ -377,7 +377,7 @@ boost::asio::awaitable<void> tcp_socks_session::client_to_upstream(std::shared_p
         if (ec)
         {
             LOG_WARN(
-                "{} trace {:016x} conn {} client {}:{} local {}:{} target {}:{} route {} stage client_to_upstream write to backend "
+                "{} trace {:016x} conn {} client {}:{} local {}:{} target {}:{} route {} stage client_to_outbound write to backend "
                 "failed {}",
                 log_event::kSocks,
                 trace_id_,
@@ -396,7 +396,7 @@ boost::asio::awaitable<void> tcp_socks_session::client_to_upstream(std::shared_p
         tx_bytes_ += n;
         last_activity_time_ms_ = net::now_ms();
     }
-    LOG_INFO("{} trace {:016x} conn {} client {}:{} local {}:{} target {}:{} route {} stage client_to_upstream finished tx_bytes {}",
+    LOG_INFO("{} trace {:016x} conn {} client {}:{} local {}:{} target {}:{} route {} stage client_to_outbound finished tx_bytes {}",
              log_event::kDataSend,
              trace_id_,
              conn_id_,
@@ -410,7 +410,7 @@ boost::asio::awaitable<void> tcp_socks_session::client_to_upstream(std::shared_p
              tx_bytes_);
 }
 
-boost::asio::awaitable<void> tcp_socks_session::upstream_to_client(std::shared_ptr<tcp_outbound_stream> backend)
+boost::asio::awaitable<void> tcp_socks_session::outbound_to_client(std::shared_ptr<tcp_outbound_stream> backend)
 {
     boost::system::error_code ec;
     std::vector<uint8_t> buf(8192);
@@ -426,7 +426,7 @@ boost::asio::awaitable<void> tcp_socks_session::upstream_to_client(std::shared_p
                 if (shutdown_ec && shutdown_ec != boost::asio::error::not_connected)
                 {
                     LOG_WARN(
-                        "{} trace {:016x} conn {} client {}:{} local {}:{} target {}:{} route {} stage upstream_to_client shutdown "
+                        "{} trace {:016x} conn {} client {}:{} local {}:{} target {}:{} route {} stage outbound_to_client shutdown "
                         "client send failed {}",
                         log_event::kSocks,
                         trace_id_,
@@ -443,7 +443,7 @@ boost::asio::awaitable<void> tcp_socks_session::upstream_to_client(std::shared_p
             }
             else
             {
-                LOG_WARN("{} trace {:016x} conn {} client {}:{} local {}:{} target {}:{} route {} stage upstream_to_client read failed {}",
+                LOG_WARN("{} trace {:016x} conn {} client {}:{} local {}:{} target {}:{} route {} stage outbound_to_client read failed {}",
                          log_event::kSocks,
                          trace_id_,
                          conn_id_,
@@ -462,7 +462,7 @@ boost::asio::awaitable<void> tcp_socks_session::upstream_to_client(std::shared_p
         auto write_size = co_await net::wait_write_with_timeout(socket_, boost::asio::buffer(buf.data(), n), cfg_.timeout.write, ec);
         if (ec)
         {
-            LOG_WARN("{} trace {:016x} conn {} client {}:{} local {}:{} target {}:{} route {} stage upstream_to_client write failed {}",
+            LOG_WARN("{} trace {:016x} conn {} client {}:{} local {}:{} target {}:{} route {} stage outbound_to_client write failed {}",
                      log_event::kSocks,
                      trace_id_,
                      conn_id_,
@@ -480,7 +480,7 @@ boost::asio::awaitable<void> tcp_socks_session::upstream_to_client(std::shared_p
         rx_bytes_ += write_size;
         last_activity_time_ms_ = net::now_ms();
     }
-    LOG_INFO("{} trace {:016x} conn {} client {}:{} local {}:{} target {}:{} route {} stage upstream_to_client finished rx_bytes {}",
+    LOG_INFO("{} trace {:016x} conn {} client {}:{} local {}:{} target {}:{} route {} stage outbound_to_client finished rx_bytes {}",
              log_event::kDataRecv,
              trace_id_,
              conn_id_,

@@ -245,14 +245,14 @@ boost::asio::awaitable<void> reality_tcp_session::relay_target(const std::shared
 
     if (cfg_.timeout.idle == 0)
     {
-        co_await (client_to_upstream(backend) && upstream_to_client(backend));
+        co_await (client_to_outbound(backend) && outbound_to_client(backend));
         co_return;
     }
 
-    co_await ((client_to_upstream(backend) && upstream_to_client(backend)) || idle_watchdog(backend));
+    co_await ((client_to_outbound(backend) && outbound_to_client(backend)) || idle_watchdog(backend));
 }
 
-boost::asio::awaitable<void> reality_tcp_session::client_to_upstream(const std::shared_ptr<tcp_outbound_stream>& backend)
+boost::asio::awaitable<void> reality_tcp_session::client_to_outbound(const std::shared_ptr<tcp_outbound_stream>& backend)
 {
     if (connection_ == nullptr || backend == nullptr)
     {
@@ -278,7 +278,7 @@ boost::asio::awaitable<void> reality_tcp_session::client_to_upstream(const std::
             }
             else
             {
-                LOG_INFO("{} trace {:016x} conn {} target {}:{} route {} client_to_upstream finished {}",
+                LOG_INFO("{} trace {:016x} conn {} target {}:{} route {} client_to_outbound finished {}",
                          log_event::kRoute,
                          trace_id_,
                          conn_id_,
@@ -295,7 +295,7 @@ boost::asio::awaitable<void> reality_tcp_session::client_to_upstream(const std::
         buffer.resize(8192);
         if (ec)
         {
-            LOG_WARN("{} trace {:016x} conn {} target {}:{} route {} client_to_upstream write failed {}",
+            LOG_WARN("{} trace {:016x} conn {} target {}:{} route {} client_to_outbound write failed {}",
                      log_event::kDataSend,
                      trace_id_,
                      conn_id_,
@@ -310,7 +310,7 @@ boost::asio::awaitable<void> reality_tcp_session::client_to_upstream(const std::
     }
 }
 
-boost::asio::awaitable<void> reality_tcp_session::upstream_to_client(const std::shared_ptr<tcp_outbound_stream>& backend)
+boost::asio::awaitable<void> reality_tcp_session::outbound_to_client(const std::shared_ptr<tcp_outbound_stream>& backend)
 {
     if (connection_ == nullptr || backend == nullptr)
     {
@@ -331,7 +331,7 @@ boost::asio::awaitable<void> reality_tcp_session::upstream_to_client(const std::
             }
             else
             {
-                LOG_INFO("{} trace {:016x} conn {} target {}:{} route {} upstream_to_client finished {}",
+                LOG_INFO("{} trace {:016x} conn {} target {}:{} route {} outbound_to_client finished {}",
                          log_event::kRoute,
                          trace_id_,
                          conn_id_,
@@ -345,7 +345,7 @@ boost::asio::awaitable<void> reality_tcp_session::upstream_to_client(const std::
         co_await connection_->write(std::span<const uint8_t>(buffer.data(), bytes_read), ec);
         if (ec)
         {
-            LOG_WARN("{} trace {:016x} conn {} target {}:{} route {} upstream_to_client write failed {}",
+            LOG_WARN("{} trace {:016x} conn {} target {}:{} route {} outbound_to_client write failed {}",
                      log_event::kDataSend,
                      trace_id_,
                      conn_id_,

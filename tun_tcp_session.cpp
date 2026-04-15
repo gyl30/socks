@@ -143,11 +143,11 @@ boost::asio::awaitable<void> tun_tcp_session::run()
     using boost::asio::experimental::awaitable_operators::operator||;
     if (cfg_.timeout.idle == 0)
     {
-        co_await (client_to_upstream(backend) && upstream_to_client(backend));
+        co_await (client_to_outbound(backend) && outbound_to_client(backend));
     }
     else
     {
-        co_await ((client_to_upstream(backend) && upstream_to_client(backend)) || idle_watchdog());
+        co_await ((client_to_outbound(backend) && outbound_to_client(backend)) || idle_watchdog());
     }
 
     co_await backend->close();
@@ -205,7 +205,7 @@ boost::asio::awaitable<std::pair<route_decision, std::shared_ptr<tcp_outbound_st
     co_return std::make_pair(decision, backend);
 }
 
-boost::asio::awaitable<void> tun_tcp_session::client_to_upstream(const std::shared_ptr<tcp_outbound_stream>& backend)
+boost::asio::awaitable<void> tun_tcp_session::client_to_outbound(const std::shared_ptr<tcp_outbound_stream>& backend)
 {
     boost::system::error_code ec;
     for (;;)
@@ -227,7 +227,7 @@ boost::asio::awaitable<void> tun_tcp_session::client_to_upstream(const std::shar
                 co_await backend->write(payload, ec);
                 if (ec)
                 {
-                    LOG_WARN("{} trace {:016x} conn {} client {}:{} target {}:{} stage client_to_upstream write backend failed {}",
+                    LOG_WARN("{} trace {:016x} conn {} client {}:{} target {}:{} stage client_to_outbound write backend failed {}",
                              log_event::kDataSend,
                              trace_id_,
                              conn_id_,
@@ -260,7 +260,7 @@ boost::asio::awaitable<void> tun_tcp_session::client_to_upstream(const std::shar
     }
 }
 
-boost::asio::awaitable<void> tun_tcp_session::upstream_to_client(const std::shared_ptr<tcp_outbound_stream>& backend)
+boost::asio::awaitable<void> tun_tcp_session::outbound_to_client(const std::shared_ptr<tcp_outbound_stream>& backend)
 {
     std::vector<uint8_t> buffer(8192);
     boost::system::error_code ec;
@@ -276,7 +276,7 @@ boost::asio::awaitable<void> tun_tcp_session::upstream_to_client(const std::shar
             }
             else
             {
-                LOG_WARN("{} trace {:016x} conn {} client {}:{} target {}:{} stage upstream_to_client read backend failed {}",
+                LOG_WARN("{} trace {:016x} conn {} client {}:{} target {}:{} stage outbound_to_client read backend failed {}",
                          log_event::kDataRecv,
                          trace_id_,
                          conn_id_,
@@ -315,7 +315,7 @@ boost::asio::awaitable<void> tun_tcp_session::upstream_to_client(const std::shar
             }
             if (write_err != ERR_OK)
             {
-                LOG_WARN("{} trace {:016x} conn {} client {}:{} target {}:{} stage upstream_to_client tcp_write failed {}",
+                LOG_WARN("{} trace {:016x} conn {} client {}:{} target {}:{} stage outbound_to_client tcp_write failed {}",
                          log_event::kDataRecv,
                          trace_id_,
                          conn_id_,
@@ -331,7 +331,7 @@ boost::asio::awaitable<void> tun_tcp_session::upstream_to_client(const std::shar
             const auto output_err = tcp_output(pcb_);
             if (output_err != ERR_OK && output_err != ERR_MEM)
             {
-                LOG_WARN("{} trace {:016x} conn {} client {}:{} target {}:{} stage upstream_to_client tcp_output failed {}",
+                LOG_WARN("{} trace {:016x} conn {} client {}:{} target {}:{} stage outbound_to_client tcp_output failed {}",
                          log_event::kDataRecv,
                          trace_id_,
                          conn_id_,
