@@ -24,10 +24,10 @@
 namespace relay
 {
 
-class tun_client : public std::enable_shared_from_this<tun_client>
+class tun_inbound : public std::enable_shared_from_this<tun_inbound>
 {
    public:
-    tun_client(io_context_pool& pool, const config& cfg);
+    tun_inbound(io_context_pool& pool, const config& cfg);
 
     void start();
     void stop();

@@ -122,16 +122,16 @@ void open_udp_listener(boost::asio::ip::udp::socket& socket, const std::string& 
 
 }    // namespace
 
-tproxy_client::tproxy_client(io_context_pool& pool, const config& cfg)
+tproxy_inbound::tproxy_inbound(io_context_pool& pool, const config& cfg)
     : cfg_(cfg), owner_worker_(pool.get_io_worker()), router_(std::make_shared<router>(cfg_)), tcp_acceptor_(owner_worker_.io_context)
 {
 }
 
-void tproxy_client::start()
+void tproxy_inbound::start()
 {
     if (!cfg_.tproxy.enabled)
     {
-        LOG_INFO("{} stage start tproxy client disabled", log_event::kConnInit);
+        LOG_INFO("{} stage start tproxy inbound disabled", log_event::kConnInit);
         return;
     }
     if (!router_->load())
@@ -158,7 +158,7 @@ void tproxy_client::start()
     owner_worker_.group.spawn([self = shared_from_this()]() { return self->start_listeners(); });
 }
 
-boost::asio::awaitable<void> tproxy_client::start_listeners()
+boost::asio::awaitable<void> tproxy_inbound::start_listeners()
 {
     boost::system::error_code ec;
     if (cfg_.tproxy.tcp_port != 0)
@@ -204,7 +204,7 @@ boost::asio::awaitable<void> tproxy_client::start_listeners()
     co_return;
 }
 
-void tproxy_client::stop()
+void tproxy_inbound::stop()
 {
     if (stopping_.exchange(true))
     {
@@ -214,7 +214,7 @@ void tproxy_client::stop()
     boost::asio::post(owner_worker_.io_context,
                       [self = shared_from_this()]()
                       {
-                          LOG_INFO("{} listen {} tcp_port {} udp_port {} tproxy client stopping closing resources",
+                          LOG_INFO("{} listen {} tcp_port {} udp_port {} tproxy inbound stopping closing resources",
                                    log_event::kConnClose,
                                    self->cfg_.tproxy.listen_host,
                                    self->cfg_.tproxy.tcp_port,
@@ -253,7 +253,7 @@ void tproxy_client::stop()
                       });
 }
 
-boost::asio::awaitable<void> tproxy_client::accept_tcp_loop()
+boost::asio::awaitable<void> tproxy_inbound::accept_tcp_loop()
 {
     boost::system::error_code ec;
 
@@ -289,7 +289,7 @@ boost::asio::awaitable<void> tproxy_client::accept_tcp_loop()
     LOG_INFO("{} listen {}:{} tcp accept loop exited", log_event::kConnClose, cfg_.tproxy.listen_host, cfg_.tproxy.tcp_port);
 }
 
-void tproxy_client::on_tcp_socket(boost::asio::ip::tcp::socket&& socket)
+void tproxy_inbound::on_tcp_socket(boost::asio::ip::tcp::socket&& socket)
 {
     boost::system::error_code local_ec;
     const auto local_ep = socket.local_endpoint(local_ec);
@@ -322,7 +322,7 @@ void tproxy_client::on_tcp_socket(boost::asio::ip::tcp::socket&& socket)
     owner_worker_.group.spawn([session]() -> boost::asio::awaitable<void> { co_await session->start(); });
 }
 
-boost::asio::awaitable<void> tproxy_client::accept_udp_loop()
+boost::asio::awaitable<void> tproxy_inbound::accept_udp_loop()
 {
     boost::system::error_code ec;
     std::vector<uint8_t> payload(65535);
@@ -411,9 +411,9 @@ boost::asio::awaitable<void> tproxy_client::accept_udp_loop()
     LOG_INFO("{} listen {}:{} udp accept loop exited", log_event::kConnClose, cfg_.tproxy.listen_host, cfg_.tproxy.udp_port);
 }
 
-boost::asio::awaitable<void> tproxy_client::on_udp_packet(boost::asio::ip::udp::endpoint client_endpoint,
-                                                          boost::asio::ip::udp::endpoint target_endpoint,
-                                                          std::vector<uint8_t> payload)
+boost::asio::awaitable<void> tproxy_inbound::on_udp_packet(boost::asio::ip::udp::endpoint client_endpoint,
+                                                           boost::asio::ip::udp::endpoint target_endpoint,
+                                                           std::vector<uint8_t> payload)
 {
     client_endpoint = net::normalize_endpoint(client_endpoint);
     target_endpoint = net::normalize_endpoint(target_endpoint);
@@ -461,7 +461,7 @@ boost::asio::awaitable<void> tproxy_client::on_udp_packet(boost::asio::ip::udp::
     }
 }
 
-bool tproxy_client::is_udp_routing_loop(const boost::asio::ip::udp::endpoint& target_endpoint) const
+bool tproxy_inbound::is_udp_routing_loop(const boost::asio::ip::udp::endpoint& target_endpoint) const
 {
     if (cfg_.tproxy.udp_port == 0)
     {
@@ -478,8 +478,8 @@ bool tproxy_client::is_udp_routing_loop(const boost::asio::ip::udp::endpoint& ta
     return target_endpoint.port() == cfg_.tproxy.udp_port && net::normalize_address(target_endpoint.address()) == net::normalize_address(local_addr);
 }
 
-boost::asio::awaitable<route_decision> tproxy_client::decide_udp_route(uint32_t conn_id,
-                                                                       const boost::asio::ip::udp::endpoint& target_endpoint) const
+boost::asio::awaitable<route_decision> tproxy_inbound::decide_udp_route(uint32_t conn_id,
+                                                                        const boost::asio::ip::udp::endpoint& target_endpoint) const
 {
     route_decision decision;
     decision.route = route_type::kBlock;
@@ -504,7 +504,7 @@ boost::asio::awaitable<route_decision> tproxy_client::decide_udp_route(uint32_t 
     co_return decision;
 }
 
-std::shared_ptr<tproxy_udp_session> tproxy_client::find_udp_session(const std::string& key) const
+std::shared_ptr<tproxy_udp_session> tproxy_inbound::find_udp_session(const std::string& key) const
 {
     const auto it = udp_sessions_.find(key);
     if (it == udp_sessions_.end())
@@ -515,9 +515,9 @@ std::shared_ptr<tproxy_udp_session> tproxy_client::find_udp_session(const std::s
     return it->second;
 }
 
-boost::asio::awaitable<void> tproxy_client::enqueue_udp_session(const std::string& key,
-                                                                const std::shared_ptr<tproxy_udp_session>& session,
-                                                                std::vector<uint8_t> payload)
+boost::asio::awaitable<void> tproxy_inbound::enqueue_udp_session(const std::string& key,
+                                                                 const std::shared_ptr<tproxy_udp_session>& session,
+                                                                 std::vector<uint8_t> payload)
 {
     const auto enqueue_result = co_await session->enqueue_packet(std::move(payload));
     if (enqueue_result == udp_enqueue_result::kEnqueued)
@@ -532,12 +532,12 @@ boost::asio::awaitable<void> tproxy_client::enqueue_udp_session(const std::strin
     }
 }
 
-std::shared_ptr<tproxy_udp_session> tproxy_client::make_udp_session(const std::string& key,
-                                                                    const boost::asio::ip::udp::endpoint& client_endpoint,
-                                                                    const boost::asio::ip::udp::endpoint& target_endpoint,
-                                                                    route_type route,
-                                                                    const std::string& outbound_tag,
-                                                                    uint32_t conn_id)
+std::shared_ptr<tproxy_udp_session> tproxy_inbound::make_udp_session(const std::string& key,
+                                                                     const boost::asio::ip::udp::endpoint& client_endpoint,
+                                                                     const boost::asio::ip::udp::endpoint& target_endpoint,
+                                                                     route_type route,
+                                                                     const std::string& outbound_tag,
+                                                                     uint32_t conn_id)
 {
     const auto weak_self = weak_from_this();
     return std::make_shared<tproxy_udp_session>(owner_worker_,
@@ -556,12 +556,12 @@ std::shared_ptr<tproxy_udp_session> tproxy_client::make_udp_session(const std::s
                                                 });
 }
 
-bool tproxy_client::register_udp_session(const std::string& key,
-                                         const std::shared_ptr<tproxy_udp_session>& session,
-                                         uint32_t conn_id,
-                                         const boost::asio::ip::udp::endpoint& client_endpoint,
-                                         const boost::asio::ip::udp::endpoint& target_endpoint,
-                                         route_type route)
+bool tproxy_inbound::register_udp_session(const std::string& key,
+                                          const std::shared_ptr<tproxy_udp_session>& session,
+                                          uint32_t conn_id,
+                                          const boost::asio::ip::udp::endpoint& client_endpoint,
+                                          const boost::asio::ip::udp::endpoint& target_endpoint,
+                                          route_type route)
 {
     evict_udp_sessions_if_needed();
     if (udp_sessions_.size() >= constants::udp::kMaxSessions)
@@ -594,7 +594,7 @@ bool tproxy_client::register_udp_session(const std::string& key,
     return true;
 }
 
-void tproxy_client::touch_udp_session(const std::string& key)
+void tproxy_inbound::touch_udp_session(const std::string& key)
 {
     const auto it = udp_session_lru_index_.find(key);
     if (it != udp_session_lru_index_.end())
@@ -609,7 +609,7 @@ void tproxy_client::touch_udp_session(const std::string& key)
     udp_session_lru_index_[key] = tail;
 }
 
-void tproxy_client::evict_udp_sessions_if_needed()
+void tproxy_inbound::evict_udp_sessions_if_needed()
 {
     while (udp_sessions_.size() >= constants::udp::kMaxSessions)
     {
@@ -635,7 +635,7 @@ void tproxy_client::evict_udp_sessions_if_needed()
     }
 }
 
-void tproxy_client::erase_udp_session(const std::string& key)
+void tproxy_inbound::erase_udp_session(const std::string& key)
 {
     udp_sessions_.erase(key);
     const auto it = udp_session_lru_index_.find(key);
@@ -646,8 +646,8 @@ void tproxy_client::erase_udp_session(const std::string& key)
     }
 }
 
-std::string tproxy_client::make_udp_session_key(const boost::asio::ip::udp::endpoint& client_endpoint,
-                                                const boost::asio::ip::udp::endpoint& target_endpoint)
+std::string tproxy_inbound::make_udp_session_key(const boost::asio::ip::udp::endpoint& client_endpoint,
+                                                 const boost::asio::ip::udp::endpoint& target_endpoint)
 {
     const auto normalized_client = net::normalize_endpoint(client_endpoint);
     const auto normalized_target = net::normalize_endpoint(target_endpoint);

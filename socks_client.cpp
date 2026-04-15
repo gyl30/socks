@@ -65,12 +65,12 @@ void setup_acceptor(boost::asio::ip::tcp::acceptor& acceptor, const std::string&
 
 }    // namespace
 
-socks_client::socks_client(io_context_pool& pool, const config& cfg)
+socks_inbound::socks_inbound(io_context_pool& pool, const config& cfg)
     : cfg_(cfg), pool_(pool), owner_worker_(pool.get_io_worker()), router_(std::make_shared<relay::router>(cfg_))
 {
 }
 
-void socks_client::start()
+void socks_inbound::start()
 {
     if (!router_->load())
     {
@@ -79,16 +79,16 @@ void socks_client::start()
     }
     if (!cfg_.socks.enabled)
     {
-        LOG_INFO("{} stage start socks client disabled", log_event::kConnInit);
+        LOG_INFO("{} stage start socks inbound disabled", log_event::kConnInit);
         return;
     }
 
-    LOG_INFO("{} listen {}:{} socks client starting listener", log_event::kConnInit, cfg_.socks.host, cfg_.socks.port);
+    LOG_INFO("{} listen {}:{} socks inbound starting listener", log_event::kConnInit, cfg_.socks.host, cfg_.socks.port);
 
     owner_worker_.group.spawn([self = shared_from_this()]() { return self->start_acceptor(); });
 }
 
-boost::asio::awaitable<void> socks_client::start_acceptor()
+boost::asio::awaitable<void> socks_inbound::start_acceptor()
 {
     boost::system::error_code ec;
     setup_acceptor(acceptor_, cfg_.socks.host, cfg_.socks.port, ec);
@@ -103,7 +103,7 @@ boost::asio::awaitable<void> socks_client::start_acceptor()
     co_return;
 }
 
-boost::asio::awaitable<void> socks_client::accept_loop()
+boost::asio::awaitable<void> socks_inbound::accept_loop()
 {
     boost::system::error_code ec;
     for (;;)
@@ -162,7 +162,7 @@ boost::asio::awaitable<void> socks_client::accept_loop()
     LOG_INFO("{} listen {}:{} accept loop exited", log_event::kConnClose, cfg_.socks.host, cfg_.socks.port);
 }
 
-void socks_client::stop()
+void socks_inbound::stop()
 {
     if (stopping_.exchange(true))
     {

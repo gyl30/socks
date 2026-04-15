@@ -18,10 +18,10 @@
 namespace relay
 {
 
-class tproxy_client : public std::enable_shared_from_this<tproxy_client>
+class tproxy_inbound : public std::enable_shared_from_this<tproxy_inbound>
 {
    public:
-    tproxy_client(io_context_pool& pool, const config& cfg);
+    tproxy_inbound(io_context_pool& pool, const config& cfg);
 
    public:
     void start();

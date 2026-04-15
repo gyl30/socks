@@ -27,20 +27,20 @@
 namespace relay
 {
 
-tun_client::tun_client(io_context_pool& pool, const config& cfg) : cfg_(cfg), owner_worker_(pool.get_io_worker()), router_(std::make_shared<router>(cfg_))
+tun_inbound::tun_inbound(io_context_pool& pool, const config& cfg) : cfg_(cfg), owner_worker_(pool.get_io_worker()), router_(std::make_shared<router>(cfg_))
 {
 }
 
-void tun_client::start()
+void tun_inbound::start()
 {
     if (!cfg_.tun.enabled)
     {
-        LOG_INFO("{} stage start tun client disabled", log_event::kConnInit);
+        LOG_INFO("{} stage start tun inbound disabled", log_event::kConnInit);
         return;
     }
     if (!router_->load())
     {
-        LOG_ERROR("{} stage start load router data for tun client failed", log_event::kConnInit);
+        LOG_ERROR("{} stage start load router data for tun inbound failed", log_event::kConnInit);
         std::exit(EXIT_FAILURE);
     }
 
@@ -100,10 +100,10 @@ void tun_client::start()
     LOG_INFO("{} device {} index {} tun stack ready", log_event::kConnInit, device_.name(), device_.index());
     owner_worker_.group.spawn([self = shared_from_this()]() { return self->read_loop(); });
     owner_worker_.group.spawn([self = shared_from_this()]() { return self->timer_loop(); });
-    LOG_INFO("{} device {} index {} tun client started", log_event::kConnEstablished, device_.name(), device_.index());
+    LOG_INFO("{} device {} index {} tun inbound started", log_event::kConnEstablished, device_.name(), device_.index());
 }
 
-void tun_client::stop()
+void tun_inbound::stop()
 {
     if (stopping_.exchange(true))
     {
@@ -113,7 +113,7 @@ void tun_client::stop()
     boost::asio::post(owner_worker_.io_context,
                       [self = shared_from_this()]()
                       {
-                          LOG_INFO("{} device {} index {} tun client stopping", log_event::kConnClose, self->device_.name(), self->device_.index());
+                          LOG_INFO("{} device {} index {} tun inbound stopping", log_event::kConnClose, self->device_.name(), self->device_.index());
                           boost::system::error_code ec;
 #ifdef _WIN32
                           self->tun_wait_handle_.close(ec);
@@ -125,11 +125,11 @@ void tun_client::stop()
                       });
 }
 
-bool tun_client::init_stack()
+bool tun_inbound::init_stack()
 {
     lwip_init();
 
-    if (netif_add_noaddr(&netif_, this, &tun_client::netif_init_handler, ip_input) == nullptr)
+    if (netif_add_noaddr(&netif_, this, &tun_inbound::netif_init_handler, ip_input) == nullptr)
     {
         return false;
     }
@@ -170,7 +170,7 @@ bool tun_client::init_stack()
         return false;
     }
     tcp_arg(tcp_listener_, this);
-    tcp_accept(tcp_listener_, &tun_client::tcp_accept_handler);
+    tcp_accept(tcp_listener_, &tun_inbound::tcp_accept_handler);
 
     udp_listener_ = udp_new_ip_type(IPADDR_TYPE_ANY);
     if (udp_listener_ == nullptr)
@@ -184,13 +184,13 @@ bool tun_client::init_stack()
         shutdown_stack();
         return false;
     }
-    udp_recv(udp_listener_, &tun_client::udp_recv_handler, this);
+    udp_recv(udp_listener_, &tun_inbound::udp_recv_handler, this);
 
     stack_ready_ = true;
     return true;
 }
 
-void tun_client::shutdown_stack()
+void tun_inbound::shutdown_stack()
 {
     for (auto& [_, session] : tcp_sessions_)
     {
@@ -236,7 +236,7 @@ void tun_client::shutdown_stack()
     }
 }
 
-boost::asio::awaitable<void> tun_client::read_loop()
+boost::asio::awaitable<void> tun_inbound::read_loop()
 {
     std::vector<uint8_t> buffer(65535);
     boost::system::error_code ec;
@@ -302,7 +302,7 @@ boost::asio::awaitable<void> tun_client::read_loop()
     }
 }
 
-boost::asio::awaitable<void> tun_client::timer_loop()
+boost::asio::awaitable<void> tun_inbound::timer_loop()
 {
     boost::asio::steady_timer timer(owner_worker_.io_context);
     uint32_t tick = 0;
@@ -333,7 +333,7 @@ boost::asio::awaitable<void> tun_client::timer_loop()
     }
 }
 
-err_t tun_client::write_packet_to_tun(const pbuf* packet)
+err_t tun_inbound::write_packet_to_tun(const pbuf* packet)
 {
     auto payload = tun::pbuf_to_vector(packet);
     if (payload.empty())
@@ -359,10 +359,10 @@ err_t tun_client::write_packet_to_tun(const pbuf* packet)
     return ERR_OK;
 }
 
-void tun_client::on_tcp_accept(tcp_pcb* pcb)
+void tun_inbound::on_tcp_accept(tcp_pcb* pcb)
 {
     const auto conn_id = next_session_id_.fetch_add(1, std::memory_order_relaxed);
-    std::weak_ptr<tun_client> weak_self = shared_from_this();
+    std::weak_ptr<tun_inbound> weak_self = shared_from_this();
     auto session = std::make_shared<tun_tcp_session>(owner_worker_.io_context.get_executor(),
                                                      router_,
                                                      pcb,
@@ -379,7 +379,7 @@ void tun_client::on_tcp_accept(tcp_pcb* pcb)
     owner_worker_.group.spawn([session]() { return session->start(); });
 }
 
-void tun_client::on_udp_accept(udp_pcb* pcb, pbuf* packet, const ip_addr_t* addr, const u16_t port)
+void tun_inbound::on_udp_accept(udp_pcb* pcb, pbuf* packet, const ip_addr_t* addr, const u16_t port)
 {
     if (pcb == nullptr || packet == nullptr || addr == nullptr)
     {
@@ -404,7 +404,7 @@ void tun_client::on_udp_accept(udp_pcb* pcb, pbuf* packet, const ip_addr_t* addr
     }
 
     const auto conn_id = next_session_id_.fetch_add(1, std::memory_order_relaxed);
-    std::weak_ptr<tun_client> weak_self = shared_from_this();
+    std::weak_ptr<tun_inbound> weak_self = shared_from_this();
     auto session = std::make_shared<tun_udp_session>(owner_worker_,
                                                      router_,
                                                      pcb,
@@ -426,21 +426,21 @@ void tun_client::on_udp_accept(udp_pcb* pcb, pbuf* packet, const ip_addr_t* addr
     owner_worker_.group.spawn([session]() { return session->start(); });
 }
 
-void tun_client::erase_tcp_session(const uint32_t conn_id) { tcp_sessions_.erase(conn_id); }
+void tun_inbound::erase_tcp_session(const uint32_t conn_id) { tcp_sessions_.erase(conn_id); }
 
-void tun_client::erase_udp_session(const uint32_t conn_id) { udp_sessions_.erase(conn_id); }
+void tun_inbound::erase_udp_session(const uint32_t conn_id) { udp_sessions_.erase(conn_id); }
 
-err_t tun_client::netif_init_handler(netif* netif)
+err_t tun_inbound::netif_init_handler(netif* netif)
 {
-    netif->output = &tun_client::netif_output_v4_handler;
-    netif->output_ip6 = &tun_client::netif_output_v6_handler;
+    netif->output = &tun_inbound::netif_output_v4_handler;
+    netif->output_ip6 = &tun_inbound::netif_output_v6_handler;
     return ERR_OK;
 }
 
-err_t tun_client::netif_output_v4_handler(netif* netif, pbuf* packet, const ip4_addr_t* ipaddr)
+err_t tun_inbound::netif_output_v4_handler(netif* netif, pbuf* packet, const ip4_addr_t* ipaddr)
 {
     (void)ipaddr;
-    auto* self = static_cast<tun_client*>(netif->state);
+    auto* self = static_cast<tun_inbound*>(netif->state);
     if (self != nullptr)
     {
         return self->write_packet_to_tun(packet);
@@ -448,10 +448,10 @@ err_t tun_client::netif_output_v4_handler(netif* netif, pbuf* packet, const ip4_
     return ERR_IF;
 }
 
-err_t tun_client::netif_output_v6_handler(netif* netif, pbuf* packet, const ip6_addr_t* ipaddr)
+err_t tun_inbound::netif_output_v6_handler(netif* netif, pbuf* packet, const ip6_addr_t* ipaddr)
 {
     (void)ipaddr;
-    auto* self = static_cast<tun_client*>(netif->state);
+    auto* self = static_cast<tun_inbound*>(netif->state);
     if (self != nullptr)
     {
         return self->write_packet_to_tun(packet);
@@ -459,9 +459,9 @@ err_t tun_client::netif_output_v6_handler(netif* netif, pbuf* packet, const ip6_
     return ERR_IF;
 }
 
-err_t tun_client::tcp_accept_handler(void* arg, tcp_pcb* pcb, const err_t err)
+err_t tun_inbound::tcp_accept_handler(void* arg, tcp_pcb* pcb, const err_t err)
 {
-    auto* self = static_cast<tun_client*>(arg);
+    auto* self = static_cast<tun_inbound*>(arg);
     if (self == nullptr || err != ERR_OK || pcb == nullptr || self->stopping_.load(std::memory_order_relaxed))
     {
         return ERR_RST;
@@ -471,9 +471,9 @@ err_t tun_client::tcp_accept_handler(void* arg, tcp_pcb* pcb, const err_t err)
     return ERR_OK;
 }
 
-void tun_client::udp_recv_handler(void* arg, udp_pcb* pcb, pbuf* packet, const ip_addr_t* addr, const u16_t port)
+void tun_inbound::udp_recv_handler(void* arg, udp_pcb* pcb, pbuf* packet, const ip_addr_t* addr, const u16_t port)
 {
-    auto* self = static_cast<tun_client*>(arg);
+    auto* self = static_cast<tun_inbound*>(arg);
     if (self == nullptr || self->stopping_.load(std::memory_order_relaxed))
     {
         if (packet != nullptr)
