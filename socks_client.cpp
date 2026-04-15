@@ -66,7 +66,7 @@ void setup_acceptor(boost::asio::ip::tcp::acceptor& acceptor, const std::string&
 }    // namespace
 
 socks_client::socks_client(io_context_pool& pool, const config& cfg)
-    : cfg_(cfg), pool_(pool), owner_worker_(pool.get_io_worker()), router_(std::make_shared<relay::router>())
+    : cfg_(cfg), pool_(pool), owner_worker_(pool.get_io_worker()), router_(std::make_shared<relay::router>(cfg_))
 {
 }
 

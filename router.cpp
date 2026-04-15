@@ -1,150 +1,289 @@
 #include <memory>
 #include <string>
 #include <vector>
-#include <cstdlib>
-#include <optional>
-#include <filesystem>
+#include <utility>
 
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/ip/address.hpp>
 
 #include "log.h"
 #include "router.h"
-#include "constants.h"
 #include "ip_matcher.h"
+#include "constants.h"
 #include "domain_matcher.h"
 
 namespace relay
 {
 
-std::string to_string(const route_type& t)
+struct router::compiled_rule
 {
-    if (t == route_type::kDirect)
+    route_type route = route_type::kBlock;
+    std::string type;
+    std::string outbound_tag;
+    std::string outbound_type;
+    std::vector<std::string> values;
+    std::shared_ptr<ip_matcher> ip_rules;
+    std::shared_ptr<domain_matcher> domain_rules;
+};
+
+namespace
+{
+
+[[nodiscard]] route_type map_outbound_route(const std::string& outbound_type)
+{
+    if (outbound_type == "direct")
+    {
+        return route_type::kDirect;
+    }
+    if (outbound_type == "reality")
+    {
+        return route_type::kProxy;
+    }
+    return route_type::kBlock;
+}
+
+}    // namespace
+
+std::string to_string(const route_type& type)
+{
+    if (type == route_type::kDirect)
     {
         return "direct";
     }
-    if (t == route_type::kProxy)
+    if (type == route_type::kProxy)
     {
         return "proxy";
     }
-    if (t == route_type::kBlock)
+    if (type == route_type::kBlock)
     {
         return "block";
     }
     return "unknown";
 }
-static std::vector<std::string> rule_search_dirs()
-{
-    std::vector<std::string> dirs;
-    if (const char* env_dir = std::getenv("SOCKS_CONFIG_DIR"); env_dir != nullptr && env_dir[0] != '\0')
-    {
-        dirs.emplace_back(env_dir);
-    }
-    dirs.emplace_back("config");
-    dirs.emplace_back("../config");
-    dirs.emplace_back("../../config");
-    dirs.emplace_back(".");
-    return dirs;
-}
 
-static std::optional<std::string> resolve_rule_path(const std::string& filename)
+router::router(const config& cfg) : cfg_(cfg), inbound_tag_(cfg.active_inbound_tag) {}
+
+bool router::load()
 {
-    namespace fs = std::filesystem;
-    for (const auto& dir : rule_search_dirs())
+    rules_.clear();
+    rules_.reserve(cfg_.routing.size());
+
+    for (const auto& rule : cfg_.routing)
     {
-        const fs::path path = (dir == ".") ? fs::path(filename) : fs::path(dir) / filename;
-        if (fs::exists(path) && fs::is_regular_file(path))
+        const auto* outbound = find_outbound_entry(cfg_, rule.out);
+        if (outbound == nullptr)
         {
-            return path.string();
+            LOG_ERROR("{} inbound_tag {} stage load_rule out {} error outbound_not_found",
+                      log_event::kRoute,
+                      inbound_tag_,
+                      rule.out);
+            return false;
         }
-    }
-    return std::nullopt;
-}
 
-template <typename Matcher>
-static bool load_rule(const std::shared_ptr<Matcher>& matcher, const std::string& filename, const char* rule_name)
-{
-    const auto path = resolve_rule_path(filename);
-    if (!path.has_value())
-    {
-        LOG_WARN("{} stage load_rule rule {} file {} error not_found", log_event::kRoute, rule_name, filename);
-        return false;
-    }
-    if (!matcher->load(*path))
-    {
-        LOG_WARN("{} stage load_rule rule {} path {} error load_failed", log_event::kRoute, rule_name, *path);
-        return false;
+        auto compiled = std::make_shared<compiled_rule>();
+        compiled->type = rule.type;
+        compiled->outbound_tag = rule.out;
+        compiled->outbound_type = outbound->type;
+        compiled->route = map_outbound_route(outbound->type);
+
+        const auto& source_values = rule.file.empty() ? rule.values : rule.file_values;
+        if (rule.type == "inbound")
+        {
+            compiled->values = source_values;
+        }
+        else if (rule.type == "ip")
+        {
+            compiled->ip_rules = std::make_shared<ip_matcher>();
+            for (const auto& value : source_values)
+            {
+                compiled->ip_rules->add_rule(value);
+            }
+            compiled->ip_rules->optimize();
+        }
+        else if (rule.type == "domain")
+        {
+            compiled->domain_rules = std::make_shared<domain_matcher>();
+            for (const auto& value : source_values)
+            {
+                compiled->domain_rules->add(value);
+            }
+        }
+        else
+        {
+            LOG_ERROR("{} inbound_tag {} stage load_rule type {} error unsupported",
+                      log_event::kRoute,
+                      inbound_tag_,
+                      rule.type);
+            return false;
+        }
+
+        LOG_INFO("{} inbound_tag {} stage load_rule type {} out_tag {} out_type {} value_count {} file {}",
+                 log_event::kRoute,
+                 inbound_tag_,
+                 compiled->type,
+                 compiled->outbound_tag,
+                 compiled->outbound_type,
+                 source_values.size(),
+                 rule.file.empty() ? "-" : rule.file);
+        rules_.push_back(std::move(compiled));
     }
     return true;
 }
 
-bool router::load()
+route_decision router::make_no_route_decision(const std::string& match_type, const std::string& match_value) const
 {
-    bool load_ok = true;
+    route_decision decision;
+    decision.route = route_type::kBlock;
+    decision.outbound_type = "no_route";
+    decision.match_type = match_type;
+    decision.match_value = match_value;
+    return decision;
+}
 
-    block_ip_matcher_ = std::make_shared<ip_matcher>();
-    load_ok = load_rule(block_ip_matcher_, "block_ip.txt", "block ip") && load_ok;
+boost::asio::awaitable<route_decision> router::decide_ip_detail(const boost::asio::ip::address& addr) const
+{
+    const auto target = addr.to_string();
+    for (const auto& rule : rules_)
+    {
+        bool matched = false;
+        if (rule->type == "inbound")
+        {
+            matched = std::find(rule->values.begin(), rule->values.end(), inbound_tag_) != rule->values.end();
+            if (!matched)
+            {
+                continue;
+            }
+            route_decision decision;
+            decision.route = rule->route;
+            decision.outbound_tag = rule->outbound_tag;
+            decision.outbound_type = rule->outbound_type;
+            decision.match_type = "inbound";
+            decision.match_value = inbound_tag_;
+            decision.matched = true;
+            LOG_INFO("{} inbound_tag {} target_ip {} match_type {} match_value {} out_tag {} out_type {} route {}",
+                     log_event::kRoute,
+                     inbound_tag_,
+                     target,
+                     decision.match_type,
+                     decision.match_value,
+                     decision.outbound_tag,
+                     decision.outbound_type,
+                     to_string(decision.route));
+            co_return decision;
+        }
 
-    direct_ip_matcher_ = std::make_shared<ip_matcher>();
-    load_ok = load_rule(direct_ip_matcher_, "direct_ip.txt", "direct ip") && load_ok;
+        if (rule->type != "ip" || rule->ip_rules == nullptr || !rule->ip_rules->match(addr))
+        {
+            continue;
+        }
 
-    proxy_domain_matcher_ = std::make_shared<domain_matcher>();
-    load_ok = load_rule(proxy_domain_matcher_, "proxy_domain.txt", "proxy domain") && load_ok;
+        route_decision decision;
+        decision.route = rule->route;
+        decision.outbound_tag = rule->outbound_tag;
+        decision.outbound_type = rule->outbound_type;
+        decision.match_type = "ip";
+        decision.match_value = target;
+        decision.matched = true;
+        LOG_INFO("{} inbound_tag {} target_ip {} match_type {} match_value {} out_tag {} out_type {} route {}",
+                 log_event::kRoute,
+                 inbound_tag_,
+                 target,
+                 decision.match_type,
+                 decision.match_value,
+                 decision.outbound_tag,
+                 decision.outbound_type,
+                 to_string(decision.route));
+        co_return decision;
+    }
 
-    block_domain_matcher_ = std::make_shared<domain_matcher>();
-    load_ok = load_rule(block_domain_matcher_, "block_domain.txt", "block domain") && load_ok;
+    auto decision = make_no_route_decision("ip", target);
+    LOG_WARN("{} inbound_tag {} target_ip {} match_type {} out_type {} route {}",
+             log_event::kRoute,
+             inbound_tag_,
+             target,
+             decision.match_type,
+             decision.outbound_type,
+             to_string(decision.route));
+    co_return decision;
+}
 
-    direct_domain_matcher_ = std::make_shared<domain_matcher>();
-    load_ok = load_rule(direct_domain_matcher_, "direct_domain.txt", "direct domain") && load_ok;
+boost::asio::awaitable<route_decision> router::decide_domain_detail(const std::string& host) const
+{
+    const auto target = host.empty() ? std::string("unknown") : host;
+    for (const auto& rule : rules_)
+    {
+        bool matched = false;
+        if (rule->type == "inbound")
+        {
+            matched = std::find(rule->values.begin(), rule->values.end(), inbound_tag_) != rule->values.end();
+            if (!matched)
+            {
+                continue;
+            }
+            route_decision decision;
+            decision.route = rule->route;
+            decision.outbound_tag = rule->outbound_tag;
+            decision.outbound_type = rule->outbound_type;
+            decision.match_type = "inbound";
+            decision.match_value = inbound_tag_;
+            decision.matched = true;
+            LOG_INFO("{} inbound_tag {} target_domain {} match_type {} match_value {} out_tag {} out_type {} route {}",
+                     log_event::kRoute,
+                     inbound_tag_,
+                     target,
+                     decision.match_type,
+                     decision.match_value,
+                     decision.outbound_tag,
+                     decision.outbound_type,
+                     to_string(decision.route));
+            co_return decision;
+        }
 
-    return load_ok;
+        if (rule->type != "domain" || rule->domain_rules == nullptr || !rule->domain_rules->match(host))
+        {
+            continue;
+        }
+
+        route_decision decision;
+        decision.route = rule->route;
+        decision.outbound_tag = rule->outbound_tag;
+        decision.outbound_type = rule->outbound_type;
+        decision.match_type = "domain";
+        decision.match_value = target;
+        decision.matched = true;
+        LOG_INFO("{} inbound_tag {} target_domain {} match_type {} match_value {} out_tag {} out_type {} route {}",
+                 log_event::kRoute,
+                 inbound_tag_,
+                 target,
+                 decision.match_type,
+                 decision.match_value,
+                 decision.outbound_tag,
+                 decision.outbound_type,
+                 to_string(decision.route));
+        co_return decision;
+    }
+
+    auto decision = make_no_route_decision("domain", target);
+    LOG_WARN("{} inbound_tag {} target_domain {} match_type {} out_type {} route {}",
+             log_event::kRoute,
+             inbound_tag_,
+             target,
+             decision.match_type,
+             decision.outbound_type,
+             to_string(decision.route));
+    co_return decision;
 }
 
 boost::asio::awaitable<route_type> router::decide_ip(const boost::asio::ip::address& addr) const
 {
-    const auto target = addr.to_string();
-    if (block_ip_matcher_ == nullptr || direct_ip_matcher_ == nullptr)
-    {
-        LOG_WARN("{} target {} ip matcher unavailable fallback default proxy", log_event::kRoute, target);
-    }
-    if (block_ip_matcher_ != nullptr && block_ip_matcher_->match(addr))
-    {
-        LOG_DEBUG("{} target {} matched ip rule block", log_event::kRoute, target);
-        co_return route_type::kBlock;
-    }
-    if (direct_ip_matcher_ != nullptr && direct_ip_matcher_->match(addr))
-    {
-        LOG_DEBUG("{} target {} matched ip rule direct", log_event::kRoute, target);
-        co_return route_type::kDirect;
-    }
-    LOG_DEBUG("{} target {} ip rule not found default proxy", log_event::kRoute, target);
-    co_return route_type::kProxy;
+    const auto decision = co_await decide_ip_detail(addr);
+    co_return decision.route;
 }
 
 boost::asio::awaitable<route_type> router::decide_domain(const std::string& host) const
 {
-    const auto target = host.empty() ? std::string("unknown") : host;
-    if (block_domain_matcher_ == nullptr || direct_domain_matcher_ == nullptr || proxy_domain_matcher_ == nullptr)
-    {
-        LOG_WARN("{} target {} domain matcher unavailable fallback default direct", log_event::kRoute, target);
-    }
-    if (block_domain_matcher_ != nullptr && block_domain_matcher_->match(host))
-    {
-        LOG_DEBUG("{} target {} matched domain rule block", log_event::kRoute, target);
-        co_return route_type::kBlock;
-    }
-    if (direct_domain_matcher_ != nullptr && direct_domain_matcher_->match(host))
-    {
-        LOG_DEBUG("{} target {} matched domain rule direct", log_event::kRoute, target);
-        co_return route_type::kDirect;
-    }
-    if (proxy_domain_matcher_ != nullptr && proxy_domain_matcher_->match(host))
-    {
-        LOG_DEBUG("{} target {} matched domain rule proxy", log_event::kRoute, target);
-        co_return route_type::kProxy;
-    }
-    LOG_DEBUG("{} target {} domain rule not found default direct", log_event::kRoute, target);
-    co_return route_type::kDirect;
+    const auto decision = co_await decide_domain_detail(host);
+    co_return decision.route;
 }
 
 }    // namespace relay

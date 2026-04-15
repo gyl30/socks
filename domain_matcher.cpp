@@ -67,23 +67,7 @@ bool domain_matcher::match(std::string domain) const
     }
     normalize_domain(domain);
 
-    if (domains_.contains(domain))
-    {
-        return true;
-    }
-
-    std::size_t pos = 0;
-    while ((pos = domain.find('.', pos)) != std::string::npos)
-    {
-        const std::string suffix = domain.substr(pos + 1);
-        if (domains_.contains(suffix))
-        {
-            return true;
-        }
-        pos++;
-    }
-
-    return false;
+    return domains_.contains(domain);
 }
 
 }    // namespace relay

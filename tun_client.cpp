@@ -27,7 +27,7 @@
 namespace relay
 {
 
-tun_client::tun_client(io_context_pool& pool, const config& cfg) : cfg_(cfg), owner_worker_(pool.get_io_worker()), router_(std::make_shared<router>())
+tun_client::tun_client(io_context_pool& pool, const config& cfg) : cfg_(cfg), owner_worker_(pool.get_io_worker()), router_(std::make_shared<router>(cfg_))
 {
 }
 
