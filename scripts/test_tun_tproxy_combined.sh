@@ -245,26 +245,83 @@ sni="localhost"
 
 cat >"$tmp_dir/server.json" <<EOF
 {
-  "mode": "server",
   "workers": 1,
   "log": {"level": "info", "file": "$tmp_dir/server.log"},
-  "inbound": {"host": "$host_ip", "port": $server_port},
-  "socks": {"enabled": false},
-  "reality": {"sni": "$sni", "max_handshake_records": 256, "private_key": "$private_key", "public_key": "$public_key", "short_id": "$short_id"},
+  "inbounds": [
+    {
+      "type": "reality",
+      "tag": "reality-in",
+      "settings": {
+        "host": "$host_ip",
+        "port": $server_port,
+        "sni": "$sni",
+        "private_key": "$private_key",
+        "public_key": "$public_key",
+        "short_id": "$short_id",
+        "replay_cache_max_entries": 100000
+      }
+    }
+  ],
+  "outbounds": [
+    {"type": "direct", "tag": "direct"},
+    {"type": "block", "tag": "block"}
+  ],
+  "routing": [
+    {"type": "inbound", "values": ["reality-in"], "out": "direct"}
+  ],
   "timeout": {"read": 5, "write": 5, "connect": 5, "idle": 30}
 }
 EOF
 
 cat >"$tmp_dir/client.json" <<EOF
 {
-  "mode": "client",
   "workers": 1,
   "log": {"level": "debug", "file": "$tmp_dir/client.log"},
-  "socks": {"enabled": false},
-  "tproxy": {"enabled": true, "listen_host": "0.0.0.0", "tcp_port": $tproxy_tcp_port, "udp_port": $tproxy_udp_port, "mark": 17},
-  "tun": {"enabled": true, "name": "$tun_name", "mtu": 1400, "ipv4": "198.18.0.1", "ipv4_prefix": 32, "ipv6": "fd00::1", "ipv6_prefix": 128},
-  "outbound": {"host": "$host_ip", "port": $server_port},
-  "reality": {"sni": "$sni", "fingerprint": "random", "max_handshake_records": 256, "public_key": "$public_key", "short_id": "$short_id"},
+  "inbounds": [
+    {
+      "type": "tproxy",
+      "tag": "tproxy-in",
+      "settings": {
+        "listen_host": "0.0.0.0",
+        "tcp_port": $tproxy_tcp_port,
+        "udp_port": $tproxy_udp_port,
+        "mark": 17
+      }
+    },
+    {
+      "type": "tun",
+      "tag": "tun-in",
+      "settings": {
+        "name": "$tun_name",
+        "mtu": 1400,
+        "ipv4": "198.18.0.1",
+        "ipv4_prefix": 32,
+        "ipv6": "fd00::1",
+        "ipv6_prefix": 128
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "reality",
+      "tag": "reality-out",
+      "settings": {
+        "host": "$host_ip",
+        "port": $server_port,
+        "sni": "$sni",
+        "fingerprint": "random",
+        "public_key": "$public_key",
+        "short_id": "$short_id",
+        "max_handshake_records": 256
+      }
+    },
+    {"type": "direct", "tag": "direct"},
+    {"type": "block", "tag": "block"}
+  ],
+  "routing": [
+    {"type": "ip", "file": "$tmp_dir/rules/direct_ip.txt", "out": "direct"},
+    {"type": "inbound", "values": ["tun-in", "tproxy-in"], "out": "reality-out"}
+  ],
   "timeout": {"read": 5, "write": 5, "connect": 5, "idle": 30}
 }
 EOF
@@ -349,16 +406,16 @@ pids+=("$!")
 wait_for_port "$direct_ip" "$http_port" direct_http
 wait_for_port "$proxy_ip" "$http_port" proxy_http
 
-env LD_LIBRARY_PATH="$runtime_ld_library_path" SOCKS_CONFIG_DIR="$tmp_dir/rules" "$binary" -c "$tmp_dir/server.json" >"$tmp_dir/server.stdout.log" 2>&1 &
+env LD_LIBRARY_PATH="$runtime_ld_library_path" "$binary" -c "$tmp_dir/server.json" >"$tmp_dir/server.stdout.log" 2>&1 &
 server_pid=$!
 pids+=("$server_pid")
 wait_for_port "$host_ip" "$server_port" reality_server
 
-ns_exec "$ns_client" env LD_LIBRARY_PATH="$runtime_ld_library_path" SOCKS_CONFIG_DIR="$tmp_dir/rules" "$binary" -c "$tmp_dir/client.json" >"$tmp_dir/client.stdout.log" 2>&1 &
+ns_exec "$ns_client" env LD_LIBRARY_PATH="$runtime_ld_library_path" "$binary" -c "$tmp_dir/client.json" >"$tmp_dir/client.stdout.log" 2>&1 &
 client_pid=$!
 pids+=("$client_pid")
 
-wait_for_log "$tmp_dir/client.log" "tun client started" 20
+wait_for_log "$tmp_dir/client.log" "tun inbound started" 20
 wait_for_log "$tmp_dir/client.log" "tproxy tcp listening on 0.0.0.0:$tproxy_tcp_port" 20
 wait_for_log "$tmp_dir/client.log" "tproxy udp listening on 0.0.0.0:$tproxy_udp_port" 20
 
