@@ -5,11 +5,11 @@ skinparam componentStyle uml2
 package "Client Process" {
     [SOCKS5 Listener] as SocksListener
     [SOCKS Session] as SocksSession
-    [TPROXY Client] as TproxyClient
+    [TPROXY Inbound] as TproxyInbound
     [TPROXY TCP Session] as TproxyTcpSession
     [TPROXY UDP Session] as TproxyUdpSession
     [TUN Device] as TunDevice
-    [tun_client] as TunClient
+    [tun_inbound] as TunInbound
     [tun_tcp_session] as TunTcpSession
     [tun_udp_session] as TunUdpSession
 
@@ -27,11 +27,11 @@ cloud "Internet" {
 }
 
 package "Server Process" {
-    [remote_server] as RemoteServer
+    [reality_inbound] as RealityInbound
     [proxy_reality_connection (server)] as ServerConn
     [reality_engine (server)] as ServerReality
-    [remote_tcp_proxy_session] as RemoteTcp
-    [remote_udp_proxy_session] as RemoteUdp
+    [reality_tcp_session] as RealityTcp
+    [reality_udp_session] as RealityUdp
 }
 
 [User App] as App
@@ -40,14 +40,14 @@ package "Server Process" {
 App --> SocksListener : SOCKS5 TCP
 SocksListener --> SocksSession : create
 
-App --> TproxyClient : redirected TCP/UDP
-TproxyClient --> TproxyTcpSession : TCP create
-TproxyClient --> TproxyUdpSession : UDP create
+App --> TproxyInbound : redirected TCP/UDP
+TproxyInbound --> TproxyTcpSession : TCP create
+TproxyInbound --> TproxyUdpSession : UDP create
 
 App --> TunDevice : routed L3 packets
-TunDevice --> TunClient : read/write packets
-TunClient --> TunTcpSession : TCP via lwIP
-TunClient --> TunUdpSession : UDP via lwIP
+TunDevice --> TunInbound : read/write packets
+TunInbound --> TunTcpSession : TCP via lwIP
+TunInbound --> TunUdpSession : UDP via lwIP
 
 SocksSession --> Router : decide_ip / decide_domain
 TproxyTcpSession --> Router : decide_ip
@@ -71,11 +71,11 @@ ClientReality <--> Network
 Network <--> ServerReality
 ServerReality --> ServerConn : decrypt/encrypt plaintext
 
-RemoteServer --> ServerConn : wrap accepted socket
-RemoteServer --> RemoteTcp : tcp_connect_request
-RemoteServer --> RemoteUdp : udp_associate_request
-RemoteTcp --> Target : TCP connect + relay
-RemoteUdp --> Target : UDP relay
+RealityInbound --> ServerConn : wrap accepted socket
+RealityInbound --> RealityTcp : tcp_connect_request
+RealityInbound --> RealityUdp : udp_associate_request
+RealityTcp --> Target : TCP connect + relay
+RealityUdp --> Target : UDP relay
 
 note right of ProxyUpstream
   每个代理 TCP 请求独占一条 REALITY 连接。
@@ -88,7 +88,7 @@ note right of ProxyUdpUpstream
   也不再依赖连接跟踪残留逻辑。
 end note
 
-note right of RemoteServer
+note right of RealityInbound
   认证成功后只处理一个代理会话，
   会话结束即关闭整条 REALITY 连接。
 end note

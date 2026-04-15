@@ -3,13 +3,13 @@
 autonumber
 
 participant "User App" as App
-participant "socks_client" as SocksClient
+participant "socks_inbound" as SocksClient
 participant "socks_session" as SocksSession
 participant "router" as Router
 participant "upstream" as Upstream
 participant "proxy_reality_connection" as ProxyConn
-participant "remote_server" as RemoteServer
-participant "remote_tcp_proxy_session" as RemoteTcp
+participant "reality_inbound" as RemoteServer
+participant "reality_tcp_session" as RemoteTcp
 participant "Target" as Target
 
 App -> SocksClient: TCP connect
