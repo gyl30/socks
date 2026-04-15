@@ -23,7 +23,7 @@
 #include "net_utils.h"
 #include "proxy_protocol.h"
 #include "proxy_udp_upstream.h"
-#include "remote_udp_proxy_session.h"
+#include "reality_udp_session.h"
 
 namespace relay
 {

@@ -15,7 +15,7 @@
 #include "router.h"
 #include "net_utils.h"
 #include "context_pool.h"
-#include "socks_client.h"
+#include "socks_inbound.h"
 #include "socks_session.h"
 
 namespace relay

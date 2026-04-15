@@ -1,5 +1,5 @@
-#ifndef REMOTE_UDP_PROXY_SESSION_H
-#define REMOTE_UDP_PROXY_SESSION_H
+#ifndef REALITY_UDP_SESSION_H
+#define REALITY_UDP_SESSION_H
 
 #include <atomic>
 #include <chrono>

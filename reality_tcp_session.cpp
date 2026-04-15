@@ -19,7 +19,7 @@
 #include "protocol.h"
 #include "net_utils.h"
 #include "proxy_protocol.h"
-#include "remote_tcp_proxy_session.h"
+#include "reality_tcp_session.h"
 
 namespace relay
 {

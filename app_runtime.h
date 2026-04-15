@@ -8,13 +8,13 @@
 
 #include "config.h"
 #include "context_pool.h"
-#include "remote_server.h"
-#include "socks_client.h"
+#include "reality_inbound.h"
+#include "socks_inbound.h"
 #if SOCKS_HAS_TPROXY
-#include "tproxy_client.h"
+#include "tproxy_inbound.h"
 #endif
 #if SOCKS_HAS_TUN
-#include "tun_client.h"
+#include "tun_inbound.h"
 #endif
 
 namespace relay

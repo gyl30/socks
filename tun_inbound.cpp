@@ -23,7 +23,7 @@
 #include "log.h"
 #include "constants.h"
 #include "net_utils.h"
-#include "tun_client.h"
+#include "tun_inbound.h"
 namespace relay
 {
 
