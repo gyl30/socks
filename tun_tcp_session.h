@@ -34,7 +34,7 @@ class tun_tcp_session : public std::enable_shared_from_this<tun_tcp_session>
 
    private:
     [[nodiscard]] boost::asio::awaitable<void> run();
-    [[nodiscard]] boost::asio::awaitable<std::pair<route_type, std::shared_ptr<upstream>>> select_backend();
+    [[nodiscard]] boost::asio::awaitable<std::pair<route_decision, std::shared_ptr<upstream>>> select_backend();
     [[nodiscard]] boost::asio::awaitable<void> client_to_upstream(const std::shared_ptr<upstream>& backend);
     [[nodiscard]] boost::asio::awaitable<void> upstream_to_client(const std::shared_ptr<upstream>& backend);
     [[nodiscard]] boost::asio::awaitable<void> idle_watchdog();

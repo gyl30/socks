@@ -650,7 +650,6 @@ template <typename T>
     }
 
     std::unordered_set<std::string> seen_tags;
-    std::size_t reality_count = 0;
     out.clear();
     out.reserve(value.Size());
     for (rapidjson::SizeType index = 0; index < value.Size(); ++index)
@@ -695,17 +694,11 @@ template <typename T>
                 return false;
             }
             parsed.reality = std::move(reality);
-            ++reality_count;
             out.push_back(std::move(parsed));
             continue;
         }
 
         return fail_config(filename, entry_path + " unsupported_type");
-    }
-
-    if (reality_count > 1)
-    {
-        return fail_config(filename, "outbounds reality_multiple_not_supported_yet");
     }
     return true;
 }

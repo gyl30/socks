@@ -43,7 +43,8 @@ class upstream
 [[nodiscard]] std::shared_ptr<upstream> make_proxy_upstream(const boost::asio::any_io_executor& executor,
                                                             uint32_t conn_id,
                                                             uint64_t trace_id,
-                                                            const config& cfg);
+                                                            const config& cfg,
+                                                            const std::string& outbound_tag);
 
 }    // namespace relay
 

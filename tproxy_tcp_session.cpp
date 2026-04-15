@@ -101,7 +101,7 @@ boost::asio::awaitable<void> tproxy_tcp_session::run()
     log_redirected_connection();
 
     const auto target_addr = net::normalize_address(target_ep.address());
-    const auto [route, backend] = co_await select_backend(target_addr);
+    const auto [decision, backend] = co_await select_backend(target_addr);
     if (backend == nullptr)
     {
         co_return;
@@ -112,8 +112,8 @@ boost::asio::awaitable<void> tproxy_tcp_session::run()
              conn_id_,
              target_addr_,
              target_port_,
-             relay::to_string(route));
-    if (!(co_await connect_backend(route, backend)))
+             decision.matched ? decision.outbound_tag : decision.outbound_type);
+    if (!(co_await connect_backend(decision.route, backend)))
     {
         co_return;
     }
@@ -207,32 +207,32 @@ void tproxy_tcp_session::log_redirected_connection() const
              target_port_);
 }
 
-boost::asio::awaitable<std::pair<route_type, std::shared_ptr<upstream>>> tproxy_tcp_session::select_backend(const boost::asio::ip::address& addr)
+boost::asio::awaitable<std::pair<route_decision, std::shared_ptr<upstream>>> tproxy_tcp_session::select_backend(const boost::asio::ip::address& addr)
 {
     if (router_ == nullptr)
     {
         LOG_WARN(
             "{} trace {:016x} conn {} target {}:{} router unavailable", log_event::kRoute, trace_id_, conn_id_, target_addr_, target_port_);
-        co_return std::make_pair(route_type::kBlock, std::shared_ptr<upstream>(nullptr));
+        co_return std::make_pair(route_decision{}, std::shared_ptr<upstream>(nullptr));
     }
 
-    const auto route = co_await router_->decide_ip(addr);
-    if (route == route_type::kBlock)
+    const auto decision = co_await router_->decide_ip_detail(addr);
+    if (decision.route == route_type::kBlock)
     {
         LOG_WARN("{} trace {:016x} conn {} target {}:{} blocked", log_event::kRoute, trace_id_, conn_id_, addr.to_string(), target_port_);
-        co_return std::make_pair(route, std::shared_ptr<upstream>(nullptr));
+        co_return std::make_pair(decision, std::shared_ptr<upstream>(nullptr));
     }
-    if (route == route_type::kDirect)
+    if (decision.route == route_type::kDirect)
     {
         const std::shared_ptr<upstream> backend = make_direct_upstream(socket_.get_executor(), conn_id_, trace_id_, cfg_);
-        co_return std::make_pair(route, backend);
+        co_return std::make_pair(decision, backend);
     }
-    if (route == route_type::kProxy)
+    if (decision.route == route_type::kProxy)
     {
-        const std::shared_ptr<upstream> backend = make_proxy_upstream(socket_.get_executor(), conn_id_, trace_id_, cfg_);
-        co_return std::make_pair(route, backend);
+        const std::shared_ptr<upstream> backend = make_proxy_upstream(socket_.get_executor(), conn_id_, trace_id_, cfg_, decision.outbound_tag);
+        co_return std::make_pair(decision, backend);
     }
-    co_return std::make_pair(route_type::kBlock, std::shared_ptr<upstream>(nullptr));
+    co_return std::make_pair(route_decision{}, std::shared_ptr<upstream>(nullptr));
 }
 
 boost::asio::awaitable<bool> tproxy_tcp_session::connect_backend(route_type route, const std::shared_ptr<upstream>& backend)

@@ -45,7 +45,7 @@ class tun_udp_session : public std::enable_shared_from_this<tun_udp_session>
 
    private:
     [[nodiscard]] boost::asio::awaitable<bool> run();
-    [[nodiscard]] boost::asio::awaitable<route_type> decide_route() const;
+    [[nodiscard]] boost::asio::awaitable<route_decision> decide_route() const;
     [[nodiscard]] boost::asio::awaitable<bool> open_direct_socket();
     [[nodiscard]] boost::asio::awaitable<bool> open_proxy_upstream();
     [[nodiscard]] boost::asio::awaitable<bool> run_direct_mode();
@@ -69,6 +69,7 @@ class tun_udp_session : public std::enable_shared_from_this<tun_udp_session>
     std::shared_ptr<router> router_;
     udp_pcb* pcb_ = nullptr;
     route_type route_ = route_type::kBlock;
+    std::string outbound_tag_;
     std::atomic<bool> stopped_{false};
     uint64_t last_activity_time_ms_ = 0;
     boost::asio::steady_timer idle_timer_;

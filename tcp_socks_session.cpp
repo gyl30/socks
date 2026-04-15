@@ -57,20 +57,22 @@ boost::asio::awaitable<void> tcp_socks_session::run(const std::string& host, uin
 
     boost::system::error_code ec;
     const auto target_addr = boost::asio::ip::make_address(host, ec);
-    route_type route = route_type::kProxy;
+    route_decision decision;
+    decision.route = route_type::kBlock;
+    decision.outbound_type = "no_route";
     if (ec)
     {
-        route = co_await router_->decide_domain(host);
+        decision = co_await router_->decide_domain_detail(host);
     }
     else
     {
-        route = co_await router_->decide_ip(target_addr);
+        decision = co_await router_->decide_ip_detail(target_addr);
     }
     target_host_ = host;
     target_port_ = port;
-    route_name_ = relay::to_string(route);
+    route_name_ = decision.matched ? decision.outbound_tag : decision.outbound_type;
 
-    const auto backend = create_backend(route);
+    const auto backend = create_backend(decision.route, decision.outbound_tag);
     if (backend == nullptr)
     {
         LOG_WARN("{} trace {:016x} conn {} client {}:{} local {}:{} target {}:{} route {} blocked",
@@ -87,7 +89,7 @@ boost::asio::awaitable<void> tcp_socks_session::run(const std::string& host, uin
         co_await reply_error(socks::kRepNotAllowed);
         co_return;
     }
-    const auto connect_result = co_await connect_backend(backend, host, port, route);
+    const auto connect_result = co_await connect_backend(backend, host, port, decision.route);
     if (connect_result.ec)
     {
         co_await backend->close();
@@ -141,7 +143,7 @@ boost::asio::awaitable<void> tcp_socks_session::run(const std::string& host, uin
              duration_ms);
 }
 
-std::shared_ptr<upstream> tcp_socks_session::create_backend(const route_type route)
+std::shared_ptr<upstream> tcp_socks_session::create_backend(const route_type route, const std::string& outbound_tag)
 {
     if (route == route_type::kDirect)
     {
@@ -149,7 +151,7 @@ std::shared_ptr<upstream> tcp_socks_session::create_backend(const route_type rou
     }
     if (route == route_type::kProxy)
     {
-        return make_proxy_upstream(socket_.get_executor(), conn_id_, trace_id_, cfg_);
+        return make_proxy_upstream(socket_.get_executor(), conn_id_, trace_id_, cfg_, outbound_tag);
     }
     return nullptr;
 }

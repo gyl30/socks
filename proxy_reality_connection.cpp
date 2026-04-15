@@ -95,18 +95,26 @@ std::optional<reality::fingerprint_type> parse_fingerprint_type(const std::strin
     return kEntries[0].type;
 }
 
-connect_options build_connect_options(const config& cfg)
+bool build_connect_options(const config& cfg, const std::string& outbound_tag, connect_options& options, boost::system::error_code& ec)
 {
-    connect_options options;
-    options.sni = cfg.reality.sni;
-    options.remote_host = cfg.outbound.host;
-    options.remote_port = std::to_string(cfg.outbound.port);
-    options.max_handshake_records = cfg.reality.max_handshake_records;
+    ec.clear();
+    const auto* outbound = find_outbound_entry(cfg, outbound_tag);
+    if (outbound == nullptr || outbound->type != "reality" || !outbound->reality.has_value())
+    {
+        ec = boost::asio::error::operation_not_supported;
+        return false;
+    }
+
+    const auto& settings = *outbound->reality;
+    options.sni = settings.sni;
+    options.remote_host = settings.host;
+    options.remote_port = std::to_string(settings.port);
+    options.max_handshake_records = settings.max_handshake_records;
     options.connect_mark = cfg.tproxy.enabled ? cfg.tproxy.mark : 0U;
-    boost::algorithm::unhex(cfg.reality.public_key, std::back_inserter(options.server_pub_key));
-    boost::algorithm::unhex(cfg.reality.short_id, std::back_inserter(options.short_id_bytes));
-    options.fingerprint_type = parse_fingerprint_type(cfg.reality.fingerprint);
-    return options;
+    boost::algorithm::unhex(settings.public_key, std::back_inserter(options.server_pub_key));
+    boost::algorithm::unhex(settings.short_id, std::back_inserter(options.short_id_bytes));
+    options.fingerprint_type = parse_fingerprint_type(settings.fingerprint);
+    return true;
 }
 
 void prepare_socket_for_connect(boost::asio::ip::tcp::socket& socket,
@@ -257,10 +265,20 @@ proxy_reality_connection::proxy_reality_connection(boost::asio::ip::tcp::socket 
 
 boost::asio::awaitable<std::shared_ptr<proxy_reality_connection>> proxy_reality_connection::connect(const boost::asio::any_io_executor& executor,
                                                                                                     const config& cfg,
+                                                                                                    const std::string& outbound_tag,
                                                                                                     const uint32_t conn_id,
                                                                                                     boost::system::error_code& ec)
 {
-    const auto options = build_connect_options(cfg);
+    connect_options options;
+    if (!build_connect_options(cfg, outbound_tag, options, ec))
+    {
+        LOG_ERROR("{} conn {} stage build_connect_options out_tag {} error {}",
+                  log_event::kConnInit,
+                  conn_id,
+                  outbound_tag,
+                  ec.message());
+        co_return nullptr;
+    }
     boost::asio::ip::tcp::socket socket(executor);
     co_await tcp_connect_remote(socket, cfg, options, conn_id, ec);
     if (ec)

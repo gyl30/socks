@@ -53,6 +53,7 @@ tproxy_udp_session::tproxy_udp_session(io_worker& worker,
                                        const boost::asio::ip::udp::endpoint& client_endpoint,
                                        const boost::asio::ip::udp::endpoint& target_endpoint,
                                        const route_type route,
+                                       std::string outbound_tag,
                                        uint32_t conn_id,
                                        const config& cfg,
                                        std::function<void()> on_close)
@@ -61,6 +62,7 @@ tproxy_udp_session::tproxy_udp_session(io_worker& worker,
       cfg_(cfg),
       worker_(worker),
       route_(route),
+      outbound_tag_(std::move(outbound_tag)),
       last_activity_time_ms_(net::now_ms()),
       idle_timer_(worker.io_context),
       upstream_socket_(worker.io_context),
@@ -282,7 +284,7 @@ boost::asio::awaitable<bool> tproxy_udp_session::open_direct_socket()
 
 boost::asio::awaitable<bool> tproxy_udp_session::open_proxy_upstream()
 {
-    const auto connect_result = co_await proxy_udp_upstream::connect(worker_.io_context.get_executor(), conn_id_, trace_id_, cfg_);
+    const auto connect_result = co_await proxy_udp_upstream::connect(worker_.io_context.get_executor(), conn_id_, trace_id_, cfg_, outbound_tag_);
     if (connect_result.ec || connect_result.upstream == nullptr)
     {
         const auto ec = connect_result.ec ? connect_result.ec : boost::asio::error::operation_aborted;

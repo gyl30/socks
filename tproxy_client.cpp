@@ -437,8 +437,8 @@ boost::asio::awaitable<void> tproxy_client::on_udp_packet(boost::asio::ip::udp::
     }
 
     const uint32_t conn_id = next_session_id_.fetch_add(1, std::memory_order_relaxed);
-    const auto route = co_await decide_udp_route(conn_id, target_endpoint);
-    if (route == route_type::kBlock)
+    const auto decision = co_await decide_udp_route(conn_id, target_endpoint);
+    if (decision.route == route_type::kBlock)
     {
         co_return;
     }
@@ -449,13 +449,13 @@ boost::asio::awaitable<void> tproxy_client::on_udp_packet(boost::asio::ip::udp::
         co_return;
     }
 
-    auto session = make_udp_session(key, client_endpoint, target_endpoint, route, conn_id);
+    auto session = make_udp_session(key, client_endpoint, target_endpoint, decision.route, decision.outbound_tag, conn_id);
     const auto enqueue_result = co_await session->enqueue_packet(std::move(payload));
     if (enqueue_result != udp_enqueue_result::kEnqueued)
     {
         co_return;
     }
-    if (!register_udp_session(key, session, conn_id, client_endpoint, target_endpoint, route))
+    if (!register_udp_session(key, session, conn_id, client_endpoint, target_endpoint, decision.route))
     {
         co_return;
     }
@@ -478,26 +478,30 @@ bool tproxy_client::is_udp_routing_loop(const boost::asio::ip::udp::endpoint& ta
     return target_endpoint.port() == cfg_.tproxy.udp_port && net::normalize_address(target_endpoint.address()) == net::normalize_address(local_addr);
 }
 
-boost::asio::awaitable<route_type> tproxy_client::decide_udp_route(uint32_t conn_id, const boost::asio::ip::udp::endpoint& target_endpoint) const
+boost::asio::awaitable<route_decision> tproxy_client::decide_udp_route(uint32_t conn_id,
+                                                                       const boost::asio::ip::udp::endpoint& target_endpoint) const
 {
-    route_type route = route_type::kProxy;
+    route_decision decision;
+    decision.route = route_type::kBlock;
+    decision.outbound_type = "no_route";
     if (router_ != nullptr)
     {
-        route = co_await router_->decide_ip(target_endpoint.address());
+        decision = co_await router_->decide_ip_detail(target_endpoint.address());
     }
 
-    LOG_INFO("{} conn {} target {}:{} route {}",
+    LOG_INFO("{} conn {} target {}:{} route {} out_tag {}",
              log_event::kRoute,
              conn_id,
              target_endpoint.address().to_string(),
              target_endpoint.port(),
-             relay::to_string(route));
-    if (route == route_type::kBlock)
+             relay::to_string(decision.route),
+             decision.outbound_tag.empty() ? "-" : decision.outbound_tag);
+    if (decision.route == route_type::kBlock)
     {
         LOG_INFO("{} conn {} target {}:{} blocked", log_event::kRoute, conn_id, target_endpoint.address().to_string(), target_endpoint.port());
     }
 
-    co_return route;
+    co_return decision;
 }
 
 std::shared_ptr<tproxy_udp_session> tproxy_client::find_udp_session(const std::string& key) const
@@ -532,6 +536,7 @@ std::shared_ptr<tproxy_udp_session> tproxy_client::make_udp_session(const std::s
                                                                     const boost::asio::ip::udp::endpoint& client_endpoint,
                                                                     const boost::asio::ip::udp::endpoint& target_endpoint,
                                                                     route_type route,
+                                                                    const std::string& outbound_tag,
                                                                     uint32_t conn_id)
 {
     const auto weak_self = weak_from_this();
@@ -539,6 +544,7 @@ std::shared_ptr<tproxy_udp_session> tproxy_client::make_udp_session(const std::s
                                                 client_endpoint,
                                                 target_endpoint,
                                                 route,
+                                                outbound_tag,
                                                 conn_id,
                                                 cfg_,
                                                 [weak_self, key]()

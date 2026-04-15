@@ -35,7 +35,8 @@ class proxy_udp_upstream : public std::enable_shared_from_this<proxy_udp_upstrea
     [[nodiscard]] static boost::asio::awaitable<proxy_udp_connect_result> connect(const boost::asio::any_io_executor& executor,
                                                                                   uint32_t conn_id,
                                                                                   uint64_t trace_id,
-                                                                                  const config& cfg);
+                                                                                  const config& cfg,
+                                                                                  const std::string& outbound_tag);
 
     boost::asio::awaitable<void> close();
     boost::asio::awaitable<void> send_datagram(

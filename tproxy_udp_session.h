@@ -35,6 +35,7 @@ class tproxy_udp_session : public std::enable_shared_from_this<tproxy_udp_sessio
                        const boost::asio::ip::udp::endpoint& client_endpoint,
                        const boost::asio::ip::udp::endpoint& target_endpoint,
                        route_type route,
+                       std::string outbound_tag,
                        uint32_t conn_id,
                        const config& cfg,
                        std::function<void()> on_close);
@@ -71,6 +72,7 @@ class tproxy_udp_session : public std::enable_shared_from_this<tproxy_udp_sessio
     const config& cfg_;
     io_worker& worker_;
     route_type route_;
+    std::string outbound_tag_;
     std::atomic<bool> stopped_{false};
     uint64_t last_activity_time_ms_ = 0;
     boost::asio::steady_timer idle_timer_;
