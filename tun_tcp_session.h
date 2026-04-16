@@ -14,6 +14,7 @@
 #include "config.h"
 #include "router.h"
 #include "tun_lwip.h"
+#include "request_context.h"
 #include "tcp_outbound_stream.h"
 
 namespace relay
@@ -35,7 +36,12 @@ class tun_tcp_session : public std::enable_shared_from_this<tun_tcp_session>
 
    private:
     [[nodiscard]] boost::asio::awaitable<void> run();
-    [[nodiscard]] boost::asio::awaitable<std::pair<route_decision, std::shared_ptr<tcp_outbound_stream>>> select_backend();
+    [[nodiscard]] request_context make_request_context() const;
+    [[nodiscard]] boost::asio::awaitable<bool> connect_backend(const route_decision& decision,
+                                                               const std::shared_ptr<tcp_outbound_stream>& backend);
+    [[nodiscard]] boost::asio::awaitable<void> finish_connected_session(const route_decision& decision,
+                                                                         const std::shared_ptr<tcp_outbound_stream>& backend);
+    [[nodiscard]] boost::asio::awaitable<void> relay_backend(const std::shared_ptr<tcp_outbound_stream>& backend);
     [[nodiscard]] boost::asio::awaitable<void> client_to_outbound(const std::shared_ptr<tcp_outbound_stream>& backend);
     [[nodiscard]] boost::asio::awaitable<void> outbound_to_client(const std::shared_ptr<tcp_outbound_stream>& backend);
     [[nodiscard]] boost::asio::awaitable<void> idle_watchdog();
