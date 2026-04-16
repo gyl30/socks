@@ -33,6 +33,16 @@ artifact_uid="${SUDO_UID:-$(stat -c '%u' "$repo_root")}"
 artifact_gid="${SUDO_GID:-$(stat -c '%g' "$repo_root")}"
 tag="$(printf '%04x' "$(( $$ % 65536 ))")"
 sni="${REALITY_SNI:-localhost}"
+site_port=443
+web_port="$(python3 - <<'PY'
+import socket
+
+sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+sock.bind(("127.0.0.1", 0))
+print(sock.getsockname()[1])
+sock.close()
+PY
+)"
 uplink_if=""
 
 init_runtime_ld_library_path "$binary"
@@ -139,12 +149,13 @@ prepare_namespace_resolv_conf() {
 verify_external_tls_reachability() {
     local ns="$1"
     local host="$2"
-    ns_exec "$ns" python3 - "$host" <<'PY'
+    local port="$3"
+    ns_exec "$ns" python3 - "$host" "$port" <<'PY'
 import socket
 import sys
 
 host = sys.argv[1]
-port = 443
+port = int(sys.argv[2])
 
 try:
     infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
@@ -294,6 +305,70 @@ print_log_count() {
     echo "$label=$count"
 }
 
+assert_trace_api_ns() {
+    local ns="$1"
+    local port="$2"
+    local label="$3"
+    ns_exec "$ns" python3 - "$port" "$label" <<'PY'
+import json
+import sys
+import urllib.request
+
+port = int(sys.argv[1])
+label = sys.argv[2]
+base = f"http://127.0.0.1:{port}"
+
+
+def fetch(path):
+    with urllib.request.urlopen(base + path, timeout=10) as response:
+        return json.load(response)
+
+
+stats = fetch("/api/traces/stats")
+if int(stats.get("total_sessions", 0)) <= 0:
+    raise RuntimeError(f"{label} missing trace sessions {stats}")
+if int(stats.get("success_sessions", 0)) <= 0:
+    raise RuntimeError(f"{label} missing success traces {stats}")
+
+items = fetch("/api/traces?status=success&limit=100").get("items", [])
+if not items:
+    raise RuntimeError(f"{label} missing success trace items")
+
+selected = None
+for item in items:
+    trace_id = item.get("trace_id")
+    if not isinstance(trace_id, str) or not trace_id:
+        continue
+    detail = fetch(f"/api/traces/{trace_id}")
+    summary = detail.get("summary", {})
+    lifecycle = summary.get("lifecycle", {})
+    stage_counts = summary.get("stage_counts", {})
+    if summary.get("status") != "success":
+        continue
+    if lifecycle.get("conn_accepted") is not True:
+        continue
+    if lifecycle.get("route_decide_done") is not True:
+        continue
+    if lifecycle.get("outbound_connect_done") is not True:
+        continue
+    if lifecycle.get("session_close") is not True:
+        continue
+    if int(stage_counts.get("route_decide_done", 0)) < 1:
+        continue
+    if int(stage_counts.get("outbound_connect_done", 0)) < 1:
+        continue
+    if int(summary.get("events_count", 0)) < 4:
+        continue
+    selected = summary
+    break
+
+if selected is None:
+    raise RuntimeError(f"{label} missing complete success trace")
+
+print(f"trace_assert_ok label={label} trace_id={selected['trace_id']} events={selected['events_count']}")
+PY
+}
+
 wait_tcp_port() {
     local ns="$1"
     local host="$2"
@@ -419,6 +494,15 @@ ns_exec "$ns_wan" ip addr add "${proxy_udp_blackhole_ip}/32" dev lo
 ns_exec "$ns_wan" ip route add default via "$mid_wan_ip"
 
 if [[ "$sni" == "localhost" ]]; then
+    site_port="$(
+        python3 - <<'PY'
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.bind(("127.0.0.1", 0))
+print(s.getsockname()[1])
+s.close()
+PY
+)"
     cat >"$tmp_dir/origin-openssl.cnf" <<'EOF'
 [req]
 distinguished_name=req_dn
@@ -436,12 +520,13 @@ DNS.1=localhost
 EOF
 
     openssl req -x509 -newkey rsa:2048 -nodes -days 1 -keyout "$tmp_dir/origin.key" -out "$tmp_dir/origin.crt" -config "$tmp_dir/origin-openssl.cnf" -extensions v3_req >"$tmp_dir/openssl-req.log" 2>&1
-    start_in_ns "$ns_wan" "$tmp_dir/origin.stdout.log" openssl s_server -accept 127.0.0.1:443 -www -tls1_3 -cert "$tmp_dir/origin.crt" -key "$tmp_dir/origin.key"
-    wait_tcp_port "$ns_wan" 127.0.0.1 443 "origin_tls"
+    start_in_ns "$ns_wan" "$tmp_dir/origin.stdout.log" \
+        openssl s_server -accept "127.0.0.1:${site_port}" -www -tls1_3 -cert "$tmp_dir/origin.crt" -key "$tmp_dir/origin.key"
+    wait_tcp_port "$ns_wan" 127.0.0.1 "$site_port" "origin_tls"
 fi
 
-echo "[setup] verify tls reachability from $ns_wan to $sni:443"
-verify_external_tls_reachability "$ns_wan" "$sni"
+echo "[setup] verify tls reachability from $ns_wan to $sni:$site_port"
+verify_external_tls_reachability "$ns_wan" "$sni" "$site_port"
 
 echo "[setup] install TPROXY rules inside $ns_mid"
 for ip_port in \
@@ -493,6 +578,7 @@ cat >"$tmp_dir/server.json" <<EOF
         "host": "$wan_ip",
         "port": $server_port,
         "sni": "$sni",
+        "site_port": $site_port,
         "private_key": "$private_key",
         "public_key": "$public_key",
         "short_id": "$short_id",
@@ -532,6 +618,11 @@ cat >"$tmp_dir/client.json" <<EOF
   "log": {
     "level": "debug",
     "file": "$client_log"
+  },
+  "web": {
+    "enabled": true,
+    "host": "127.0.0.1",
+    "port": $web_port
   },
   "inbounds": [
     {
@@ -618,6 +709,7 @@ if ! wait_log_pattern_since "$client_log" 0 "tproxy udp listening on 0.0.0.0:$tp
     echo "tproxy udp listener did not start" >&2
     exit 1
 fi
+wait_tcp_port "$ns_mid" "127.0.0.1" "$web_port" "trace_web"
 
 echo "[test] tcp slow success under low rate and latency"
 start_line="$(log_line_count "$client_log")"
@@ -705,7 +797,7 @@ run_expect_failure "tcp direct idle timeout" \
     --port "$direct_tcp_port" \
     --path "/stall-before-header?delay_ms=6500" \
     --read-timeout 8
-wait_log_pattern_since "$client_log" "$start_line" "tcp session idle closing" 8 || {
+wait_log_pattern_since "$client_log" "$start_line" "stage relay idle timeout" 8 || {
     echo "missing tcp idle timeout log for direct case" >&2
     exit 1
 }
@@ -717,7 +809,7 @@ run_expect_failure "tcp proxy idle timeout" \
     --port "$proxy_tcp_port" \
     --path "/stall-before-header?delay_ms=6500" \
     --read-timeout 8
-if ! wait_log_pattern_since "$client_log" "$start_line" "tcp session idle closing" 8; then
+if ! wait_log_pattern_since "$client_log" "$start_line" "stage relay idle timeout" 8; then
     wait_log_pattern_since "$client_log" "$start_line" "target ${proxy_tcp_ip}:${proxy_tcp_port} tx_bytes" 8 || {
         echo "missing tcp idle timeout log for proxy case" >&2
         exit 1
@@ -734,7 +826,7 @@ run_step "tcp direct client no-read" \
     --path "/fast-large?body_bytes=67108864&chunk_size=65536&chunk_interval_ms=0" \
     --hold-seconds 5 \
     --recv-buffer 4096
-wait_log_pattern_since "$client_log" "$start_line" "failed to write to client" 8 || {
+wait_log_pattern_since "$client_log" "$start_line" "stage relay outbound_to_client write failed" 8 || {
     echo "missing client write timeout log for direct case" >&2
     exit 1
 }
@@ -748,7 +840,7 @@ run_step "tcp proxy client no-read" \
     --path "/fast-large?body_bytes=67108864&chunk_size=65536&chunk_interval_ms=0" \
     --hold-seconds 5 \
     --recv-buffer 4096
-wait_log_pattern_since "$client_log" "$start_line" "failed to write to client" 8 || {
+wait_log_pattern_since "$client_log" "$start_line" "stage relay outbound_to_client write failed" 8 || {
     echo "missing client write timeout log for proxy case" >&2
     exit 1
 }
@@ -787,13 +879,14 @@ if grep -Fq "original dst failed" "$client_log"; then
     echo "SO_ORIGINAL_DST failed; TPROXY not verified" >&2
     exit 1
 fi
+assert_trace_api_ns "$ns_mid" "$web_port" "tproxy_client_trace"
 print_log_count "client_route_direct" "$client_log" " route direct"
 print_log_count "client_route_proxy" "$client_log" " route proxy"
 print_log_count "client_udp_direct_open" "$client_log" "opened direct udp socket"
 print_log_count "client_udp_proxy_open" "$client_log" "opened proxy udp outbound"
-print_log_count "client_tcp_idle_timeout" "$client_log" "tcp session idle closing"
+print_log_count "client_tcp_idle_timeout" "$client_log" "stage relay idle timeout"
 print_log_count "client_udp_idle_timeout" "$client_log" "udp session idle timeout"
-print_log_count "client_write_timeout" "$client_log" "failed to write to client"
+print_log_count "client_write_timeout" "$client_log" "stage relay outbound_to_client write failed"
 print_log_count "proxy_connect_failed" "$client_log" "target ${proxy_tcp_drop_ip}:${proxy_tcp_drop_port} route proxy connect failed"
 
 echo "client_log=$client_log"

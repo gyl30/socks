@@ -13,7 +13,7 @@
 
 #include "config.h"
 #include "reality/session/engine.h"
-#include "reality/session/session.h"
+#include "reality/session/record_context.h"
 
 namespace relay
 {

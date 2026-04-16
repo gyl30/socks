@@ -1,5 +1,5 @@
-#ifndef REALITY_SESSION_H
-#define REALITY_SESSION_H
+#ifndef REALITY_RECORD_CONTEXT_H
+#define REALITY_RECORD_CONTEXT_H
 
 #include <boost/system/detail/error_code.hpp>
 

@@ -9,7 +9,7 @@
 #include "reality/types.h"
 #include "tls/cipher_suite.h"
 #include "tls/key_schedule.h"
-#include "reality/session/session.h"
+#include "reality/session/record_context.h"
 
 namespace reality
 {
