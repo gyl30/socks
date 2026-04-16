@@ -16,15 +16,16 @@
 
 #include "log.h"
 #include "config.h"
-#include "outbound.h"
-#include "router.h"
 #include "protocol.h"
 #include "trace_store.h"
 #include "trace_id.h"
 #include "constants.h"
+#include "datagram_relay.h"
 #include "net_utils.h"
 #include "context_pool.h"
 #include "proxy_protocol.h"
+#include "request_context.h"
+#include "udp_session_flow.h"
 #include "udp_proxy_outbound.h"
 #include "tproxy_udp_session.h"
 
@@ -52,13 +53,9 @@ void set_socket_reuse_port(int fd, boost::system::error_code& ec)
 }    // namespace
 
 tproxy_udp_session::tproxy_udp_session(io_worker& worker,
+                                       std::shared_ptr<router> router,
                                        const boost::asio::ip::udp::endpoint& client_endpoint,
                                        const boost::asio::ip::udp::endpoint& target_endpoint,
-                                       const route_type route,
-                                       std::string outbound_tag,
-                                       std::string outbound_type,
-                                       std::string match_type,
-                                       std::string match_value,
                                        uint32_t conn_id,
                                        std::string inbound_tag,
                                        const config& cfg,
@@ -68,11 +65,7 @@ tproxy_udp_session::tproxy_udp_session(io_worker& worker,
       inbound_tag_(std::move(inbound_tag)),
       cfg_(cfg),
       worker_(worker),
-      route_(route),
-      outbound_tag_(std::move(outbound_tag)),
-      outbound_type_(std::move(outbound_type)),
-      match_type_(std::move(match_type)),
-      match_value_(std::move(match_value)),
+      router_(std::move(router)),
       last_activity_time_ms_(net::now_ms()),
       idle_timer_(worker.io_context),
       upstream_socket_(worker.io_context),
@@ -138,17 +131,48 @@ boost::asio::awaitable<udp_enqueue_result> tproxy_udp_session::enqueue_packet(st
     co_return udp_enqueue_result::kEnqueued;
 }
 
+request_context tproxy_udp_session::make_request_context() const
+{
+    return request_context{
+        .trace_id = trace_id_,
+        .conn_id = conn_id_,
+        .transport = request_transport::kUdp,
+        .command = request_command::kDatagram,
+        .inbound_tag = inbound_tag_,
+        .inbound_type = "tproxy",
+        .target_host = target_endpoint_.address().to_string(),
+        .target_port = target_endpoint_.port(),
+        .target_ip = target_endpoint_.address().to_string(),
+        .target_domain = std::nullopt,
+        .client_host = client_endpoint_.address().to_string(),
+        .client_port = client_endpoint_.port(),
+        .local_host = "",
+        .local_port = 0,
+    };
+}
+
+void tproxy_udp_session::apply_route_decision(const route_decision& decision)
+{
+    route_ = decision.route;
+    outbound_tag_ = decision.outbound_tag;
+    outbound_type_ = decision.outbound_type;
+    match_type_ = decision.match_type;
+    match_value_ = decision.match_value;
+}
+
+boost::asio::awaitable<bool> tproxy_udp_session::run_selected_mode()
+{
+    if (route_ == route_type::kDirect)
+    {
+        co_return co_await run_direct_mode();
+    }
+    co_return co_await run_proxy_mode();
+}
+
 boost::asio::awaitable<void> tproxy_udp_session::run()
 {
-    LOG_INFO("{} trace {:016x} conn {} client {}:{} target {}:{} route {} udp session started",
-             log_event::kConnInit,
-             trace_id_,
-             conn_id_,
-             client_endpoint_.address().to_string(),
-             client_endpoint_.port(),
-             target_endpoint_.address().to_string(),
-             target_endpoint_.port(),
-             relay::to_string(route_));
+    const auto request = make_request_context();
+
     trace_store::instance().record_event(trace_event{
         .trace_id = trace_id_,
         .conn_id = conn_id_,
@@ -158,11 +182,6 @@ boost::asio::awaitable<void> tproxy_udp_session::run()
         .inbound_type = "tproxy",
         .target_host = target_endpoint_.address().to_string(),
         .target_port = target_endpoint_.port(),
-        .route_type = relay::to_string(route_),
-        .outbound_tag = outbound_tag_,
-        .outbound_type = outbound_type_,
-        .match_type = match_type_,
-        .match_value = match_value_,
         .remote_host = client_endpoint_.address().to_string(),
         .remote_port = client_endpoint_.port(),
     });
@@ -175,14 +194,11 @@ boost::asio::awaitable<void> tproxy_udp_session::run()
         .inbound_type = "tproxy",
         .target_host = target_endpoint_.address().to_string(),
         .target_port = target_endpoint_.port(),
-        .route_type = relay::to_string(route_),
-        .outbound_tag = outbound_tag_,
-        .outbound_type = outbound_type_,
-        .match_type = match_type_,
-        .match_value = match_value_,
         .remote_host = client_endpoint_.address().to_string(),
         .remote_port = client_endpoint_.port(),
     });
+    const auto flow_result = co_await prepare_udp_route_flow(request, router_);
+    apply_route_decision(flow_result.decision);
     trace_store::instance().record_event(trace_event{
         .trace_id = trace_id_,
         .conn_id = conn_id_,
@@ -190,16 +206,26 @@ boost::asio::awaitable<void> tproxy_udp_session::run()
         .result = (route_ == route_type::kBlock) ? trace_result::kFail : trace_result::kOk,
         .inbound_tag = inbound_tag_,
         .inbound_type = "tproxy",
-        .target_host = target_endpoint_.address().to_string(),
-        .target_port = target_endpoint_.port(),
-        .route_type = relay::to_string(route_),
         .outbound_tag = outbound_tag_,
         .outbound_type = outbound_type_,
-        .match_type = match_type_,
-        .match_value = match_value_,
+        .target_host = target_endpoint_.address().to_string(),
+        .target_port = target_endpoint_.port(),
         .remote_host = client_endpoint_.address().to_string(),
         .remote_port = client_endpoint_.port(),
+        .route_type = relay::to_string(route_),
+        .match_type = match_type_,
+        .match_value = match_value_,
     });
+    LOG_INFO("{} trace {:016x} conn {} client {}:{} target {}:{} route {} out_tag {}",
+             log_event::kRoute,
+             trace_id_,
+             conn_id_,
+             client_endpoint_.address().to_string(),
+             client_endpoint_.port(),
+             target_endpoint_.address().to_string(),
+             target_endpoint_.port(),
+             relay::to_string(route_),
+             outbound_tag_.empty() ? "-" : outbound_tag_);
     if (route_ == route_type::kBlock)
     {
         trace_store::instance().record_event(trace_event{
@@ -209,21 +235,21 @@ boost::asio::awaitable<void> tproxy_udp_session::run()
             .result = trace_result::kFail,
             .inbound_tag = inbound_tag_,
             .inbound_type = "tproxy",
-            .target_host = target_endpoint_.address().to_string(),
-            .target_port = target_endpoint_.port(),
-            .route_type = relay::to_string(route_),
             .outbound_tag = outbound_tag_,
             .outbound_type = outbound_type_,
+            .target_host = target_endpoint_.address().to_string(),
+            .target_port = target_endpoint_.port(),
+            .remote_host = client_endpoint_.address().to_string(),
+            .remote_port = client_endpoint_.port(),
+            .route_type = relay::to_string(route_),
             .match_type = match_type_,
             .match_value = match_value_,
             .error_message = "route blocked",
-            .remote_host = client_endpoint_.address().to_string(),
-            .remote_port = client_endpoint_.port(),
         });
         notify_closed();
         co_return;
     }
-    const bool completed = (route_ == route_type::kDirect) ? co_await run_direct_mode() : co_await run_proxy_mode();
+    const bool completed = co_await run_selected_mode();
     notify_closed();
     if (!completed)
     {
@@ -234,15 +260,15 @@ boost::asio::awaitable<void> tproxy_udp_session::run()
             .result = trace_result::kFail,
             .inbound_tag = inbound_tag_,
             .inbound_type = "tproxy",
-            .target_host = target_endpoint_.address().to_string(),
-            .target_port = target_endpoint_.port(),
-            .route_type = relay::to_string(route_),
             .outbound_tag = outbound_tag_,
             .outbound_type = outbound_type_,
-            .match_type = match_type_,
-            .match_value = match_value_,
+            .target_host = target_endpoint_.address().to_string(),
+            .target_port = target_endpoint_.port(),
             .remote_host = client_endpoint_.address().to_string(),
             .remote_port = client_endpoint_.port(),
+            .route_type = relay::to_string(route_),
+            .match_type = match_type_,
+            .match_value = match_value_,
         });
         co_return;
     }
@@ -254,18 +280,18 @@ boost::asio::awaitable<void> tproxy_udp_session::run()
         .result = trace_result::kOk,
         .inbound_tag = inbound_tag_,
         .inbound_type = "tproxy",
-        .target_host = target_endpoint_.address().to_string(),
-        .target_port = target_endpoint_.port(),
-        .route_type = relay::to_string(route_),
         .outbound_tag = outbound_tag_,
         .outbound_type = outbound_type_,
+        .target_host = target_endpoint_.address().to_string(),
+        .target_port = target_endpoint_.port(),
+        .remote_host = client_endpoint_.address().to_string(),
+        .remote_port = client_endpoint_.port(),
+        .route_type = relay::to_string(route_),
         .match_type = match_type_,
         .match_value = match_value_,
         .bytes_tx = tx_bytes_,
         .bytes_rx = rx_bytes_,
         .latency_ms = static_cast<uint32_t>(duration_ms),
-        .remote_host = client_endpoint_.address().to_string(),
-        .remote_port = client_endpoint_.port(),
     });
     LOG_INFO("{} trace {:016x} conn {} client {}:{} target {}:{} route {} tx_bytes {} rx_bytes {} duration_ms {}",
              log_event::kConnClose,
@@ -326,6 +352,37 @@ boost::asio::awaitable<bool> tproxy_udp_session::run_proxy_mode()
     co_return true;
 }
 
+void tproxy_udp_session::record_open_direct_socket_result(const bool success,
+                                                          const boost::system::error_code& ec,
+                                                          const std::chrono::steady_clock::time_point connect_start) const
+{
+    trace_event event{
+        .trace_id = trace_id_,
+        .conn_id = conn_id_,
+        .stage = trace_stage::kOutboundConnectDone,
+        .result = success ? trace_result::kOk : trace_result::kFail,
+        .inbound_tag = inbound_tag_,
+        .inbound_type = "tproxy",
+        .outbound_tag = outbound_tag_,
+        .outbound_type = "direct",
+        .target_host = target_endpoint_.address().to_string(),
+        .target_port = target_endpoint_.port(),
+        .remote_host = client_endpoint_.address().to_string(),
+        .remote_port = client_endpoint_.port(),
+        .route_type = relay::to_string(route_),
+        .match_type = match_type_,
+        .match_value = match_value_,
+        .latency_ms = static_cast<uint32_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - connect_start).count()),
+    };
+    if (ec)
+    {
+        event.error_code = static_cast<int32_t>(ec.value());
+        event.error_message = ec.message();
+    }
+    trace_store::instance().record_event(std::move(event));
+}
+
 boost::asio::awaitable<bool> tproxy_udp_session::open_direct_socket()
 {
     const auto connect_start = std::chrono::steady_clock::now();
@@ -336,42 +393,22 @@ boost::asio::awaitable<bool> tproxy_udp_session::open_direct_socket()
         .result = trace_result::kOk,
         .inbound_tag = inbound_tag_,
         .inbound_type = "tproxy",
-        .target_host = target_endpoint_.address().to_string(),
-        .target_port = target_endpoint_.port(),
-        .route_type = relay::to_string(route_),
         .outbound_tag = outbound_tag_,
         .outbound_type = "direct",
-        .match_type = match_type_,
-        .match_value = match_value_,
+        .target_host = target_endpoint_.address().to_string(),
+        .target_port = target_endpoint_.port(),
         .remote_host = client_endpoint_.address().to_string(),
         .remote_port = client_endpoint_.port(),
+        .route_type = relay::to_string(route_),
+        .match_type = match_type_,
+        .match_value = match_value_,
     });
     boost::system::error_code ec;
     const auto protocol = target_endpoint_.address().is_v6() ? boost::asio::ip::udp::v6() : boost::asio::ip::udp::v4();
     ec = upstream_socket_.open(protocol, ec);
     if (ec)
     {
-        trace_store::instance().record_event(trace_event{
-            .trace_id = trace_id_,
-            .conn_id = conn_id_,
-            .stage = trace_stage::kOutboundConnectDone,
-            .result = trace_result::kFail,
-            .inbound_tag = inbound_tag_,
-            .inbound_type = "tproxy",
-            .target_host = target_endpoint_.address().to_string(),
-            .target_port = target_endpoint_.port(),
-            .route_type = relay::to_string(route_),
-            .outbound_tag = outbound_tag_,
-            .outbound_type = "direct",
-            .match_type = match_type_,
-            .match_value = match_value_,
-            .latency_ms = static_cast<uint32_t>(
-                std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - connect_start).count()),
-            .error_code = ec.value(),
-            .error_message = ec.message(),
-            .remote_host = client_endpoint_.address().to_string(),
-            .remote_port = client_endpoint_.port(),
-        });
+        record_open_direct_socket_result(false, ec, connect_start);
         LOG_WARN("{} trace {:016x} conn {} client {}:{} target {}:{} open direct udp socket failed {}",
                  log_event::kConnInit,
                  trace_id_,
@@ -390,27 +427,7 @@ boost::asio::awaitable<bool> tproxy_udp_session::open_direct_socket()
         net::set_socket_mark(upstream_socket_.native_handle(), connect_mark, ec);
         if (ec)
         {
-            trace_store::instance().record_event(trace_event{
-                .trace_id = trace_id_,
-                .conn_id = conn_id_,
-                .stage = trace_stage::kOutboundConnectDone,
-                .result = trace_result::kFail,
-                .inbound_tag = inbound_tag_,
-                .inbound_type = "tproxy",
-                .target_host = target_endpoint_.address().to_string(),
-                .target_port = target_endpoint_.port(),
-                .route_type = relay::to_string(route_),
-                .outbound_tag = outbound_tag_,
-                .outbound_type = "direct",
-                .match_type = match_type_,
-                .match_value = match_value_,
-                .latency_ms = static_cast<uint32_t>(
-                    std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - connect_start).count()),
-                .error_code = ec.value(),
-                .error_message = ec.message(),
-                .remote_host = client_endpoint_.address().to_string(),
-                .remote_port = client_endpoint_.port(),
-            });
+            record_open_direct_socket_result(false, ec, connect_start);
             LOG_WARN("{} trace {:016x} conn {} client {}:{} target {}:{} set direct udp mark failed {}",
                      log_event::kConnInit,
                      trace_id_,
@@ -441,27 +458,7 @@ boost::asio::awaitable<bool> tproxy_udp_session::open_direct_socket()
     ec = upstream_socket_.connect(target_endpoint_, ec);
     if (ec)
     {
-        trace_store::instance().record_event(trace_event{
-            .trace_id = trace_id_,
-            .conn_id = conn_id_,
-            .stage = trace_stage::kOutboundConnectDone,
-            .result = trace_result::kFail,
-            .inbound_tag = inbound_tag_,
-            .inbound_type = "tproxy",
-            .target_host = target_endpoint_.address().to_string(),
-            .target_port = target_endpoint_.port(),
-            .route_type = relay::to_string(route_),
-            .outbound_tag = outbound_tag_,
-            .outbound_type = "direct",
-            .match_type = match_type_,
-            .match_value = match_value_,
-            .latency_ms = static_cast<uint32_t>(
-                std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - connect_start).count()),
-            .error_code = ec.value(),
-            .error_message = ec.message(),
-            .remote_host = client_endpoint_.address().to_string(),
-            .remote_port = client_endpoint_.port(),
-        });
+        record_open_direct_socket_result(false, ec, connect_start);
         LOG_WARN("{} trace {:016x} conn {} client {}:{} target {}:{} connect direct udp socket failed {}",
                  log_event::kConnInit,
                  trace_id_,
@@ -482,31 +479,14 @@ boost::asio::awaitable<bool> tproxy_udp_session::open_direct_socket()
              client_endpoint_.port(),
              target_endpoint_.address().to_string(),
              target_endpoint_.port());
-    trace_store::instance().record_event(trace_event{
-        .trace_id = trace_id_,
-        .conn_id = conn_id_,
-        .stage = trace_stage::kOutboundConnectDone,
-        .result = trace_result::kOk,
-        .inbound_tag = inbound_tag_,
-        .inbound_type = "tproxy",
-        .target_host = target_endpoint_.address().to_string(),
-        .target_port = target_endpoint_.port(),
-        .route_type = relay::to_string(route_),
-        .outbound_tag = outbound_tag_,
-        .outbound_type = "direct",
-        .match_type = match_type_,
-        .match_value = match_value_,
-        .latency_ms = static_cast<uint32_t>(
-            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - connect_start).count()),
-        .remote_host = client_endpoint_.address().to_string(),
-        .remote_port = client_endpoint_.port(),
-    });
+    record_open_direct_socket_result(true, ec, connect_start);
     co_return true;
 }
 
 boost::asio::awaitable<bool> tproxy_udp_session::open_proxy_outbound()
 {
     const auto connect_start = std::chrono::steady_clock::now();
+    const auto request = make_request_context();
     trace_store::instance().record_event(trace_event{
         .trace_id = trace_id_,
         .conn_id = conn_id_,
@@ -514,18 +494,23 @@ boost::asio::awaitable<bool> tproxy_udp_session::open_proxy_outbound()
         .result = trace_result::kOk,
         .inbound_tag = inbound_tag_,
         .inbound_type = "tproxy",
-        .target_host = target_endpoint_.address().to_string(),
-        .target_port = target_endpoint_.port(),
-        .route_type = relay::to_string(route_),
         .outbound_tag = outbound_tag_,
         .outbound_type = outbound_type_,
-        .match_type = match_type_,
-        .match_value = match_value_,
+        .target_host = target_endpoint_.address().to_string(),
+        .target_port = target_endpoint_.port(),
         .remote_host = client_endpoint_.address().to_string(),
         .remote_port = client_endpoint_.port(),
+        .route_type = relay::to_string(route_),
+        .match_type = match_type_,
+        .match_value = match_value_,
     });
-    const auto connect_result =
-        co_await connect_udp_proxy_outbound(worker_.io_context.get_executor(), conn_id_, trace_id_, cfg_, outbound_tag_);
+    const auto connect_result = co_await connect_udp_proxy_flow(worker_.io_context.get_executor(), request, outbound_tag_, cfg_);
+    co_return co_await apply_open_proxy_outbound_result(connect_result, connect_start);
+}
+
+boost::asio::awaitable<bool> tproxy_udp_session::apply_open_proxy_outbound_result(
+    const udp_proxy_outbound_connect_result& connect_result, const std::chrono::steady_clock::time_point connect_start)
+{
     if (connect_result.ec || connect_result.outbound == nullptr)
     {
         const auto ec = connect_result.ec ? connect_result.ec : boost::asio::error::operation_aborted;
@@ -536,19 +521,19 @@ boost::asio::awaitable<bool> tproxy_udp_session::open_proxy_outbound()
             .result = trace_result::kFail,
             .inbound_tag = inbound_tag_,
             .inbound_type = "tproxy",
-            .target_host = target_endpoint_.address().to_string(),
-            .target_port = target_endpoint_.port(),
-            .route_type = relay::to_string(route_),
             .outbound_tag = outbound_tag_,
             .outbound_type = outbound_type_,
+            .target_host = target_endpoint_.address().to_string(),
+            .target_port = target_endpoint_.port(),
+            .remote_host = client_endpoint_.address().to_string(),
+            .remote_port = client_endpoint_.port(),
+            .route_type = relay::to_string(route_),
             .match_type = match_type_,
             .match_value = match_value_,
             .latency_ms = static_cast<uint32_t>(
                 std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - connect_start).count()),
-            .error_code = ec.value(),
+            .error_code = static_cast<int32_t>(ec.value()),
             .error_message = ec.message(),
-            .remote_host = client_endpoint_.address().to_string(),
-            .remote_port = client_endpoint_.port(),
         });
         LOG_WARN("{} trace {:016x} conn {} client {}:{} target {}:{} open proxy udp outbound failed {} rep {}",
                  log_event::kConnInit,
@@ -562,6 +547,7 @@ boost::asio::awaitable<bool> tproxy_udp_session::open_proxy_outbound()
                  connect_result.socks_rep);
         co_return false;
     }
+
     proxy_outbound_ = connect_result.outbound;
     LOG_INFO("{} trace {:016x} conn {} opened proxy udp outbound client {}:{} target {}:{} bind {}:{}",
              log_event::kConnInit,
@@ -580,17 +566,17 @@ boost::asio::awaitable<bool> tproxy_udp_session::open_proxy_outbound()
         .result = trace_result::kOk,
         .inbound_tag = inbound_tag_,
         .inbound_type = "tproxy",
-        .target_host = target_endpoint_.address().to_string(),
-        .target_port = target_endpoint_.port(),
-        .route_type = relay::to_string(route_),
         .outbound_tag = outbound_tag_,
         .outbound_type = outbound_type_,
+        .target_host = target_endpoint_.address().to_string(),
+        .target_port = target_endpoint_.port(),
+        .remote_host = client_endpoint_.address().to_string(),
+        .remote_port = client_endpoint_.port(),
+        .route_type = relay::to_string(route_),
         .match_type = match_type_,
         .match_value = match_value_,
         .latency_ms = static_cast<uint32_t>(
             std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - connect_start).count()),
-        .remote_host = client_endpoint_.address().to_string(),
-        .remote_port = client_endpoint_.port(),
     });
     co_return true;
 }
@@ -623,6 +609,7 @@ boost::asio::awaitable<void> tproxy_udp_session::packets_to_direct()
             break;
         }
         tx_bytes_ += payload.size();
+        trace_store::instance().add_live_tx_bytes(payload.size());
         last_activity_time_ms_ = net::now_ms();
     }
 }
@@ -679,6 +666,7 @@ boost::asio::awaitable<void> tproxy_udp_session::packets_to_proxy()
             break;
         }
         tx_bytes_ += payload.size();
+        trace_store::instance().add_live_tx_bytes(payload.size());
         last_activity_time_ms_ = net::now_ms();
     }
 }
@@ -690,47 +678,45 @@ boost::asio::awaitable<void> tproxy_udp_session::proxy_to_client()
         co_return;
     }
 
-    for (;;)
-    {
-        boost::system::error_code ec;
-        const auto datagram = co_await proxy_outbound_->receive_datagram(cfg_.timeout.read, ec);
-        if (ec)
+    proxy_outbound_reply_relay_context relay_context{
+        .read_timeout_sec = cfg_.timeout.read,
+        .last_activity_time_ms = last_activity_time_ms_,
+        .rx_bytes = rx_bytes_,
+    };
+    co_await relay_proxy_outbound_replies(
+        proxy_outbound_,
+        relay_context,
+        [this]() { return stopped_.load(std::memory_order_relaxed); },
+        [this](const proxy::udp_datagram& datagram, boost::system::error_code& ec) -> boost::asio::awaitable<std::size_t>
         {
-            if (ec == boost::asio::error::timed_out)
+            boost::system::error_code addr_ec;
+            const auto source_addr = boost::asio::ip::make_address(datagram.target_host, addr_ec);
+            if (addr_ec)
             {
-                continue;
+                co_return 0;
             }
-            break;
-        }
 
-        boost::system::error_code addr_ec;
-        const auto source_addr = boost::asio::ip::make_address(datagram.target_host, addr_ec);
-        if (addr_ec)
-        {
-            continue;
-        }
-
-        const auto source_endpoint = boost::asio::ip::udp::endpoint(socks_codec::normalize_ip_address(source_addr), datagram.target_port);
-        if (!(co_await send_to_client(source_endpoint, datagram.payload.data(), datagram.payload.size())))
-        {
-            break;
-        }
-        last_activity_time_ms_ = net::now_ms();
-    }
+            const auto source_endpoint = boost::asio::ip::udp::endpoint(socks_codec::normalize_ip_address(source_addr), datagram.target_port);
+            if (!(co_await send_to_client(source_endpoint, datagram.payload.data(), datagram.payload.size())))
+            {
+                ec = boost::asio::error::operation_aborted;
+                co_return 0;
+            }
+            co_return 0;
+        },
+        [](const boost::system::error_code&) {});
 }
 
 boost::asio::awaitable<void> tproxy_udp_session::idle_watchdog()
 {
-    const auto idle_timeout_ms = net::timeout_seconds_to_milliseconds(cfg_.timeout.idle);
-    while (!stopped_.load(std::memory_order_relaxed))
-    {
-        idle_timer_.expires_after(std::chrono::seconds(1));
-        const auto [wait_ec] = co_await idle_timer_.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
-        if (wait_ec)
-        {
-            break;
-        }
-        if (net::now_ms() - last_activity_time_ms_ > idle_timeout_ms)
+    datagram_idle_watchdog_context relay_context{
+        .timer = idle_timer_,
+        .idle_timeout_sec = cfg_.timeout.idle,
+        .last_activity_time_ms = last_activity_time_ms_,
+    };
+    co_await run_datagram_idle_watchdog(
+        relay_context,
+        [this]()
         {
             LOG_INFO("{} trace {:016x} conn {} udp session idle timeout client {}:{} target {}:{}",
                      log_event::kTimeout,
@@ -740,9 +726,7 @@ boost::asio::awaitable<void> tproxy_udp_session::idle_watchdog()
                      client_endpoint_.port(),
                      target_endpoint_.address().to_string(),
                      target_endpoint_.port());
-            break;
-        }
-    }
+        });
 }
 
 boost::asio::awaitable<bool> tproxy_udp_session::send_to_client(const boost::asio::ip::udp::endpoint& source,
@@ -809,6 +793,7 @@ boost::asio::awaitable<bool> tproxy_udp_session::send_to_client(const boost::asi
     }
 
     rx_bytes_ += bytes_sent;
+    trace_store::instance().add_live_rx_bytes(bytes_sent);
     co_return true;
 }
 

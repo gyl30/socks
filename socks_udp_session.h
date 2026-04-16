@@ -12,10 +12,11 @@
 #include <boost/asio/experimental/concurrent_channel.hpp>
 
 #include "config.h"
-#include "router.h"
-#include "protocol.h"
 #include "lru_cache.h"
 #include "net_utils.h"
+#include "protocol.h"
+#include "request_context.h"
+#include "router.h"
 #include "run_loop_spawner.h"
 #include "udp_proxy_outbound.h"
 
@@ -27,10 +28,10 @@ namespace detail
 std::vector<uint8_t> build_udp_associate_reply(const boost::asio::ip::address& local_addr, uint16_t udp_bind_port);
 }
 
-class socks_udp_associate_session : public std::enable_shared_from_this<socks_udp_associate_session>
+class socks_udp_session : public std::enable_shared_from_this<socks_udp_session>
 {
    public:
-    socks_udp_associate_session(
+    socks_udp_session(
         boost::asio::ip::tcp::socket socket,
         io_worker& worker,
         std::shared_ptr<router> router,
@@ -43,13 +44,32 @@ class socks_udp_associate_session : public std::enable_shared_from_this<socks_ud
 
    private:
     boost::asio::awaitable<void> run(const std::string& host, uint16_t port);
+    [[nodiscard]] boost::asio::awaitable<bool> prepare_udp_associate(const std::string& host, uint16_t port);
+    [[nodiscard]] boost::asio::awaitable<bool> send_udp_associate_reply(const boost::asio::ip::address& local_addr, uint16_t udp_port);
 
    private:
     void apply_request_peer_constraint(const std::string& host, uint16_t port) const;
     [[nodiscard]] std::string current_client_host() const;
     [[nodiscard]] uint16_t current_client_port() const;
+    [[nodiscard]] request_context make_proxy_outbound_request() const;
     [[nodiscard]] boost::asio::awaitable<route_decision> decide_udp_route(const socks_udp_header& header) const;
+    [[nodiscard]] boost::asio::awaitable<bool> process_udp_packet(const socks_udp_header& header,
+                                                                  const route_decision& decision,
+                                                                  const uint8_t* payload,
+                                                                  std::size_t payload_len);
+    [[nodiscard]] boost::asio::awaitable<boost::asio::ip::udp::endpoint> resolve_target_endpoint_uncached(
+        const std::string& key,
+        const std::string& host,
+        uint16_t port,
+        uint64_t now_ms_value,
+        boost::system::error_code& ec);
     [[nodiscard]] boost::asio::awaitable<bool> ensure_proxy_outbound(boost::system::error_code& ec);
+    [[nodiscard]] boost::asio::awaitable<bool> connect_proxy_outbound(boost::system::error_code& ec);
+    [[nodiscard]] boost::asio::awaitable<bool> apply_proxy_outbound_connect_result(
+        const udp_proxy_outbound_connect_result& connect_result,
+        boost::system::error_code& ec);
+    void record_proxy_outbound_connect_result(bool success, const boost::system::error_code& ec) const;
+    [[nodiscard]] boost::asio::awaitable<bool> start_proxy_outbound_reader(boost::system::error_code& ec);
     [[nodiscard]] boost::asio::awaitable<boost::asio::ip::udp::endpoint> resolve_target_endpoint(const std::string& host,
                                                                                                  uint16_t port,
                                                                                                  boost::system::error_code& ec);
@@ -60,10 +80,13 @@ class socks_udp_associate_session : public std::enable_shared_from_this<socks_ud
                                                        const uint8_t* payload,
                                                        std::size_t payload_len,
                                                        boost::system::error_code& ec);
-    boost::asio::awaitable<void> forward_direct_reply_to_client(const boost::asio::ip::udp::endpoint& sender,
-                                                                const uint8_t* payload,
-                                                                std::size_t payload_len,
-                                                                boost::system::error_code& ec);
+    boost::asio::awaitable<std::size_t> forward_direct_reply_to_client(const boost::asio::ip::udp::endpoint& sender,
+                                                                       const uint8_t* payload,
+                                                                       std::size_t payload_len,
+                                                                       boost::system::error_code& ec);
+    boost::asio::awaitable<std::size_t> forward_proxy_reply_to_client(const proxy::udp_datagram& datagram,
+                                                                      boost::system::error_code& ec,
+                                                                      bool& send_reply_failed);
     void open_direct_udp_socket(boost::asio::ip::udp::socket& direct_socket,
                                 const boost::asio::ip::udp& protocol,
                                 const char* family,
