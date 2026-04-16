@@ -30,8 +30,8 @@ package "Server Process" {
     [reality_inbound] as RealityInbound
     [proxy_reality_connection (server)] as ServerConn
     [reality_engine (server)] as ServerReality
-    [reality_tcp_connect_session] as RealityTcp
-    [reality_udp_associate_session] as RealityUdp
+    [reality_tcp_session] as RealityTcp
+    [reality_udp_session] as RealityUdp
 }
 
 [User App] as App
