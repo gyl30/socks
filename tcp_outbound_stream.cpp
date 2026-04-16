@@ -158,6 +158,12 @@ class socks_tcp_outbound final : public tcp_outbound_stream
     return &*outbound->socks;
 }
 
+void set_connect_failure(tcp_outbound_connect_result& result, const boost::system::error_code& ec)
+{
+    result.ec = ec;
+    result.socks_rep = socks::map_connect_error_to_socks_rep(ec);
+}
+
 bool append_socks_target_address(std::vector<uint8_t>& packet, const std::string& host)
 {
     boost::system::error_code ec;
@@ -205,14 +211,16 @@ boost::asio::awaitable<tcp_outbound_connect_result> direct_tcp_outbound::connect
     {
         LOG_WARN(
             "{} trace {:016x} conn {} stage resolve target {}:{} error {}", log_event::kRoute, trace_id_, conn_id_, host, port, ec.message());
-        result.ec = ec;
-        result.socks_rep = socks::map_connect_error_to_socks_rep(ec);
+        set_connect_failure(result, ec);
         co_return result;
     }
 
     boost::system::error_code last_ec = boost::asio::error::host_unreachable;
     for (const auto& entry : endpoints)
     {
+        result.resolved_target_addr = net::normalize_address(entry.endpoint().address());
+        result.resolved_target_port = entry.endpoint().port();
+        result.has_resolved_target_endpoint = true;
         if (socket_.is_open())
         {
             boost::system::error_code close_ec;
@@ -241,6 +249,14 @@ boost::asio::awaitable<tcp_outbound_connect_result> direct_tcp_outbound::connect
         {
             last_ec = op_ec;
             continue;
+        }
+        boost::system::error_code remote_ec;
+        const auto remote_ep = socket_.remote_endpoint(remote_ec);
+        if (!remote_ec)
+        {
+            result.resolved_target_addr = socks_codec::normalize_ip_address(remote_ep.address());
+            result.resolved_target_port = remote_ep.port();
+            result.has_resolved_target_endpoint = true;
         }
         op_ec = socket_.set_option(boost::asio::ip::tcp::no_delay(true), op_ec);
         if (op_ec)
@@ -282,8 +298,7 @@ boost::asio::awaitable<tcp_outbound_connect_result> direct_tcp_outbound::connect
                  bind_port_);
         co_return result;
     }
-    result.ec = last_ec;
-    result.socks_rep = socks::map_connect_error_to_socks_rep(last_ec);
+    set_connect_failure(result, last_ec);
     co_return result;
 }
 
@@ -580,28 +595,24 @@ boost::asio::awaitable<tcp_outbound_connect_result> socks_tcp_outbound::connect(
     const auto* outbound_settings = settings();
     if (outbound_settings == nullptr)
     {
-        result.ec = boost::asio::error::operation_not_supported;
-        result.socks_rep = socks::map_connect_error_to_socks_rep(result.ec);
+        set_connect_failure(result, boost::asio::error::operation_not_supported);
         co_return result;
     }
 
     boost::system::error_code ec;
     if (!(co_await connect_server(*outbound_settings, ec)))
     {
-        result.ec = ec ? ec : boost::asio::error::host_unreachable;
-        result.socks_rep = socks::map_connect_error_to_socks_rep(result.ec);
+        set_connect_failure(result, ec ? ec : boost::asio::error::host_unreachable);
         co_return result;
     }
     if (!(co_await negotiate_method(*outbound_settings, ec)))
     {
-        result.ec = ec ? ec : boost::system::errc::make_error_code(boost::system::errc::permission_denied);
-        result.socks_rep = socks::map_connect_error_to_socks_rep(result.ec);
+        set_connect_failure(result, ec ? ec : boost::system::errc::make_error_code(boost::system::errc::permission_denied));
         co_return result;
     }
     if (!(co_await send_connect_request(host, port, ec)))
     {
-        result.ec = ec ? ec : boost::asio::error::operation_aborted;
-        result.socks_rep = socks::map_connect_error_to_socks_rep(result.ec);
+        set_connect_failure(result, ec ? ec : boost::asio::error::operation_aborted);
         co_return result;
     }
     if (!(co_await read_connect_reply(result, ec)))
@@ -758,8 +769,7 @@ boost::asio::awaitable<void> proxy_tcp_outbound::wait_connect_reply(const std::s
 {
     if (connection_ == nullptr)
     {
-        result.ec = boost::asio::error::not_connected;
-        result.socks_rep = socks::map_connect_error_to_socks_rep(result.ec);
+        set_connect_failure(result, boost::asio::error::not_connected);
         co_return;
     }
 
@@ -774,8 +784,7 @@ boost::asio::awaitable<void> proxy_tcp_outbound::wait_connect_reply(const std::s
                   host,
                   port,
                   reply_ec.message());
-        result.ec = reply_ec;
-        result.socks_rep = socks::map_connect_error_to_socks_rep(reply_ec);
+        set_connect_failure(result, reply_ec);
         co_return;
     }
 
@@ -789,8 +798,7 @@ boost::asio::awaitable<void> proxy_tcp_outbound::wait_connect_reply(const std::s
                  host,
                  port,
                  packet.size());
-        result.ec = boost::asio::error::invalid_argument;
-        result.socks_rep = socks::map_connect_error_to_socks_rep(result.ec);
+        set_connect_failure(result, boost::asio::error::invalid_argument);
         co_return;
     }
     result.socks_rep = reply.socks_rep;
@@ -803,7 +811,7 @@ boost::asio::awaitable<void> proxy_tcp_outbound::wait_connect_reply(const std::s
                  host,
                  port,
                  reply.socks_rep);
-        result.ec = map_socks_rep_to_connect_error(reply.socks_rep);
+        set_connect_failure(result, map_socks_rep_to_connect_error(reply.socks_rep));
         co_return;
     }
 
@@ -862,8 +870,7 @@ boost::asio::awaitable<tcp_outbound_connect_result> proxy_tcp_outbound::connect(
                   port,
                   outbound_tag_,
                   ec.message());
-        result.ec = ec;
-        result.socks_rep = socks::map_connect_error_to_socks_rep(ec);
+        set_connect_failure(result, ec);
         co_return result;
     }
 
@@ -881,8 +888,7 @@ boost::asio::awaitable<tcp_outbound_connect_result> proxy_tcp_outbound::connect(
     co_await send_connect_request(host, port, ec);
     if (ec)
     {
-        result.ec = ec;
-        result.socks_rep = socks::map_connect_error_to_socks_rep(ec);
+        set_connect_failure(result, ec);
         boost::system::error_code close_ec;
         connection_->close(close_ec);
         connection_.reset();
