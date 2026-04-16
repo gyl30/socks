@@ -29,15 +29,15 @@ class tproxy_inbound : public std::enable_shared_from_this<tproxy_inbound>
 
    private:
     boost::asio::awaitable<void> start_listeners();
+    boost::asio::awaitable<bool> handle_tcp_accept_error(boost::system::error_code& ec);
     boost::asio::awaitable<void> accept_tcp_loop();
     boost::asio::awaitable<void> accept_udp_loop();
+    boost::asio::awaitable<void> process_udp_accept_event(std::vector<uint8_t>& payload);
     void on_tcp_socket(boost::asio::ip::tcp::socket&& socket);
     [[nodiscard]] boost::asio::awaitable<void> on_udp_packet(boost::asio::ip::udp::endpoint client_endpoint,
                                                              boost::asio::ip::udp::endpoint target_endpoint,
                                                              std::vector<uint8_t> payload);
     [[nodiscard]] bool is_udp_routing_loop(const boost::asio::ip::udp::endpoint& target_endpoint) const;
-    [[nodiscard]] boost::asio::awaitable<route_decision> decide_udp_route(uint32_t conn_id,
-                                                                          const boost::asio::ip::udp::endpoint& target_endpoint) const;
     [[nodiscard]] std::shared_ptr<tproxy_udp_session> find_udp_session(const std::string& key) const;
     [[nodiscard]] boost::asio::awaitable<void> enqueue_udp_session(const std::string& key,
                                                                    const std::shared_ptr<tproxy_udp_session>& session,
@@ -45,18 +45,12 @@ class tproxy_inbound : public std::enable_shared_from_this<tproxy_inbound>
     [[nodiscard]] std::shared_ptr<tproxy_udp_session> make_udp_session(const std::string& key,
                                                                        const boost::asio::ip::udp::endpoint& client_endpoint,
                                                                        const boost::asio::ip::udp::endpoint& target_endpoint,
-                                                                       route_type route,
-                                                                       const std::string& outbound_tag,
-                                                                       const std::string& outbound_type,
-                                                                       const std::string& match_type,
-                                                                       const std::string& match_value,
                                                                        uint32_t conn_id);
     [[nodiscard]] bool register_udp_session(const std::string& key,
                                             const std::shared_ptr<tproxy_udp_session>& session,
                                             uint32_t conn_id,
                                             const boost::asio::ip::udp::endpoint& client_endpoint,
-                                            const boost::asio::ip::udp::endpoint& target_endpoint,
-                                            route_type route);
+                                            const boost::asio::ip::udp::endpoint& target_endpoint);
     void touch_udp_session(const std::string& key);
     void evict_udp_sessions_if_needed();
     void erase_udp_session(const std::string& key);

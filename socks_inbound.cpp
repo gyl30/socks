@@ -16,7 +16,7 @@
 #include "net_utils.h"
 #include "context_pool.h"
 #include "socks_inbound.h"
-#include "socks_control_session.h"
+#include "socks_session.h"
 
 namespace relay
 {
@@ -111,6 +111,41 @@ boost::asio::awaitable<void> socks_inbound::start_acceptor()
     co_return;
 }
 
+void socks_inbound::on_socket_accepted(boost::asio::ip::tcp::socket&& socket, io_worker& socket_worker, uint32_t sid)
+{
+    std::string local_host;
+    std::string remote_host;
+    uint16_t local_port = 0;
+    uint16_t remote_port = 0;
+    boost::system::error_code local_ep_ec;
+    boost::system::error_code remote_ep_ec;
+    net::load_tcp_socket_endpoints(socket, local_host, local_port, remote_host, remote_port, &local_ep_ec, &remote_ep_ec);
+    if (local_ep_ec)
+    {
+        LOG_WARN("{} conn {} stage query_local_endpoint error {}", log_event::kConnInit, sid, local_ep_ec.message());
+    }
+    if (remote_ep_ec)
+    {
+        LOG_WARN("{} conn {} stage query_remote_endpoint error {}", log_event::kConnInit, sid, remote_ep_ec.message());
+    }
+    LOG_INFO("{} conn {} local {}:{} remote {}:{} accepted", log_event::kConnInit, sid, local_host, local_port, remote_host, remote_port);
+
+    boost::system::error_code ec;
+    ec = socket.set_option(boost::asio::ip::tcp::no_delay(true), ec);
+    if (ec)
+    {
+        LOG_WARN("{} conn {} local {}:{} remote {}:{} stage set_no_delay error {}",
+                 log_event::kSocks,
+                 sid,
+                 local_host,
+                 local_port,
+                 remote_host,
+                 remote_port,
+                 ec.message());
+    }
+    std::make_shared<socks_session>(std::move(socket), socket_worker, router_, sid, inbound_tag_, cfg_, settings_)->start();
+}
+
 boost::asio::awaitable<void> socks_inbound::accept_loop()
 {
     boost::system::error_code ec;
@@ -152,35 +187,7 @@ boost::asio::awaitable<void> socks_inbound::accept_loop()
         }
 
         const uint32_t sid = next_session_id_.fetch_add(1, std::memory_order_relaxed);
-        std::string local_host;
-        std::string remote_host;
-        uint16_t local_port = 0;
-        uint16_t remote_port = 0;
-        boost::system::error_code local_ep_ec;
-        boost::system::error_code remote_ep_ec;
-        net::load_tcp_socket_endpoints(socket, local_host, local_port, remote_host, remote_port, &local_ep_ec, &remote_ep_ec);
-        if (local_ep_ec)
-        {
-            LOG_WARN("{} conn {} stage query_local_endpoint error {}", log_event::kConnInit, sid, local_ep_ec.message());
-        }
-        if (remote_ep_ec)
-        {
-            LOG_WARN("{} conn {} stage query_remote_endpoint error {}", log_event::kConnInit, sid, remote_ep_ec.message());
-        }
-        LOG_INFO("{} conn {} local {}:{} remote {}:{} accepted", log_event::kConnInit, sid, local_host, local_port, remote_host, remote_port);
-        ec = socket.set_option(boost::asio::ip::tcp::no_delay(true), ec);
-        if (ec)
-        {
-            LOG_WARN("{} conn {} local {}:{} remote {}:{} stage set_no_delay error {}",
-                     log_event::kSocks,
-                     sid,
-                     local_host,
-                     local_port,
-                     remote_host,
-                     remote_port,
-                     ec.message());
-        }
-        std::make_shared<socks_control_session>(std::move(socket), socket_worker, router_, sid, inbound_tag_, cfg_, settings_)->start();
+        on_socket_accepted(std::move(socket), socket_worker, sid);
     }
     LOG_INFO("{} inbound_tag {} listen {}:{} accept loop exited", log_event::kConnClose, inbound_tag_, settings_.host, settings_.port);
 }

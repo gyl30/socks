@@ -27,6 +27,23 @@
 namespace relay
 {
 
+namespace
+{
+template <typename SessionMap>
+void stop_all_sessions(SessionMap& sessions)
+{
+    for (auto& [_, session] : sessions)
+    {
+        if (session != nullptr)
+        {
+            session->stop();
+        }
+    }
+    sessions.clear();
+}
+
+}    // namespace
+
 tun_inbound::tun_inbound(io_context_pool& pool, const config& cfg, std::string inbound_tag, const config::tun_t& settings)
     : cfg_(cfg),
       inbound_tag_(std::move(inbound_tag)),
@@ -192,23 +209,8 @@ bool tun_inbound::init_stack()
 
 void tun_inbound::shutdown_stack()
 {
-    for (auto& [_, session] : tcp_sessions_)
-    {
-        if (session != nullptr)
-        {
-            session->stop();
-        }
-    }
-    tcp_sessions_.clear();
-
-    for (auto& [_, session] : udp_sessions_)
-    {
-        if (session != nullptr)
-        {
-            session->stop();
-        }
-    }
-    udp_sessions_.clear();
+    stop_all_sessions(tcp_sessions_);
+    stop_all_sessions(udp_sessions_);
 
     if (udp_listener_ != nullptr)
     {
@@ -280,25 +282,29 @@ boost::asio::awaitable<void> tun_inbound::read_loop()
             {
                 break;
             }
-
-            auto* packet = pbuf_alloc(PBUF_RAW, static_cast<u16_t>(bytes_read), PBUF_RAM);
-            if (packet == nullptr)
-            {
-                LOG_WARN("{} device {} index {} alloc lwip pbuf failed size {}", log_event::kRelay, device_.name(), device_.index(), bytes_read);
-                continue;
-            }
-
-            if (pbuf_take(packet, buffer.data(), static_cast<u16_t>(bytes_read)) != ERR_OK)
-            {
-                pbuf_free(packet);
-                continue;
-            }
-
-            if (netif_.input(packet, &netif_) != ERR_OK)
-            {
-                pbuf_free(packet);
-            }
+            process_tun_packet(buffer.data(), static_cast<std::size_t>(bytes_read));
         }
+    }
+}
+
+void tun_inbound::process_tun_packet(const uint8_t* data, const std::size_t bytes_read)
+{
+    auto* packet = pbuf_alloc(PBUF_RAW, static_cast<u16_t>(bytes_read), PBUF_RAM);
+    if (packet == nullptr)
+    {
+        LOG_WARN("{} device {} index {} alloc lwip pbuf failed size {}", log_event::kRelay, device_.name(), device_.index(), bytes_read);
+        return;
+    }
+
+    if (pbuf_take(packet, data, static_cast<u16_t>(bytes_read)) != ERR_OK)
+    {
+        pbuf_free(packet);
+        return;
+    }
+
+    if (netif_.input(packet, &netif_) != ERR_OK)
+    {
+        pbuf_free(packet);
     }
 }
 

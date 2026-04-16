@@ -37,6 +37,7 @@ class tun_inbound : public std::enable_shared_from_this<tun_inbound>
     [[nodiscard]] boost::asio::awaitable<void> timer_loop();
     [[nodiscard]] bool init_stack();
     void shutdown_stack();
+    void process_tun_packet(const uint8_t* data, std::size_t bytes_read);
     [[nodiscard]] err_t write_packet_to_tun(const pbuf* packet);
     void on_tcp_accept(tcp_pcb* pcb);
     void on_udp_accept(udp_pcb* pcb, pbuf* packet, const ip_addr_t* addr, u16_t port);
