@@ -1729,6 +1729,7 @@ std::optional<server_accept_result> validate_client_hello_and_authenticate(serve
                                                                            relay::replay_cache& replay_cache,
                                                                            boost::system::error_code& ec)
 {
+    (void)cfg;
     if (auto result = validate_client_hello_sni_and_extensions(handshake_ctx, state, settings); result.has_value())
     {
         return result;

@@ -70,13 +70,13 @@ tproxy_udp_port=15081
 host_ip_forward_before="$(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null || echo 0)"
 declare -a pids=()
 
-read -r server_port http_port udp_port < <(
+read -r server_port http_port site_port web_port udp_port < <(
     python3 - <<'PY'
 import socket
 
 ports = []
 sockets = []
-for _ in range(2):
+for _ in range(4):
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.bind(("127.0.0.1", 0))
     ports.append(sock.getsockname()[1])
@@ -86,7 +86,7 @@ udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 udp_sock.bind(("127.0.0.1", 0))
 udp_port = udp_sock.getsockname()[1]
 
-print(ports[0], ports[1], udp_port)
+print(ports[0], ports[1], ports[2], ports[3], udp_port)
 
 for sock in sockets:
     sock.close()
@@ -134,6 +134,40 @@ sys.exit(1)
 PY
 }
 
+wait_for_port_in_ns() {
+    local ns="$1"
+    local host="$2"
+    local port="$3"
+    local label="$4"
+
+    ns_exec "$ns" python3 - "$host" "$port" "$label" <<'PY'
+import socket
+import sys
+import time
+
+host = sys.argv[1]
+port = int(sys.argv[2])
+label = sys.argv[3]
+deadline = time.time() + 20.0
+last_error = None
+
+while time.time() < deadline:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(0.2)
+    try:
+        sock.connect((host, port))
+        sys.exit(0)
+    except OSError as exc:
+        last_error = exc
+        time.sleep(0.1)
+    finally:
+        sock.close()
+
+print(f"timeout waiting for {label} {host}:{port} last_error={last_error}", file=sys.stderr)
+sys.exit(1)
+PY
+}
+
 wait_for_log() {
     local file="$1"
     local needle="$2"
@@ -156,6 +190,71 @@ while time.time() < deadline:
 
 print(f"timeout waiting for {needle!r} in {path}", file=sys.stderr)
 sys.exit(1)
+PY
+}
+
+assert_trace_api_in_ns() {
+    local ns="$1"
+    local port="$2"
+    local label="$3"
+
+    ns_exec "$ns" python3 - "$port" "$label" <<'PY'
+import json
+import sys
+import urllib.request
+
+port = int(sys.argv[1])
+label = sys.argv[2]
+base = f"http://127.0.0.1:{port}"
+
+
+def fetch(path):
+    with urllib.request.urlopen(base + path, timeout=10) as response:
+        return json.load(response)
+
+
+stats = fetch("/api/traces/stats")
+if int(stats.get("total_sessions", 0)) <= 0:
+    raise RuntimeError(f"{label} missing trace sessions {stats}")
+if int(stats.get("success_sessions", 0)) <= 0:
+    raise RuntimeError(f"{label} missing success traces {stats}")
+
+items = fetch("/api/traces?status=success&limit=100").get("items", [])
+if not items:
+    raise RuntimeError(f"{label} missing success trace items")
+
+selected = None
+for item in items:
+    trace_id = item.get("trace_id")
+    if not isinstance(trace_id, str) or not trace_id:
+        continue
+    detail = fetch(f"/api/traces/{trace_id}")
+    summary = detail.get("summary", {})
+    lifecycle = summary.get("lifecycle", {})
+    stage_counts = summary.get("stage_counts", {})
+    if summary.get("status") != "success":
+        continue
+    if lifecycle.get("conn_accepted") is not True:
+        continue
+    if lifecycle.get("route_decide_done") is not True:
+        continue
+    if lifecycle.get("outbound_connect_done") is not True:
+        continue
+    if lifecycle.get("session_close") is not True:
+        continue
+    if int(stage_counts.get("route_decide_done", 0)) < 1:
+        continue
+    if int(stage_counts.get("outbound_connect_done", 0)) < 1:
+        continue
+    if int(summary.get("events_count", 0)) < 4:
+        continue
+    selected = summary
+    break
+
+if selected is None:
+    raise RuntimeError(f"{label} missing complete success trace")
+
+print(f"trace_assert_ok label={label} trace_id={selected['trace_id']} events={selected['events_count']}")
 PY
 }
 
@@ -255,6 +354,7 @@ cat >"$tmp_dir/server.json" <<EOF
         "host": "$host_ip",
         "port": $server_port,
         "sni": "$sni",
+        "site_port": $site_port,
         "private_key": "$private_key",
         "public_key": "$public_key",
         "short_id": "$short_id",
@@ -277,6 +377,7 @@ cat >"$tmp_dir/client.json" <<EOF
 {
   "workers": 1,
   "log": {"level": "debug", "file": "$tmp_dir/client.log"},
+  "web": {"enabled": true, "host": "127.0.0.1", "port": $web_port},
   "inbounds": [
     {
       "type": "tproxy",
@@ -390,9 +491,10 @@ DNS.1=localhost
 EOF
 
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 -keyout "$tmp_dir/origin.key" -out "$tmp_dir/origin.crt" -config "$tmp_dir/origin-openssl.cnf" -extensions v3_req >"$tmp_dir/openssl-req.log" 2>&1
-openssl s_server -accept 127.0.0.1:443 -www -tls1_3 -cert "$tmp_dir/origin.crt" -key "$tmp_dir/origin.key" >"$tmp_dir/origin.log" 2>&1 &
+openssl s_server -accept "127.0.0.1:${site_port}" -www -tls1_3 -cert "$tmp_dir/origin.crt" -key "$tmp_dir/origin.key" \
+    >"$tmp_dir/origin.log" 2>&1 &
 pids+=("$!")
-wait_for_port 127.0.0.1 443 origin_tls
+wait_for_port 127.0.0.1 "$site_port" origin_tls
 
 ns_exec "$ns_target" python3 "$repo_root/scripts/test_http_server.py" --host "$direct_ip" --port "$http_port" --directory "$tmp_dir/http" >"$tmp_dir/direct-http.log" 2>&1 &
 pids+=("$!")
@@ -418,6 +520,7 @@ pids+=("$client_pid")
 wait_for_log "$tmp_dir/client.log" "tun inbound started" 20
 wait_for_log "$tmp_dir/client.log" "tproxy tcp listening on 0.0.0.0:$tproxy_tcp_port" 20
 wait_for_log "$tmp_dir/client.log" "tproxy udp listening on 0.0.0.0:$tproxy_udp_port" 20
+wait_for_port_in_ns "$ns_client" "127.0.0.1" "$web_port" "trace_web"
 
 /usr/bin/bash "$repo_root/scripts/tun_linux_route.sh" --netns "$ns_client" --from "$tun_app_cidr" --table 101 --priority 90 up "$tun_name" "${target_cidrs[@]}" >/dev/null
 ns_exec "$ns_client" ip rule show >"$tmp_dir/client-policy-rule.log" 2>&1 || true
@@ -490,5 +593,6 @@ run_step "tproxy udp proxy" \
 
 wait_for_log "$tmp_dir/client.log" "target ${direct_ip}:${http_port} route direct" 5
 wait_for_log "$tmp_dir/client.log" "target ${proxy_ip}:${http_port} route proxy" 5
+assert_trace_api_in_ns "$ns_client" "$web_port" "combined_client_trace"
 
 echo "combined tun tproxy smoke ok"

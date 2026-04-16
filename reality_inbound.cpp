@@ -28,10 +28,9 @@
 #include "proxy_protocol.h"
 #include "trace_store.h"
 #include "tls/crypto_util.h"
-#include "reality/session/session.h"
-#include "reality_tcp_connect_session.h"
-#include "reality_udp_associate_session.h"
+#include "reality/session/record_context.h"
 #include "proxy_reality_connection.h"
+#include "reality_protocol_session.h"
 #include "reality/policy/fallback_gate.h"
 #include "reality/policy/fallback_executor.h"
 #include "reality/material/material_provider.h"
@@ -95,7 +94,7 @@ reality::server_handshake_context build_handshake_context(const std::shared_ptr<
 struct fallback_target
 {
     std::string host;
-    uint16_t port = constants::reality_limits::kDefaultTlsPort;
+    uint16_t port = 443;
 };
 
 std::optional<fallback_target> resolve_fallback_target(const config::reality_inbound_t& settings)
@@ -105,7 +104,7 @@ std::optional<fallback_target> resolve_fallback_target(const config::reality_inb
         return std::nullopt;
     }
 
-    return fallback_target{.host = settings.sni, .port = constants::reality_limits::kDefaultTlsPort};
+    return fallback_target{.host = settings.sni, .port = settings.site_port};
 }
 
 }    // namespace
@@ -127,6 +126,62 @@ boost::asio::awaitable<void> reality_inbound::fallback_to_target_site(reality::f
 
     boost::system::error_code ec;
     co_await fallback_executor_.run(request, target->host, target->port, reason, ec);
+}
+
+boost::asio::awaitable<void> reality_inbound::start_authenticated_session(
+    io_worker& worker,
+    std::shared_ptr<boost::asio::ip::tcp::socket> s,
+    const reality::server_handshake_context& reality_ctx,
+    const reality::authenticated_session& authenticated)
+{
+    boost::system::error_code ec;
+    auto record_context = reality::build_reality_record_context(authenticated, ec);
+    if (ec)
+    {
+        LOG_ERROR("{} conn {} sni {} stage build_record_context error {}",
+                  log_event::kHandshake,
+                  reality_ctx.conn_id,
+                  reality_ctx.sni.empty() ? "unknown" : reality_ctx.sni,
+                  ec.message());
+        co_return;
+    }
+    LOG_INFO("{} conn {} sni {} tunnel starting",
+             log_event::kConnEstablished,
+             reality_ctx.conn_id,
+             reality_ctx.sni.empty() ? "unknown" : reality_ctx.sni);
+    auto connection = std::make_shared<proxy_reality_connection>(std::move(*s), std::move(record_context), cfg_, reality_ctx.conn_id);
+    auto protocol_session = std::make_shared<reality_protocol_session>(worker,
+                                                                       std::move(connection),
+                                                                       router_,
+                                                                       inbound_tag_,
+                                                                       cfg_,
+                                                                       reality_protocol_context{
+                                                                           .conn_id = reality_ctx.conn_id,
+                                                                           .local_host = reality_ctx.local_addr,
+                                                                           .local_port = reality_ctx.local_port,
+                                                                           .remote_host = reality_ctx.remote_addr,
+                                                                           .remote_port = reality_ctx.remote_port,
+                                                                           .sni = reality_ctx.sni,
+                                                                       });
+    co_await protocol_session->start();
+}
+
+boost::asio::awaitable<bool> reality_inbound::handle_accept_error(const boost::system::error_code& accept_ec)
+{
+    if (accept_ec == boost::asio::error::operation_aborted || accept_ec == boost::asio::error::bad_descriptor)
+    {
+        LOG_INFO("{} listen {}:{} accept loop stopped {}", log_event::kConnClose, settings_.host, settings_.port, accept_ec.message());
+        co_return false;
+    }
+
+    LOG_WARN("{} listen {}:{} accept error {} retrying", log_event::kConnInit, settings_.host, settings_.port, accept_ec.message());
+
+    const auto wait_ec = co_await net::wait_for(owner_worker_.io_context, std::chrono::milliseconds(200));
+    if (wait_ec && wait_ec != boost::asio::error::operation_aborted)
+    {
+        LOG_WARN("{} listen {}:{} accept retry wait error {}", log_event::kConnInit, settings_.host, settings_.port, wait_ec.message());
+    }
+    co_return true;
 }
 
 reality_inbound::reality_inbound(io_context_pool& pool, const config& cfg, std::string inbound_tag, const config::reality_inbound_t& settings)
@@ -290,18 +345,9 @@ boost::asio::awaitable<void> reality_inbound::accept_loop()
         const auto [accept_ec] = co_await acceptor_.async_accept(*s, boost::asio::as_tuple(boost::asio::use_awaitable));
         if (accept_ec)
         {
-            if (accept_ec == boost::asio::error::operation_aborted || accept_ec == boost::asio::error::bad_descriptor)
+            if (!(co_await handle_accept_error(accept_ec)))
             {
-                LOG_INFO("{} listen {}:{} accept loop stopped {}", log_event::kConnClose, settings_.host, settings_.port, accept_ec.message());
                 break;
-            }
-
-            LOG_WARN("{} listen {}:{} accept error {} retrying", log_event::kConnInit, settings_.host, settings_.port, accept_ec.message());
-
-            const auto wait_ec = co_await net::wait_for(owner_worker_.io_context, std::chrono::milliseconds(200));
-            if (wait_ec && wait_ec != boost::asio::error::operation_aborted)
-            {
-                LOG_WARN("{} listen {}:{} accept retry wait error {}", log_event::kConnInit, settings_.host, settings_.port, wait_ec.message());
             }
             continue;
         }
@@ -374,134 +420,7 @@ boost::asio::awaitable<void> reality_inbound::handle(io_worker& worker, std::sha
     }
     LOG_INFO("{} conn {} authorized sni {}", log_event::kAuth, reality_ctx.conn_id, reality_ctx.sni);
 
-    auto record_context = reality::build_reality_record_context(accept_result.authenticated, ec);
-    if (ec)
-    {
-        LOG_ERROR("{} conn {} sni {} stage build_record_context error {}",
-                  log_event::kHandshake,
-                  reality_ctx.conn_id,
-                  reality_ctx.sni.empty() ? "unknown" : reality_ctx.sni,
-                  ec.message());
-        co_return;
-    }
-    LOG_INFO("{} conn {} sni {} tunnel starting",
-             log_event::kConnEstablished,
-             reality_ctx.conn_id,
-             reality_ctx.sni.empty() ? "unknown" : reality_ctx.sni);
-    auto connection = std::make_shared<proxy_reality_connection>(std::move(*s), std::move(record_context), cfg_, conn_id);
-    co_await process_proxy_request(worker, connection, reality_ctx);
-}
-
-boost::asio::awaitable<void> reality_inbound::process_proxy_request(io_worker& worker,
-                                                                    std::shared_ptr<proxy_reality_connection> connection,
-                                                                    const reality::server_handshake_context& reality_ctx) const
-{
-    if (connection == nullptr)
-    {
-        LOG_WARN("{} conn {} local {}:{} remote {}:{} sni {} dropped without connection",
-                 log_event::kRoute,
-                 reality_ctx.conn_id,
-                 reality_ctx.local_addr,
-                 reality_ctx.local_port,
-                 reality_ctx.remote_addr,
-                 reality_ctx.remote_port,
-                 reality_ctx.sni.empty() ? "unknown" : reality_ctx.sni);
-        co_return;
-    }
-
-    boost::system::error_code ec;
-    const auto packet = co_await connection->read_packet(cfg_.timeout.connect == 0 ? cfg_.timeout.read : cfg_.timeout.connect + 1, ec);
-    if (ec)
-    {
-        LOG_WARN("{} conn {} local {}:{} remote {}:{} sni {} read initial proxy packet failed {}",
-                 log_event::kRoute,
-                 reality_ctx.conn_id,
-                 reality_ctx.local_addr,
-                 reality_ctx.local_port,
-                 reality_ctx.remote_addr,
-                 reality_ctx.remote_port,
-                 reality_ctx.sni.empty() ? "unknown" : reality_ctx.sni,
-                 ec.message());
-        co_return;
-    }
-
-    proxy::tcp_connect_request tcp_request;
-    if (proxy::decode_tcp_connect_request(packet.data(), packet.size(), tcp_request))
-    {
-        LOG_INFO("{} trace {:016x} conn {} local {}:{} remote {}:{} sni {} type tcp connect target {}:{} payload_size {}",
-                 log_event::kRoute,
-                 tcp_request.trace_id,
-                 reality_ctx.conn_id,
-                 reality_ctx.local_addr,
-                 reality_ctx.local_port,
-                 reality_ctx.remote_addr,
-                 reality_ctx.remote_port,
-                 reality_ctx.sni.empty() ? "unknown" : reality_ctx.sni,
-                 tcp_request.target_host,
-                 tcp_request.target_port,
-                 packet.size());
-        trace_store::instance().record_event(trace_event{
-            .trace_id = tcp_request.trace_id,
-            .conn_id = reality_ctx.conn_id,
-            .stage = trace_stage::kRequestDone,
-            .result = trace_result::kOk,
-            .inbound_tag = inbound_tag_,
-            .inbound_type = "reality",
-            .target_host = tcp_request.target_host,
-            .target_port = tcp_request.target_port,
-            .local_host = reality_ctx.local_addr,
-            .local_port = reality_ctx.local_port,
-            .remote_host = reality_ctx.remote_addr,
-            .remote_port = reality_ctx.remote_port,
-            .extra = {{"type", "tcp"}},
-        });
-        const auto tcp_connect_session = std::make_shared<reality_tcp_connect_session>(
-            worker.io_context, std::move(connection), router_, reality_ctx.conn_id, tcp_request.trace_id, inbound_tag_, cfg_);
-        co_await tcp_connect_session->start(tcp_request);
-        co_return;
-    }
-
-    proxy::udp_associate_request udp_request;
-    if (proxy::decode_udp_associate_request(packet.data(), packet.size(), udp_request))
-    {
-        LOG_INFO("{} trace {:016x} conn {} local {}:{} remote {}:{} sni {} type udp associate payload_size {}",
-                 log_event::kRoute,
-                 udp_request.trace_id,
-                 reality_ctx.conn_id,
-                 reality_ctx.local_addr,
-                 reality_ctx.local_port,
-                 reality_ctx.remote_addr,
-                 reality_ctx.remote_port,
-                 reality_ctx.sni.empty() ? "unknown" : reality_ctx.sni,
-                 packet.size());
-        trace_store::instance().record_event(trace_event{
-            .trace_id = udp_request.trace_id,
-            .conn_id = reality_ctx.conn_id,
-            .stage = trace_stage::kRequestDone,
-            .result = trace_result::kOk,
-            .inbound_tag = inbound_tag_,
-            .inbound_type = "reality",
-            .local_host = reality_ctx.local_addr,
-            .local_port = reality_ctx.local_port,
-            .remote_host = reality_ctx.remote_addr,
-            .remote_port = reality_ctx.remote_port,
-            .extra = {{"type", "udp"}},
-        });
-        const auto udp_associate_session = std::make_shared<reality_udp_associate_session>(
-            worker.io_context, std::move(connection), router_, reality_ctx.conn_id, udp_request.trace_id, inbound_tag_, cfg_);
-        co_await udp_associate_session->start(udp_request);
-        co_return;
-    }
-
-    LOG_WARN("{} conn {} local {}:{} remote {}:{} sni {} invalid initial proxy request payload_size {}",
-             log_event::kRoute,
-             reality_ctx.conn_id,
-             reality_ctx.local_addr,
-             reality_ctx.local_port,
-             reality_ctx.remote_addr,
-             reality_ctx.remote_port,
-             reality_ctx.sni.empty() ? "unknown" : reality_ctx.sni,
-             packet.size());
+    co_await start_authenticated_session(worker, std::move(s), reality_ctx, accept_result.authenticated);
 }
 
 }    // namespace relay

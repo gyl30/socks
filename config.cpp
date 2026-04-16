@@ -520,6 +520,10 @@ template <typename T>
     {
         return false;
     }
+    if (!parse_unsigned_field(value, "site_port", path, out.site_port, filename, false))
+    {
+        return false;
+    }
     if (!parse_string_field(value, "private_key", path, out.private_key, filename, true))
     {
         return false;
@@ -956,6 +960,8 @@ void write_reality_inbound_settings(rapidjson::PrettyWriter<rapidjson::StringBuf
     writer.Uint(value.port);
     writer.Key("sni");
     writer.String(value.sni.c_str());
+    writer.Key("site_port");
+    writer.Uint(value.site_port);
     writer.Key("private_key");
     writer.String(value.private_key.c_str());
     if (!value.public_key.empty())

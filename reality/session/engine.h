@@ -12,7 +12,7 @@
 #include <boost/system/error_code.hpp>
 
 #include "tls/cipher_context.h"
-#include "reality/session/session.h"
+#include "reality/session/record_context.h"
 
 namespace relay
 {

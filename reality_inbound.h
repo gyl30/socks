@@ -14,11 +14,10 @@
 #include "replay_cache.h"
 #include "site_material.h"
 #include "router.h"
-#include "proxy_protocol.h"
-#include "proxy_reality_connection.h"
 #include "reality/policy/fallback_gate.h"
 #include "reality/policy/fallback_executor.h"
 #include "reality/handshake/server_handshake_context.h"
+#include "reality/types.h"
 
 namespace relay
 {
@@ -34,12 +33,14 @@ class reality_inbound : public std::enable_shared_from_this<reality_inbound>
     void stop();
 
    private:
+    boost::asio::awaitable<bool> handle_accept_error(const boost::system::error_code& accept_ec);
     boost::asio::awaitable<void> accept_loop();
     boost::asio::awaitable<void> fallback_to_target_site(reality::fallback_request&& request, const char* reason);
+    boost::asio::awaitable<void> start_authenticated_session(io_worker& worker,
+                                                             std::shared_ptr<boost::asio::ip::tcp::socket> s,
+                                                             const reality::server_handshake_context& reality_ctx,
+                                                             const reality::authenticated_session& authenticated);
     boost::asio::awaitable<void> handle(io_worker& worker, std::shared_ptr<boost::asio::ip::tcp::socket> s, uint32_t conn_id);
-    boost::asio::awaitable<void> process_proxy_request(io_worker& worker,
-                                                       std::shared_ptr<proxy_reality_connection> connection,
-                                                       const reality::server_handshake_context& reality_ctx) const;
 
    private:
     const config& cfg_;
