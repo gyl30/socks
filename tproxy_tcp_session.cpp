@@ -8,18 +8,19 @@
 #include <boost/asio.hpp>
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/redirect_error.hpp>
-#include <boost/asio/experimental/channel_error.hpp>
-#include <boost/asio/experimental/awaitable_operators.hpp>
 
 #include "log.h"
 #include "config.h"
-#include "outbound.h"
 #include "router.h"
 #include "trace_store.h"
 #include "trace_id.h"
 #include "tcp_outbound_stream.h"
 #include "constants.h"
 #include "net_utils.h"
+#include "request_context.h"
+#include "stream_relay.h"
+#include "stream_relay_transport.h"
+#include "tcp_connect_flow.h"
 #include "tproxy_tcp_session.h"
 
 namespace relay
@@ -89,25 +90,55 @@ void tproxy_tcp_session::stop()
     }
 }
 
-boost::asio::awaitable<void> tproxy_tcp_session::run()
+bool tproxy_tcp_session::prepare_redirected_connection()
 {
     boost::asio::ip::tcp::endpoint target_ep;
     if (!resolve_target_endpoint(target_ep))
     {
-        co_return;
+        return false;
     }
 
     boost::system::error_code local_ec;
     const auto local_ep = socket_.local_endpoint(local_ec);
     if (detect_routing_loop(target_ep, local_ec, local_ep))
     {
-        co_return;
+        return false;
     }
 
     boost::system::error_code peer_ec;
     const auto peer_ep = socket_.remote_endpoint(peer_ec);
     update_session_endpoints(target_ep, local_ec, local_ep, peer_ec, peer_ep);
     log_redirected_connection();
+    return true;
+}
+
+request_context tproxy_tcp_session::make_request_context() const
+{
+    return request_context{
+        .trace_id = trace_id_,
+        .conn_id = conn_id_,
+        .transport = request_transport::kTcp,
+        .command = request_command::kConnect,
+        .inbound_tag = inbound_tag_,
+        .inbound_type = "tproxy",
+        .target_host = target_addr_,
+        .target_port = target_port_,
+        .target_ip = std::make_optional(target_addr_),
+        .target_domain = std::nullopt,
+        .client_host = client_addr_.empty() ? "unknown" : client_addr_,
+        .client_port = client_port_,
+        .local_host = local_addr_.empty() ? "unknown" : local_addr_,
+        .local_port = local_port_,
+    };
+}
+
+boost::asio::awaitable<void> tproxy_tcp_session::run()
+{
+    if (!prepare_redirected_connection())
+    {
+        co_return;
+    }
+
     trace_store::instance().record_event(trace_event{
         .trace_id = trace_id_,
         .conn_id = conn_id_,
@@ -115,15 +146,25 @@ boost::asio::awaitable<void> tproxy_tcp_session::run()
         .result = trace_result::kOk,
         .inbound_tag = inbound_tag_,
         .inbound_type = "tproxy",
+        .outbound_tag = "",
+        .outbound_type = "",
         .target_host = target_addr_,
         .target_port = target_port_,
         .local_host = local_addr_.empty() ? "unknown" : local_addr_,
         .local_port = local_port_,
         .remote_host = client_addr_.empty() ? "unknown" : client_addr_,
         .remote_port = client_port_,
+        .route_type = "",
+        .match_type = "",
+        .match_value = "",
+        .bytes_tx = 0,
+        .bytes_rx = 0,
+        .latency_ms = 0,
+        .error_code = 0,
+        .error_message = "",
+        .extra = {},
     });
 
-    const auto target_addr = net::normalize_address(target_ep.address());
     trace_store::instance().record_event(trace_event{
         .trace_id = trace_id_,
         .conn_id = conn_id_,
@@ -131,14 +172,29 @@ boost::asio::awaitable<void> tproxy_tcp_session::run()
         .result = trace_result::kOk,
         .inbound_tag = inbound_tag_,
         .inbound_type = "tproxy",
+        .outbound_tag = "",
+        .outbound_type = "",
         .target_host = target_addr_,
         .target_port = target_port_,
         .local_host = local_addr_.empty() ? "unknown" : local_addr_,
         .local_port = local_port_,
         .remote_host = client_addr_.empty() ? "unknown" : client_addr_,
         .remote_port = client_port_,
+        .route_type = "",
+        .match_type = "",
+        .match_value = "",
+        .bytes_tx = 0,
+        .bytes_rx = 0,
+        .latency_ms = 0,
+        .error_code = 0,
+        .error_message = "",
+        .extra = {},
     });
-    const auto [decision, backend] = co_await select_backend(target_addr);
+
+    const auto request = make_request_context();
+    auto flow_result = co_await prepare_tcp_connect_flow(request, router_, socket_.get_executor(), cfg_);
+    auto decision = std::move(flow_result.decision);
+    const auto backend = flow_result.outbound;
     trace_store::instance().record_event(trace_event{
         .trace_id = trace_id_,
         .conn_id = conn_id_,
@@ -146,17 +202,23 @@ boost::asio::awaitable<void> tproxy_tcp_session::run()
         .result = decision.route == route_type::kBlock ? trace_result::kFail : trace_result::kOk,
         .inbound_tag = inbound_tag_,
         .inbound_type = "tproxy",
-        .target_host = target_addr_,
-        .target_port = target_port_,
-        .route_type = relay::to_string(decision.route),
-        .match_type = decision.match_type,
-        .match_value = decision.match_value,
         .outbound_tag = decision.outbound_tag,
         .outbound_type = decision.outbound_type,
+        .target_host = target_addr_,
+        .target_port = target_port_,
         .local_host = local_addr_.empty() ? "unknown" : local_addr_,
         .local_port = local_port_,
         .remote_host = client_addr_.empty() ? "unknown" : client_addr_,
         .remote_port = client_port_,
+        .route_type = relay::to_string(decision.route),
+        .match_type = decision.match_type,
+        .match_value = decision.match_value,
+        .bytes_tx = 0,
+        .bytes_rx = 0,
+        .latency_ms = 0,
+        .error_code = 0,
+        .error_message = "",
+        .extra = {},
     });
     if (backend == nullptr)
     {
@@ -168,14 +230,23 @@ boost::asio::awaitable<void> tproxy_tcp_session::run()
             .result = trace_result::kFail,
             .inbound_tag = inbound_tag_,
             .inbound_type = "tproxy",
+            .outbound_tag = decision.outbound_tag,
+            .outbound_type = decision.outbound_type,
             .target_host = target_addr_,
             .target_port = target_port_,
+            .local_host = "",
+            .local_port = 0,
+            .remote_host = "",
+            .remote_port = 0,
             .route_type = relay::to_string(decision.route),
             .match_type = decision.match_type,
             .match_value = decision.match_value,
-            .outbound_tag = decision.outbound_tag,
-            .outbound_type = decision.outbound_type,
+            .bytes_tx = 0,
+            .bytes_rx = 0,
+            .latency_ms = 0,
+            .error_code = 0,
             .error_message = error_message,
+            .extra = {},
         });
         co_return;
     }
@@ -195,57 +266,28 @@ boost::asio::awaitable<void> tproxy_tcp_session::run()
             .result = trace_result::kFail,
             .inbound_tag = inbound_tag_,
             .inbound_type = "tproxy",
+            .outbound_tag = decision.outbound_tag,
+            .outbound_type = decision.outbound_type,
             .target_host = target_addr_,
             .target_port = target_port_,
+            .local_host = "",
+            .local_port = 0,
+            .remote_host = "",
+            .remote_port = 0,
             .route_type = relay::to_string(decision.route),
             .match_type = decision.match_type,
             .match_value = decision.match_value,
-            .outbound_tag = decision.outbound_tag,
-            .outbound_type = decision.outbound_type,
+            .bytes_tx = 0,
+            .bytes_rx = 0,
+            .latency_ms = 0,
+            .error_code = 0,
+            .error_message = "",
+            .extra = {},
         });
         co_return;
     }
 
-    trace_store::instance().record_event(trace_event{
-        .trace_id = trace_id_,
-        .conn_id = conn_id_,
-        .stage = trace_stage::kRelayStart,
-        .result = trace_result::kOk,
-        .inbound_tag = inbound_tag_,
-        .inbound_type = "tproxy",
-        .target_host = target_addr_,
-        .target_port = target_port_,
-        .route_type = relay::to_string(decision.route),
-        .match_type = decision.match_type,
-        .match_value = decision.match_value,
-        .outbound_tag = decision.outbound_tag,
-        .outbound_type = decision.outbound_type,
-        .local_host = local_addr_.empty() ? "unknown" : local_addr_,
-        .local_port = local_port_,
-        .remote_host = client_addr_.empty() ? "unknown" : client_addr_,
-        .remote_port = client_port_,
-    });
-    co_await relay_backend(backend);
-    co_await backend->close();
-    close_client_socket();
-    trace_store::instance().record_event(trace_event{
-        .trace_id = trace_id_,
-        .conn_id = conn_id_,
-        .stage = trace_stage::kSessionClose,
-        .result = trace_result::kOk,
-        .inbound_tag = inbound_tag_,
-        .inbound_type = "tproxy",
-        .target_host = target_addr_,
-        .target_port = target_port_,
-        .route_type = relay::to_string(decision.route),
-        .bytes_tx = tx_bytes_,
-        .bytes_rx = rx_bytes_,
-        .local_host = local_addr_.empty() ? "unknown" : local_addr_,
-        .local_port = local_port_,
-        .remote_host = client_addr_.empty() ? "unknown" : client_addr_,
-        .remote_port = client_port_,
-    });
-    log_close_summary();
+    co_await finish_connected_session(decision, backend);
 }
 
 bool tproxy_tcp_session::resolve_target_endpoint(boost::asio::ip::tcp::endpoint& target_ep)
@@ -331,41 +373,6 @@ void tproxy_tcp_session::log_redirected_connection() const
              target_port_);
 }
 
-boost::asio::awaitable<std::pair<route_decision, std::shared_ptr<tcp_outbound_stream>>> tproxy_tcp_session::select_backend(const boost::asio::ip::address& addr)
-{
-    if (router_ == nullptr)
-    {
-        LOG_WARN(
-            "{} trace {:016x} conn {} target {}:{} router unavailable", log_event::kRoute, trace_id_, conn_id_, target_addr_, target_port_);
-        co_return std::make_pair(route_decision{}, std::shared_ptr<tcp_outbound_stream>(nullptr));
-    }
-
-    const auto decision = co_await router_->decide_ip_detail(addr);
-    if (decision.route == route_type::kBlock)
-    {
-        LOG_WARN("{} trace {:016x} conn {} target {}:{} blocked", log_event::kRoute, trace_id_, conn_id_, addr.to_string(), target_port_);
-        co_return std::make_pair(decision, std::shared_ptr<tcp_outbound_stream>(nullptr));
-    }
-    if (decision.route != route_type::kDirect && decision.route != route_type::kProxy)
-    {
-        co_return std::make_pair(route_decision{}, std::shared_ptr<tcp_outbound_stream>(nullptr));
-    }
-    const auto handler = make_outbound_handler(cfg_, decision.outbound_tag);
-    if (handler == nullptr)
-    {
-        LOG_WARN("{} trace {:016x} conn {} target {}:{} out_tag {} outbound handler unavailable",
-                 log_event::kRoute,
-                 trace_id_,
-                 conn_id_,
-                 addr.to_string(),
-                 target_port_,
-                 decision.outbound_tag);
-        co_return std::make_pair(decision, std::shared_ptr<tcp_outbound_stream>(nullptr));
-    }
-    const auto backend = handler->create_tcp_outbound(socket_.get_executor(), conn_id_, trace_id_, cfg_);
-    co_return std::make_pair(decision, backend);
-}
-
 boost::asio::awaitable<bool> tproxy_tcp_session::connect_backend(const route_decision& decision,
                                                                  const std::shared_ptr<tcp_outbound_stream>& backend)
 {
@@ -377,17 +384,23 @@ boost::asio::awaitable<bool> tproxy_tcp_session::connect_backend(const route_dec
         .result = trace_result::kOk,
         .inbound_tag = inbound_tag_,
         .inbound_type = "tproxy",
-        .target_host = target_addr_,
-        .target_port = target_port_,
-        .route_type = relay::to_string(decision.route),
-        .match_type = decision.match_type,
-        .match_value = decision.match_value,
         .outbound_tag = decision.outbound_tag,
         .outbound_type = decision.outbound_type,
+        .target_host = target_addr_,
+        .target_port = target_port_,
         .local_host = local_addr_.empty() ? "unknown" : local_addr_,
         .local_port = local_port_,
         .remote_host = client_addr_.empty() ? "unknown" : client_addr_,
         .remote_port = client_port_,
+        .route_type = relay::to_string(decision.route),
+        .match_type = decision.match_type,
+        .match_value = decision.match_value,
+        .bytes_tx = 0,
+        .bytes_rx = 0,
+        .latency_ms = 0,
+        .error_code = 0,
+        .error_message = "",
+        .extra = {},
     });
     const auto connect_result = co_await backend->connect(target_addr_, target_port_);
     const auto latency_ms = static_cast<uint32_t>(
@@ -401,21 +414,29 @@ boost::asio::awaitable<bool> tproxy_tcp_session::connect_backend(const route_dec
             .result = trace_result::kFail,
             .inbound_tag = inbound_tag_,
             .inbound_type = "tproxy",
-            .target_host = target_addr_,
-            .target_port = target_port_,
-            .route_type = relay::to_string(decision.route),
-            .match_type = decision.match_type,
-            .match_value = decision.match_value,
             .outbound_tag = decision.outbound_tag,
             .outbound_type = decision.outbound_type,
+            .target_host = target_addr_,
+            .target_port = target_port_,
             .local_host = local_addr_.empty() ? "unknown" : local_addr_,
             .local_port = local_port_,
             .remote_host = client_addr_.empty() ? "unknown" : client_addr_,
             .remote_port = client_port_,
+            .route_type = relay::to_string(decision.route),
+            .match_type = decision.match_type,
+            .match_value = decision.match_value,
+            .bytes_tx = 0,
+            .bytes_rx = 0,
             .latency_ms = latency_ms,
             .error_code = connect_result.ec.value(),
             .error_message = connect_result.ec.message(),
+            .extra = {},
         };
+        if (connect_result.has_resolved_target_endpoint)
+        {
+            event.resolved_target_host = connect_result.resolved_target_addr.to_string();
+            event.resolved_target_port = connect_result.resolved_target_port;
+        }
         if (connect_result.has_bind_endpoint)
         {
             event.extra["bind_host"] = connect_result.bind_addr.to_string();
@@ -443,19 +464,29 @@ boost::asio::awaitable<bool> tproxy_tcp_session::connect_backend(const route_dec
         .result = trace_result::kOk,
         .inbound_tag = inbound_tag_,
         .inbound_type = "tproxy",
-        .target_host = target_addr_,
-        .target_port = target_port_,
-        .route_type = relay::to_string(decision.route),
-        .match_type = decision.match_type,
-        .match_value = decision.match_value,
         .outbound_tag = decision.outbound_tag,
         .outbound_type = decision.outbound_type,
+        .target_host = target_addr_,
+        .target_port = target_port_,
         .local_host = local_addr_.empty() ? "unknown" : local_addr_,
         .local_port = local_port_,
         .remote_host = client_addr_.empty() ? "unknown" : client_addr_,
         .remote_port = client_port_,
+        .route_type = relay::to_string(decision.route),
+        .match_type = decision.match_type,
+        .match_value = decision.match_value,
+        .bytes_tx = 0,
+        .bytes_rx = 0,
         .latency_ms = latency_ms,
+        .error_code = 0,
+        .error_message = "",
+        .extra = {},
     };
+    if (connect_result.has_resolved_target_endpoint)
+    {
+        event.resolved_target_host = connect_result.resolved_target_addr.to_string();
+        event.resolved_target_port = connect_result.resolved_target_port;
+    }
     if (connect_result.has_bind_endpoint)
     {
         event.extra["bind_host"] = connect_result.bind_addr.to_string();
@@ -472,243 +503,83 @@ boost::asio::awaitable<bool> tproxy_tcp_session::connect_backend(const route_dec
     co_return true;
 }
 
+boost::asio::awaitable<void> tproxy_tcp_session::finish_connected_session(
+    const route_decision& decision, const std::shared_ptr<tcp_outbound_stream>& backend)
+{
+    trace_store::instance().record_event(trace_event{
+        .trace_id = trace_id_,
+        .conn_id = conn_id_,
+        .stage = trace_stage::kRelayStart,
+        .result = trace_result::kOk,
+        .inbound_tag = inbound_tag_,
+        .inbound_type = "tproxy",
+        .outbound_tag = decision.outbound_tag,
+        .outbound_type = decision.outbound_type,
+        .target_host = target_addr_,
+        .target_port = target_port_,
+        .local_host = local_addr_.empty() ? "unknown" : local_addr_,
+        .local_port = local_port_,
+        .remote_host = client_addr_.empty() ? "unknown" : client_addr_,
+        .remote_port = client_port_,
+        .route_type = relay::to_string(decision.route),
+        .match_type = decision.match_type,
+        .match_value = decision.match_value,
+        .bytes_tx = 0,
+        .bytes_rx = 0,
+        .latency_ms = 0,
+        .error_code = 0,
+        .error_message = "",
+        .extra = {},
+    });
+    co_await relay_backend(backend);
+    co_await backend->close();
+    close_client_socket();
+    trace_store::instance().record_event(trace_event{
+        .trace_id = trace_id_,
+        .conn_id = conn_id_,
+        .stage = trace_stage::kSessionClose,
+        .result = trace_result::kOk,
+        .inbound_tag = inbound_tag_,
+        .inbound_type = "tproxy",
+        .outbound_tag = decision.outbound_tag,
+        .outbound_type = decision.outbound_type,
+        .target_host = target_addr_,
+        .target_port = target_port_,
+        .local_host = local_addr_.empty() ? "unknown" : local_addr_,
+        .local_port = local_port_,
+        .remote_host = client_addr_.empty() ? "unknown" : client_addr_,
+        .remote_port = client_port_,
+        .route_type = relay::to_string(decision.route),
+        .match_type = decision.match_type,
+        .match_value = decision.match_value,
+        .bytes_tx = tx_bytes_,
+        .bytes_rx = rx_bytes_,
+        .latency_ms = 0,
+        .error_code = 0,
+        .error_message = "",
+        .extra = {},
+    });
+    log_close_summary();
+    co_return;
+}
+
 boost::asio::awaitable<void> tproxy_tcp_session::relay_backend(const std::shared_ptr<tcp_outbound_stream>& backend)
 {
-    using boost::asio::experimental::awaitable_operators::operator&&;
-    using boost::asio::experimental::awaitable_operators::operator||;
-
-    if (cfg_.timeout.idle == 0)
-    {
-        co_await (client_to_outbound(backend) && outbound_to_client(backend));
-        co_return;
-    }
-
-    co_await ((client_to_outbound(backend) && outbound_to_client(backend)) || idle_watchdog());
-}
-
-boost::asio::awaitable<void> tproxy_tcp_session::client_to_outbound(std::shared_ptr<tcp_outbound_stream> backend)
-{
-    std::vector<uint8_t> buf(8192);
-    boost::system::error_code ec;
-    for (;;)
-    {
-        const std::size_t n = co_await socket_.async_read_some(boost::asio::buffer(buf), boost::asio::redirect_error(boost::asio::use_awaitable, ec));
-        if (ec)
-        {
-            if (ec == boost::asio::error::eof)
-            {
-                boost::system::error_code shutdown_ec;
-                co_await backend->shutdown_send(shutdown_ec);
-                if (shutdown_ec)
-                {
-                    LOG_WARN("{} trace {:016x} conn {} client {}:{} target {}:{} stage client_to_outbound shutdown backend send failed {}",
-                             log_event::kSocks,
-                             trace_id_,
-                             conn_id_,
-                             client_addr_.empty() ? "unknown" : client_addr_,
-                             client_port_,
-                             target_addr_.empty() ? "unknown" : target_addr_,
-                             target_port_,
-                             shutdown_ec.message());
-                }
-            }
-            else
-            {
-                LOG_INFO("{} trace {:016x} conn {} client {}:{} target {}:{} stage client_to_outbound client read finished {}",
-                         log_event::kSocks,
-                         trace_id_,
-                         conn_id_,
-                         client_addr_.empty() ? "unknown" : client_addr_,
-                         client_port_,
-                         target_addr_.empty() ? "unknown" : target_addr_,
-                         target_port_,
-                         ec.message());
-                co_await backend->close();
-            }
-            break;
-        }
-        const std::vector<uint8_t> data_buf(buf.begin(), buf.begin() + static_cast<int>(n));
-        co_await backend->write(data_buf, ec);
-        if (ec)
-        {
-            LOG_WARN("{} trace {:016x} conn {} client {}:{} target {}:{} stage client_to_outbound failed to write to backend {}",
-                     log_event::kSocks,
-                     trace_id_,
-                     conn_id_,
-                     client_addr_.empty() ? "unknown" : client_addr_,
-                     client_port_,
-                     target_addr_.empty() ? "unknown" : target_addr_,
-                     target_port_,
-                     ec.message());
-            co_await backend->close();
-            break;
-        }
-        tx_bytes_ += n;
-        last_activity_time_ms_ = net::now_ms();
-    }
-    LOG_INFO("{} trace {:016x} conn {} client {}:{} target {}:{} stage client_to_outbound finished tx_bytes {}",
-             log_event::kSocks,
-             trace_id_,
-             conn_id_,
-             client_addr_.empty() ? "unknown" : client_addr_,
-             client_port_,
-             target_addr_.empty() ? "unknown" : target_addr_,
-             target_port_,
-             tx_bytes_);
-}
-
-boost::asio::awaitable<void> tproxy_tcp_session::outbound_to_client(std::shared_ptr<tcp_outbound_stream> backend)
-{
-    std::vector<uint8_t> buf(8192);
-    boost::system::error_code ec;
-    for (;;)
-    {
-        const auto n = co_await backend->read(buf, ec);
-        if (ec)
-        {
-            if (ec == boost::asio::error::eof)
-            {
-                boost::system::error_code shutdown_ec;
-                shutdown_ec = socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_send, shutdown_ec);
-                if (shutdown_ec && shutdown_ec != boost::asio::error::not_connected)
-                {
-                    LOG_WARN("{} trace {:016x} conn {} client {}:{} target {}:{} stage outbound_to_client shutdown client send failed {}",
-                             log_event::kSocks,
-                             trace_id_,
-                             conn_id_,
-                             client_addr_.empty() ? "unknown" : client_addr_,
-                             client_port_,
-                             target_addr_.empty() ? "unknown" : target_addr_,
-                             target_port_,
-                             shutdown_ec.message());
-                }
-            }
-            else
-            {
-                if (net::is_channel_close_error(ec) || ec == boost::asio::error::connection_reset)
-                {
-                    LOG_INFO("{} trace {:016x} conn {} client {}:{} target {}:{} stage outbound_to_client backend read stopped {} code {}",
-                             log_event::kSocks,
-                             trace_id_,
-                             conn_id_,
-                             client_addr_.empty() ? "unknown" : client_addr_,
-                             client_port_,
-                             target_addr_.empty() ? "unknown" : target_addr_,
-                             target_port_,
-                             ec.message(),
-                             ec.value());
-                }
-                else
-                {
-                    LOG_WARN(
-                        "{} trace {:016x} conn {} client {}:{} target {}:{} stage outbound_to_client failed to read from backend {} code "
-                        "{}",
-                        log_event::kSocks,
-                        trace_id_,
-                        conn_id_,
-                        client_addr_.empty() ? "unknown" : client_addr_,
-                        client_port_,
-                        target_addr_.empty() ? "unknown" : target_addr_,
-                        target_port_,
-                        ec.message(),
-                        ec.value());
-                }
-                ec = socket_.close(ec);
-                if (ec)
-                {
-                    LOG_WARN("{} trace {:016x} conn {} client {}:{} target {}:{} close client failed {}",
-                             log_event::kSocks,
-                             trace_id_,
-                             conn_id_,
-                             client_addr_.empty() ? "unknown" : client_addr_,
-                             client_port_,
-                             target_addr_.empty() ? "unknown" : target_addr_,
-                             target_port_,
-                             ec.message());
-                }
-            }
-            break;
-        }
-        boost::system::error_code write_ec;
-        auto write_size = co_await net::wait_write_with_timeout(socket_, boost::asio::buffer(buf.data(), n), cfg_.timeout.write, write_ec);
-        if (write_ec)
-        {
-            LOG_WARN(
-                "{} trace {:016x} conn {} client {}:{} target {}:{} stage outbound_to_client failed to write to client bytes {} code {} "
-                "error {}",
-                log_event::kSocks,
-                trace_id_,
-                conn_id_,
-                client_addr_.empty() ? "unknown" : client_addr_,
-                client_port_,
-                target_addr_.empty() ? "unknown" : target_addr_,
-                target_port_,
-                n,
-                write_ec.value(),
-                write_ec.message());
-            co_await backend->close();
-            break;
-        }
-        rx_bytes_ += write_size;
-        last_activity_time_ms_ = net::now_ms();
-    }
-    LOG_INFO("{} trace {:016x} conn {} client {}:{} target {}:{} stage outbound_to_client finished rx_bytes {}",
-             log_event::kSocks,
-             trace_id_,
-             conn_id_,
-             client_addr_.empty() ? "unknown" : client_addr_,
-             client_port_,
-             target_addr_.empty() ? "unknown" : target_addr_,
-             target_port_,
-             rx_bytes_);
-}
-
-boost::asio::awaitable<void> tproxy_tcp_session::idle_watchdog()
-{
-    if (cfg_.timeout.idle == 0)
-    {
-        co_return;
-    }
-
-    const auto idle_timeout_ms = static_cast<uint64_t>(cfg_.timeout.idle) * 1000ULL;
-
-    while (socket_.is_open())
-    {
-        idle_timer_.expires_after(std::chrono::seconds(1));
-        const auto [wait_ec] = co_await idle_timer_.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
-        if (wait_ec)
-        {
-            break;
-        }
-        const auto elapsed_ms = net::now_ms() - last_activity_time_ms_;
-        if (elapsed_ms > idle_timeout_ms)
-        {
-            LOG_WARN("{} trace {:016x} conn {} client {}:{} target {}:{} idle_timeout_sec {} tcp session idle closing",
-                     log_event::kTimeout,
-                     trace_id_,
-                     conn_id_,
-                     client_addr_.empty() ? "unknown" : client_addr_,
-                     client_port_,
-                     target_addr_.empty() ? "unknown" : target_addr_,
-                     target_port_,
-                     cfg_.timeout.idle);
-            break;
-        }
-    }
-    boost::system::error_code ec;
-    ec = socket_.close(ec);
-    if (ec && ec != boost::asio::error::bad_descriptor)
-    {
-        LOG_WARN("{} trace {:016x} conn {} client {}:{} target {}:{} stage idle_watchdog close client failed {}",
-                 log_event::kSocks,
-                 trace_id_,
-                 conn_id_,
-                 client_addr_.empty() ? "unknown" : client_addr_,
-                 client_port_,
-                 target_addr_.empty() ? "unknown" : target_addr_,
-                 target_port_,
-                 ec.message());
-    }
+    tcp_socket_stream_relay_transport inbound_transport(socket_, cfg_.timeout);
+    outbound_stream_relay_transport outbound_transport(backend);
+    auto relay_context = stream_relay_context{
+        .inbound = inbound_transport,
+        .outbound = outbound_transport,
+        .idle_timer = idle_timer_,
+        .timeout = cfg_.timeout,
+        .trace_id = trace_id_,
+        .conn_id = conn_id_,
+        .log_event_name = log_event::kSocks,
+        .last_activity_time_ms = last_activity_time_ms_,
+        .tx_bytes = tx_bytes_,
+        .rx_bytes = rx_bytes_,
+    };
+    co_await relay_streams(relay_context);
 }
 
 void tproxy_tcp_session::close_client_socket()

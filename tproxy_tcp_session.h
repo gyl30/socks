@@ -1,7 +1,6 @@
 #ifndef TPROXY_TCP_SESSION_H
 #define TPROXY_TCP_SESSION_H
 
-#include <atomic>
 #include <chrono>
 #include <memory>
 #include <string>
@@ -13,6 +12,7 @@
 
 #include "config.h"
 #include "router.h"
+#include "request_context.h"
 #include "tcp_outbound_stream.h"
 
 namespace relay
@@ -33,6 +33,7 @@ class tproxy_tcp_session : public std::enable_shared_from_this<tproxy_tcp_sessio
 
    private:
     [[nodiscard]] boost::asio::awaitable<void> run();
+    [[nodiscard]] bool prepare_redirected_connection();
     [[nodiscard]] bool resolve_target_endpoint(boost::asio::ip::tcp::endpoint& target_ep);
     [[nodiscard]] bool detect_routing_loop(const boost::asio::ip::tcp::endpoint& target_ep,
                                            const boost::system::error_code& local_ec,
@@ -43,13 +44,12 @@ class tproxy_tcp_session : public std::enable_shared_from_this<tproxy_tcp_sessio
                                   const boost::system::error_code& peer_ec,
                                   const boost::asio::ip::tcp::endpoint& peer_ep);
     void log_redirected_connection() const;
-    [[nodiscard]] boost::asio::awaitable<std::pair<route_decision, std::shared_ptr<tcp_outbound_stream>>> select_backend(const boost::asio::ip::address& addr);
+    [[nodiscard]] request_context make_request_context() const;
     [[nodiscard]] boost::asio::awaitable<bool> connect_backend(const route_decision& decision,
                                                                const std::shared_ptr<tcp_outbound_stream>& backend);
+    [[nodiscard]] boost::asio::awaitable<void> finish_connected_session(const route_decision& decision,
+                                                                         const std::shared_ptr<tcp_outbound_stream>& backend);
     [[nodiscard]] boost::asio::awaitable<void> relay_backend(const std::shared_ptr<tcp_outbound_stream>& backend);
-    [[nodiscard]] boost::asio::awaitable<void> client_to_outbound(std::shared_ptr<tcp_outbound_stream> backend);
-    [[nodiscard]] boost::asio::awaitable<void> outbound_to_client(std::shared_ptr<tcp_outbound_stream> backend);
-    [[nodiscard]] boost::asio::awaitable<void> idle_watchdog();
     void close_client_socket();
     void log_close_summary() const;
 
@@ -72,7 +72,6 @@ class tproxy_tcp_session : public std::enable_shared_from_this<tproxy_tcp_sessio
     const config& cfg_;
     config::tproxy_t settings_;
     uint64_t last_activity_time_ms_{0};
-    std::atomic<bool> backend_closed_{false};
 };
 
 }    // namespace relay
