@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <map>
 #include <optional>
 #include <shared_mutex>
@@ -76,25 +77,49 @@ struct trace_event
     uint64_t ts_mono_ns = 0;
     trace_stage stage = trace_stage::kConnAccepted;
     trace_result result = trace_result::kOk;
-    std::string inbound_tag;
-    std::string inbound_type;
-    std::string outbound_tag;
-    std::string outbound_type;
-    std::string target_host;
+    std::string inbound_tag{};
+    std::string inbound_type{};
+    std::string outbound_tag{};
+    std::string outbound_type{};
+    std::string target_host{};
     uint16_t target_port = 0;
-    std::string local_host;
+    std::string resolved_target_host{};
+    uint16_t resolved_target_port = 0;
+    std::string local_host{};
     uint16_t local_port = 0;
-    std::string remote_host;
+    std::string remote_host{};
     uint16_t remote_port = 0;
-    std::string route_type;
-    std::string match_type;
-    std::string match_value;
+    std::string route_type{};
+    std::string match_type{};
+    std::string match_value{};
     uint64_t bytes_tx = 0;
     uint64_t bytes_rx = 0;
     uint32_t latency_ms = 0;
     int32_t error_code = 0;
-    std::string error_message;
-    std::map<std::string, std::string> extra;
+    std::string error_message{};
+    std::map<std::string, std::string> extra{};
+};
+
+struct trace_lifecycle_summary
+{
+    bool conn_accepted = false;
+    bool handshake_start = false;
+    bool handshake_done = false;
+    bool auth_start = false;
+    bool auth_done = false;
+    bool request_start = false;
+    bool request_done = false;
+    bool route_decide_start = false;
+    bool route_decide_done = false;
+    bool outbound_connect_start = false;
+    bool outbound_connect_done = false;
+    bool relay_start = false;
+    bool data_send = false;
+    bool data_recv = false;
+    bool session_close = false;
+    bool session_error = false;
+    bool fallback_start = false;
+    bool fallback_done = false;
 };
 
 struct trace_session_summary
@@ -114,6 +139,8 @@ struct trace_session_summary
     std::string outbound_type;
     std::string target_host;
     uint16_t target_port = 0;
+    std::string resolved_target_host;
+    uint16_t resolved_target_port = 0;
     std::string local_host;
     uint16_t local_port = 0;
     std::string remote_host;
@@ -127,6 +154,8 @@ struct trace_session_summary
     uint64_t events_count = 0;
     int32_t final_error_code = 0;
     std::string final_error_message;
+    trace_lifecycle_summary lifecycle;
+    std::map<std::string, uint64_t> stage_counts;
 };
 
 struct trace_session_snapshot
@@ -149,6 +178,26 @@ struct trace_query
     trace_sort_order sort_order = trace_sort_order::kDesc;
 };
 
+struct trace_event_query
+{
+    std::optional<uint64_t> trace_id;
+    std::optional<trace_stage> stage;
+    std::optional<trace_result> result;
+    std::optional<std::string> inbound_tag;
+    std::optional<std::string> outbound_tag;
+    std::optional<std::string> target_host;
+    std::size_t limit = 100;
+    std::size_t offset = 0;
+    trace_sort_order sort_order = trace_sort_order::kDesc;
+};
+
+struct trace_event_page
+{
+    trace_event_query query;
+    uint64_t total = 0;
+    std::vector<trace_event> items;
+};
+
 struct trace_stats
 {
     uint64_t total_sessions = 0;
@@ -159,6 +208,28 @@ struct trace_stats
     uint64_t total_events = 0;
     uint64_t total_tx_bytes = 0;
     uint64_t total_rx_bytes = 0;
+};
+
+struct trace_traffic_sample
+{
+    uint64_t ts_unix_ms = 0;
+    uint64_t total_tx_bytes = 0;
+    uint64_t total_rx_bytes = 0;
+};
+
+struct trace_dashboard_snapshot
+{
+    trace_stats stats;
+    uint64_t latest_event_unix_ms = 0;
+    std::vector<trace_traffic_sample> traffic_history;
+    std::map<std::string, uint64_t> status_counts;
+    std::map<std::string, uint64_t> inbound_tag_counts;
+    std::map<std::string, uint64_t> inbound_type_counts;
+    std::map<std::string, uint64_t> outbound_tag_counts;
+    std::map<std::string, uint64_t> outbound_type_counts;
+    std::map<std::string, uint64_t> route_type_counts;
+    std::map<std::string, uint64_t> match_type_counts;
+    std::map<std::string, uint64_t> stage_event_counts;
 };
 
 [[nodiscard]] std::string_view to_string(trace_status status);
@@ -179,10 +250,14 @@ class trace_store
     [[nodiscard]] static trace_store& instance();
 
     trace_event record_event(trace_event event);
+    void add_live_tx_bytes(uint64_t bytes);
+    void add_live_rx_bytes(uint64_t bytes);
 
     [[nodiscard]] std::optional<trace_session_snapshot> get_trace(uint64_t trace_id) const;
     [[nodiscard]] std::vector<trace_session_summary> list_traces(const trace_query& query) const;
+    [[nodiscard]] trace_event_page list_events(const trace_event_query& query) const;
     [[nodiscard]] trace_stats get_stats() const;
+    [[nodiscard]] trace_dashboard_snapshot get_dashboard() const;
 
    private:
     struct trace_session_state
@@ -198,12 +273,17 @@ class trace_store
     static uint64_t now_mono_ns();
     static void update_summary(trace_session_summary& summary, const trace_event& event);
     static bool match_query(const trace_session_summary& summary, const trace_query& query);
+    static bool match_query(const trace_event& event, const trace_event_query& query);
     static bool compare_summary(const trace_session_summary& lhs, const trace_session_summary& rhs, trace_sort_field field);
+    void append_traffic_sample_locked(uint64_t now_unix_ms, const trace_stats& stats) const;
 
    private:
     mutable std::shared_mutex mutex_;
     std::unordered_map<uint64_t, trace_session_state> sessions_;
     std::vector<uint64_t> insertion_order_;
+    mutable std::deque<trace_traffic_sample> traffic_history_;
+    std::atomic<uint64_t> live_total_tx_bytes_{0};
+    std::atomic<uint64_t> live_total_rx_bytes_{0};
     std::atomic<uint64_t> next_event_id_{1};
 };
 
