@@ -19,8 +19,11 @@ struct tcp_outbound_connect_result
     boost::system::error_code ec;
     boost::asio::ip::address bind_addr;
     uint16_t bind_port = 0;
+    boost::asio::ip::address resolved_target_addr;
+    uint16_t resolved_target_port = 0;
     uint8_t socks_rep = 0;
     bool has_bind_endpoint = false;
+    bool has_resolved_target_endpoint = false;
 };
 
 class tcp_outbound_stream
