@@ -218,6 +218,28 @@ boost::asio::awaitable<void> tproxy_inbound::start_listeners()
     co_return;
 }
 
+boost::asio::awaitable<bool> tproxy_inbound::handle_tcp_accept_error(boost::system::error_code& ec)
+{
+    if (ec == boost::asio::error::operation_aborted)
+    {
+        LOG_INFO("{} listen {}:{} tcp accept loop stopped {}", log_event::kConnClose, settings_.listen_host, settings_.tcp_port, ec.message());
+        co_return false;
+    }
+
+    LOG_ERROR("{} listen {}:{} tcp accept failed {} retry", log_event::kConnInit, settings_.listen_host, settings_.tcp_port, ec.message());
+    ec = co_await net::wait_for(owner_worker_.io_context, std::chrono::seconds(3));
+    if (ec)
+    {
+        LOG_ERROR("{} listen {}:{} tcp accept retry timer failed {}",
+                  log_event::kConnInit,
+                  settings_.listen_host,
+                  settings_.tcp_port,
+                  ec.message());
+        co_return false;
+    }
+    co_return true;
+}
+
 void tproxy_inbound::stop()
 {
     if (stopping_.exchange(true))
@@ -275,22 +297,10 @@ boost::asio::awaitable<void> tproxy_inbound::accept_tcp_loop()
     {
         boost::asio::ip::tcp::socket socket(owner_worker_.io_context);
         co_await tcp_acceptor_.async_accept(socket, boost::asio::redirect_error(boost::asio::use_awaitable, ec));
-        if (ec == boost::asio::error::operation_aborted)
-        {
-            LOG_INFO("{} listen {}:{} tcp accept loop stopped {}", log_event::kConnClose, settings_.listen_host, settings_.tcp_port, ec.message());
-            break;
-        }
         if (ec)
         {
-            LOG_ERROR("{} listen {}:{} tcp accept failed {} retry", log_event::kConnInit, settings_.listen_host, settings_.tcp_port, ec.message());
-            ec = co_await net::wait_for(owner_worker_.io_context, std::chrono::seconds(3));
-            if (ec)
+            if (!(co_await handle_tcp_accept_error(ec)))
             {
-                LOG_ERROR("{} listen {}:{} tcp accept retry timer failed {}",
-                          log_event::kConnInit,
-                          settings_.listen_host,
-                          settings_.tcp_port,
-                          ec.message());
                 break;
             }
             continue;
@@ -338,7 +348,6 @@ boost::asio::awaitable<void> tproxy_inbound::accept_udp_loop()
 {
     boost::system::error_code ec;
     std::vector<uint8_t> payload(65535);
-    std::array<char, CMSG_SPACE(sizeof(sockaddr_in6))> control{};
 
     while (true)
     {
@@ -353,74 +362,80 @@ boost::asio::awaitable<void> tproxy_inbound::accept_udp_loop()
             break;
         }
 
-        sockaddr_storage source_addr{};
-        struct iovec iov{.iov_base = payload.data(), .iov_len = payload.size()};
-        msghdr msg{};
-        msg.msg_name = &source_addr;
-        msg.msg_namelen = sizeof(source_addr);
-        msg.msg_iov = &iov;
-        msg.msg_iovlen = 1;
-        msg.msg_control = control.data();
-        msg.msg_controllen = control.size();
-
-        const auto bytes_recv = recvmsg(udp_socket_.native_handle(), &msg, MSG_DONTWAIT);
-        if (bytes_recv < 0)
-        {
-            if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
-            {
-                continue;
-            }
-            LOG_ERROR("{} listen {}:{} udp recv msg failed errno {} error {}",
-                      log_event::kConnInit,
-                      settings_.listen_host,
-                      settings_.udp_port,
-                      errno,
-                      std::strerror(errno));
-            continue;
-        }
-        if ((msg.msg_flags & (MSG_TRUNC | MSG_CTRUNC)) != 0)
-        {
-            LOG_WARN("{} listen {}:{} udp recv msg truncated drop flags {} bytes {} controllen {}",
-                     log_event::kConnInit,
-                     settings_.listen_host,
-                     settings_.udp_port,
-                     msg.msg_flags,
-                     bytes_recv,
-                     msg.msg_controllen);
-            continue;
-        }
-
-        const auto client_endpoint = net::normalize_endpoint(net::endpoint_from_sockaddr(source_addr, msg.msg_namelen));
-        const auto target_endpoint_opt = net::parse_original_dst(msg);
-        if (!target_endpoint_opt.has_value())
-        {
-            LOG_WARN("{} client {}:{} udp parse original dst failed bytes {} flags {}",
-                     log_event::kConnInit,
-                     client_endpoint.address().to_string(),
-                     client_endpoint.port(),
-                     bytes_recv,
-                     msg.msg_flags);
-            continue;
-        }
-
-        const auto target_endpoint = net::normalize_endpoint(*target_endpoint_opt);
-        if (client_endpoint.port() == 0 || target_endpoint.port() == 0)
-        {
-            LOG_WARN("{} client {}:{} target {}:{} udp skip invalid endpoint bytes {}",
-                     log_event::kConnInit,
-                     client_endpoint.address().to_string(),
-                     client_endpoint.port(),
-                     target_endpoint.address().to_string(),
-                     target_endpoint.port(),
-                     bytes_recv);
-            continue;
-        }
-
-        std::vector<uint8_t> packet(payload.begin(), payload.begin() + static_cast<std::ptrdiff_t>(bytes_recv));
-        co_await on_udp_packet(client_endpoint, target_endpoint, std::move(packet));
+        co_await process_udp_accept_event(payload);
     }
 
     LOG_INFO("{} listen {}:{} udp accept loop exited", log_event::kConnClose, settings_.listen_host, settings_.udp_port);
+}
+
+boost::asio::awaitable<void> tproxy_inbound::process_udp_accept_event(std::vector<uint8_t>& payload)
+{
+    std::array<char, CMSG_SPACE(sizeof(sockaddr_in6))> control{};
+    sockaddr_storage source_addr{};
+    struct iovec iov{.iov_base = payload.data(), .iov_len = payload.size()};
+    msghdr msg{};
+    msg.msg_name = &source_addr;
+    msg.msg_namelen = sizeof(source_addr);
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+    msg.msg_control = control.data();
+    msg.msg_controllen = control.size();
+
+    const auto bytes_recv = recvmsg(udp_socket_.native_handle(), &msg, MSG_DONTWAIT);
+    if (bytes_recv < 0)
+    {
+        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
+        {
+            co_return;
+        }
+        LOG_ERROR("{} listen {}:{} udp recv msg failed errno {} error {}",
+                  log_event::kConnInit,
+                  settings_.listen_host,
+                  settings_.udp_port,
+                  errno,
+                  std::strerror(errno));
+        co_return;
+    }
+    if ((msg.msg_flags & (MSG_TRUNC | MSG_CTRUNC)) != 0)
+    {
+        LOG_WARN("{} listen {}:{} udp recv msg truncated drop flags {} bytes {} controllen {}",
+                 log_event::kConnInit,
+                 settings_.listen_host,
+                 settings_.udp_port,
+                 msg.msg_flags,
+                 bytes_recv,
+                 msg.msg_controllen);
+        co_return;
+    }
+
+    const auto client_endpoint = net::normalize_endpoint(net::endpoint_from_sockaddr(source_addr, msg.msg_namelen));
+    const auto target_endpoint_opt = net::parse_original_dst(msg);
+    if (!target_endpoint_opt.has_value())
+    {
+        LOG_WARN("{} client {}:{} udp parse original dst failed bytes {} flags {}",
+                 log_event::kConnInit,
+                 client_endpoint.address().to_string(),
+                 client_endpoint.port(),
+                 bytes_recv,
+                 msg.msg_flags);
+        co_return;
+    }
+
+    const auto target_endpoint = net::normalize_endpoint(*target_endpoint_opt);
+    if (client_endpoint.port() == 0 || target_endpoint.port() == 0)
+    {
+        LOG_WARN("{} client {}:{} target {}:{} udp skip invalid endpoint bytes {}",
+                 log_event::kConnInit,
+                 client_endpoint.address().to_string(),
+                 client_endpoint.port(),
+                 target_endpoint.address().to_string(),
+                 target_endpoint.port(),
+                 bytes_recv);
+        co_return;
+    }
+
+    std::vector<uint8_t> packet(payload.begin(), payload.begin() + static_cast<std::ptrdiff_t>(bytes_recv));
+    co_await on_udp_packet(client_endpoint, target_endpoint, std::move(packet));
 }
 
 boost::asio::awaitable<void> tproxy_inbound::on_udp_packet(boost::asio::ip::udp::endpoint client_endpoint,
@@ -449,33 +464,13 @@ boost::asio::awaitable<void> tproxy_inbound::on_udp_packet(boost::asio::ip::udp:
     }
 
     const uint32_t conn_id = next_session_id_.fetch_add(1, std::memory_order_relaxed);
-    const auto decision = co_await decide_udp_route(conn_id, target_endpoint);
-    if (decision.route == route_type::kBlock)
-    {
-        co_return;
-    }
-
-    if (auto session = find_udp_session(key); session != nullptr)
-    {
-        co_await enqueue_udp_session(key, session, std::move(payload));
-        co_return;
-    }
-
-    auto session = make_udp_session(key,
-                                    client_endpoint,
-                                    target_endpoint,
-                                    decision.route,
-                                    decision.outbound_tag,
-                                    decision.outbound_type,
-                                    decision.match_type,
-                                    decision.match_value,
-                                    conn_id);
+    auto session = make_udp_session(key, client_endpoint, target_endpoint, conn_id);
     const auto enqueue_result = co_await session->enqueue_packet(std::move(payload));
     if (enqueue_result != udp_enqueue_result::kEnqueued)
     {
         co_return;
     }
-    if (!register_udp_session(key, session, conn_id, client_endpoint, target_endpoint, decision.route))
+    if (!register_udp_session(key, session, conn_id, client_endpoint, target_endpoint))
     {
         co_return;
     }
@@ -496,32 +491,6 @@ bool tproxy_inbound::is_udp_routing_loop(const boost::asio::ip::udp::endpoint& t
     }
 
     return target_endpoint.port() == settings_.udp_port && net::normalize_address(target_endpoint.address()) == net::normalize_address(local_addr);
-}
-
-boost::asio::awaitable<route_decision> tproxy_inbound::decide_udp_route(uint32_t conn_id,
-                                                                        const boost::asio::ip::udp::endpoint& target_endpoint) const
-{
-    route_decision decision;
-    decision.route = route_type::kBlock;
-    decision.outbound_type = "no_route";
-    if (router_ != nullptr)
-    {
-        decision = co_await router_->decide_ip_detail(target_endpoint.address());
-    }
-
-    LOG_INFO("{} conn {} target {}:{} route {} out_tag {}",
-             log_event::kRoute,
-             conn_id,
-             target_endpoint.address().to_string(),
-             target_endpoint.port(),
-             relay::to_string(decision.route),
-             decision.outbound_tag.empty() ? "-" : decision.outbound_tag);
-    if (decision.route == route_type::kBlock)
-    {
-        LOG_INFO("{} conn {} target {}:{} blocked", log_event::kRoute, conn_id, target_endpoint.address().to_string(), target_endpoint.port());
-    }
-
-    co_return decision;
 }
 
 std::shared_ptr<tproxy_udp_session> tproxy_inbound::find_udp_session(const std::string& key) const
@@ -555,22 +524,13 @@ boost::asio::awaitable<void> tproxy_inbound::enqueue_udp_session(const std::stri
 std::shared_ptr<tproxy_udp_session> tproxy_inbound::make_udp_session(const std::string& key,
                                                                      const boost::asio::ip::udp::endpoint& client_endpoint,
                                                                      const boost::asio::ip::udp::endpoint& target_endpoint,
-                                                                     route_type route,
-                                                                     const std::string& outbound_tag,
-                                                                     const std::string& outbound_type,
-                                                                     const std::string& match_type,
-                                                                     const std::string& match_value,
                                                                      uint32_t conn_id)
 {
     const auto weak_self = weak_from_this();
     return std::make_shared<tproxy_udp_session>(owner_worker_,
+                                                router_,
                                                 client_endpoint,
                                                 target_endpoint,
-                                                route,
-                                                outbound_tag,
-                                                outbound_type,
-                                                match_type,
-                                                match_value,
                                                 conn_id,
                                                 inbound_tag_,
                                                 cfg_,
@@ -587,20 +547,18 @@ bool tproxy_inbound::register_udp_session(const std::string& key,
                                           const std::shared_ptr<tproxy_udp_session>& session,
                                           uint32_t conn_id,
                                           const boost::asio::ip::udp::endpoint& client_endpoint,
-                                          const boost::asio::ip::udp::endpoint& target_endpoint,
-                                          route_type route)
+                                          const boost::asio::ip::udp::endpoint& target_endpoint)
 {
     evict_udp_sessions_if_needed();
     if (udp_sessions_.size() >= constants::udp::kMaxSessions)
     {
-        LOG_WARN("{} conn {} client {}:{} target {}:{} route {} udp session limit reached active {} limit {} drop packet",
+        LOG_WARN("{} conn {} client {}:{} target {}:{} udp session limit reached active {} limit {} drop packet",
                  log_event::kConnInit,
                  conn_id,
                  client_endpoint.address().to_string(),
                  client_endpoint.port(),
                  target_endpoint.address().to_string(),
                  target_endpoint.port(),
-                 relay::to_string(route),
                  udp_sessions_.size(),
                  constants::udp::kMaxSessions);
         return false;
@@ -608,14 +566,13 @@ bool tproxy_inbound::register_udp_session(const std::string& key,
 
     udp_sessions_.emplace(key, session);
     session->start();
-    LOG_INFO("{} conn {} client {}:{} target {}:{} route {} udp session registered active {}",
+    LOG_INFO("{} conn {} client {}:{} target {}:{} udp session registered active {}",
              log_event::kConnEstablished,
              conn_id,
              client_endpoint.address().to_string(),
              client_endpoint.port(),
              target_endpoint.address().to_string(),
              target_endpoint.port(),
-             relay::to_string(route),
              udp_sessions_.size());
     touch_udp_session(key);
     return true;

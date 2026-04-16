@@ -26,6 +26,7 @@ class socks_inbound : public std::enable_shared_from_this<socks_inbound>
    private:
     boost::asio::awaitable<void> start_acceptor();
     boost::asio::awaitable<void> accept_loop();
+    void on_socket_accepted(boost::asio::ip::tcp::socket&& socket, io_worker& socket_worker, uint32_t sid);
 
    private:
     const config& cfg_;
