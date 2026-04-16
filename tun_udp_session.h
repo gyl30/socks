@@ -15,9 +15,10 @@
 #include <boost/asio/experimental/concurrent_channel.hpp>
 
 #include "config.h"
+#include "context_pool.h"
+#include "request_context.h"
 #include "router.h"
 #include "tun_lwip.h"
-#include "context_pool.h"
 #include "udp_proxy_outbound.h"
 
 namespace relay
@@ -46,9 +47,17 @@ class tun_udp_session : public std::enable_shared_from_this<tun_udp_session>
 
    private:
     [[nodiscard]] boost::asio::awaitable<bool> run();
-    [[nodiscard]] boost::asio::awaitable<route_decision> decide_route() const;
+    [[nodiscard]] request_context make_request_context() const;
+    void apply_route_decision(const route_decision& decision);
+    [[nodiscard]] boost::asio::awaitable<bool> run_selected_mode();
     [[nodiscard]] boost::asio::awaitable<bool> open_direct_socket();
     [[nodiscard]] boost::asio::awaitable<bool> open_proxy_outbound();
+    [[nodiscard]] boost::asio::awaitable<bool> apply_open_proxy_outbound_result(
+        const udp_proxy_outbound_connect_result& connect_result,
+        std::chrono::steady_clock::time_point connect_start);
+    void record_open_direct_socket_result(bool success,
+                                          const boost::system::error_code& ec,
+                                          std::chrono::steady_clock::time_point connect_start) const;
     [[nodiscard]] boost::asio::awaitable<bool> run_direct_mode();
     [[nodiscard]] boost::asio::awaitable<bool> run_proxy_mode();
     [[nodiscard]] boost::asio::awaitable<void> packets_to_direct();
@@ -73,6 +82,8 @@ class tun_udp_session : public std::enable_shared_from_this<tun_udp_session>
     route_type route_ = route_type::kBlock;
     std::string outbound_tag_;
     std::string outbound_type_;
+    std::string match_type_;
+    std::string match_value_;
     std::atomic<bool> stopped_{false};
     uint64_t last_activity_time_ms_ = 0;
     boost::asio::steady_timer idle_timer_;

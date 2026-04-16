@@ -13,9 +13,10 @@
 #include <boost/asio/experimental/concurrent_channel.hpp>
 
 #include "config.h"
-#include "router.h"
-#include "lru_cache.h"
 #include "context_pool.h"
+#include "lru_cache.h"
+#include "request_context.h"
+#include "router.h"
 #include "udp_proxy_outbound.h"
 
 namespace relay
@@ -32,13 +33,9 @@ class tproxy_udp_session : public std::enable_shared_from_this<tproxy_udp_sessio
 {
    public:
     tproxy_udp_session(io_worker& worker,
+                       std::shared_ptr<router> router,
                        const boost::asio::ip::udp::endpoint& client_endpoint,
                        const boost::asio::ip::udp::endpoint& target_endpoint,
-                       route_type route,
-                       std::string outbound_tag,
-                       std::string outbound_type,
-                       std::string match_type,
-                       std::string match_value,
                        uint32_t conn_id,
                        std::string inbound_tag,
                        const config& cfg,
@@ -52,8 +49,17 @@ class tproxy_udp_session : public std::enable_shared_from_this<tproxy_udp_sessio
     using packet_channel_type = boost::asio::experimental::concurrent_channel<void(boost::system::error_code, std::vector<uint8_t>)>;
 
     [[nodiscard]] boost::asio::awaitable<void> run();
+    [[nodiscard]] request_context make_request_context() const;
+    void apply_route_decision(const route_decision& decision);
+    [[nodiscard]] boost::asio::awaitable<bool> run_selected_mode();
     [[nodiscard]] boost::asio::awaitable<bool> open_direct_socket();
     [[nodiscard]] boost::asio::awaitable<bool> open_proxy_outbound();
+    [[nodiscard]] boost::asio::awaitable<bool> apply_open_proxy_outbound_result(
+        const udp_proxy_outbound_connect_result& connect_result,
+        std::chrono::steady_clock::time_point connect_start);
+    void record_open_direct_socket_result(bool success,
+                                          const boost::system::error_code& ec,
+                                          std::chrono::steady_clock::time_point connect_start) const;
     [[nodiscard]] boost::asio::awaitable<bool> run_direct_mode();
     [[nodiscard]] boost::asio::awaitable<bool> run_proxy_mode();
     [[nodiscard]] boost::asio::awaitable<void> packets_to_direct();
@@ -76,7 +82,8 @@ class tproxy_udp_session : public std::enable_shared_from_this<tproxy_udp_sessio
     std::string inbound_tag_;
     const config& cfg_;
     io_worker& worker_;
-    route_type route_;
+    std::shared_ptr<router> router_;
+    route_type route_ = route_type::kBlock;
     std::string outbound_tag_;
     std::string outbound_type_;
     std::string match_type_;

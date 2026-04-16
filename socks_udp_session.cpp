@@ -21,9 +21,12 @@
 #include "protocol.h"
 #include "trace_store.h"
 #include "constants.h"
+#include "datagram_relay.h"
 #include "net_utils.h"
 #include "context_pool.h"
-#include "socks_udp_associate_session.h"
+#include "request_context.h"
+#include "socks_udp_session.h"
+#include "udp_session_flow.h"
 
 namespace relay
 {
@@ -239,7 +242,7 @@ void bind_local_udp_address(const boost::asio::ip::tcp::socket& tcp_socket,
 
 }    // namespace
 
-socks_udp_associate_session::socks_udp_associate_session(boost::asio::ip::tcp::socket socket,
+socks_udp_session::socks_udp_session(boost::asio::ip::tcp::socket socket,
                                                          io_worker& worker,
                                                          std::shared_ptr<router> router,
                                                          const uint32_t sid,
@@ -265,12 +268,12 @@ socks_udp_associate_session::socks_udp_associate_session(boost::asio::ip::tcp::s
     last_activity_time_ms_ = net::now_ms();
 }
 
-void socks_udp_associate_session::start(const std::string& host, const uint16_t port)
+void socks_udp_session::start(const std::string& host, const uint16_t port)
 {
     worker_.group.spawn([self = shared_from_this(), host, port]() -> boost::asio::awaitable<void> { co_await self->run(host, port); });
 }
 
-void socks_udp_associate_session::close_impl()
+void socks_udp_session::close_impl()
 {
     if (stopped_)
     {
@@ -335,7 +338,28 @@ void socks_udp_associate_session::close_impl()
     }
 }
 
-boost::asio::awaitable<void> socks_udp_associate_session::run(const std::string& host, const uint16_t port)
+boost::asio::awaitable<bool> socks_udp_session::send_udp_associate_reply(const boost::asio::ip::address& local_addr, const uint16_t udp_port)
+{
+    const auto reply = detail::build_udp_associate_reply(local_addr, udp_port);
+    boost::system::error_code ec;
+    co_await net::wait_write_with_timeout(socket_, boost::asio::buffer(reply), cfg_.timeout.write, ec);
+    if (ec)
+    {
+        LOG_WARN("{} trace {:016x} conn {} tcp peer {}:{} udp bind {}:{} write udp associate reply failed {}",
+                 log_event::kSocks,
+                 trace_id_,
+                 conn_id_,
+                 tcp_peer_host_,
+                 tcp_peer_port_,
+                 udp_bind_host_,
+                 udp_bind_port_,
+                 ec.message());
+        co_return false;
+    }
+    co_return true;
+}
+
+boost::asio::awaitable<bool> socks_udp_session::prepare_udp_associate(const std::string& host, const uint16_t port)
 {
     apply_request_peer_constraint(host, port);
 
@@ -346,7 +370,7 @@ boost::asio::awaitable<void> socks_udp_associate_session::run(const std::string&
     if (ec)
     {
         co_await write_socks_error_reply(socket_, socks::kRepGenFail, trace_id_, conn_id_, cfg_.timeout.write);
-        co_return;
+        co_return false;
     }
 
     udp_bind_host_ = local_addr.to_string();
@@ -362,7 +386,7 @@ boost::asio::awaitable<void> socks_udp_associate_session::run(const std::string&
                   udp_bind_port_,
                   ec.message());
         co_await write_socks_error_reply(socket_, socks::kRepGenFail, trace_id_, conn_id_, cfg_.timeout.write);
-        co_return;
+        co_return false;
     }
 
     client_ip_ = net::normalize_address(tcp_remote_ep.address());
@@ -390,19 +414,13 @@ boost::asio::awaitable<void> socks_udp_associate_session::run(const std::string&
              udp_bind_host_,
              udp_bind_port_);
 
-    const auto final_rep = detail::build_udp_associate_reply(local_addr, udp_port);
-    co_await net::wait_write_with_timeout(socket_, boost::asio::buffer(final_rep), cfg_.timeout.write, ec);
-    if (ec)
+    co_return co_await send_udp_associate_reply(local_addr, udp_port);
+}
+
+boost::asio::awaitable<void> socks_udp_session::run(const std::string& host, const uint16_t port)
+{
+    if (!(co_await prepare_udp_associate(host, port)))
     {
-        LOG_WARN("{} trace {:016x} conn {} tcp peer {}:{} udp bind {}:{} write udp associate reply failed {}",
-                 log_event::kSocks,
-                 trace_id_,
-                 conn_id_,
-                 tcp_peer_host_,
-                 tcp_peer_port_,
-                 udp_bind_host_,
-                 udp_bind_port_,
-                 ec.message());
         co_return;
     }
 
@@ -437,16 +455,16 @@ boost::asio::awaitable<void> socks_udp_associate_session::run(const std::string&
         .result = trace_result::kOk,
         .inbound_tag = inbound_tag_,
         .inbound_type = "socks",
-        .target_host = has_last_target_ ? last_target_addr_ : "unknown",
-        .target_port = static_cast<uint16_t>(has_last_target_ ? last_target_port_ : 0U),
         .outbound_tag = proxy_outbound_tag_,
         .outbound_type = proxy_outbound_ != nullptr ? "proxy" : "direct",
-        .bytes_tx = tx_bytes_,
-        .bytes_rx = rx_bytes_,
+        .target_host = has_last_target_ ? last_target_addr_ : "unknown",
+        .target_port = static_cast<uint16_t>(has_last_target_ ? last_target_port_ : 0U),
         .local_host = udp_bind_host_,
         .local_port = udp_bind_port_,
         .remote_host = tcp_peer_host_,
         .remote_port = tcp_peer_port_,
+        .bytes_tx = tx_bytes_,
+        .bytes_rx = rx_bytes_,
         .extra = {{"duration_ms", std::to_string(duration_ms)}},
     });
     LOG_INFO("{} trace {:016x} conn {} tcp peer {}:{} udp bind {}:{} client {}:{} tx_bytes {} rx_bytes {} duration_ms {}",
@@ -464,7 +482,7 @@ boost::asio::awaitable<void> socks_udp_associate_session::run(const std::string&
              duration_ms);
 }
 
-void socks_udp_associate_session::apply_request_peer_constraint(const std::string& host, const uint16_t port) const
+void socks_udp_session::apply_request_peer_constraint(const std::string& host, const uint16_t port) const
 {
     if (!host.empty() || port != 0)
     {
@@ -499,7 +517,7 @@ void socks_udp_associate_session::apply_request_peer_constraint(const std::strin
     }
 }
 
-std::string socks_udp_associate_session::current_client_host() const
+std::string socks_udp_session::current_client_host() const
 {
     if (has_client_addr_)
     {
@@ -512,7 +530,7 @@ std::string socks_udp_associate_session::current_client_host() const
     return tcp_peer_host_;
 }
 
-uint16_t socks_udp_associate_session::current_client_port() const
+uint16_t socks_udp_session::current_client_port() const
 {
     if (has_client_addr_)
     {
@@ -521,7 +539,25 @@ uint16_t socks_udp_associate_session::current_client_port() const
     return tcp_peer_port_;
 }
 
-void socks_udp_associate_session::open_direct_udp_socket(boost::asio::ip::udp::socket& direct_socket,
+request_context socks_udp_session::make_proxy_outbound_request() const
+{
+    return request_context{
+        .trace_id = trace_id_,
+        .conn_id = conn_id_,
+        .transport = request_transport::kUdp,
+        .command = request_command::kDatagram,
+        .inbound_tag = inbound_tag_,
+        .inbound_type = inbound_type_,
+        .target_host = has_last_target_ ? last_target_addr_ : "unknown",
+        .target_port = static_cast<uint16_t>(has_last_target_ ? last_target_port_ : 0U),
+        .client_host = current_client_host(),
+        .client_port = current_client_port(),
+        .local_host = udp_bind_host_,
+        .local_port = udp_bind_port_,
+    };
+}
+
+void socks_udp_session::open_direct_udp_socket(boost::asio::ip::udp::socket& direct_socket,
                                                const boost::asio::ip::udp& protocol,
                                                const char* family,
                                                boost::system::error_code& ec) const
@@ -583,7 +619,7 @@ void socks_udp_associate_session::open_direct_udp_socket(boost::asio::ip::udp::s
     }
 }
 
-boost::asio::ip::udp::socket* socks_udp_associate_session::select_direct_udp_socket(const boost::asio::ip::udp::endpoint& target)
+boost::asio::ip::udp::socket* socks_udp_session::select_direct_udp_socket(const boost::asio::ip::udp::endpoint& target)
 {
     if (target.address().is_v6())
     {
@@ -618,26 +654,96 @@ boost::asio::ip::udp::socket* socks_udp_associate_session::select_direct_udp_soc
     return &direct_udp_socket_v4_;
 }
 
-boost::asio::awaitable<route_decision> socks_udp_associate_session::decide_udp_route(const socks_udp_header& header) const
+boost::asio::awaitable<route_decision> socks_udp_session::decide_udp_route(const socks_udp_header& header) const
 {
-    if (router_ == nullptr)
+    request_context request{
+        .trace_id = trace_id_,
+        .conn_id = conn_id_,
+        .transport = request_transport::kUdp,
+        .command = request_command::kDatagram,
+        .inbound_tag = inbound_tag_,
+        .inbound_type = inbound_type_,
+        .target_host = header.addr,
+        .target_port = header.port,
+        .client_host = current_client_host(),
+        .client_port = current_client_port(),
+        .local_host = udp_bind_host_,
+        .local_port = udp_bind_port_,
+    };
+    const auto flow_result = co_await prepare_udp_route_flow(request, router_);
+    co_return flow_result.decision;
+}
+
+boost::asio::awaitable<bool> socks_udp_session::process_udp_packet(const socks_udp_header& udp_header,
+                                                                   const route_decision& decision,
+                                                                   const uint8_t* payload,
+                                                                   const std::size_t payload_len)
+{
+    if (decision.route == route_type::kBlock)
     {
-        route_decision decision;
-        decision.route = route_type::kBlock;
-        decision.outbound_type = "no_route";
-        co_return decision;
+        LOG_INFO("{} trace {:016x} conn {} client {}:{} udp bind {}:{} udp blocked {}:{}",
+                 log_event::kRoute,
+                 trace_id_,
+                 conn_id_,
+                 current_client_host(),
+                 current_client_port(),
+                 udp_bind_host_,
+                 udp_bind_port_,
+                 udp_header.addr,
+                 udp_header.port);
+        co_return true;
+    }
+
+    if (decision.route == route_type::kProxy)
+    {
+        boost::system::error_code open_ec;
+        if (!(co_await ensure_proxy_outbound(open_ec)))
+        {
+            co_return false;
+        }
+
+        const auto outbound = proxy_outbound_;
+        if (outbound == nullptr)
+        {
+            co_return false;
+        }
+
+        boost::system::error_code write_ec;
+        co_await outbound->send_datagram(udp_header.addr, udp_header.port, payload, payload_len, write_ec);
+        if (write_ec)
+        {
+            clear_proxy_outbound_if_current(outbound);
+            co_await outbound->close();
+            LOG_WARN("{} trace {:016x} conn {} client {}:{} udp bind {}:{} target {}:{} write proxy udp datagram failed {}",
+                     log_event::kSocks,
+                     trace_id_,
+                     conn_id_,
+                     current_client_host(),
+                     current_client_port(),
+                     udp_bind_host_,
+                     udp_bind_port_,
+                     udp_header.addr,
+                     udp_header.port,
+                     write_ec.message());
+            co_return true;
+        }
+
+        tx_bytes_ += payload_len;
+        trace_store::instance().add_live_tx_bytes(payload_len);
+        last_activity_time_ms_ = net::now_ms();
+        co_return true;
     }
 
     boost::system::error_code ec;
-    const auto addr = boost::asio::ip::make_address(header.addr, ec);
+    co_await forward_direct_packet(udp_header, payload, payload_len, ec);
     if (ec)
     {
-        co_return co_await router_->decide_domain_detail(header.addr);
+        co_return false;
     }
-    co_return co_await router_->decide_ip_detail(socks_codec::normalize_ip_address(addr));
+    co_return true;
 }
 
-boost::asio::awaitable<boost::asio::ip::udp::endpoint> socks_udp_associate_session::resolve_target_endpoint(const std::string& host,
+boost::asio::awaitable<boost::asio::ip::udp::endpoint> socks_udp_session::resolve_target_endpoint(const std::string& host,
                                                                                                   const uint16_t port,
                                                                                                   boost::system::error_code& ec)
 {
@@ -664,6 +770,16 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> socks_udp_associate_sessi
         }
     }
 
+    co_return co_await resolve_target_endpoint_uncached(key, host, port, now_ms_value, ec);
+}
+
+boost::asio::awaitable<boost::asio::ip::udp::endpoint> socks_udp_session::resolve_target_endpoint_uncached(
+    const std::string& key,
+    const std::string& host,
+    const uint16_t port,
+    const uint64_t now_ms_value,
+    boost::system::error_code& ec)
+{
     boost::asio::ip::udp::resolver resolver(worker_.io_context);
     auto endpoints = co_await net::wait_resolve_with_timeout(resolver, host, std::to_string(port), cfg_.timeout.connect, ec);
     if (ec)
@@ -751,7 +867,7 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> socks_udp_associate_sessi
     co_return target;
 }
 
-boost::asio::awaitable<void> socks_udp_associate_session::forward_direct_packet(const socks_udp_header& header,
+boost::asio::awaitable<void> socks_udp_session::forward_direct_packet(const socks_udp_header& header,
                                                                       const uint8_t* payload,
                                                                       const std::size_t payload_len,
                                                                       boost::system::error_code& ec)
@@ -814,19 +930,47 @@ boost::asio::awaitable<void> socks_udp_associate_session::forward_direct_packet(
     direct_peers_.evict_if([&](const auto&, const auto& entry) { return entry.expires_at <= now_ms_value; });
     direct_peers_.put(normalized_target, peer_cache_entry{expires_at});
     tx_bytes_ += payload_len;
+    trace_store::instance().add_live_tx_bytes(payload_len);
     last_activity_time_ms_ = now_ms_value;
 }
 
-boost::asio::awaitable<void> socks_udp_associate_session::direct_udp_socket_loop(boost::asio::ip::udp::socket& direct_socket)
+boost::asio::awaitable<void> socks_udp_session::direct_udp_socket_loop(boost::asio::ip::udp::socket& direct_socket)
 {
-    std::vector<uint8_t> buf(65535);
-    boost::asio::ip::udp::endpoint sender;
-    boost::system::error_code ec;
-    while (true)
-    {
-        const auto n =
-            co_await direct_socket.async_receive_from(boost::asio::buffer(buf), sender, boost::asio::redirect_error(boost::asio::use_awaitable, ec));
-        if (ec)
+    udp_socket_reply_relay_context relay_context{
+        .socket = direct_socket,
+        .last_activity_time_ms = last_activity_time_ms_,
+        .rx_bytes = rx_bytes_,
+    };
+    co_await relay_udp_socket_replies(
+        relay_context,
+        [this](const boost::asio::ip::udp::endpoint& sender, const uint64_t now_ms_value)
+        {
+            direct_peers_.evict_if([&](const auto&, const auto& entry) { return entry.expires_at <= now_ms_value; });
+            const auto normalized_sender = net::normalize_endpoint(sender);
+            auto* peer = direct_peers_.get(normalized_sender);
+            if (peer == nullptr || peer->expires_at <= now_ms_value)
+            {
+                if (peer != nullptr && peer->expires_at <= now_ms_value)
+                {
+                    direct_peers_.erase(normalized_sender);
+                }
+                LOG_WARN("{} trace {:016x} conn {} client {}:{} udp bind {}:{} ignore udp packet from unexpected direct peer {}:{}",
+                         log_event::kRoute,
+                         trace_id_,
+                         conn_id_,
+                         current_client_host(),
+                         current_client_port(),
+                         udp_bind_host_,
+                         udp_bind_port_,
+                         sender.address().to_string(),
+                         sender.port());
+                return false;
+            }
+            return true;
+        },
+        [this](const boost::asio::ip::udp::endpoint& sender, const uint8_t* payload, const std::size_t payload_len, boost::system::error_code& ec)
+            -> boost::asio::awaitable<std::size_t> { co_return co_await forward_direct_reply_to_client(sender, payload, payload_len, ec); },
+        [this, &direct_socket](const boost::system::error_code& ec)
         {
             if (!net::is_socket_close_error(ec))
             {
@@ -839,49 +983,14 @@ boost::asio::awaitable<void> socks_udp_associate_session::direct_udp_socket_loop
                          udp_bind_host_,
                          udp_bind_port_,
                          ec.message());
-                ec = direct_socket.close(ec);
-                (void)ec;
+                boost::system::error_code close_ec;
+                close_ec = direct_socket.close(close_ec);
+                (void)close_ec;
             }
-            break;
-        }
-        const auto now_ms_value = net::now_ms();
-        direct_peers_.evict_if([&](const auto&, const auto& entry) { return entry.expires_at <= now_ms_value; });
-        const auto normalized_sender = net::normalize_endpoint(sender);
-        auto* peer = direct_peers_.get(normalized_sender);
-        if (peer == nullptr || peer->expires_at <= now_ms_value)
-        {
-            if (peer != nullptr && peer->expires_at <= now_ms_value)
-            {
-                direct_peers_.erase(normalized_sender);
-            }
-            LOG_WARN("{} trace {:016x} conn {} client {}:{} udp bind {}:{} ignore udp packet from unexpected direct peer {}:{}",
-                     log_event::kRoute,
-                     trace_id_,
-                     conn_id_,
-                     current_client_host(),
-                     current_client_port(),
-                     udp_bind_host_,
-                     udp_bind_port_,
-                     sender.address().to_string(),
-                     sender.port());
-            continue;
-        }
-
-        co_await forward_direct_reply_to_client(sender, buf.data(), n, ec);
-        if (ec)
-        {
-            if (!net::is_socket_close_error(ec))
-            {
-                ec = direct_socket.close(ec);
-                (void)ec;
-            }
-            break;
-        }
-        last_activity_time_ms_ = net::now_ms();
-    }
+        });
 }
 
-void socks_udp_associate_session::start_direct_udp_socket_loops()
+void socks_udp_session::start_direct_udp_socket_loops()
 {
     const auto self = shared_from_this();
     if (direct_udp_socket_v4_.is_open())
@@ -912,14 +1021,14 @@ void socks_udp_associate_session::start_direct_udp_socket_loops()
     }
 }
 
-boost::asio::awaitable<void> socks_udp_associate_session::forward_direct_reply_to_client(const boost::asio::ip::udp::endpoint& sender,
-                                                                               const uint8_t* payload,
-                                                                               const std::size_t payload_len,
-                                                                               boost::system::error_code& ec)
+boost::asio::awaitable<std::size_t> socks_udp_session::forward_direct_reply_to_client(const boost::asio::ip::udp::endpoint& sender,
+                                                                                       const uint8_t* payload,
+                                                                                       const std::size_t payload_len,
+                                                                                       boost::system::error_code& ec)
 {
     if (!has_client_addr_)
     {
-        co_return;
+        co_return 0;
     }
 
     const auto normalized_sender = net::normalize_endpoint(sender);
@@ -938,7 +1047,7 @@ boost::asio::awaitable<void> socks_udp_associate_session::forward_direct_reply_t
                  udp_bind_port_,
                  packet_len,
                  constants::udp::kMaxPayload);
-        co_return;
+        co_return 0;
     }
 
     std::vector<uint8_t> packet;
@@ -963,87 +1072,135 @@ boost::asio::awaitable<void> socks_udp_associate_session::forward_direct_reply_t
                  client_addr_.address().to_string(),
                  client_addr_.port(),
                  ec.message());
-        co_return;
+        co_return 0;
     }
-    rx_bytes_ += packet_len;
+    co_return packet_len;
 }
 
-boost::asio::awaitable<bool> socks_udp_associate_session::ensure_proxy_outbound(boost::system::error_code& ec)
+boost::asio::awaitable<std::size_t> socks_udp_session::forward_proxy_reply_to_client(const proxy::udp_datagram& datagram,
+                                                                                      boost::system::error_code& ec,
+                                                                                      bool& send_reply_failed)
 {
-    if (proxy_outbound_ == nullptr)
+    if (!has_client_addr_)
     {
-        trace_store::instance().record_event(trace_event{
-            .trace_id = trace_id_,
-            .conn_id = conn_id_,
-            .stage = trace_stage::kOutboundConnectStart,
-            .result = trace_result::kOk,
-            .inbound_tag = inbound_tag_,
-            .inbound_type = "socks",
-            .target_host = has_last_target_ ? last_target_addr_ : "unknown",
-            .target_port = static_cast<uint16_t>(has_last_target_ ? last_target_port_ : 0U),
-            .outbound_tag = proxy_outbound_tag_,
-            .outbound_type = "proxy",
-            .local_host = udp_bind_host_,
-            .local_port = udp_bind_port_,
-            .remote_host = tcp_peer_host_,
-            .remote_port = tcp_peer_port_,
-        });
-        const auto connect_result =
-            co_await connect_udp_proxy_outbound(worker_.io_context.get_executor(), conn_id_, trace_id_, cfg_, proxy_outbound_tag_);
-        if (connect_result.ec || connect_result.outbound == nullptr)
-        {
-            ec = connect_result.ec ? connect_result.ec : boost::asio::error::not_connected;
-            trace_store::instance().record_event(trace_event{
-                .trace_id = trace_id_,
-                .conn_id = conn_id_,
-                .stage = trace_stage::kOutboundConnectDone,
-                .result = trace_result::kFail,
-                .inbound_tag = inbound_tag_,
-                .inbound_type = "socks",
-                .target_host = has_last_target_ ? last_target_addr_ : "unknown",
-                .target_port = static_cast<uint16_t>(has_last_target_ ? last_target_port_ : 0U),
-                .outbound_tag = proxy_outbound_tag_,
-                .outbound_type = "proxy",
-                .local_host = udp_bind_host_,
-                .local_port = udp_bind_port_,
-                .remote_host = tcp_peer_host_,
-                .remote_port = tcp_peer_port_,
-                .error_code = static_cast<int32_t>(ec.value()),
-                .error_message = ec.message(),
-            });
-            LOG_WARN("{} trace {:016x} conn {} client {}:{} udp bind {}:{} target {}:{} connect proxy udp outbound failed {} rep {}",
-                     log_event::kSocks,
-                     trace_id_,
-                     conn_id_,
-                     current_client_host(),
-                     current_client_port(),
-                     udp_bind_host_,
-                     udp_bind_port_,
-                     has_last_target_ ? last_target_addr_ : "unknown",
-                     has_last_target_ ? last_target_port_ : 0,
-                     ec.message(),
-                     connect_result.socks_rep);
-            co_return false;
-        }
+        co_return 0;
+    }
 
-        proxy_outbound_ = connect_result.outbound;
-        trace_store::instance().record_event(trace_event{
-            .trace_id = trace_id_,
-            .conn_id = conn_id_,
-            .stage = trace_stage::kOutboundConnectDone,
-            .result = trace_result::kOk,
-            .inbound_tag = inbound_tag_,
-            .inbound_type = "socks",
-            .target_host = has_last_target_ ? last_target_addr_ : "unknown",
-            .target_port = static_cast<uint16_t>(has_last_target_ ? last_target_port_ : 0U),
-            .outbound_tag = proxy_outbound_tag_,
-            .outbound_type = "proxy",
-            .local_host = udp_bind_host_,
-            .local_port = udp_bind_port_,
-            .remote_host = tcp_peer_host_,
-            .remote_port = tcp_peer_port_,
-        });
-        LOG_INFO("{} trace {:016x} conn {} client {}:{} udp bind {}:{} target {}:{} proxy udp outbound ready bind {}:{}",
+    const socks_udp_header header{.frag = 0, .addr = datagram.target_host, .port = datagram.target_port};
+    const auto udp_header = socks_codec::encode_udp_header(header);
+    if (udp_header.empty())
+    {
+        LOG_WARN("{} trace {:016x} conn {} client {}:{} udp bind {}:{} invalid proxy udp source {}:{}",
+                 log_event::kSocks,
+                 trace_id_,
+                 conn_id_,
+                 current_client_host(),
+                 current_client_port(),
+                 udp_bind_host_,
+                 udp_bind_port_,
+                 datagram.target_host,
+                 datagram.target_port);
+        co_return 0;
+    }
+
+    const auto packet_len = udp_header.size() + datagram.payload.size();
+    if (packet_len > constants::udp::kMaxPayload)
+    {
+        LOG_WARN("{} trace {:016x} conn {} client {}:{} udp bind {}:{} proxy udp reply oversized drop size {} max {}",
+                 log_event::kSocks,
+                 trace_id_,
+                 conn_id_,
+                 current_client_host(),
+                 current_client_port(),
+                 udp_bind_host_,
+                 udp_bind_port_,
+                 packet_len,
+                 constants::udp::kMaxPayload);
+        co_return 0;
+    }
+
+    std::vector<uint8_t> packet;
+    packet.reserve(packet_len);
+    packet.insert(packet.end(), udp_header.begin(), udp_header.end());
+    packet.insert(packet.end(), datagram.payload.begin(), datagram.payload.end());
+
+    const auto [send_ec, send_n] =
+        co_await udp_socket_.async_send_to(boost::asio::buffer(packet), client_addr_, boost::asio::as_tuple(boost::asio::use_awaitable));
+    ec = send_ec;
+    if (ec)
+    {
+        LOG_ERROR("{} trace {:016x} conn {} client {}:{} udp bind {}:{} send proxy udp reply failed {}",
+                  log_event::kSocks,
+                  trace_id_,
+                  conn_id_,
+                  current_client_host(),
+                  current_client_port(),
+                  udp_bind_host_,
+                  udp_bind_port_,
+                  ec.message());
+        send_reply_failed = true;
+        co_return 0;
+    }
+    co_return send_n;
+}
+
+boost::asio::awaitable<bool> socks_udp_session::connect_proxy_outbound(boost::system::error_code& ec)
+{
+    trace_store::instance().record_event(trace_event{
+        .trace_id = trace_id_,
+        .conn_id = conn_id_,
+        .stage = trace_stage::kOutboundConnectStart,
+        .result = trace_result::kOk,
+        .inbound_tag = inbound_tag_,
+        .inbound_type = "socks",
+        .outbound_tag = proxy_outbound_tag_,
+        .outbound_type = "proxy",
+        .target_host = has_last_target_ ? last_target_addr_ : "unknown",
+        .target_port = static_cast<uint16_t>(has_last_target_ ? last_target_port_ : 0U),
+        .local_host = udp_bind_host_,
+        .local_port = udp_bind_port_,
+        .remote_host = tcp_peer_host_,
+        .remote_port = tcp_peer_port_,
+    });
+    const auto request = make_proxy_outbound_request();
+    const auto connect_result = co_await connect_udp_proxy_flow(worker_.io_context.get_executor(), request, proxy_outbound_tag_, cfg_);
+    co_return co_await apply_proxy_outbound_connect_result(connect_result, ec);
+}
+
+void socks_udp_session::record_proxy_outbound_connect_result(const bool success, const boost::system::error_code& ec) const
+{
+    trace_event event{
+        .trace_id = trace_id_,
+        .conn_id = conn_id_,
+        .stage = trace_stage::kOutboundConnectDone,
+        .result = success ? trace_result::kOk : trace_result::kFail,
+        .inbound_tag = inbound_tag_,
+        .inbound_type = "socks",
+        .outbound_tag = proxy_outbound_tag_,
+        .outbound_type = "proxy",
+        .target_host = has_last_target_ ? last_target_addr_ : "unknown",
+        .target_port = static_cast<uint16_t>(has_last_target_ ? last_target_port_ : 0U),
+        .local_host = udp_bind_host_,
+        .local_port = udp_bind_port_,
+        .remote_host = tcp_peer_host_,
+        .remote_port = tcp_peer_port_,
+    };
+    if (ec)
+    {
+        event.error_code = static_cast<int32_t>(ec.value());
+        event.error_message = ec.message();
+    }
+    trace_store::instance().record_event(std::move(event));
+}
+
+boost::asio::awaitable<bool> socks_udp_session::apply_proxy_outbound_connect_result(
+    const udp_proxy_outbound_connect_result& connect_result, boost::system::error_code& ec)
+{
+    if (connect_result.ec || connect_result.outbound == nullptr)
+    {
+        ec = connect_result.ec ? connect_result.ec : boost::asio::error::not_connected;
+        record_proxy_outbound_connect_result(false, ec);
+        LOG_WARN("{} trace {:016x} conn {} client {}:{} udp bind {}:{} target {}:{} connect proxy udp outbound failed {} rep {}",
                  log_event::kSocks,
                  trace_id_,
                  conn_id_,
@@ -1053,43 +1210,80 @@ boost::asio::awaitable<bool> socks_udp_associate_session::ensure_proxy_outbound(
                  udp_bind_port_,
                  has_last_target_ ? last_target_addr_ : "unknown",
                  has_last_target_ ? last_target_port_ : 0,
-                 proxy_outbound_->bind_host(),
-                 proxy_outbound_->bind_port());
+                 ec.message(),
+                 connect_result.socks_rep);
+        co_return false;
+    }
+
+    proxy_outbound_ = connect_result.outbound;
+    record_proxy_outbound_connect_result(true, {});
+    LOG_INFO("{} trace {:016x} conn {} client {}:{} udp bind {}:{} target {}:{} proxy udp outbound ready bind {}:{}",
+             log_event::kSocks,
+             trace_id_,
+             conn_id_,
+             current_client_host(),
+             current_client_port(),
+             udp_bind_host_,
+             udp_bind_port_,
+             has_last_target_ ? last_target_addr_ : "unknown",
+             has_last_target_ ? last_target_port_ : 0,
+             proxy_outbound_->bind_host(),
+             proxy_outbound_->bind_port());
+    co_return true;
+}
+
+boost::asio::awaitable<bool> socks_udp_session::start_proxy_outbound_reader(boost::system::error_code& ec)
+{
+    const auto [send_ec] =
+        co_await proxy_outbound_channel_.async_send(boost::system::error_code{}, proxy_outbound_, boost::asio::as_tuple(boost::asio::use_awaitable));
+    if (send_ec)
+    {
+        ec = send_ec;
+        LOG_WARN("{} trace {:016x} conn {} client {}:{} udp bind {}:{} target {}:{} start proxy udp reader failed {}",
+                 log_event::kSocks,
+                 trace_id_,
+                 conn_id_,
+                 current_client_host(),
+                 current_client_port(),
+                 udp_bind_host_,
+                 udp_bind_port_,
+                 has_last_target_ ? last_target_addr_ : "unknown",
+                 has_last_target_ ? last_target_port_ : 0,
+                 ec.message());
+        auto outbound = proxy_outbound_;
+        proxy_outbound_.reset();
+        proxy_outbound_started_ = false;
+        if (outbound != nullptr)
+        {
+            co_await outbound->close();
+        }
+        co_return false;
+    }
+    proxy_outbound_started_ = true;
+    co_return true;
+}
+
+boost::asio::awaitable<bool> socks_udp_session::ensure_proxy_outbound(boost::system::error_code& ec)
+{
+    if (proxy_outbound_ == nullptr)
+    {
+        if (!(co_await connect_proxy_outbound(ec)))
+        {
+            co_return false;
+        }
     }
 
     if (!proxy_outbound_started_)
     {
-        const auto [send_ec] = co_await proxy_outbound_channel_.async_send(
-            boost::system::error_code{}, proxy_outbound_, boost::asio::as_tuple(boost::asio::use_awaitable));
-        if (send_ec)
+        if (!(co_await start_proxy_outbound_reader(ec)))
         {
-            ec = send_ec;
-            LOG_WARN("{} trace {:016x} conn {} client {}:{} udp bind {}:{} target {}:{} start proxy udp reader failed {}",
-                     log_event::kSocks,
-                     trace_id_,
-                     conn_id_,
-                     current_client_host(),
-                     current_client_port(),
-                     udp_bind_host_,
-                     udp_bind_port_,
-                     has_last_target_ ? last_target_addr_ : "unknown",
-                     has_last_target_ ? last_target_port_ : 0,
-                     ec.message());
-            auto outbound = proxy_outbound_;
-            proxy_outbound_.reset();
-            proxy_outbound_started_ = false;
-            if (outbound != nullptr)
-            {
-                co_await outbound->close();
-            }
             co_return false;
         }
-        proxy_outbound_started_ = true;
     }
     co_return true;
 }
 
-void socks_udp_associate_session::clear_proxy_outbound_if_current(const std::shared_ptr<udp_proxy_outbound>& outbound)
+void socks_udp_session::clear_proxy_outbound_if_current(const std::shared_ptr<udp_proxy_outbound>& outbound)
 {
     if (outbound == nullptr || proxy_outbound_ != outbound)
     {
@@ -1100,7 +1294,7 @@ void socks_udp_associate_session::clear_proxy_outbound_if_current(const std::sha
     proxy_outbound_started_ = false;
 }
 
-boost::asio::awaitable<void> socks_udp_associate_session::udp_socket_loop()
+boost::asio::awaitable<void> socks_udp_session::udp_socket_loop()
 {
     std::vector<uint8_t> buf(65535);
     boost::asio::ip::udp::endpoint sender;
@@ -1191,17 +1385,17 @@ boost::asio::awaitable<void> socks_udp_associate_session::udp_socket_loop()
             .result = decision.route == route_type::kBlock ? trace_result::kFail : trace_result::kOk,
             .inbound_tag = inbound_tag_,
             .inbound_type = "socks",
-            .target_host = udp_header.addr,
-            .target_port = udp_header.port,
-            .route_type = relay::to_string(decision.route),
-            .match_type = decision.match_type,
-            .match_value = decision.match_value,
             .outbound_tag = decision.outbound_tag,
             .outbound_type = decision.outbound_type,
+            .target_host = udp_header.addr,
+            .target_port = udp_header.port,
             .local_host = udp_bind_host_,
             .local_port = udp_bind_port_,
             .remote_host = tcp_peer_host_,
             .remote_port = tcp_peer_port_,
+            .route_type = relay::to_string(decision.route),
+            .match_type = decision.match_type,
+            .match_value = decision.match_value,
         });
         if (decision.route == route_type::kBlock)
         {
@@ -1219,54 +1413,14 @@ boost::asio::awaitable<void> socks_udp_associate_session::udp_socket_loop()
         }
 
         const auto payload_len = n - udp_header.header_len;
-        if (decision.route == route_type::kProxy)
-        {
-            boost::system::error_code open_ec;
-            if (!(co_await ensure_proxy_outbound(open_ec)))
-            {
-                break;
-            }
-
-            const auto outbound = proxy_outbound_;
-            if (outbound == nullptr)
-            {
-                break;
-            }
-
-            boost::system::error_code write_ec;
-            co_await outbound->send_datagram(udp_header.addr, udp_header.port, buf.data() + udp_header.header_len, payload_len, write_ec);
-            if (write_ec)
-            {
-                clear_proxy_outbound_if_current(outbound);
-                co_await outbound->close();
-                LOG_WARN("{} trace {:016x} conn {} client {}:{} udp bind {}:{} target {}:{} write proxy udp datagram failed {}",
-                         log_event::kSocks,
-                         trace_id_,
-                         conn_id_,
-                         current_client_host(),
-                         current_client_port(),
-                         udp_bind_host_,
-                         udp_bind_port_,
-                         udp_header.addr,
-                         udp_header.port,
-                         write_ec.message());
-                continue;
-            }
-            tx_bytes_ += payload_len;
-            last_activity_time_ms_ = net::now_ms();
-            continue;
-        }
-
-        boost::system::error_code ec;
-        co_await forward_direct_packet(udp_header, buf.data() + udp_header.header_len, payload_len, ec);
-        if (ec)
+        if (!(co_await process_udp_packet(udp_header, decision, buf.data() + udp_header.header_len, payload_len)))
         {
             break;
         }
     }
 }
 
-boost::asio::awaitable<void> socks_udp_associate_session::wait_and_proxy_to_udp_sock()
+boost::asio::awaitable<void> socks_udp_session::wait_and_proxy_to_udp_sock()
 {
     while (true)
     {
@@ -1284,20 +1438,32 @@ boost::asio::awaitable<void> socks_udp_associate_session::wait_and_proxy_to_udp_
     }
 }
 
-boost::asio::awaitable<void> socks_udp_associate_session::proxy_to_udp_sock(std::shared_ptr<udp_proxy_outbound> outbound)
+boost::asio::awaitable<void> socks_udp_session::proxy_to_udp_sock(std::shared_ptr<udp_proxy_outbound> outbound)
 {
     const auto read_timeout = (cfg_.timeout.idle == 0) ? cfg_.timeout.read : std::max(cfg_.timeout.read, cfg_.timeout.idle + 2);
-    boost::system::error_code ec;
-    while (true)
-    {
-        const auto datagram = co_await outbound->receive_datagram(read_timeout, ec);
-        if (ec)
+    bool send_reply_failed = false;
+    proxy_outbound_reply_relay_context relay_context{
+        .read_timeout_sec = static_cast<uint32_t>(read_timeout),
+        .last_activity_time_ms = last_activity_time_ms_,
+        .rx_bytes = rx_bytes_,
+    };
+    co_await relay_proxy_outbound_replies(
+        outbound,
+        relay_context,
+        [this]() { return stopped_; },
+        [this, &send_reply_failed](const proxy::udp_datagram& datagram, boost::system::error_code& ec)
+            -> boost::asio::awaitable<std::size_t>
         {
-            if (ec == boost::asio::error::timed_out)
-            {
-                continue;
-            }
+            co_return co_await forward_proxy_reply_to_client(datagram, ec, send_reply_failed);
+        },
+        [this, &outbound, &send_reply_failed](const boost::system::error_code& ec)
+        {
             clear_proxy_outbound_if_current(outbound);
+            if (send_reply_failed)
+            {
+                close_impl();
+                return;
+            }
             if (!stopped_ && !net::is_socket_close_error(ec))
             {
                 LOG_WARN("{} trace {:016x} conn {} client {}:{} udp bind {}:{} read proxy udp datagram failed {}",
@@ -1310,74 +1476,15 @@ boost::asio::awaitable<void> socks_udp_associate_session::proxy_to_udp_sock(std:
                          udp_bind_port_,
                          ec.message());
             }
-            co_await outbound->close();
-            break;
-        }
-        if (!has_client_addr_)
-        {
-            continue;
-        }
-
-        const socks_udp_header header{.frag = 0, .addr = datagram.target_host, .port = datagram.target_port};
-        const auto udp_header = socks_codec::encode_udp_header(header);
-        if (udp_header.empty())
-        {
-            LOG_WARN("{} trace {:016x} conn {} client {}:{} udp bind {}:{} invalid proxy udp source {}:{}",
-                     log_event::kSocks,
-                     trace_id_,
-                     conn_id_,
-                     current_client_host(),
-                     current_client_port(),
-                     udp_bind_host_,
-                     udp_bind_port_,
-                     datagram.target_host,
-                     datagram.target_port);
-            continue;
-        }
-
-        const auto packet_len = udp_header.size() + datagram.payload.size();
-        if (packet_len > constants::udp::kMaxPayload)
-        {
-            LOG_WARN("{} trace {:016x} conn {} client {}:{} udp bind {}:{} proxy udp reply oversized drop size {} max {}",
-                     log_event::kSocks,
-                     trace_id_,
-                     conn_id_,
-                     current_client_host(),
-                     current_client_port(),
-                     udp_bind_host_,
-                     udp_bind_port_,
-                     packet_len,
-                     constants::udp::kMaxPayload);
-            continue;
-        }
-
-        std::vector<uint8_t> packet;
-        packet.reserve(packet_len);
-        packet.insert(packet.end(), udp_header.begin(), udp_header.end());
-        packet.insert(packet.end(), datagram.payload.begin(), datagram.payload.end());
-
-        const auto [send_ec, send_n] =
-            co_await udp_socket_.async_send_to(boost::asio::buffer(packet), client_addr_, boost::asio::as_tuple(boost::asio::use_awaitable));
-        if (send_ec)
-        {
-            LOG_ERROR("{} trace {:016x} conn {} client {}:{} udp bind {}:{} send proxy udp reply failed {}",
-                      log_event::kSocks,
-                      trace_id_,
-                      conn_id_,
-                      current_client_host(),
-                      current_client_port(),
-                      udp_bind_host_,
-                      udp_bind_port_,
-                      send_ec.message());
-            close_impl();
-            co_return;
-        }
-        rx_bytes_ += send_n;
-        last_activity_time_ms_ = net::now_ms();
+        });
+    clear_proxy_outbound_if_current(outbound);
+    if (!stopped_)
+    {
+        co_await outbound->close();
     }
 }
 
-boost::asio::awaitable<void> socks_udp_associate_session::keep_tcp_alive()
+boost::asio::awaitable<void> socks_udp_session::keep_tcp_alive()
 {
     std::array<char, constants::udp::kTcpControlReadBufferSize> buf{};
     std::size_t ignored_bytes = 0;
@@ -1439,24 +1546,16 @@ boost::asio::awaitable<void> socks_udp_associate_session::keep_tcp_alive()
     }
 }
 
-boost::asio::awaitable<void> socks_udp_associate_session::idle_watchdog()
+boost::asio::awaitable<void> socks_udp_session::idle_watchdog()
 {
-    if (cfg_.timeout.idle == 0)
-    {
-        co_return;
-    }
-
-    while (true)
-    {
-        idle_timer_.expires_after(std::chrono::seconds(1));
-        const auto [wait_ec] = co_await idle_timer_.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
-        if (wait_ec)
-        {
-            break;
-        }
-        const auto elapsed_ms = net::now_ms() - last_activity_time_ms_;
-        const auto idle_timeout_ms = static_cast<uint64_t>(cfg_.timeout.idle) * 1000ULL;
-        if (elapsed_ms > idle_timeout_ms)
+    datagram_idle_watchdog_context relay_context{
+        .timer = idle_timer_,
+        .idle_timeout_sec = cfg_.timeout.idle,
+        .last_activity_time_ms = last_activity_time_ms_,
+    };
+    co_await run_datagram_idle_watchdog(
+        relay_context,
+        [this]()
         {
             LOG_WARN("{} trace {:016x} conn {} tcp peer {}:{} udp bind {}:{} client {}:{} last_target {}:{} udp session idle closing",
                      log_event::kSocks,
@@ -1470,9 +1569,7 @@ boost::asio::awaitable<void> socks_udp_associate_session::idle_watchdog()
                      current_client_port(),
                      has_last_target_ ? last_target_addr_ : "unknown",
                      has_last_target_ ? last_target_port_ : 0);
-            break;
-        }
-    }
+        });
 }
 
 }    // namespace relay

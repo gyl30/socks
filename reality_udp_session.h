@@ -15,18 +15,19 @@
 #include "config.h"
 #include "lru_cache.h"
 #include "net_utils.h"
-#include "router.h"
 #include "proxy_protocol.h"
-#include "udp_proxy_outbound.h"
 #include "proxy_reality_connection.h"
+#include "request_context.h"
+#include "router.h"
+#include "udp_proxy_outbound.h"
 
 namespace relay
 {
 
-class reality_udp_associate_session : public std::enable_shared_from_this<reality_udp_associate_session>
+class reality_udp_session : public std::enable_shared_from_this<reality_udp_session>
 {
    public:
-    reality_udp_associate_session(boost::asio::io_context& io_context,
+    reality_udp_session(boost::asio::io_context& io_context,
                                   std::shared_ptr<proxy_reality_connection> connection,
                                   std::shared_ptr<router> router,
                                   uint32_t conn_id,
@@ -38,12 +39,34 @@ class reality_udp_associate_session : public std::enable_shared_from_this<realit
 
    private:
     boost::asio::awaitable<void> start_impl(const proxy::udp_associate_request& request);
+    [[nodiscard]] boost::asio::awaitable<bool> establish_udp_associate();
+    [[nodiscard]] boost::asio::awaitable<bool> send_udp_associate_reply(uint8_t socks_rep);
+    [[nodiscard]] bool open_bind_udp_socket();
+    void close_udp_socket();
+    [[nodiscard]] request_context make_route_request(const proxy::udp_datagram& datagram) const;
+    [[nodiscard]] request_context make_proxy_outbound_request() const;
+    [[nodiscard]] boost::asio::awaitable<bool> forward_direct_datagram(const proxy::udp_datagram& datagram, const std::string& route_name);
+    [[nodiscard]] boost::asio::awaitable<bool> forward_proxy_datagram(const proxy::udp_datagram& datagram,
+                                                                      const route_decision& decision,
+                                                                      const std::string& route_name);
+    [[nodiscard]] boost::asio::awaitable<bool> process_connection_datagram(const proxy::udp_datagram& datagram,
+                                                                            const route_decision& decision,
+                                                                            const std::string& route_name);
+    [[nodiscard]] boost::asio::awaitable<std::size_t> forward_proxy_reply_to_connection(const proxy::udp_datagram& datagram,
+                                                                                        const std::string& outbound_tag,
+                                                                                        boost::system::error_code& ec);
     boost::asio::awaitable<void> connection_to_udp();
     boost::asio::awaitable<void> udp_to_connection();
     boost::asio::awaitable<void> proxy_to_connection(const std::string& outbound_tag, const std::shared_ptr<udp_proxy_outbound>& upstream);
     boost::asio::awaitable<void> idle_watchdog();
     [[nodiscard]] boost::asio::awaitable<route_decision> decide_route(const proxy::udp_datagram& datagram) const;
     [[nodiscard]] boost::asio::awaitable<std::shared_ptr<udp_proxy_outbound>> get_proxy_outbound(const std::string& outbound_tag);
+    [[nodiscard]] boost::asio::awaitable<std::shared_ptr<udp_proxy_outbound>> apply_proxy_outbound_connect_result(
+        const std::string& outbound_tag,
+        const udp_proxy_outbound_connect_result& connect_result);
+    void record_proxy_outbound_connect_result(const std::string& outbound_tag,
+                                              bool success,
+                                              const boost::system::error_code& ec) const;
     boost::asio::awaitable<void> close_proxy_outbounds();
     [[nodiscard]] boost::asio::awaitable<boost::asio::ip::udp::endpoint> resolve_target_endpoint(const std::string& host,
                                                                                                  uint16_t port,
