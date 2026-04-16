@@ -7,24 +7,36 @@
 - 一个 UDP 代理会话对应一条 `udp_proxy_outbound -> proxy_reality_connection`。
 - 服务端通过 `reality_inbound` 完成 REALITY 认证后，只处理一个代理会话。
 - UDP 仍保留 `udp_datagram` framing，用来保存报文边界；它只负责报文边界，不承担连接复用。
+- 域名解析统一使用系统 dns，不引入自定义 dns 组件。
 
 ## 2. 总体架构与数据流
+
+当前 TCP/UDP 主路径已经收敛到四个公共模块：
+- `tcp_connect_flow`：统一处理目标识别、路由决策、出站实例创建。
+- `udp_session_flow`：统一处理 UDP 路由决策、模式选择、代理出站建立。
+- `stream_relay`：统一处理 `socket <-> tcp_outbound_stream` 的双向转发与 idle watchdog。
+- `datagram_relay`：统一处理 UDP 回包循环、代理回包循环与 idle watchdog。
 
 ```mermaid
 flowchart TD
   App[客户端应用] -->|TCP/UDP| Inbound{SOCKS5 / TPROXY / TUN}
 
-  Inbound -->|SOCKS5 TCP| SocksTcp["socks_control_session -> socks_tcp_connect_session"]
-  Inbound -->|SOCKS5 UDP| SocksUdp["socks_control_session -> socks_udp_associate_session"]
+  Inbound -->|SOCKS5| SocksProto["socks_session -> socks_protocol_session"]
+  SocksProto -->|CONNECT| SocksTcp["socks_tcp_session"]
+  SocksProto -->|UDP ASSOCIATE| SocksUdp["socks_udp_session"]
   Inbound -->|TPROXY TCP| TproxyTcp["tproxy_inbound -> tproxy_tcp_session"]
   Inbound -->|TPROXY UDP| TproxyUdp["tproxy_inbound -> tproxy_udp_session"]
-  Inbound -->|TUN TCP/UDP| TunInbound["tun_inbound -> tun_tcp_session / tun_udp_session"]
+  Inbound -->|TUN TCP| TunTcp["tun_inbound -> tun_tcp_session"]
+  Inbound -->|TUN UDP| TunUdp["tun_inbound -> tun_udp_session"]
 
-  SocksTcp --> Router[router]
-  SocksUdp --> Router
-  TproxyTcp --> Router
-  TproxyUdp --> Router
-  TunInbound --> Router
+  SocksTcp --> TcpFlow[tcp_connect_flow]
+  TproxyTcp --> TcpFlow
+  TunTcp --> TcpFlow
+  SocksUdp --> UdpFlow[udp_session_flow]
+  TproxyUdp --> UdpFlow
+  TunUdp --> UdpFlow
+  TcpFlow --> Router[router]
+  UdpFlow --> Router
 
   Router -->|direct,tcp| DirectTcp[direct_tcp_outbound]
   Router -->|direct,udp| DirectUdp[direct UDP socket]
@@ -43,10 +55,11 @@ flowchart TD
   Network <--> ServerReality["reality_engine (server)"]
   ServerReality --> ServerConn["proxy_reality_connection (server)"]
   ServerConn --> RealityInbound[reality_inbound]
-  RealityInbound --> RealityTcp[reality_tcp_connect_session]
-  RealityInbound --> RealityUdp[reality_udp_associate_session]
-  RemoteTcp --> Target
-  RemoteUdp --> Target
+  RealityInbound --> RealityProto["reality_protocol_session"]
+  RealityProto --> RealityTcp[reality_tcp_session]
+  RealityProto --> RealityUdp[reality_udp_session]
+  RealityTcp --> TcpFlow
+  RealityUdp --> UdpFlow
 
   Block -.-> Note1["不再存在旧的连接池 / 复用层 / stream 管理器"]
 ```
@@ -58,21 +71,25 @@ sequenceDiagram
   autonumber
   participant App as Client App
   participant Inb as Inbound
+  participant Flow as tcp_connect_flow
   participant Router as router
   participant Up as direct_tcp_outbound / proxy_tcp_outbound
   participant Conn as proxy_reality_connection
   participant Server as reality_inbound
-  participant RTcp as reality_tcp_connect_session
+  participant Proto as reality_protocol_session
+  participant RTcp as reality_tcp_session
   participant Target as Target
 
   App->>Inb: TCP connect / CONNECT
-  Inb->>Router: decide_ip / decide_domain
+  Inb->>Flow: request_context
+  Flow->>Router: decide_ip / decide_domain
 
   alt route=direct
-    Inb->>Up: direct_tcp_outbound.connect
+    Flow->>Up: direct_tcp_outbound.connect
     Up->>Target: TCP connect
     Target-->>Up: connected
-    Up-->>Inb: success
+    Up-->>Flow: success
+    Flow-->>Inb: connect ok
     Inb-->>App: success / reply
     loop 双向转发
       App->>Inb: data
@@ -82,25 +99,29 @@ sequenceDiagram
       Inb->>App: data
     end
   else route=proxy
-    Inb->>Up: proxy_tcp_outbound.connect
+    Flow->>Up: proxy_tcp_outbound.connect
     Up->>Conn: connect()
     Conn->>Server: REALITY handshake
     Up->>Conn: tcp_connect_request
     Conn->>Server: encrypted request
-    Server->>RTcp: start(request)
-    RTcp->>Target: resolve + connect
+    Server->>Proto: start(request)
+    Proto->>RTcp: start(request)
+    RTcp->>Flow: request_context
+    Flow->>Target: resolve + connect
 
     alt connect fail
       RTcp->>Server: tcp_connect_reply(fail)
       Server->>Conn: encrypted reply
       Conn->>Up: tcp_connect_reply(fail)
-      Up-->>Inb: connect failed
+      Up-->>Flow: connect failed
+      Flow-->>Inb: connect failed
       Inb-->>App: error reply
     else connect ok
       RTcp->>Server: tcp_connect_reply(success, bind)
       Server->>Conn: encrypted reply
       Conn->>Up: tcp_connect_reply(success)
-      Up-->>Inb: connect ok
+      Up-->>Flow: connect ok
+      Flow-->>Inb: connect ok
       Inb-->>App: success / reply
 
       loop 双向转发
@@ -127,34 +148,40 @@ sequenceDiagram
   autonumber
   participant App as Client App
   participant Inb as Inbound
+  participant Flow as udp_session_flow
   participant Router as router
   participant Direct as direct UDP socket
   participant ProxyUdp as udp_proxy_outbound
   participant Conn as proxy_reality_connection
   participant Server as reality_inbound
-  participant RUdp as reality_udp_associate_session
+  participant Proto as reality_protocol_session
+  participant RUdp as reality_udp_session
   participant Target as Target
 
   App->>Inb: UDP 数据包
-  Inb->>Router: decide_ip / decide_domain
+  Inb->>Flow: request_context
+  Flow->>Router: decide_ip / decide_domain
 
   alt route=direct
-    Inb->>Direct: sendto(target)
+    Flow->>Direct: sendto(target)
     Target-->>Direct: UDP reply
-    Direct-->>Inb: reply
+    Direct-->>Flow: reply
+    Flow-->>Inb: reply
     Inb-->>App: reply
   else route=proxy
-    Inb->>ProxyUdp: connect()
+    Flow->>ProxyUdp: connect()
     ProxyUdp->>Conn: connect()
     Conn->>Server: REALITY handshake
     ProxyUdp->>Conn: udp_associate_request
     Conn->>Server: encrypted request
-    Server->>RUdp: start(request)
+    Server->>Proto: start(request)
+    Proto->>RUdp: start(request)
     RUdp->>Server: udp_associate_reply
     Server->>Conn: encrypted reply
     Conn->>ProxyUdp: udp_associate_reply
 
-    Inb->>ProxyUdp: send_datagram(host, port, payload)
+    Inb->>Flow: send_datagram(host, port, payload)
+    Flow->>ProxyUdp: send_datagram(host, port, payload)
     ProxyUdp->>Conn: udp_datagram
     Conn->>Server: encrypted datagram
     Server->>RUdp: sendto(target)
@@ -162,7 +189,8 @@ sequenceDiagram
     RUdp-->>Server: udp_datagram
     Server-->>Conn: encrypted datagram
     Conn-->>ProxyUdp: udp_datagram
-    ProxyUdp-->>Inb: reply
+    ProxyUdp-->>Flow: reply
+    Flow-->>Inb: reply
     Inb-->>App: reply
   end
 ```
@@ -210,8 +238,11 @@ flowchart TD
   Lwip -->|TCP| TunTcp[tun_tcp_session]
   Lwip -->|UDP| TunUdp[tun_udp_session]
 
-  TunTcp --> Router[router]
-  TunUdp --> Router
+  TunTcp --> TcpFlow[tcp_connect_flow]
+  TunUdp --> UdpFlow[udp_session_flow]
+
+  TcpFlow --> Router[router]
+  UdpFlow --> Router
 
   Router -->|direct| Direct[direct_tcp_outbound / direct UDP socket]
   Router -->|proxy,tcp| ProxyTcp[proxy_tcp_outbound]
@@ -237,6 +268,11 @@ flowchart TD
 - 已删除旧的预建隧道、连接复用和控制帧实现。
 - 已删除旧的 `connection_tracker` 和只增减不读取的连接守卫。
 - `route=proxy` 时，TCP 请求和 UDP 会话都直接新建 `proxy_reality_connection`，不再存在预建隧道槽位。
+- `socks_session` 已拆出 `socks_protocol_session`，`reality_inbound` 已拆出 `reality_protocol_session`。
+- `socks_tcp_session`、`reality_tcp_session`、`tproxy_tcp_session`、`tun_tcp_session` 已接入统一 `tcp_connect_flow`。
+- `socks_udp_session`、`reality_udp_session`、`tproxy_udp_session`、`tun_udp_session` 已接入统一 `udp_session_flow`。
+- `socks_tcp_session`、`reality_tcp_session`、`tproxy_tcp_session` 已接入统一 `stream_relay`。
+- 四条 UDP 会话路径都已经复用 `datagram_relay` 的公共收包、回包与 idle watchdog 编排能力。
 - 连接关闭和正常收尾错误判断统一收敛到 `net_utils`：
   `is_basic_close_error`、`is_socket_close_error`、`is_socket_shutdown_error`、`is_channel_close_error`。
 - 日志统一使用 `log_event::kRelay`，语义与当前架构一致。

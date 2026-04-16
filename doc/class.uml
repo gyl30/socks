@@ -21,19 +21,19 @@ package "Client Inbound" {
         - accept_loop()
     }
 
-    class socks_control_session {
+    class socks_session {
         + start()
         - handshake()
         - read_request()
     }
 
-    class socks_tcp_connect_session {
+    class socks_tcp_session {
         + start(host, port)
         - run(host, port)
         - idle_watchdog()
     }
 
-    class socks_udp_associate_session {
+    class socks_udp_session {
         + start(host, port)
         - run(host, port)
         - ensure_proxy_outbound()
@@ -148,7 +148,7 @@ package "Server Side" {
         - process_proxy_request()
     }
 
-    class reality_tcp_connect_session {
+    class reality_tcp_session {
         + start(request)
         - run(request)
         - send_connect_reply()
@@ -158,7 +158,7 @@ package "Server Side" {
         - idle_watchdog()
     }
 
-    class reality_udp_associate_session {
+    class reality_udp_session {
         + start(request)
         - start_impl(request)
         - connection_to_udp()
@@ -171,15 +171,15 @@ package "Server Side" {
 
 socks_inbound o-- io_context_pool
 socks_inbound *-- router
-socks_inbound ..> socks_control_session : creates
+socks_inbound ..> socks_session : creates
 
-socks_control_session ..> socks_tcp_connect_session : CONNECT
-socks_control_session ..> socks_udp_associate_session : UDP ASSOCIATE
+socks_session ..> socks_tcp_session : CONNECT
+socks_session ..> socks_udp_session : UDP ASSOCIATE
 
-socks_tcp_connect_session ..> router
-socks_tcp_connect_session ..> tcp_outbound_stream : create_backend
-socks_udp_associate_session ..> router
-socks_udp_associate_session ..> udp_proxy_outbound : ensure_proxy_outbound
+socks_tcp_session ..> router
+socks_tcp_session ..> tcp_outbound_stream : create_backend
+socks_udp_session ..> router
+socks_udp_session ..> udp_proxy_outbound : ensure_proxy_outbound
 
 tproxy_inbound o-- io_context_pool
 tproxy_inbound *-- router
@@ -215,11 +215,11 @@ proxy_reality_connection ..> udp_datagram
 reality_inbound o-- io_context_pool
 reality_inbound *-- replay_cache
 reality_inbound ..> proxy_reality_connection : wraps accepted socket
-reality_inbound ..> reality_tcp_connect_session : tcp_connect_request
-reality_inbound ..> reality_udp_associate_session : udp_associate_request
+reality_inbound ..> reality_tcp_session : tcp_connect_request
+reality_inbound ..> reality_udp_session : udp_associate_request
 
-reality_tcp_connect_session ..> proxy_reality_connection
-reality_udp_associate_session ..> proxy_reality_connection
+reality_tcp_session ..> proxy_reality_connection
+reality_udp_session ..> proxy_reality_connection
 
 note right of proxy_reality_connection
   route=proxy 时：

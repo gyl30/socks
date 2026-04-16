@@ -226,14 +226,24 @@ set(SOCKS_SOURCES
     app_runtime.cpp
     log.cpp
     outbound.cpp
+    direct_outbound.cpp
+    datagram_relay.cpp
+    block_outbound.cpp
+    proxy_outbound.cpp
     config.cpp
     net_utils.cpp
     reality_inbound.cpp
+    reality_protocol_session.cpp
+    udp_session_flow.cpp
     socks_inbound.cpp
     router.cpp
-    socks_control_session.cpp
-    socks_tcp_connect_session.cpp
-    socks_udp_associate_session.cpp
+    socks_session.cpp
+    socks_protocol_session.cpp
+    tcp_connect_flow.cpp
+    socks_tcp_session.cpp
+    stream_relay.cpp
+    stream_relay_transport.cpp
+    socks_udp_session.cpp
     reality/handshake/client_hello_builder.cpp
     tls/cipher_suite.cpp
     tls/record_validation.cpp
@@ -243,8 +253,8 @@ set(SOCKS_SOURCES
     tls/record_layer.cpp
     tls/key_schedule.cpp
     ip_matcher.cpp
-    reality_tcp_connect_session.cpp
-    reality_udp_associate_session.cpp
+    reality_tcp_session.cpp
+    reality_udp_session.cpp
     trace_store.cpp
     trace_json.cpp
     trace_web_server.cpp
@@ -259,7 +269,7 @@ set(SOCKS_SOURCES
     reality/policy/fallback_gate.cpp
     reality/policy/fallback_executor.cpp
     reality/material/material_provider.cpp
-    reality/session/session.cpp
+    reality/session/record_context.cpp
     tls/handshake_builder.cpp
     tls/handshake_message.cpp
     tls/handshake_reassembler.cpp
