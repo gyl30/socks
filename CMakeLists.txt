@@ -418,4 +418,9 @@ if(BUILD_TESTING)
     NAME reality_handshake_guardrails
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_reality_handshake_guards.py --binary $<TARGET_FILE:socks>)
   set_tests_properties(reality_handshake_guardrails PROPERTIES TIMEOUT 180)
+
+  add_test(
+    NAME config_roundtrip_smoke
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_config_roundtrip.py --binary $<TARGET_FILE:socks>)
+  set_tests_properties(config_roundtrip_smoke PROPERTIES TIMEOUT 60)
 endif()

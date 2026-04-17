@@ -14,22 +14,17 @@
 
 extern "C"
 {
-#include <openssl/bio.h>
 #include <openssl/evp.h>
-}
-
-#include <boost/asio.hpp>
-
-extern "C"
-{
+#include <openssl/bio.h>
 #include <openssl/rand.h>
 #include <openssl/x509.h>
 #include <openssl/types.h>
-#include <openssl/crypto.h>
 #include <openssl/x509_vfy.h>
+#include <openssl/crypto.h>
 #include <openssl/safestack.h>
 }
 
+#include <boost/asio.hpp>
 #include <boost/asio/awaitable.hpp>
 
 #include "log.h"
@@ -40,17 +35,17 @@ extern "C"
 #include "reality/types.h"
 #include "tls/ch_parser.h"
 #include "tls/transcript.h"
+#include "tls/key_schedule.h"
 #include "tls/crypto_util.h"
 #include "tls/cipher_suite.h"
-#include "tls/key_schedule.h"
 #include "tls/record_layer.h"
-#include "tls/handshake_builder.h"
-#include "tls/handshake_message.h"
 #include "tls/record_validation.h"
 #include "reality/handshake/auth.h"
+#include "tls/handshake_builder.h"
+#include "tls/handshake_message.h"
+#include "reality/handshake/client_handshaker.h"
 #include "tls/certificate_compression.h"
 #include "reality/handshake/fingerprint.h"
-#include "reality/handshake/client_handshaker.h"
 #include "reality/handshake/client_hello_builder.h"
 #include "reality/handshake/fingerprint_internal.h"
 namespace reality

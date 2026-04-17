@@ -2,11 +2,11 @@
 #include <chrono>
 #include <memory>
 #include <string>
-#include <string_view>
 #include <vector>
 #include <cstdint>
 #include <utility>
 #include <algorithm>
+#include <string_view>
 
 #include <boost/asio.hpp>
 #include <boost/asio/as_tuple.hpp>
@@ -18,15 +18,15 @@
 
 #include "log.h"
 #include "config.h"
-#include "outbound.h"
 #include "router.h"
 #include "protocol.h"
-#include "trace_store.h"
+#include "outbound.h"
 #include "constants.h"
-#include "datagram_relay.h"
 #include "net_utils.h"
-#include "proxy_protocol.h"
+#include "trace_store.h"
+#include "datagram_relay.h"
 #include "request_context.h"
+#include "proxy_protocol.h"
 #include "udp_session_flow.h"
 #include "udp_proxy_outbound.h"
 #include "reality_udp_session.h"
