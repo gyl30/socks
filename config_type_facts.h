@@ -27,6 +27,13 @@ enum class outbound_class
     kBlock,
 };
 
+enum class proxy_outbound_kind
+{
+    kUnsupported,
+    kReality,
+    kSocks,
+};
+
 [[nodiscard]] constexpr bool is_known_inbound_type(const std::string_view type)
 {
     return type == kInboundSocks || type == kInboundTproxy || type == kInboundTun || type == kInboundReality;
@@ -88,6 +95,19 @@ enum class outbound_class
         return outbound_class::kProxy;
     }
     return outbound_class::kUnsupported;
+}
+
+[[nodiscard]] constexpr proxy_outbound_kind classify_proxy_outbound_type(const std::string_view type)
+{
+    if (type == kOutboundReality)
+    {
+        return proxy_outbound_kind::kReality;
+    }
+    if (type == kOutboundSocks)
+    {
+        return proxy_outbound_kind::kSocks;
+    }
+    return proxy_outbound_kind::kUnsupported;
 }
 
 }    // namespace config_type

@@ -120,7 +120,7 @@ boost::asio::awaitable<socks_protocol_request> socks_protocol_session::read_requ
 
 boost::asio::awaitable<void> socks_protocol_session::reply_error(const uint8_t code)
 {
-    uint8_t err[] = {socks::kVer, code, 0, socks::kAtypIpv4, 0, 0, 0, 0, 0, 0};
+    const auto err = socks::make_error_reply(code);
 
     boost::system::error_code ec;
     co_await net::wait_write_with_timeout(socket_, boost::asio::buffer(err), cfg_.timeout.write, ec);

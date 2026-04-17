@@ -14,12 +14,14 @@
 
 #include "log.h"
 #include "config.h"
+#include "config_type_facts.h"
 #include "protocol.h"
 #include "tcp_outbound_stream.h"
 #include "constants.h"
 #include "net_utils.h"
 #include "proxy_protocol.h"
 #include "proxy_reality_connection.h"
+#include "socks_client_flow.h"
 
 namespace relay
 {
@@ -105,8 +107,6 @@ class socks_tcp_outbound final : public tcp_outbound_stream
    private:
     [[nodiscard]] const config::socks_t* settings() const;
     [[nodiscard]] boost::asio::awaitable<bool> connect_server(const config::socks_t& settings, boost::system::error_code& ec);
-    [[nodiscard]] boost::asio::awaitable<bool> negotiate_method(const config::socks_t& settings, boost::system::error_code& ec);
-    [[nodiscard]] boost::asio::awaitable<bool> do_password_auth(const config::socks_t& settings, boost::system::error_code& ec);
     [[nodiscard]] boost::asio::awaitable<bool> send_connect_request(const std::string& host, uint16_t port, boost::system::error_code& ec);
     [[nodiscard]] boost::asio::awaitable<bool> read_connect_reply(tcp_outbound_connect_result& result, boost::system::error_code& ec);
 
@@ -122,41 +122,6 @@ class socks_tcp_outbound final : public tcp_outbound_stream
     boost::asio::ip::tcp::socket socket_;
     boost::asio::ip::tcp::resolver resolver_;
 };
-
-[[nodiscard]] static boost::system::error_code map_socks_rep_to_connect_error(uint8_t rep)
-{
-    switch (rep)
-    {
-        case socks::kRepSuccess:
-            return {};
-        case socks::kRepNotAllowed:
-            return boost::system::errc::make_error_code(boost::system::errc::permission_denied);
-        case socks::kRepNetUnreach:
-            return boost::asio::error::network_unreachable;
-        case socks::kRepHostUnreach:
-            return boost::asio::error::host_unreachable;
-        case socks::kRepConnRefused:
-            return boost::asio::error::connection_refused;
-        case socks::kRepTtlExpired:
-            return boost::asio::error::timed_out;
-        case socks::kRepCmdNotSupported:
-            return boost::asio::error::operation_not_supported;
-        case socks::kRepAddrTypeNotSupported:
-            return boost::asio::error::address_family_not_supported;
-        default:
-            return boost::asio::error::connection_aborted;
-    }
-}
-
-[[nodiscard]] const config::socks_t* find_socks_outbound_settings(const config& cfg, const std::string& outbound_tag)
-{
-    const auto* outbound = find_outbound_entry(cfg, outbound_tag);
-    if (outbound == nullptr || outbound->type != "socks" || !outbound->socks.has_value())
-    {
-        return nullptr;
-    }
-    return &*outbound->socks;
-}
 
 void set_connect_failure(tcp_outbound_connect_result& result, const boost::system::error_code& ec)
 {
@@ -419,74 +384,6 @@ boost::asio::awaitable<bool> socks_tcp_outbound::connect_server(const config::so
     co_return false;
 }
 
-boost::asio::awaitable<bool> socks_tcp_outbound::do_password_auth(const config::socks_t& settings, boost::system::error_code& ec)
-{
-    if (settings.username.size() > 255 || settings.password.size() > 255)
-    {
-        ec = boost::asio::error::invalid_argument;
-        co_return false;
-    }
-
-    std::vector<uint8_t> request;
-    request.reserve(3 + settings.username.size() + settings.password.size());
-    request.push_back(socks::kAuthVer);
-    request.push_back(static_cast<uint8_t>(settings.username.size()));
-    request.insert(request.end(), settings.username.begin(), settings.username.end());
-    request.push_back(static_cast<uint8_t>(settings.password.size()));
-    request.insert(request.end(), settings.password.begin(), settings.password.end());
-    co_await net::wait_write_with_timeout(socket_, boost::asio::buffer(request), cfg_.timeout.write, ec);
-    if (ec)
-    {
-        co_return false;
-    }
-
-    uint8_t reply[2] = {0};
-    co_await net::wait_read_with_timeout(socket_, boost::asio::buffer(reply), cfg_.timeout.read, ec);
-    if (ec)
-    {
-        co_return false;
-    }
-    if (reply[0] != socks::kAuthVer || reply[1] != 0x00)
-    {
-        ec = boost::system::errc::make_error_code(boost::system::errc::permission_denied);
-        co_return false;
-    }
-    co_return true;
-}
-
-boost::asio::awaitable<bool> socks_tcp_outbound::negotiate_method(const config::socks_t& settings, boost::system::error_code& ec)
-{
-    const uint8_t method = settings.auth ? socks::kMethodPassword : socks::kMethodNoAuth;
-    const uint8_t request[] = {socks::kVer, 0x01, method};
-    co_await net::wait_write_with_timeout(socket_, boost::asio::buffer(request), cfg_.timeout.write, ec);
-    if (ec)
-    {
-        co_return false;
-    }
-
-    uint8_t reply[2] = {0};
-    co_await net::wait_read_with_timeout(socket_, boost::asio::buffer(reply), cfg_.timeout.read, ec);
-    if (ec)
-    {
-        co_return false;
-    }
-    if (reply[0] != socks::kVer || reply[1] == socks::kMethodNoAcceptable)
-    {
-        ec = boost::system::errc::make_error_code(boost::system::errc::permission_denied);
-        co_return false;
-    }
-    if (reply[1] == socks::kMethodPassword)
-    {
-        co_return co_await do_password_auth(settings, ec);
-    }
-    if (reply[1] != socks::kMethodNoAuth)
-    {
-        ec = boost::asio::error::operation_not_supported;
-        co_return false;
-    }
-    co_return true;
-}
-
 boost::asio::awaitable<bool> socks_tcp_outbound::send_connect_request(const std::string& host, const uint16_t port, boost::system::error_code& ec)
 {
     std::vector<uint8_t> request = {socks::kVer, socks::kCmdConnect, 0x00};
@@ -518,68 +415,33 @@ boost::asio::awaitable<bool> socks_tcp_outbound::read_connect_reply(tcp_outbound
     result.socks_rep = header[1];
     if (result.socks_rep != socks::kRepSuccess)
     {
-        result.ec = map_socks_rep_to_connect_error(result.socks_rep);
+        result.ec = socks::map_socks_rep_to_connect_error(result.socks_rep);
         co_return false;
     }
 
-    std::vector<uint8_t> address_bytes;
-    if (header[3] == socks::kAtypIpv4)
+    std::string bind_host;
+    uint16_t bind_port = 0;
+    if (!(co_await socks_client::read_reply_address(socket_, header[3], cfg_, bind_host, bind_port, ec)))
     {
-        address_bytes.resize(6);
+        co_return false;
     }
-    else if (header[3] == socks::kAtypIpv6)
+
+    bind_host_ = bind_host;
+    bind_port_ = bind_port;
+    if (header[3] != socks::kAtypDomain)
     {
-        address_bytes.resize(18);
-    }
-    else if (header[3] == socks::kAtypDomain)
-    {
-        uint8_t domain_len = 0;
-        co_await net::wait_read_with_timeout(socket_, boost::asio::buffer(&domain_len, 1), cfg_.timeout.read, ec);
-        if (ec)
+        boost::system::error_code bind_ec;
+        const auto bind_addr = boost::asio::ip::make_address(bind_host, bind_ec);
+        if (bind_ec)
         {
+            ec = bind_ec;
             co_return false;
         }
-        address_bytes.resize(static_cast<std::size_t>(domain_len) + 2U);
-        co_await net::wait_read_with_timeout(socket_, boost::asio::buffer(address_bytes), cfg_.timeout.read, ec);
-        if (ec)
-        {
-            co_return false;
-        }
-        const std::string bind_host(address_bytes.begin(), address_bytes.end() - 2);
-        bind_host_ = bind_host;
-        bind_port_ = static_cast<uint16_t>((address_bytes[address_bytes.size() - 2] << 8) | address_bytes[address_bytes.size() - 1]);
-        co_return true;
+        result.bind_addr = socks_codec::normalize_ip_address(bind_addr);
+        result.bind_port = bind_port;
+        result.has_bind_endpoint = true;
+        bind_host_ = result.bind_addr.to_string();
     }
-    else
-    {
-        ec = boost::asio::error::address_family_not_supported;
-        co_return false;
-    }
-
-    co_await net::wait_read_with_timeout(socket_, boost::asio::buffer(address_bytes), cfg_.timeout.read, ec);
-    if (ec)
-    {
-        co_return false;
-    }
-
-    if (header[3] == socks::kAtypIpv4)
-    {
-        boost::asio::ip::address_v4::bytes_type bytes{};
-        std::copy_n(address_bytes.begin(), 4, bytes.begin());
-        result.bind_addr = boost::asio::ip::address_v4(bytes);
-        result.bind_port = static_cast<uint16_t>((address_bytes[4] << 8) | address_bytes[5]);
-    }
-    else
-    {
-        boost::asio::ip::address_v6::bytes_type bytes{};
-        std::copy_n(address_bytes.begin(), 16, bytes.begin());
-        result.bind_addr = boost::asio::ip::address_v6(bytes);
-        result.bind_port = static_cast<uint16_t>((address_bytes[16] << 8) | address_bytes[17]);
-    }
-    result.bind_addr = socks_codec::normalize_ip_address(result.bind_addr);
-    result.has_bind_endpoint = true;
-    bind_host_ = result.bind_addr.to_string();
-    bind_port_ = result.bind_port;
     co_return true;
 }
 
@@ -605,7 +467,7 @@ boost::asio::awaitable<tcp_outbound_connect_result> socks_tcp_outbound::connect(
         set_connect_failure(result, ec ? ec : boost::asio::error::host_unreachable);
         co_return result;
     }
-    if (!(co_await negotiate_method(*outbound_settings, ec)))
+    if (!(co_await socks_client::negotiate_method(socket_, *outbound_settings, cfg_, ec)))
     {
         set_connect_failure(result, ec ? ec : boost::system::errc::make_error_code(boost::system::errc::permission_denied));
         co_return result;
@@ -697,11 +559,12 @@ std::shared_ptr<tcp_outbound_stream> make_proxy_tcp_outbound_stream(const boost:
     {
         return nullptr;
     }
-    if (outbound->type == "reality")
+    const auto outbound_kind = config_type::classify_proxy_outbound_type(outbound->type);
+    if (outbound_kind == config_type::proxy_outbound_kind::kReality)
     {
         return std::make_shared<proxy_tcp_outbound>(executor, conn_id, trace_id, cfg, outbound_tag);
     }
-    if (outbound->type == "socks")
+    if (outbound_kind == config_type::proxy_outbound_kind::kSocks)
     {
         return std::make_shared<socks_tcp_outbound>(executor, conn_id, trace_id, cfg, outbound_tag);
     }
@@ -811,7 +674,7 @@ boost::asio::awaitable<void> proxy_tcp_outbound::wait_connect_reply(const std::s
                  host,
                  port,
                  reply.socks_rep);
-        set_connect_failure(result, map_socks_rep_to_connect_error(reply.socks_rep));
+        set_connect_failure(result, socks::map_socks_rep_to_connect_error(reply.socks_rep));
         co_return;
     }
 

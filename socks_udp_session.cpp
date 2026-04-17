@@ -31,37 +31,6 @@
 namespace relay
 {
 
-namespace detail
-{
-
-std::vector<uint8_t> build_udp_associate_reply(const boost::asio::ip::address& local_addr, const uint16_t udp_bind_port)
-{
-    std::vector<uint8_t> final_rep;
-    final_rep.reserve(22);
-    final_rep.push_back(socks::kVer);
-    final_rep.push_back(socks::kRepSuccess);
-    final_rep.push_back(0x00);
-
-    if (local_addr.is_v4())
-    {
-        final_rep.push_back(socks::kAtypIpv4);
-        const auto bytes = local_addr.to_v4().to_bytes();
-        final_rep.insert(final_rep.end(), bytes.begin(), bytes.end());
-    }
-    else
-    {
-        final_rep.push_back(socks::kAtypIpv6);
-        const auto bytes = local_addr.to_v6().to_bytes();
-        final_rep.insert(final_rep.end(), bytes.begin(), bytes.end());
-    }
-
-    final_rep.push_back(static_cast<uint8_t>((udp_bind_port >> 8) & 0xFF));
-    final_rep.push_back(static_cast<uint8_t>(udp_bind_port & 0xFF));
-    return final_rep;
-}
-
-}    // namespace detail
-
 namespace
 {
 
@@ -70,7 +39,7 @@ namespace
 boost::asio::awaitable<void> write_socks_error_reply(
     boost::asio::ip::tcp::socket& socket, const uint8_t rep, const uint64_t trace_id, const uint32_t conn_id, const uint32_t timeout_sec)
 {
-    uint8_t err[] = {socks::kVer, rep, 0, socks::kAtypIpv4, 0, 0, 0, 0, 0, 0};
+    const auto err = socks::make_error_reply(rep);
     boost::system::error_code ec;
     co_await net::wait_write_with_timeout(socket, boost::asio::buffer(err), timeout_sec, ec);
     if (ec)
@@ -340,7 +309,7 @@ void socks_udp_session::close_impl()
 
 boost::asio::awaitable<bool> socks_udp_session::send_udp_associate_reply(const boost::asio::ip::address& local_addr, const uint16_t udp_port)
 {
-    const auto reply = detail::build_udp_associate_reply(local_addr, udp_port);
+    const auto reply = socks::make_reply(socks::kRepSuccess, local_addr, udp_port);
     boost::system::error_code ec;
     co_await net::wait_write_with_timeout(socket_, boost::asio::buffer(reply), cfg_.timeout.write, ec);
     if (ec)

@@ -1,6 +1,7 @@
 #ifndef PROTOCOL_H
 #define PROTOCOL_H
 
+#include <array>
 #include <string>
 #include <vector>
 #include <cstddef>
@@ -44,6 +45,12 @@ constexpr uint8_t kRepAddrTypeNotSupported = 0x08;
 [[nodiscard]] bool is_valid_domain(std::string_view domain);
 
 [[nodiscard]] uint8_t map_connect_error_to_socks_rep(const boost::system::error_code& ec);
+[[nodiscard]] boost::system::error_code map_socks_rep_to_connect_error(uint8_t rep);
+[[nodiscard]] constexpr std::array<uint8_t, 10> make_error_reply(uint8_t rep)
+{
+    return {socks::kVer, rep, 0, socks::kAtypIpv4, 0, 0, 0, 0, 0, 0};
+}
+[[nodiscard]] std::vector<uint8_t> make_reply(uint8_t rep, const boost::asio::ip::address& bind_addr, uint16_t bind_port);
 
 }    // namespace socks
 

@@ -392,7 +392,7 @@ boost::asio::awaitable<tcp_outbound_connect_result> socks_tcp_session::connect_b
 
 boost::asio::awaitable<void> socks_tcp_session::reply_error(uint8_t code)
 {
-    uint8_t err[] = {socks::kVer, code, 0, socks::kAtypIpv4, 0, 0, 0, 0, 0, 0};
+    const auto err = socks::make_error_reply(code);
     boost::system::error_code ec;
     co_await net::wait_write_with_timeout(socket_, boost::asio::buffer(err), cfg_.timeout.write, ec);
     if (!ec)
@@ -415,11 +415,8 @@ boost::asio::awaitable<void> socks_tcp_session::reply_error(uint8_t code)
 
 boost::asio::awaitable<bool> socks_tcp_session::reply_success(const tcp_outbound_connect_result& connect_result)
 {
-    std::vector<uint8_t> rep;
-    rep.reserve(22);
-    rep.push_back(socks::kVer);
-    rep.push_back(socks::kRepSuccess);
-    rep.push_back(0x00);
+    boost::asio::ip::address bind_addr = boost::asio::ip::address_v4{};
+    uint16_t bind_port = 0;
     if (!connect_result.has_bind_endpoint)
     {
         LOG_WARN("{} trace {:016x} conn {} client {}:{} local {}:{} target {}:{} route {} backend bind endpoint unavailable fallback zero",
@@ -433,28 +430,13 @@ boost::asio::awaitable<bool> socks_tcp_session::reply_success(const tcp_outbound
                  target_host_,
                  target_port_,
                  route_name_);
-        rep.push_back(socks::kAtypIpv4);
-        rep.insert(rep.end(), {0, 0, 0, 0, 0, 0});
     }
     else
     {
-        auto bind_addr = socks_codec::normalize_ip_address(connect_result.bind_addr);
-        const auto bind_port = connect_result.bind_port;
-        if (bind_addr.is_v4())
-        {
-            rep.push_back(socks::kAtypIpv4);
-            const auto bytes = bind_addr.to_v4().to_bytes();
-            rep.insert(rep.end(), bytes.begin(), bytes.end());
-        }
-        else
-        {
-            rep.push_back(socks::kAtypIpv6);
-            const auto bytes = bind_addr.to_v6().to_bytes();
-            rep.insert(rep.end(), bytes.begin(), bytes.end());
-        }
-        rep.push_back(static_cast<uint8_t>((bind_port >> 8) & 0xFF));
-        rep.push_back(static_cast<uint8_t>(bind_port & 0xFF));
+        bind_addr = socks_codec::normalize_ip_address(connect_result.bind_addr);
+        bind_port = connect_result.bind_port;
     }
+    const auto rep = socks::make_reply(socks::kRepSuccess, bind_addr, bind_port);
 
     boost::system::error_code ec;
     co_await net::wait_write_with_timeout(socket_, boost::asio::buffer(rep), cfg_.timeout.write, ec);

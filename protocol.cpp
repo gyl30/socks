@@ -64,6 +64,57 @@ namespace socks
     return socks::kRepGenFail;
 }
 
+[[nodiscard]] boost::system::error_code map_socks_rep_to_connect_error(const uint8_t rep)
+{
+    switch (rep)
+    {
+        case socks::kRepSuccess:
+            return {};
+        case socks::kRepNotAllowed:
+            return boost::system::errc::make_error_code(boost::system::errc::permission_denied);
+        case socks::kRepNetUnreach:
+            return boost::asio::error::network_unreachable;
+        case socks::kRepHostUnreach:
+            return boost::asio::error::host_unreachable;
+        case socks::kRepConnRefused:
+            return boost::asio::error::connection_refused;
+        case socks::kRepTtlExpired:
+            return boost::asio::error::timed_out;
+        case socks::kRepCmdNotSupported:
+            return boost::asio::error::operation_not_supported;
+        case socks::kRepAddrTypeNotSupported:
+            return boost::asio::error::address_family_not_supported;
+        default:
+            return boost::asio::error::connection_aborted;
+    }
+}
+
+[[nodiscard]] std::vector<uint8_t> make_reply(const uint8_t rep, const boost::asio::ip::address& bind_addr, const uint16_t bind_port)
+{
+    std::vector<uint8_t> reply;
+    reply.reserve(22);
+    reply.push_back(socks::kVer);
+    reply.push_back(rep);
+    reply.push_back(0x00);
+
+    if (bind_addr.is_v4())
+    {
+        reply.push_back(socks::kAtypIpv4);
+        const auto bytes = bind_addr.to_v4().to_bytes();
+        reply.insert(reply.end(), bytes.begin(), bytes.end());
+    }
+    else
+    {
+        reply.push_back(socks::kAtypIpv6);
+        const auto bytes = bind_addr.to_v6().to_bytes();
+        reply.insert(reply.end(), bytes.begin(), bytes.end());
+    }
+
+    reply.push_back(static_cast<uint8_t>((bind_port >> 8) & 0xFF));
+    reply.push_back(static_cast<uint8_t>(bind_port & 0xFF));
+    return reply;
+}
+
 }    // namespace socks
 
 namespace

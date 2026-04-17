@@ -237,6 +237,7 @@ set(SOCKS_SOURCES
     reality_inbound.cpp
     reality_protocol_session.cpp
     udp_session_flow.cpp
+    route_flow_utils.cpp
     socks_inbound.cpp
     router.cpp
     socks_session.cpp
@@ -264,6 +265,7 @@ set(SOCKS_SOURCES
     tcp_outbound_stream.cpp
     proxy_protocol.cpp
     proxy_reality_connection.cpp
+    socks_client_flow.cpp
     protocol.cpp
     context_pool.cpp
     reality/handshake/client_handshaker.cpp
