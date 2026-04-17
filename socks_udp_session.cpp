@@ -16,17 +16,17 @@
 
 #include "log.h"
 #include "config.h"
-#include "outbound.h"
 #include "router.h"
 #include "protocol.h"
-#include "trace_store.h"
+#include "outbound.h"
 #include "constants.h"
-#include "datagram_relay.h"
 #include "net_utils.h"
+#include "trace_store.h"
 #include "context_pool.h"
+#include "datagram_relay.h"
 #include "request_context.h"
-#include "socks_udp_session.h"
 #include "udp_session_flow.h"
+#include "socks_udp_session.h"
 
 namespace relay
 {

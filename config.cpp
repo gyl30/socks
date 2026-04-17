@@ -1,34 +1,39 @@
-#include <cstdio>
 #include <cctype>
+#include <cstdio>
+#include <cstdlib>
+#include <memory>
+#include <string>
+#include <vector>
+#include <cstdint>
 #include <cstring>
 #include <fstream>
-#include <vector>
-#include <string>
-#include <memory>
 #include <utility>
-#include <cstdint>
-#include <cstdlib>
-#include <sstream>
+#include <iterator>
 #include <optional>
+#include <sstream>
 #include <algorithm>
 #include <charconv>
-#include <iterator>
 #include <stdexcept>
 #include <string_view>
 #include <unordered_set>
 
 #include <boost/asio/ip/address.hpp>
 
+extern "C"
+{
 #include <openssl/rand.h>
 #include <openssl/crypto.h>
+}
+
 #include <rapidjson/document.h>
 #include <rapidjson/error/en.h>
-#include <rapidjson/stringbuffer.h>
 #include <rapidjson/prettywriter.h>
+#include <rapidjson/stringbuffer.h>
 
 #include "config.h"
-#include "rule_file_utils.h"
+#include "config_type_facts.h"
 #include "tls/crypto_util.h"
+#include "rule_file_utils.h"
 
 namespace relay
 {
@@ -607,6 +612,14 @@ template <typename T>
         {
             return false;
         }
+        if (!config_type::is_known_inbound_type(parsed.type))
+        {
+            return fail_config(filename, entry_path + " unsupported_type");
+        }
+        if (!config_type::is_supported_inbound_type(parsed.type))
+        {
+            return fail_config(filename, entry_path + " unsupported_in_current_build");
+        }
         if (!parse_string_field(entry, "tag", entry_path, parsed.tag, filename, true))
         {
             return false;
@@ -617,11 +630,11 @@ template <typename T>
         }
 
         const auto* settings = find_member_object(entry, "settings");
-        if (settings == nullptr)
+        if (config_type::inbound_type_requires_settings(parsed.type) && settings == nullptr)
         {
             return fail_config(filename, entry_path + ".settings missing");
         }
-        if (parsed.type == "socks")
+        if (parsed.type == config_type::kInboundSocks)
         {
             config::socks_t socks;
             if (!parse_socks_settings(*settings, filename, entry_path + ".settings", socks))
@@ -630,7 +643,7 @@ template <typename T>
             }
             parsed.socks = std::move(socks);
         }
-        else if (parsed.type == "tproxy")
+        else if (parsed.type == config_type::kInboundTproxy)
         {
             config::tproxy_t tproxy;
             if (!parse_tproxy_settings(*settings, filename, entry_path + ".settings", tproxy))
@@ -639,7 +652,7 @@ template <typename T>
             }
             parsed.tproxy = std::move(tproxy);
         }
-        else if (parsed.type == "tun")
+        else if (parsed.type == config_type::kInboundTun)
         {
             config::tun_t tun;
             if (!parse_tun_settings(*settings, filename, entry_path + ".settings", tun))
@@ -648,7 +661,7 @@ template <typename T>
             }
             parsed.tun = std::move(tun);
         }
-        else if (parsed.type == "reality")
+        else if (parsed.type == config_type::kInboundReality)
         {
             config::reality_inbound_t reality;
             if (!parse_reality_inbound_settings(*settings, filename, entry_path + ".settings", reality))
@@ -691,6 +704,14 @@ template <typename T>
         {
             return false;
         }
+        if (!config_type::is_known_outbound_type(parsed.type))
+        {
+            return fail_config(filename, entry_path + " unsupported_type");
+        }
+        if (!config_type::is_supported_outbound_type(parsed.type))
+        {
+            return fail_config(filename, entry_path + " unsupported_in_current_build");
+        }
         if (!parse_string_field(entry, "tag", entry_path, parsed.tag, filename, true))
         {
             return false;
@@ -700,19 +721,20 @@ template <typename T>
             return fail_config(filename, entry_path + " duplicate_tag");
         }
 
-        if (parsed.type == "direct" || parsed.type == "block")
+        if (!config_type::outbound_type_requires_settings(parsed.type))
         {
             out.push_back(std::move(parsed));
             continue;
         }
 
-        if (parsed.type == "reality")
+        const auto* settings = find_member_object(entry, "settings");
+        if (settings == nullptr)
         {
-            const auto* settings = find_member_object(entry, "settings");
-            if (settings == nullptr)
-            {
-                return fail_config(filename, entry_path + ".settings missing");
-            }
+            return fail_config(filename, entry_path + ".settings missing");
+        }
+
+        if (parsed.type == config_type::kOutboundReality)
+        {
             config::reality_outbound_t reality;
             if (!parse_reality_outbound_settings(*settings, filename, entry_path + ".settings", reality))
             {
@@ -723,13 +745,8 @@ template <typename T>
             continue;
         }
 
-        if (parsed.type == "socks")
+        if (parsed.type == config_type::kOutboundSocks)
         {
-            const auto* settings = find_member_object(entry, "settings");
-            if (settings == nullptr)
-            {
-                return fail_config(filename, entry_path + ".settings missing");
-            }
             config::socks_t socks;
             if (!parse_socks_settings(*settings, filename, entry_path + ".settings", socks))
             {
@@ -867,131 +884,7 @@ template <typename T>
     return true;
 }
 
-void write_string_array(rapidjson::PrettyWriter<rapidjson::StringBuffer>& writer, const std::vector<std::string>& values)
-{
-    writer.StartArray();
-    for (const auto& value : values)
-    {
-        writer.String(value.c_str());
-    }
-    writer.EndArray();
-}
-
-void write_log(rapidjson::PrettyWriter<rapidjson::StringBuffer>& writer, const config::log_t& value)
-{
-    writer.Key("level");
-    writer.String(value.level.c_str());
-    writer.Key("file");
-    writer.String(value.file.c_str());
-}
-
-void write_timeout(rapidjson::PrettyWriter<rapidjson::StringBuffer>& writer, const config::timeout_t& value)
-{
-    writer.Key("read");
-    writer.Uint(value.read);
-    writer.Key("write");
-    writer.Uint(value.write);
-    writer.Key("connect");
-    writer.Uint(value.connect);
-    writer.Key("idle");
-    writer.Uint(value.idle);
-}
-
-void write_web_settings(rapidjson::PrettyWriter<rapidjson::StringBuffer>& writer, const config::web_t& value)
-{
-    writer.Key("enabled");
-    writer.Bool(value.enabled);
-    writer.Key("host");
-    writer.String(value.host.c_str());
-    writer.Key("port");
-    writer.Uint(value.port);
-}
-
-void write_socks_settings(rapidjson::PrettyWriter<rapidjson::StringBuffer>& writer, const config::socks_t& value)
-{
-    writer.Key("host");
-    writer.String(value.host.c_str());
-    writer.Key("port");
-    writer.Uint(value.port);
-    writer.Key("auth");
-    writer.Bool(value.auth);
-    if (value.auth)
-    {
-        writer.Key("username");
-        writer.String(value.username.c_str());
-        writer.Key("password");
-        writer.String(value.password.c_str());
-    }
-}
-
-void write_tproxy_settings(rapidjson::PrettyWriter<rapidjson::StringBuffer>& writer, const config::tproxy_t& value)
-{
-    writer.Key("listen_host");
-    writer.String(value.listen_host.c_str());
-    writer.Key("tcp_port");
-    writer.Uint(value.tcp_port);
-    writer.Key("udp_port");
-    writer.Uint(value.udp_port);
-    writer.Key("mark");
-    writer.Uint(value.mark);
-}
-
-void write_tun_settings(rapidjson::PrettyWriter<rapidjson::StringBuffer>& writer, const config::tun_t& value)
-{
-    writer.Key("name");
-    writer.String(value.name.c_str());
-    writer.Key("mtu");
-    writer.Uint(value.mtu);
-    writer.Key("ipv4");
-    writer.String(value.ipv4.c_str());
-    writer.Key("ipv4_prefix");
-    writer.Uint(value.ipv4_prefix);
-    writer.Key("ipv6");
-    writer.String(value.ipv6.c_str());
-    writer.Key("ipv6_prefix");
-    writer.Uint(value.ipv6_prefix);
-}
-
-void write_reality_inbound_settings(rapidjson::PrettyWriter<rapidjson::StringBuffer>& writer, const config::reality_inbound_t& value)
-{
-    writer.Key("host");
-    writer.String(value.host.c_str());
-    writer.Key("port");
-    writer.Uint(value.port);
-    writer.Key("sni");
-    writer.String(value.sni.c_str());
-    writer.Key("site_port");
-    writer.Uint(value.site_port);
-    writer.Key("private_key");
-    writer.String(value.private_key.c_str());
-    if (!value.public_key.empty())
-    {
-        writer.Key("public_key");
-        writer.String(value.public_key.c_str());
-    }
-    writer.Key("short_id");
-    writer.String(value.short_id.c_str());
-    writer.Key("replay_cache_max_entries");
-    writer.Uint(value.replay_cache_max_entries);
-}
-
-void write_reality_outbound_settings(rapidjson::PrettyWriter<rapidjson::StringBuffer>& writer, const config::reality_outbound_t& value)
-{
-    writer.Key("host");
-    writer.String(value.host.c_str());
-    writer.Key("port");
-    writer.Uint(value.port);
-    writer.Key("sni");
-    writer.String(value.sni.c_str());
-    writer.Key("fingerprint");
-    writer.String(value.fingerprint.c_str());
-    writer.Key("public_key");
-    writer.String(value.public_key.c_str());
-    writer.Key("short_id");
-    writer.String(value.short_id.c_str());
-    writer.Key("max_handshake_records");
-    writer.Uint(value.max_handshake_records);
-}
+#include "config_dump.inc"
 
 }    // namespace
 

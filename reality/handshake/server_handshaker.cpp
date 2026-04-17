@@ -13,38 +13,33 @@
 extern "C"
 {
 #include <openssl/evp.h>
-}
-
-#include <boost/asio.hpp>
-
-extern "C"
-{
-#include <openssl/rand.h>
 #include <openssl/types.h>
+#include <openssl/rand.h>
 #include <openssl/crypto.h>
 }
 
+#include <boost/asio.hpp>
 #include <boost/asio/awaitable.hpp>
 
 #include "log.h"
 #include "config.h"
 #include "tls/core.h"
-#include "constants.h"
 #include "net_utils.h"
+#include "constants.h"
 #include "replay_cache.h"
 #include "reality/types.h"
 #include "site_material.h"
 #include "tls/ch_parser.h"
-#include "tls/transcript.h"
-#include "tls/crypto_util.h"
-#include "tls/server_name.h"
 #include "tls/cipher_suite.h"
+#include "tls/server_name.h"
+#include "tls/transcript.h"
 #include "tls/key_schedule.h"
+#include "tls/crypto_util.h"
 #include "tls/record_layer.h"
-#include "tls/handshake_builder.h"
-#include "tls/handshake_message.h"
 #include "tls/record_validation.h"
 #include "reality/handshake/auth.h"
+#include "tls/handshake_builder.h"
+#include "tls/handshake_message.h"
 #include "reality/handshake/server_handshaker.h"
 namespace reality
 {
