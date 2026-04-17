@@ -14,6 +14,8 @@ namespace
 
 constexpr uint64_t kTrafficHistoryWindowMs = 30ULL * 60ULL * 1000ULL;
 constexpr uint64_t kTrafficSampleMinIntervalMs = 1000ULL;
+constexpr std::size_t kMaxTraceSessions = 4096;
+constexpr std::size_t kMaxTraceEventsPerSession = 512;
 
 void increment_counter(std::map<std::string, uint64_t>& counters, const std::string& key)
 {
@@ -23,6 +25,11 @@ void increment_counter(std::map<std::string, uint64_t>& counters, const std::str
     }
 
     counters[key]++;
+}
+
+bool is_trace_session_finished(const trace_status status)
+{
+    return status != trace_status::kRunning;
 }
 
 }    // namespace
@@ -290,6 +297,18 @@ trace_store& trace_store::instance()
     return store;
 }
 
+trace_store::trace_store()
+{
+    const auto now = now_unix_ms();
+    const auto bootstrap_ts = now > (kTrafficSampleMinIntervalMs + 1ULL) ? (now - kTrafficSampleMinIntervalMs - 1ULL) : 0ULL;
+    traffic_history_.push_back(trace_traffic_sample{
+        .ts_unix_ms = bootstrap_ts,
+        .total_tx_bytes = 0,
+        .total_rx_bytes = 0,
+    });
+    last_traffic_sample_unix_ms_.store(bootstrap_ts, std::memory_order_relaxed);
+}
+
 void trace_store::add_live_tx_bytes(const uint64_t bytes)
 {
     if (bytes == 0)
@@ -297,6 +316,7 @@ void trace_store::add_live_tx_bytes(const uint64_t bytes)
         return;
     }
     live_total_tx_bytes_.fetch_add(bytes, std::memory_order_relaxed);
+    maybe_append_traffic_sample_on_write(now_unix_ms());
 }
 
 void trace_store::add_live_rx_bytes(const uint64_t bytes)
@@ -306,6 +326,7 @@ void trace_store::add_live_rx_bytes(const uint64_t bytes)
         return;
     }
     live_total_rx_bytes_.fetch_add(bytes, std::memory_order_relaxed);
+    maybe_append_traffic_sample_on_write(now_unix_ms());
 }
 
 uint64_t trace_store::now_unix_ms()
@@ -584,7 +605,12 @@ trace_event trace_store::record_event(trace_event event)
     }
     auto& session = it->second;
     session.events.push_back(event);
+    prune_session_events_locked(session);
     update_summary(session.summary, event);
+    prune_sessions_locked();
+    append_traffic_sample_locked(event.ts_unix_ms,
+                                 live_total_tx_bytes_.load(std::memory_order_relaxed),
+                                 live_total_rx_bytes_.load(std::memory_order_relaxed));
     return event;
 }
 
@@ -599,27 +625,36 @@ std::optional<trace_session_snapshot> trace_store::get_trace(const uint64_t trac
 
     trace_session_snapshot snapshot;
     snapshot.summary = it->second.summary;
-    snapshot.events = it->second.events;
+    snapshot.events.assign(it->second.events.begin(), it->second.events.end());
     return snapshot;
 }
 
 std::vector<trace_session_summary> trace_store::list_traces(const trace_query& query) const
 {
-    std::vector<trace_session_summary> items;
-    std::shared_lock lock(mutex_);
-    items.reserve(sessions_.size());
-    for (const auto trace_id : insertion_order_)
+    std::vector<trace_session_summary> summaries;
     {
-        const auto it = sessions_.find(trace_id);
-        if (it == sessions_.end())
+        std::shared_lock lock(mutex_);
+        summaries.reserve(insertion_order_.size());
+        for (const auto trace_id : insertion_order_)
+        {
+            const auto it = sessions_.find(trace_id);
+            if (it == sessions_.end())
+            {
+                continue;
+            }
+            summaries.push_back(it->second.summary);
+        }
+    }
+
+    std::vector<trace_session_summary> items;
+    items.reserve(summaries.size());
+    for (const auto& summary : summaries)
+    {
+        if (!match_query(summary, query))
         {
             continue;
         }
-        if (!match_query(it->second.summary, query))
-        {
-            continue;
-        }
-        items.push_back(it->second.summary);
+        items.push_back(summary);
     }
 
     std::sort(
@@ -653,45 +688,41 @@ trace_event_page trace_store::list_events(const trace_event_query& query) const
     page.query = query;
 
     std::vector<trace_event> items;
-    std::shared_lock lock(mutex_);
-    if (query.trace_id.has_value())
     {
-        const auto it = sessions_.find(*query.trace_id);
-        if (it == sessions_.end())
+        std::shared_lock lock(mutex_);
+        if (query.trace_id.has_value())
         {
-            return page;
-        }
-
-        items.reserve(it->second.events.size());
-        for (const auto& event : it->second.events)
-        {
-            if (!match_query(event, query))
-            {
-                continue;
-            }
-            items.push_back(event);
-        }
-    }
-    else
-    {
-        items.reserve(insertion_order_.size() * 4);
-        for (const auto trace_id : insertion_order_)
-        {
-            const auto it = sessions_.find(trace_id);
+            const auto it = sessions_.find(*query.trace_id);
             if (it == sessions_.end())
             {
-                continue;
+                return page;
             }
-            for (const auto& event : it->second.events)
+
+            items.assign(it->second.events.begin(), it->second.events.end());
+        }
+        else
+        {
+            for (const auto trace_id : insertion_order_)
             {
-                if (!match_query(event, query))
+                const auto it = sessions_.find(trace_id);
+                if (it == sessions_.end())
                 {
                     continue;
                 }
-                items.push_back(event);
+                items.insert(items.end(), it->second.events.begin(), it->second.events.end());
             }
         }
     }
+
+    items.erase(
+        std::remove_if(
+            items.begin(),
+            items.end(),
+            [&query](const trace_event& event)
+            {
+                return !match_query(event, query);
+            }),
+        items.end());
 
     std::sort(
         items.begin(),
@@ -725,15 +756,28 @@ trace_event_page trace_store::list_events(const trace_event_query& query) const
 
 trace_stats trace_store::get_stats() const
 {
-    trace_stats stats;
-    std::shared_lock lock(mutex_);
-    stats.total_sessions = static_cast<uint64_t>(sessions_.size());
-    stats.total_tx_bytes = live_total_tx_bytes_.load(std::memory_order_relaxed);
-    stats.total_rx_bytes = live_total_rx_bytes_.load(std::memory_order_relaxed);
-    for (const auto& [_, session] : sessions_)
+    std::vector<trace_session_summary> summaries;
+    uint64_t total_tx_bytes = 0;
+    uint64_t total_rx_bytes = 0;
     {
-        stats.total_events += static_cast<uint64_t>(session.events.size());
-        switch (session.summary.status)
+        std::shared_lock lock(mutex_);
+        summaries.reserve(sessions_.size());
+        for (const auto& [_, session] : sessions_)
+        {
+            summaries.push_back(session.summary);
+        }
+        total_tx_bytes = live_total_tx_bytes_.load(std::memory_order_relaxed);
+        total_rx_bytes = live_total_rx_bytes_.load(std::memory_order_relaxed);
+    }
+
+    trace_stats stats;
+    stats.total_sessions = static_cast<uint64_t>(summaries.size());
+    stats.total_tx_bytes = total_tx_bytes;
+    stats.total_rx_bytes = total_rx_bytes;
+    for (const auto& summary : summaries)
+    {
+        stats.total_events += summary.events_count;
+        switch (summary.status)
         {
             case trace_status::kRunning:
                 stats.running_sessions++;
@@ -752,20 +796,42 @@ trace_stats trace_store::get_stats() const
     return stats;
 }
 
-void trace_store::append_traffic_sample_locked(const uint64_t now_unix_ms, const trace_stats& stats) const
+void trace_store::maybe_append_traffic_sample_on_write(const uint64_t now_unix_ms)
+{
+    const auto last_sample_unix_ms = last_traffic_sample_unix_ms_.load(std::memory_order_relaxed);
+    if (now_unix_ms <= last_sample_unix_ms + kTrafficSampleMinIntervalMs)
+    {
+        return;
+    }
+
+    std::unique_lock lock(mutex_);
+    const auto locked_last_sample_unix_ms = last_traffic_sample_unix_ms_.load(std::memory_order_relaxed);
+    if (now_unix_ms <= locked_last_sample_unix_ms + kTrafficSampleMinIntervalMs)
+    {
+        return;
+    }
+
+    append_traffic_sample_locked(now_unix_ms,
+                                 live_total_tx_bytes_.load(std::memory_order_relaxed),
+                                 live_total_rx_bytes_.load(std::memory_order_relaxed));
+}
+
+void trace_store::append_traffic_sample_locked(const uint64_t now_unix_ms,
+                                               const uint64_t total_tx_bytes,
+                                               const uint64_t total_rx_bytes)
 {
     if (!traffic_history_.empty() && now_unix_ms <= traffic_history_.back().ts_unix_ms + kTrafficSampleMinIntervalMs)
     {
         traffic_history_.back().ts_unix_ms = now_unix_ms;
-        traffic_history_.back().total_tx_bytes = stats.total_tx_bytes;
-        traffic_history_.back().total_rx_bytes = stats.total_rx_bytes;
+        traffic_history_.back().total_tx_bytes = total_tx_bytes;
+        traffic_history_.back().total_rx_bytes = total_rx_bytes;
     }
     else
     {
         traffic_history_.push_back(trace_traffic_sample{
             .ts_unix_ms = now_unix_ms,
-            .total_tx_bytes = stats.total_tx_bytes,
-            .total_rx_bytes = stats.total_rx_bytes,
+            .total_tx_bytes = total_tx_bytes,
+            .total_rx_bytes = total_rx_bytes,
         });
     }
 
@@ -774,19 +840,75 @@ void trace_store::append_traffic_sample_locked(const uint64_t now_unix_ms, const
     {
         traffic_history_.pop_front();
     }
+
+    if (!traffic_history_.empty())
+    {
+        last_traffic_sample_unix_ms_.store(traffic_history_.back().ts_unix_ms, std::memory_order_relaxed);
+    }
+}
+
+void trace_store::prune_session_events_locked(trace_session_state& session)
+{
+    while (session.events.size() > kMaxTraceEventsPerSession)
+    {
+        session.events.pop_front();
+    }
+}
+
+void trace_store::prune_sessions_locked()
+{
+    while (sessions_.size() > kMaxTraceSessions && !insertion_order_.empty())
+    {
+        auto evict_it = insertion_order_.begin();
+        for (auto it = insertion_order_.begin(); it != insertion_order_.end(); ++it)
+        {
+            const auto session_it = sessions_.find(*it);
+            if (session_it == sessions_.end())
+            {
+                evict_it = it;
+                break;
+            }
+            if (is_trace_session_finished(session_it->second.summary.status))
+            {
+                evict_it = it;
+                break;
+            }
+        }
+
+        const auto trace_id = *evict_it;
+        insertion_order_.erase(evict_it);
+
+        // if every retained session is still running we still need a hard cap
+        sessions_.erase(trace_id);
+    }
 }
 
 trace_dashboard_snapshot trace_store::get_dashboard() const
 {
-    trace_dashboard_snapshot snapshot;
-    std::unique_lock lock(mutex_);
-    snapshot.stats.total_sessions = static_cast<uint64_t>(sessions_.size());
-    snapshot.stats.total_tx_bytes = live_total_tx_bytes_.load(std::memory_order_relaxed);
-    snapshot.stats.total_rx_bytes = live_total_rx_bytes_.load(std::memory_order_relaxed);
-    for (const auto& [_, session] : sessions_)
+    std::vector<trace_session_summary> summaries;
+    uint64_t total_tx_bytes = 0;
+    uint64_t total_rx_bytes = 0;
+    std::vector<trace_traffic_sample> traffic_history;
     {
-        const auto& summary = session.summary;
-        snapshot.stats.total_events += static_cast<uint64_t>(session.events.size());
+        std::shared_lock lock(mutex_);
+        summaries.reserve(sessions_.size());
+        for (const auto& [_, session] : sessions_)
+        {
+            summaries.push_back(session.summary);
+        }
+        total_tx_bytes = live_total_tx_bytes_.load(std::memory_order_relaxed);
+        total_rx_bytes = live_total_rx_bytes_.load(std::memory_order_relaxed);
+        traffic_history.assign(traffic_history_.begin(), traffic_history_.end());
+    }
+
+    trace_dashboard_snapshot snapshot;
+    snapshot.stats.total_sessions = static_cast<uint64_t>(summaries.size());
+    snapshot.stats.total_tx_bytes = total_tx_bytes;
+    snapshot.stats.total_rx_bytes = total_rx_bytes;
+    snapshot.traffic_history = std::move(traffic_history);
+    for (const auto& summary : summaries)
+    {
+        snapshot.stats.total_events += summary.events_count;
         snapshot.latest_event_unix_ms = std::max(snapshot.latest_event_unix_ms, summary.last_event_unix_ms);
         snapshot.status_counts[std::string(to_string(summary.status))]++;
         increment_counter(snapshot.inbound_tag_counts, summary.inbound_tag);
@@ -816,8 +938,6 @@ trace_dashboard_snapshot trace_store::get_dashboard() const
                 break;
         }
     }
-    append_traffic_sample_locked(now_unix_ms(), snapshot.stats);
-    snapshot.traffic_history.assign(traffic_history_.begin(), traffic_history_.end());
     return snapshot;
 }
 

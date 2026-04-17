@@ -263,11 +263,11 @@ class trace_store
     struct trace_session_state
     {
         trace_session_summary summary;
-        std::vector<trace_event> events;
+        std::deque<trace_event> events;
     };
 
    private:
-    trace_store() = default;
+    trace_store();
 
     static uint64_t now_unix_ms();
     static uint64_t now_mono_ns();
@@ -275,15 +275,19 @@ class trace_store
     static bool match_query(const trace_session_summary& summary, const trace_query& query);
     static bool match_query(const trace_event& event, const trace_event_query& query);
     static bool compare_summary(const trace_session_summary& lhs, const trace_session_summary& rhs, trace_sort_field field);
-    void append_traffic_sample_locked(uint64_t now_unix_ms, const trace_stats& stats) const;
+    void maybe_append_traffic_sample_on_write(uint64_t now_unix_ms);
+    void append_traffic_sample_locked(uint64_t now_unix_ms, uint64_t total_tx_bytes, uint64_t total_rx_bytes);
+    void prune_session_events_locked(trace_session_state& session);
+    void prune_sessions_locked();
 
    private:
     mutable std::shared_mutex mutex_;
     std::unordered_map<uint64_t, trace_session_state> sessions_;
-    std::vector<uint64_t> insertion_order_;
+    std::deque<uint64_t> insertion_order_;
     mutable std::deque<trace_traffic_sample> traffic_history_;
     std::atomic<uint64_t> live_total_tx_bytes_{0};
     std::atomic<uint64_t> live_total_rx_bytes_{0};
+    std::atomic<uint64_t> last_traffic_sample_unix_ms_{0};
     std::atomic<uint64_t> next_event_id_{1};
 };
 
