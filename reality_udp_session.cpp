@@ -567,9 +567,8 @@ boost::asio::awaitable<void> reality_udp_session::connection_to_udp()
 
     for (;;)
     {
-        const auto read_timeout = (cfg_.timeout.idle == 0) ? cfg_.timeout.read : std::max(cfg_.timeout.read, cfg_.timeout.idle + 2);
         boost::system::error_code ec;
-        const auto packet = co_await connection_->read_packet(read_timeout, ec);
+        const auto packet = co_await connection_->read_packet(cfg_.timeout.read, ec);
         if (ec)
         {
             if (ec == boost::asio::error::timed_out)
@@ -692,9 +691,8 @@ boost::asio::awaitable<void> reality_udp_session::proxy_to_connection(const std:
         co_return;
     }
 
-    const auto read_timeout = (cfg_.timeout.idle == 0) ? cfg_.timeout.read : std::max(cfg_.timeout.read, cfg_.timeout.idle + 2);
     proxy_outbound_reply_relay_context relay_context{
-        .read_timeout_sec = static_cast<uint32_t>(read_timeout),
+        .read_timeout_sec = cfg_.timeout.read,
         .last_activity_time_ms = last_activity_time_ms_,
         .rx_bytes = rx_bytes_,
     };
@@ -708,6 +706,10 @@ boost::asio::awaitable<void> reality_udp_session::proxy_to_connection(const std:
         },
         [this, &outbound_tag](const boost::system::error_code& ec)
         {
+            if (stopping_.load() || net::is_socket_close_error(ec))
+            {
+                return;
+            }
             LOG_WARN("{} trace {:016x} conn {} bind {}:{} out_tag {} receive proxy udp failed {}",
                      log_event::kRoute,
                      trace_id_,

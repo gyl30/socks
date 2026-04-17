@@ -12,7 +12,6 @@
 #include <boost/asio.hpp>
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/experimental/channel_error.hpp>
-#include <boost/asio/experimental/awaitable_operators.hpp>
 
 #include "log.h"
 #include "config.h"
@@ -25,6 +24,7 @@
 #include "context_pool.h"
 #include "proxy_protocol.h"
 #include "request_context.h"
+#include "transparent_udp_session_flow.h"
 #include "udp_session_flow.h"
 #include "udp_proxy_outbound.h"
 #include "tproxy_udp_session.h"
@@ -309,47 +309,31 @@ boost::asio::awaitable<void> tproxy_udp_session::run()
 
 boost::asio::awaitable<bool> tproxy_udp_session::run_direct_mode()
 {
-    using boost::asio::experimental::awaitable_operators::operator||;
-
-    if (!(co_await open_direct_socket()))
-    {
-        co_return false;
-    }
-
-    if (cfg_.timeout.idle == 0)
-    {
-        co_await (packets_to_direct() || direct_to_client());
-    }
-    else
-    {
-        co_await (packets_to_direct() || direct_to_client() || idle_watchdog());
-    }
-    co_return true;
+    co_return co_await run_transparent_udp_mode(
+        cfg_.timeout.idle,
+        [this]() -> boost::asio::awaitable<bool> { co_return co_await open_direct_socket(); },
+        [this]() -> boost::asio::awaitable<void> { co_await packets_to_direct(); },
+        [this]() -> boost::asio::awaitable<void> { co_await direct_to_client(); },
+        [this]() -> boost::asio::awaitable<void> { co_await idle_watchdog(); },
+        []() -> boost::asio::awaitable<void> { co_return; });
 }
 
 boost::asio::awaitable<bool> tproxy_udp_session::run_proxy_mode()
 {
-    using boost::asio::experimental::awaitable_operators::operator||;
-
-    if (!(co_await open_proxy_outbound()))
-    {
-        co_return false;
-    }
-
-    if (cfg_.timeout.idle == 0)
-    {
-        co_await (packets_to_proxy() || proxy_to_client());
-    }
-    else
-    {
-        co_await (packets_to_proxy() || proxy_to_client() || idle_watchdog());
-    }
-    if (proxy_outbound_ != nullptr)
-    {
-        co_await proxy_outbound_->close();
-        proxy_outbound_.reset();
-    }
-    co_return true;
+    co_return co_await run_transparent_udp_mode(
+        cfg_.timeout.idle,
+        [this]() -> boost::asio::awaitable<bool> { co_return co_await open_proxy_outbound(); },
+        [this]() -> boost::asio::awaitable<void> { co_await packets_to_proxy(); },
+        [this]() -> boost::asio::awaitable<void> { co_await proxy_to_client(); },
+        [this]() -> boost::asio::awaitable<void> { co_await idle_watchdog(); },
+        [this]() -> boost::asio::awaitable<void>
+        {
+            if (proxy_outbound_ != nullptr)
+            {
+                co_await proxy_outbound_->close();
+                proxy_outbound_.reset();
+            }
+        });
 }
 
 void tproxy_udp_session::record_open_direct_socket_result(const bool success,
@@ -583,19 +567,21 @@ boost::asio::awaitable<bool> tproxy_udp_session::apply_open_proxy_outbound_resul
 
 boost::asio::awaitable<void> tproxy_udp_session::packets_to_direct()
 {
-    boost::system::error_code ec;
-    for (;;)
-    {
-        auto payload = co_await packet_channel_.async_receive(boost::asio::redirect_error(boost::asio::use_awaitable, ec));
-        if (ec)
+    packet_channel_send_relay_context relay_context{
+        .last_activity_time_ms = last_activity_time_ms_,
+        .tx_bytes = tx_bytes_,
+    };
+    co_await relay_packet_channel_payloads(
+        packet_channel_,
+        relay_context,
+        [this](const std::vector<uint8_t>& payload, boost::system::error_code& ec) -> boost::asio::awaitable<void>
         {
-            break;
-        }
-
-        const auto sent =
-            co_await upstream_socket_.async_send(boost::asio::buffer(payload), boost::asio::redirect_error(boost::asio::use_awaitable, ec));
-        (void)sent;
-        if (ec)
+            const auto sent =
+                co_await upstream_socket_.async_send(boost::asio::buffer(payload), boost::asio::redirect_error(boost::asio::use_awaitable, ec));
+            (void)sent;
+            co_return;
+        },
+        [this](const boost::system::error_code& ec)
         {
             LOG_WARN("{} trace {:016x} conn {} client {}:{} target {}:{} send direct udp payload failed {}",
                      log_event::kRelay,
@@ -606,34 +592,23 @@ boost::asio::awaitable<void> tproxy_udp_session::packets_to_direct()
                      target_endpoint_.address().to_string(),
                      target_endpoint_.port(),
                      ec.message());
-            break;
-        }
-        tx_bytes_ += payload.size();
-        trace_store::instance().add_live_tx_bytes(payload.size());
-        last_activity_time_ms_ = net::now_ms();
-    }
+        });
 }
 
 boost::asio::awaitable<void> tproxy_udp_session::direct_to_client()
 {
-    std::vector<uint8_t> buffer(65535);
     const auto normalized_target = net::normalize_endpoint(target_endpoint_);
-    boost::system::error_code ec;
-    for (;;)
-    {
-        const auto bytes_recv =
-            co_await upstream_socket_.async_receive(boost::asio::buffer(buffer), boost::asio::redirect_error(boost::asio::use_awaitable, ec));
-        if (ec)
+    connected_udp_socket_reply_relay_context relay_context{
+        .socket = upstream_socket_,
+        .last_activity_time_ms = last_activity_time_ms_,
+    };
+    co_await relay_connected_udp_socket_replies(
+        relay_context,
+        [this, normalized_target](const uint8_t* payload, const std::size_t payload_len) -> boost::asio::awaitable<bool>
         {
-            break;
-        }
-
-        if (!(co_await send_to_client(normalized_target, buffer.data(), bytes_recv)))
-        {
-            break;
-        }
-        last_activity_time_ms_ = net::now_ms();
-    }
+            co_return co_await send_to_client(normalized_target, payload, payload_len);
+        },
+        [](const boost::system::error_code&) {});
 }
 
 boost::asio::awaitable<void> tproxy_udp_session::packets_to_proxy()
@@ -643,16 +618,19 @@ boost::asio::awaitable<void> tproxy_udp_session::packets_to_proxy()
         co_return;
     }
 
-    boost::system::error_code ec;
-    for (;;)
-    {
-        auto payload = co_await packet_channel_.async_receive(boost::asio::redirect_error(boost::asio::use_awaitable, ec));
-        if (ec)
+    packet_channel_send_relay_context relay_context{
+        .last_activity_time_ms = last_activity_time_ms_,
+        .tx_bytes = tx_bytes_,
+    };
+    co_await relay_packet_channel_payloads(
+        packet_channel_,
+        relay_context,
+        [this](const std::vector<uint8_t>& payload, boost::system::error_code& ec) -> boost::asio::awaitable<void>
         {
-            break;
-        }
-        co_await proxy_outbound_->send_datagram(target_endpoint_.address().to_string(), target_endpoint_.port(), payload.data(), payload.size(), ec);
-        if (ec)
+            co_await proxy_outbound_->send_datagram(target_endpoint_.address().to_string(), target_endpoint_.port(), payload.data(), payload.size(), ec);
+            co_return;
+        },
+        [this](const boost::system::error_code& ec)
         {
             LOG_WARN("{} trace {:016x} conn {} client {}:{} target {}:{} send proxy udp payload failed {}",
                      log_event::kRoute,
@@ -663,12 +641,7 @@ boost::asio::awaitable<void> tproxy_udp_session::packets_to_proxy()
                      target_endpoint_.address().to_string(),
                      target_endpoint_.port(),
                      ec.message());
-            break;
-        }
-        tx_bytes_ += payload.size();
-        trace_store::instance().add_live_tx_bytes(payload.size());
-        last_activity_time_ms_ = net::now_ms();
-    }
+        });
 }
 
 boost::asio::awaitable<void> tproxy_udp_session::proxy_to_client()
@@ -689,14 +662,22 @@ boost::asio::awaitable<void> tproxy_udp_session::proxy_to_client()
         [this]() { return stopped_.load(std::memory_order_relaxed); },
         [this](const proxy::udp_datagram& datagram, boost::system::error_code& ec) -> boost::asio::awaitable<std::size_t>
         {
-            boost::system::error_code addr_ec;
-            const auto source_addr = boost::asio::ip::make_address(datagram.target_host, addr_ec);
-            if (addr_ec)
+            boost::asio::ip::udp::endpoint source_endpoint;
+            if (!parse_proxy_datagram_source_endpoint(datagram, source_endpoint))
             {
+                LOG_WARN("{} trace {:016x} conn {} client {}:{} target {}:{} invalid proxy udp source {}:{}",
+                         log_event::kRoute,
+                         trace_id_,
+                         conn_id_,
+                         client_endpoint_.address().to_string(),
+                         client_endpoint_.port(),
+                         target_endpoint_.address().to_string(),
+                         target_endpoint_.port(),
+                         datagram.target_host,
+                         datagram.target_port);
                 co_return 0;
             }
 
-            const auto source_endpoint = boost::asio::ip::udp::endpoint(socks_codec::normalize_ip_address(source_addr), datagram.target_port);
             if (!(co_await send_to_client(source_endpoint, datagram.payload.data(), datagram.payload.size())))
             {
                 ec = boost::asio::error::operation_aborted;
@@ -726,6 +707,7 @@ boost::asio::awaitable<void> tproxy_udp_session::idle_watchdog()
                      client_endpoint_.port(),
                      target_endpoint_.address().to_string(),
                      target_endpoint_.port());
+            close_impl();
         });
 }
 

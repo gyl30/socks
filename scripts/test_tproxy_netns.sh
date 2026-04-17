@@ -867,12 +867,10 @@ run_step "udp proxy idle timeout" \
     --payload "proxy-blackhole" \
     --timeout 1.5 \
     --expect-timeout
-if ! wait_log_pattern_since "$client_log" "$start_line" "udp session idle timeout" 8; then
-    wait_log_pattern_since "$client_log" "$start_line" "target ${proxy_udp_blackhole_ip}:${proxy_udp_blackhole_port} route proxy tx_bytes" 8 || {
-        echo "missing udp idle timeout or proxy close log for proxy case" >&2
-        exit 1
-    }
-fi
+wait_log_pattern_since "$client_log" "$start_line" "udp session idle timeout" 8 || {
+    echo "missing udp idle timeout log for proxy case" >&2
+    exit 1
+}
 
 echo "[summary]"
 if grep -Fq "original dst failed" "$client_log"; then

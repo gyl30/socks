@@ -1440,10 +1440,9 @@ boost::asio::awaitable<void> socks_udp_session::wait_and_proxy_to_udp_sock()
 
 boost::asio::awaitable<void> socks_udp_session::proxy_to_udp_sock(std::shared_ptr<udp_proxy_outbound> outbound)
 {
-    const auto read_timeout = (cfg_.timeout.idle == 0) ? cfg_.timeout.read : std::max(cfg_.timeout.read, cfg_.timeout.idle + 2);
     bool send_reply_failed = false;
     proxy_outbound_reply_relay_context relay_context{
-        .read_timeout_sec = static_cast<uint32_t>(read_timeout),
+        .read_timeout_sec = cfg_.timeout.read,
         .last_activity_time_ms = last_activity_time_ms_,
         .rx_bytes = rx_bytes_,
     };
@@ -1569,6 +1568,7 @@ boost::asio::awaitable<void> socks_udp_session::idle_watchdog()
                      current_client_port(),
                      has_last_target_ ? last_target_addr_ : "unknown",
                      has_last_target_ ? last_target_port_ : 0);
+            close_impl();
         });
 }
 
