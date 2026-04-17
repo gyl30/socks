@@ -588,6 +588,171 @@ template <typename T>
     return true;
 }
 
+[[nodiscard]] bool parse_inbound_entry_settings(const rapidjson::Value& settings,
+                                                const std::string& filename,
+                                                const std::string& entry_path,
+                                                config::inbound_entry_t& parsed)
+{
+    const std::string settings_path = entry_path + ".settings";
+    if (parsed.type == config_type::kInboundSocks)
+    {
+        config::socks_t socks;
+        if (!parse_socks_settings(settings, filename, settings_path, socks))
+        {
+            return false;
+        }
+        parsed.socks = std::move(socks);
+        return true;
+    }
+    if (parsed.type == config_type::kInboundTproxy)
+    {
+        config::tproxy_t tproxy;
+        if (!parse_tproxy_settings(settings, filename, settings_path, tproxy))
+        {
+            return false;
+        }
+        parsed.tproxy = std::move(tproxy);
+        return true;
+    }
+    if (parsed.type == config_type::kInboundTun)
+    {
+        config::tun_t tun;
+        if (!parse_tun_settings(settings, filename, settings_path, tun))
+        {
+            return false;
+        }
+        parsed.tun = std::move(tun);
+        return true;
+    }
+    if (parsed.type == config_type::kInboundReality)
+    {
+        config::reality_inbound_t reality;
+        if (!parse_reality_inbound_settings(settings, filename, settings_path, reality))
+        {
+            return false;
+        }
+        parsed.reality = std::move(reality);
+        return true;
+    }
+    return fail_config(filename, entry_path + " unsupported_type");
+}
+
+[[nodiscard]] bool parse_inbound_entry(const rapidjson::Value& entry,
+                                       const std::string& filename,
+                                       const std::string& entry_path,
+                                       std::unordered_set<std::string>& seen_tags,
+                                       config::inbound_entry_t& parsed)
+{
+    if (!entry.IsObject())
+    {
+        return fail_config(filename, entry_path + " type invalid");
+    }
+    if (!parse_string_field(entry, "type", entry_path, parsed.type, filename, true))
+    {
+        return false;
+    }
+    if (!config_type::is_known_inbound_type(parsed.type))
+    {
+        return fail_config(filename, entry_path + " unsupported_type");
+    }
+    if (!config_type::is_supported_inbound_type(parsed.type))
+    {
+        return fail_config(filename, entry_path + " unsupported_in_current_build");
+    }
+    if (!parse_string_field(entry, "tag", entry_path, parsed.tag, filename, true))
+    {
+        return false;
+    }
+    if (!seen_tags.insert(parsed.tag).second)
+    {
+        return fail_config(filename, entry_path + " duplicate_tag");
+    }
+
+    const auto* settings = find_member_object(entry, "settings");
+    if (config_type::inbound_type_requires_settings(parsed.type) && settings == nullptr)
+    {
+        return fail_config(filename, entry_path + ".settings missing");
+    }
+    if (settings != nullptr && !parse_inbound_entry_settings(*settings, filename, entry_path, parsed))
+    {
+        return false;
+    }
+    return true;
+}
+
+[[nodiscard]] bool parse_outbound_entry_settings(const rapidjson::Value& settings,
+                                                 const std::string& filename,
+                                                 const std::string& entry_path,
+                                                 config::outbound_entry_t& parsed)
+{
+    const std::string settings_path = entry_path + ".settings";
+    if (parsed.type == config_type::kOutboundReality)
+    {
+        config::reality_outbound_t reality;
+        if (!parse_reality_outbound_settings(settings, filename, settings_path, reality))
+        {
+            return false;
+        }
+        parsed.reality = std::move(reality);
+        return true;
+    }
+    if (parsed.type == config_type::kOutboundSocks)
+    {
+        config::socks_t socks;
+        if (!parse_socks_settings(settings, filename, settings_path, socks))
+        {
+            return false;
+        }
+        parsed.socks = std::move(socks);
+        return true;
+    }
+    return fail_config(filename, entry_path + " unsupported_type");
+}
+
+[[nodiscard]] bool parse_outbound_entry(const rapidjson::Value& entry,
+                                        const std::string& filename,
+                                        const std::string& entry_path,
+                                        std::unordered_set<std::string>& seen_tags,
+                                        config::outbound_entry_t& parsed)
+{
+    if (!entry.IsObject())
+    {
+        return fail_config(filename, entry_path + " type invalid");
+    }
+    if (!parse_string_field(entry, "type", entry_path, parsed.type, filename, true))
+    {
+        return false;
+    }
+    if (!config_type::is_known_outbound_type(parsed.type))
+    {
+        return fail_config(filename, entry_path + " unsupported_type");
+    }
+    if (!config_type::is_supported_outbound_type(parsed.type))
+    {
+        return fail_config(filename, entry_path + " unsupported_in_current_build");
+    }
+    if (!parse_string_field(entry, "tag", entry_path, parsed.tag, filename, true))
+    {
+        return false;
+    }
+    if (!seen_tags.insert(parsed.tag).second)
+    {
+        return fail_config(filename, entry_path + " duplicate_tag");
+    }
+
+    if (!config_type::outbound_type_requires_settings(parsed.type))
+    {
+        return true;
+    }
+
+    const auto* settings = find_member_object(entry, "settings");
+    if (settings == nullptr)
+    {
+        return fail_config(filename, entry_path + ".settings missing");
+    }
+    return parse_outbound_entry_settings(*settings, filename, entry_path, parsed);
+}
+
 [[nodiscard]] bool parse_inbounds(const rapidjson::Value& value, const std::string& filename, std::vector<config::inbound_entry_t>& out)
 {
     if (!value.IsArray())
@@ -602,79 +767,11 @@ template <typename T>
     {
         const auto& entry = value[index];
         const std::string entry_path = join_index_path("inbounds", index);
-        if (!entry.IsObject())
-        {
-            return fail_config(filename, entry_path + " type invalid");
-        }
-
         config::inbound_entry_t parsed;
-        if (!parse_string_field(entry, "type", entry_path, parsed.type, filename, true))
+        if (!parse_inbound_entry(entry, filename, entry_path, seen_tags, parsed))
         {
             return false;
         }
-        if (!config_type::is_known_inbound_type(parsed.type))
-        {
-            return fail_config(filename, entry_path + " unsupported_type");
-        }
-        if (!config_type::is_supported_inbound_type(parsed.type))
-        {
-            return fail_config(filename, entry_path + " unsupported_in_current_build");
-        }
-        if (!parse_string_field(entry, "tag", entry_path, parsed.tag, filename, true))
-        {
-            return false;
-        }
-        if (!seen_tags.insert(parsed.tag).second)
-        {
-            return fail_config(filename, entry_path + " duplicate_tag");
-        }
-
-        const auto* settings = find_member_object(entry, "settings");
-        if (config_type::inbound_type_requires_settings(parsed.type) && settings == nullptr)
-        {
-            return fail_config(filename, entry_path + ".settings missing");
-        }
-        if (parsed.type == config_type::kInboundSocks)
-        {
-            config::socks_t socks;
-            if (!parse_socks_settings(*settings, filename, entry_path + ".settings", socks))
-            {
-                return false;
-            }
-            parsed.socks = std::move(socks);
-        }
-        else if (parsed.type == config_type::kInboundTproxy)
-        {
-            config::tproxy_t tproxy;
-            if (!parse_tproxy_settings(*settings, filename, entry_path + ".settings", tproxy))
-            {
-                return false;
-            }
-            parsed.tproxy = std::move(tproxy);
-        }
-        else if (parsed.type == config_type::kInboundTun)
-        {
-            config::tun_t tun;
-            if (!parse_tun_settings(*settings, filename, entry_path + ".settings", tun))
-            {
-                return false;
-            }
-            parsed.tun = std::move(tun);
-        }
-        else if (parsed.type == config_type::kInboundReality)
-        {
-            config::reality_inbound_t reality;
-            if (!parse_reality_inbound_settings(*settings, filename, entry_path + ".settings", reality))
-            {
-                return false;
-            }
-            parsed.reality = std::move(reality);
-        }
-        else
-        {
-            return fail_config(filename, entry_path + " unsupported_type");
-        }
-
         out.push_back(std::move(parsed));
     }
     return true;
@@ -694,70 +791,12 @@ template <typename T>
     {
         const auto& entry = value[index];
         const std::string entry_path = join_index_path("outbounds", index);
-        if (!entry.IsObject())
-        {
-            return fail_config(filename, entry_path + " type invalid");
-        }
-
         config::outbound_entry_t parsed;
-        if (!parse_string_field(entry, "type", entry_path, parsed.type, filename, true))
+        if (!parse_outbound_entry(entry, filename, entry_path, seen_tags, parsed))
         {
             return false;
         }
-        if (!config_type::is_known_outbound_type(parsed.type))
-        {
-            return fail_config(filename, entry_path + " unsupported_type");
-        }
-        if (!config_type::is_supported_outbound_type(parsed.type))
-        {
-            return fail_config(filename, entry_path + " unsupported_in_current_build");
-        }
-        if (!parse_string_field(entry, "tag", entry_path, parsed.tag, filename, true))
-        {
-            return false;
-        }
-        if (!seen_tags.insert(parsed.tag).second)
-        {
-            return fail_config(filename, entry_path + " duplicate_tag");
-        }
-
-        if (!config_type::outbound_type_requires_settings(parsed.type))
-        {
-            out.push_back(std::move(parsed));
-            continue;
-        }
-
-        const auto* settings = find_member_object(entry, "settings");
-        if (settings == nullptr)
-        {
-            return fail_config(filename, entry_path + ".settings missing");
-        }
-
-        if (parsed.type == config_type::kOutboundReality)
-        {
-            config::reality_outbound_t reality;
-            if (!parse_reality_outbound_settings(*settings, filename, entry_path + ".settings", reality))
-            {
-                return false;
-            }
-            parsed.reality = std::move(reality);
-            out.push_back(std::move(parsed));
-            continue;
-        }
-
-        if (parsed.type == config_type::kOutboundSocks)
-        {
-            config::socks_t socks;
-            if (!parse_socks_settings(*settings, filename, entry_path + ".settings", socks))
-            {
-                return false;
-            }
-            parsed.socks = std::move(socks);
-            out.push_back(std::move(parsed));
-            continue;
-        }
-
-        return fail_config(filename, entry_path + " unsupported_type");
+        out.push_back(std::move(parsed));
     }
     return true;
 }
@@ -791,6 +830,112 @@ template <typename T>
     return true;
 }
 
+[[nodiscard]] bool is_known_route_rule_type(const std::string_view type)
+{
+    return type == "inbound" || type == "ip" || type == "domain";
+}
+
+[[nodiscard]] bool parse_route_rule_source(const rapidjson::Value& entry,
+                                           const std::string& filename,
+                                           const std::string& entry_path,
+                                           config::route_rule_t& parsed)
+{
+    const bool has_values = find_member_object(entry, "values") != nullptr;
+    const bool has_file = find_member_object(entry, "file") != nullptr;
+    if (has_values == has_file)
+    {
+        return fail_config(filename, entry_path + " values_file_conflict");
+    }
+    if (parsed.type == "inbound" && has_file)
+    {
+        return fail_config(filename, entry_path + " inbound_file_unsupported");
+    }
+
+    if (has_values)
+    {
+        const auto* values = find_member_object(entry, "values");
+        if (values == nullptr)
+        {
+            return fail_config(filename, entry_path + ".values missing");
+        }
+        if (!parse_values_array(*values, parsed.type, filename, entry_path + ".values", parsed.values))
+        {
+            return false;
+        }
+        if (parsed.values.empty())
+        {
+            return fail_config(filename, entry_path + ".values empty");
+        }
+        return true;
+    }
+
+    if (!parse_string_field(entry, "file", entry_path, parsed.file, filename, true))
+    {
+        return false;
+    }
+    if (!load_rule_file_values(parsed.type, parsed.file, filename, entry_path + ".file", parsed.file_values))
+    {
+        return false;
+    }
+    if (parsed.file_values.empty())
+    {
+        return fail_config(filename, entry_path + ".file empty");
+    }
+    return true;
+}
+
+[[nodiscard]] bool validate_route_rule_refs(const config& cfg,
+                                            const std::string& filename,
+                                            const std::string& entry_path,
+                                            const config::route_rule_t& parsed)
+{
+    if (parsed.type == "inbound")
+    {
+        for (const auto& inbound_tag : parsed.values)
+        {
+            if (find_inbound_entry(cfg, inbound_tag) == nullptr)
+            {
+                return fail_config(filename, entry_path + " inbound_not_found");
+            }
+        }
+    }
+    if (find_outbound_entry(cfg, parsed.out) == nullptr)
+    {
+        return fail_config(filename, entry_path + " outbound_not_found");
+    }
+    return true;
+}
+
+[[nodiscard]] bool parse_route_rule_entry(const rapidjson::Value& entry,
+                                          const std::string& filename,
+                                          const std::string& entry_path,
+                                          const config& cfg,
+                                          config::route_rule_t& parsed)
+{
+    if (!entry.IsObject())
+    {
+        return fail_config(filename, entry_path + " type invalid");
+    }
+
+    if (!parse_string_field(entry, "type", entry_path, parsed.type, filename, true))
+    {
+        return false;
+    }
+    if (!is_known_route_rule_type(parsed.type))
+    {
+        return fail_config(filename, entry_path + " unsupported_type");
+    }
+    if (!parse_string_field(entry, "out", entry_path, parsed.out, filename, true))
+    {
+        return false;
+    }
+    if (!parse_route_rule_source(entry, filename, entry_path, parsed))
+    {
+        return false;
+    }
+    return validate_route_rule_refs(cfg, filename, entry_path, parsed);
+}
+
 [[nodiscard]] bool parse_routing(const rapidjson::Value& value, const std::string& filename, config& cfg)
 {
     if (!value.IsArray())
@@ -804,84 +949,136 @@ template <typename T>
     {
         const auto& entry = value[index];
         const std::string entry_path = join_index_path("routing", index);
-        if (!entry.IsObject())
-        {
-            return fail_config(filename, entry_path + " type invalid");
-        }
-
         config::route_rule_t parsed;
-        if (!parse_string_field(entry, "type", entry_path, parsed.type, filename, true))
+        if (!parse_route_rule_entry(entry, filename, entry_path, cfg, parsed))
         {
             return false;
-        }
-        if (!parse_string_field(entry, "out", entry_path, parsed.out, filename, true))
-        {
-            return false;
-        }
-        const bool has_values = find_member_object(entry, "values") != nullptr;
-        const bool has_file = find_member_object(entry, "file") != nullptr;
-        if (has_values == has_file)
-        {
-            return fail_config(filename, entry_path + " values_file_conflict");
-        }
-        if (parsed.type != "inbound" && parsed.type != "ip" && parsed.type != "domain")
-        {
-            return fail_config(filename, entry_path + " unsupported_type");
-        }
-        if (parsed.type == "inbound" && has_file)
-        {
-            return fail_config(filename, entry_path + " inbound_file_unsupported");
-        }
-
-        if (has_values)
-        {
-            const auto* values = find_member_object(entry, "values");
-            if (values == nullptr)
-            {
-                return fail_config(filename, entry_path + ".values missing");
-            }
-            if (!parse_values_array(*values, parsed.type, filename, entry_path + ".values", parsed.values))
-            {
-                return false;
-            }
-            if (parsed.values.empty())
-            {
-                return fail_config(filename, entry_path + ".values empty");
-            }
-        }
-        else
-        {
-            if (!parse_string_field(entry, "file", entry_path, parsed.file, filename, true))
-            {
-                return false;
-            }
-            if (!load_rule_file_values(parsed.type, parsed.file, filename, entry_path + ".file", parsed.file_values))
-            {
-                return false;
-            }
-            if (parsed.file_values.empty())
-            {
-                return fail_config(filename, entry_path + ".file empty");
-            }
-        }
-
-        if (parsed.type == "inbound")
-        {
-            for (const auto& inbound_tag : parsed.values)
-            {
-                if (find_inbound_entry(cfg, inbound_tag) == nullptr)
-                {
-                    return fail_config(filename, entry_path + " inbound_not_found");
-                }
-            }
-        }
-        if (find_outbound_entry(cfg, parsed.out) == nullptr)
-        {
-            return fail_config(filename, entry_path + " outbound_not_found");
         }
         cfg.routing.push_back(std::move(parsed));
     }
     return true;
+}
+
+void write_socks_settings(rapidjson::PrettyWriter<rapidjson::StringBuffer>& writer, const config::socks_t& value);
+void write_tproxy_settings(rapidjson::PrettyWriter<rapidjson::StringBuffer>& writer, const config::tproxy_t& value);
+void write_tun_settings(rapidjson::PrettyWriter<rapidjson::StringBuffer>& writer, const config::tun_t& value);
+void write_string_array(rapidjson::PrettyWriter<rapidjson::StringBuffer>& writer, const std::vector<std::string>& values);
+void write_reality_inbound_settings(
+    rapidjson::PrettyWriter<rapidjson::StringBuffer>& writer, const config::reality_inbound_t& value);
+void write_reality_outbound_settings(
+    rapidjson::PrettyWriter<rapidjson::StringBuffer>& writer, const config::reality_outbound_t& value);
+
+void write_inbound_entry_settings(
+    rapidjson::PrettyWriter<rapidjson::StringBuffer>& writer, const config::inbound_entry_t& inbound)
+{
+    if (inbound.type == config_type::kInboundSocks && inbound.socks.has_value())
+    {
+        write_socks_settings(writer, *inbound.socks);
+    }
+    else if (inbound.type == config_type::kInboundTproxy && inbound.tproxy.has_value())
+    {
+        write_tproxy_settings(writer, *inbound.tproxy);
+    }
+    else if (inbound.type == config_type::kInboundTun && inbound.tun.has_value())
+    {
+        write_tun_settings(writer, *inbound.tun);
+    }
+    else if (inbound.type == config_type::kInboundReality && inbound.reality.has_value())
+    {
+        write_reality_inbound_settings(writer, *inbound.reality);
+    }
+}
+
+void write_inbound_entry(
+    rapidjson::PrettyWriter<rapidjson::StringBuffer>& writer, const config::inbound_entry_t& inbound)
+{
+    writer.StartObject();
+    writer.Key("type");
+    writer.String(inbound.type.c_str());
+    writer.Key("tag");
+    writer.String(inbound.tag.c_str());
+    writer.Key("settings");
+    writer.StartObject();
+    write_inbound_entry_settings(writer, inbound);
+    writer.EndObject();
+    writer.EndObject();
+}
+
+void write_outbound_entry_settings(
+    rapidjson::PrettyWriter<rapidjson::StringBuffer>& writer, const config::outbound_entry_t& outbound)
+{
+    if (outbound.type == config_type::kOutboundReality && outbound.reality.has_value())
+    {
+        write_reality_outbound_settings(writer, *outbound.reality);
+    }
+    else if (outbound.type == config_type::kOutboundSocks && outbound.socks.has_value())
+    {
+        write_socks_settings(writer, *outbound.socks);
+    }
+}
+
+void write_outbound_entry(
+    rapidjson::PrettyWriter<rapidjson::StringBuffer>& writer, const config::outbound_entry_t& outbound)
+{
+    writer.StartObject();
+    writer.Key("type");
+    writer.String(outbound.type.c_str());
+    writer.Key("tag");
+    writer.String(outbound.tag.c_str());
+    if (config_type::outbound_type_requires_settings(outbound.type))
+    {
+        writer.Key("settings");
+        writer.StartObject();
+        write_outbound_entry_settings(writer, outbound);
+        writer.EndObject();
+    }
+    writer.EndObject();
+}
+
+void write_route_rule_entry(
+    rapidjson::PrettyWriter<rapidjson::StringBuffer>& writer, const config::route_rule_t& rule)
+{
+    writer.StartObject();
+    writer.Key("type");
+    writer.String(rule.type.c_str());
+    if (!rule.file.empty())
+    {
+        writer.Key("file");
+        writer.String(rule.file.c_str());
+    }
+    else
+    {
+        writer.Key("values");
+        write_string_array(writer, rule.values);
+    }
+    writer.Key("out");
+    writer.String(rule.out.c_str());
+    writer.EndObject();
+}
+
+template <typename Entry>
+[[nodiscard]] const Entry* find_entry_by_tag(const std::vector<Entry>& entries, const std::string_view tag)
+{
+    for (const auto& entry : entries)
+    {
+        if (entry.tag == tag)
+        {
+            return &entry;
+        }
+    }
+    return nullptr;
+}
+
+[[nodiscard]] uint32_t find_tproxy_mark(const std::vector<config::inbound_entry_t>& inbounds)
+{
+    for (const auto& inbound : inbounds)
+    {
+        if (inbound.type == config_type::kInboundTproxy && inbound.tproxy.has_value())
+        {
+            return inbound.tproxy->mark;
+        }
+    }
+    return 0;
 }
 
 #include "config_dump.inc"
@@ -890,38 +1087,17 @@ template <typename T>
 
 const config::inbound_entry_t* find_inbound_entry(const config& cfg, const std::string_view tag)
 {
-    for (const auto& inbound : cfg.inbounds)
-    {
-        if (inbound.tag == tag)
-        {
-            return &inbound;
-        }
-    }
-    return nullptr;
+    return find_entry_by_tag(cfg.inbounds, tag);
 }
 
 const config::outbound_entry_t* find_outbound_entry(const config& cfg, const std::string_view tag)
 {
-    for (const auto& outbound : cfg.outbounds)
-    {
-        if (outbound.tag == tag)
-        {
-            return &outbound;
-        }
-    }
-    return nullptr;
+    return find_entry_by_tag(cfg.outbounds, tag);
 }
 
 uint32_t resolve_socket_mark(const config& cfg)
 {
-    for (const auto& inbound : cfg.inbounds)
-    {
-        if (inbound.type == "tproxy" && inbound.tproxy.has_value())
-        {
-            return inbound.tproxy->mark;
-        }
-    }
-    return 0;
+    return find_tproxy_mark(cfg.inbounds);
 }
 
 std::optional<config> parse_config(const std::string& filename)
@@ -1029,31 +1205,7 @@ std::string dump_config(const config& cfg)
     writer.StartArray();
     for (const auto& inbound : cfg.inbounds)
     {
-        writer.StartObject();
-        writer.Key("type");
-        writer.String(inbound.type.c_str());
-        writer.Key("tag");
-        writer.String(inbound.tag.c_str());
-        writer.Key("settings");
-        writer.StartObject();
-        if (inbound.type == "socks" && inbound.socks.has_value())
-        {
-            write_socks_settings(writer, *inbound.socks);
-        }
-        else if (inbound.type == "tproxy" && inbound.tproxy.has_value())
-        {
-            write_tproxy_settings(writer, *inbound.tproxy);
-        }
-        else if (inbound.type == "tun" && inbound.tun.has_value())
-        {
-            write_tun_settings(writer, *inbound.tun);
-        }
-        else if (inbound.type == "reality" && inbound.reality.has_value())
-        {
-            write_reality_inbound_settings(writer, *inbound.reality);
-        }
-        writer.EndObject();
-        writer.EndObject();
+        write_inbound_entry(writer, inbound);
     }
     writer.EndArray();
 
@@ -1061,26 +1213,7 @@ std::string dump_config(const config& cfg)
     writer.StartArray();
     for (const auto& outbound : cfg.outbounds)
     {
-        writer.StartObject();
-        writer.Key("type");
-        writer.String(outbound.type.c_str());
-        writer.Key("tag");
-        writer.String(outbound.tag.c_str());
-        if (outbound.type == "reality" && outbound.reality.has_value())
-        {
-            writer.Key("settings");
-            writer.StartObject();
-            write_reality_outbound_settings(writer, *outbound.reality);
-            writer.EndObject();
-        }
-        else if (outbound.type == "socks" && outbound.socks.has_value())
-        {
-            writer.Key("settings");
-            writer.StartObject();
-            write_socks_settings(writer, *outbound.socks);
-            writer.EndObject();
-        }
-        writer.EndObject();
+        write_outbound_entry(writer, outbound);
     }
     writer.EndArray();
 
@@ -1088,22 +1221,7 @@ std::string dump_config(const config& cfg)
     writer.StartArray();
     for (const auto& rule : cfg.routing)
     {
-        writer.StartObject();
-        writer.Key("type");
-        writer.String(rule.type.c_str());
-        if (!rule.file.empty())
-        {
-            writer.Key("file");
-            writer.String(rule.file.c_str());
-        }
-        else
-        {
-            writer.Key("values");
-            write_string_array(writer, rule.values);
-        }
-        writer.Key("out");
-        writer.String(rule.out.c_str());
-        writer.EndObject();
+        write_route_rule_entry(writer, rule);
     }
     writer.EndArray();
 
@@ -1115,13 +1233,17 @@ std::string dump_default_config()
 {
     config cfg;
     cfg.workers = 1;
-    cfg.web.enabled = false;
-    cfg.web.host = "127.0.0.1";
-    cfg.web.port = 18080;
 
     uint8_t public_key[32] = {0};
     uint8_t private_key[32] = {0};
     uint8_t short_id[8] = {0};
+    auto cleanse_generated_keys = [&]()
+    {
+        OPENSSL_cleanse(private_key, sizeof(private_key));
+        OPENSSL_cleanse(public_key, sizeof(public_key));
+        OPENSSL_cleanse(short_id, sizeof(short_id));
+    };
+
     if (tls::crypto_util::generate_x25519_keypair(public_key, private_key))
     {
         const std::vector<uint8_t> public_bytes(public_key, public_key + 32);
@@ -1130,12 +1252,12 @@ std::string dump_default_config()
         const std::string private_hex = tls::crypto_util::bytes_to_hex(private_bytes);
 
         config::inbound_entry_t socks_inbound;
-        socks_inbound.type = "socks";
+        socks_inbound.type = std::string(config_type::kInboundSocks);
         socks_inbound.tag = "socks-in";
         socks_inbound.socks = config::socks_t{};
 
         config::outbound_entry_t reality_outbound;
-        reality_outbound.type = "reality";
+        reality_outbound.type = std::string(config_type::kOutboundReality);
         reality_outbound.tag = "reality-out";
         reality_outbound.reality = config::reality_outbound_t{};
         reality_outbound.reality->host = "1.2.3.4";
@@ -1153,12 +1275,12 @@ std::string dump_default_config()
         reality_outbound.reality->short_id = short_id_hex;
 
         config::outbound_entry_t direct_outbound;
-        direct_outbound.type = "direct";
-        direct_outbound.tag = "direct";
+        direct_outbound.type = std::string(config_type::kOutboundDirect);
+        direct_outbound.tag = std::string(config_type::kOutboundDirect);
 
         config::outbound_entry_t block_outbound;
-        block_outbound.type = "block";
-        block_outbound.tag = "block";
+        block_outbound.type = std::string(config_type::kOutboundBlock);
+        block_outbound.tag = std::string(config_type::kOutboundBlock);
 
         config::route_rule_t rule;
         rule.type = "inbound";
@@ -1170,17 +1292,11 @@ std::string dump_default_config()
         cfg.outbounds.push_back(std::move(direct_outbound));
         cfg.outbounds.push_back(std::move(block_outbound));
         cfg.routing.push_back(std::move(rule));
-
-        OPENSSL_cleanse(private_key, sizeof(private_key));
-        OPENSSL_cleanse(public_key, sizeof(public_key));
-        OPENSSL_cleanse(short_id, sizeof(short_id));
-        return dump_config(cfg);
     }
 
-    OPENSSL_cleanse(private_key, sizeof(private_key));
-    OPENSSL_cleanse(public_key, sizeof(public_key));
-    OPENSSL_cleanse(short_id, sizeof(short_id));
-    return dump_config(cfg);
+    const std::string dumped = dump_config(cfg);
+    cleanse_generated_keys();
+    return dumped;
 }
 
 }    // namespace relay
