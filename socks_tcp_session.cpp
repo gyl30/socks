@@ -262,26 +262,6 @@ boost::asio::awaitable<void> socks_tcp_session::run(const std::string& host, uin
              port,
              route_name_);
 
-    trace_store::instance().record_event(trace_event{
-        .trace_id = trace_id_,
-        .conn_id = conn_id_,
-        .stage = trace_stage::kRelayStart,
-        .result = trace_result::kOk,
-        .inbound_tag = inbound_tag_,
-        .inbound_type = "socks",
-        .outbound_tag = decision.outbound_tag,
-        .outbound_type = decision.outbound_type,
-        .target_host = host,
-        .target_port = port,
-        .local_host = local_host_,
-        .local_port = local_port_,
-        .remote_host = client_host_,
-        .remote_port = client_port_,
-        .route_type = relay::to_string(decision.route),
-        .match_type = decision.match_type,
-        .match_value = decision.match_value,
-    });
-
     co_await finish_connected_session(decision, backend);
 }
 
