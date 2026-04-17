@@ -10,6 +10,7 @@
 #include <boost/asio.hpp>
 #include <boost/asio/as_tuple.hpp>
 #include <boost/asio/awaitable.hpp>
+#include <boost/asio/redirect_error.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/use_awaitable.hpp>
 
@@ -27,6 +28,86 @@ struct udp_socket_reply_relay_context
     uint64_t& last_activity_time_ms;
     uint64_t& rx_bytes;
 };
+
+struct packet_channel_send_relay_context
+{
+    uint64_t& last_activity_time_ms;
+    uint64_t& tx_bytes;
+};
+
+template <typename PacketChannel, typename SendPayloadFn, typename ErrorFn>
+boost::asio::awaitable<void> relay_packet_channel_payloads(PacketChannel& channel,
+                                                           packet_channel_send_relay_context context,
+                                                           SendPayloadFn send_payload,
+                                                           ErrorFn on_error)
+{
+    boost::system::error_code ec;
+    for (;;)
+    {
+        auto payload = co_await channel.async_receive(boost::asio::redirect_error(boost::asio::use_awaitable, ec));
+        if (ec)
+        {
+            co_return;
+        }
+
+        co_await send_payload(payload, ec);
+        if (ec)
+        {
+            on_error(ec);
+            co_return;
+        }
+
+        context.tx_bytes += payload.size();
+        trace_store::instance().add_live_tx_bytes(payload.size());
+        context.last_activity_time_ms = net::now_ms();
+    }
+}
+
+struct connected_udp_socket_reply_relay_context
+{
+    boost::asio::ip::udp::socket& socket;
+    uint64_t& last_activity_time_ms;
+};
+
+[[nodiscard]] inline bool parse_proxy_datagram_source_endpoint(const proxy::udp_datagram& datagram,
+                                                               boost::asio::ip::udp::endpoint& endpoint)
+{
+    boost::system::error_code addr_ec;
+    const auto source_addr = boost::asio::ip::make_address(datagram.target_host, addr_ec);
+    if (addr_ec)
+    {
+        return false;
+    }
+
+    endpoint = boost::asio::ip::udp::endpoint(net::normalize_address(source_addr), datagram.target_port);
+    return true;
+}
+
+template <typename WriteReplyFn, typename ErrorFn>
+boost::asio::awaitable<void> relay_connected_udp_socket_replies(connected_udp_socket_reply_relay_context context,
+                                                                WriteReplyFn write_reply,
+                                                                ErrorFn on_error)
+{
+    std::vector<uint8_t> buffer(65535);
+    boost::system::error_code ec;
+    for (;;)
+    {
+        const auto bytes_recv =
+            co_await context.socket.async_receive(boost::asio::buffer(buffer), boost::asio::redirect_error(boost::asio::use_awaitable, ec));
+        if (ec)
+        {
+            on_error(ec);
+            co_return;
+        }
+
+        if (!(co_await write_reply(buffer.data(), bytes_recv)))
+        {
+            co_return;
+        }
+
+        context.last_activity_time_ms = net::now_ms();
+    }
+}
 
 template <typename AcceptReplyFn, typename WriteReplyFn, typename ErrorFn>
 boost::asio::awaitable<void> relay_udp_socket_replies(udp_socket_reply_relay_context context,
