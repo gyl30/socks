@@ -260,6 +260,9 @@ set(SOCKS_SOURCES
     reality_udp_session.cpp
     trace_store.cpp
     trace_json.cpp
+    trace_web_dashboard_page.cpp
+    trace_web_handler.cpp
+    trace_web_query.cpp
     trace_web_server.cpp
     udp_proxy_outbound.cpp
     tcp_outbound_stream.cpp
