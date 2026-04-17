@@ -8,8 +8,9 @@
 
 #include "log.h"
 #include "router.h"
-#include "ip_matcher.h"
 #include "constants.h"
+#include "ip_matcher.h"
+#include "config_type_facts.h"
 #include "domain_matcher.h"
 
 namespace relay
@@ -31,15 +32,12 @@ namespace
 
 [[nodiscard]] route_type map_outbound_route(const std::string& outbound_type)
 {
-    if (outbound_type == "direct")
+    const auto outbound_class = config_type::classify_outbound_type(outbound_type);
+    if (outbound_class == config_type::outbound_class::kDirect)
     {
         return route_type::kDirect;
     }
-    if (outbound_type == "reality")
-    {
-        return route_type::kProxy;
-    }
-    if (outbound_type == "socks")
+    if (outbound_class == config_type::outbound_class::kProxy)
     {
         return route_type::kProxy;
     }

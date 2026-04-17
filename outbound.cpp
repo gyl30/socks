@@ -6,6 +6,7 @@
 #include <boost/asio/error.hpp>
 
 #include "config.h"
+#include "config_type_facts.h"
 #include "outbound.h"
 #include "outbound_factory.h"
 #include "protocol.h"
@@ -22,15 +23,16 @@ std::shared_ptr<outbound_handler> make_outbound_handler(const config& cfg, const
     {
         return nullptr;
     }
-    if (outbound->type == "direct")
+    const auto outbound_class = config_type::classify_outbound_type(outbound->type);
+    if (outbound_class == config_type::outbound_class::kDirect)
     {
         return make_direct_outbound_handler(outbound_tag);
     }
-    if (outbound->type == "block")
+    if (outbound_class == config_type::outbound_class::kBlock)
     {
         return make_block_outbound_handler(outbound_tag);
     }
-    if (outbound->type == "reality" || outbound->type == "socks")
+    if (outbound_class == config_type::outbound_class::kProxy)
     {
         return make_proxy_outbound_handler(outbound_tag, outbound->type);
     }
