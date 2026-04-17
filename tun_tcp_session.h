@@ -45,6 +45,7 @@ class tun_tcp_session : public std::enable_shared_from_this<tun_tcp_session>
     [[nodiscard]] boost::asio::awaitable<void> client_to_outbound(const std::shared_ptr<tcp_outbound_stream>& backend);
     [[nodiscard]] boost::asio::awaitable<void> outbound_to_client(const std::shared_ptr<tcp_outbound_stream>& backend);
     [[nodiscard]] boost::asio::awaitable<void> idle_watchdog();
+    [[nodiscard]] boost::asio::awaitable<void> wait_for_close_completion();
 
     [[nodiscard]] boost::asio::awaitable<void> wait_client_event();
     [[nodiscard]] boost::asio::awaitable<void> wait_send_event();
@@ -53,6 +54,8 @@ class tun_tcp_session : public std::enable_shared_from_this<tun_tcp_session>
     void signal_all_events();
 
     void close_client_connection(bool abort_connection);
+    void abort_client_connection();
+    void try_finish_client_close();
     void graceful_shutdown_to_client();
     void notify_closed();
 
@@ -82,6 +85,7 @@ class tun_tcp_session : public std::enable_shared_from_this<tun_tcp_session>
     uint64_t last_activity_time_ms_ = 0;
     std::chrono::steady_clock::time_point start_time_ = std::chrono::steady_clock::now();
     bool peer_eof_ = false;
+    bool close_pending_ = false;
     bool stopped_ = false;
 };
 

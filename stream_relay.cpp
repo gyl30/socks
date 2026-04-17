@@ -10,6 +10,7 @@
 
 #include "log.h"
 #include "net_utils.h"
+#include "task_group.h"
 #include "trace_store.h"
 
 namespace relay
@@ -111,18 +112,40 @@ boost::asio::awaitable<void> relay_idle_watchdog(stream_relay_context& context)
 boost::asio::awaitable<stream_relay_result> relay_streams(stream_relay_context& context)
 {
     stream_relay_result result;
-    using boost::asio::experimental::awaitable_operators::operator&&;
     using boost::asio::experimental::awaitable_operators::operator||;
+    auto executor = co_await boost::asio::this_coro::executor;
+    auto& io_context = static_cast<boost::asio::io_context&>(executor.context());
+    task_group tg(io_context);
+
+    tg.spawn([&context]() -> boost::asio::awaitable<void>
+             { co_await relay_direction(context,
+                                        context.inbound,
+                                        context.outbound,
+                                        context.inbound_to_outbound_stage,
+                                        context.tx_bytes,
+                                        true); });
+    tg.spawn([&context]() -> boost::asio::awaitable<void>
+             { co_await relay_direction(context,
+                                        context.outbound,
+                                        context.inbound,
+                                        context.outbound_to_inbound_stage,
+                                        context.rx_bytes,
+                                        false); });
+
     if (context.timeout.idle == 0)
     {
-        co_await (relay_direction(context, context.inbound, context.outbound, context.inbound_to_outbound_stage, context.tx_bytes, true) &&
-                  relay_direction(context, context.outbound, context.inbound, context.outbound_to_inbound_stage, context.rx_bytes, false));
+        const auto wait_ec = co_await tg.async_wait();
+        (void)wait_ec;
     }
     else
     {
-        co_await ((relay_direction(context, context.inbound, context.outbound, context.inbound_to_outbound_stage, context.tx_bytes, true) &&
-                   relay_direction(context, context.outbound, context.inbound, context.outbound_to_inbound_stage, context.rx_bytes, false)) ||
-                  relay_idle_watchdog(context));
+        auto wait_or_timeout = co_await (tg.async_wait() || relay_idle_watchdog(context));
+        if (wait_or_timeout.index() == 1)
+        {
+            tg.emit(boost::asio::cancellation_type::all);
+            const auto wait_ec = co_await tg.async_wait();
+            (void)wait_ec;
+        }
     }
     result.tx_bytes = context.tx_bytes;
     result.rx_bytes = context.rx_bytes;

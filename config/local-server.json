@@ -1,0 +1,60 @@
+{
+  "workers": 1,
+  "log": {
+    "level": "info",
+    "file": "config/local-server.log"
+  },
+  "inbounds": [
+    {
+      "type": "reality",
+      "tag": "reality-in",
+      "settings": {
+        "host": "127.0.0.1",
+        "port": 14443,
+        "sni": "www.apple.com",
+        "site_port": 443,
+        "private_key": "d095934f8e38d187ffb43304fb6cebb96aeb51deb2d00a06ebb8c8a841924a47",
+        "public_key": "8e9e4aaa52f801da410b42390e8de31602263ef385da0bd677fd4d585c0a727b",
+        "short_id": "0102030405060708",
+        "replay_cache_max_entries": 100000
+      }
+    },
+    {
+      "type": "socks",
+      "tag": "socks-in",
+      "settings": {
+        "host": "127.0.0.1",
+        "port": 11080,
+        "auth": false
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "direct"
+    }
+  ],
+  "routing": [
+    {
+      "type": "inbound",
+      "values": [
+        "reality-in"
+      ],
+      "out": "direct"
+    },
+    {
+      "type": "inbound",
+      "values": [
+        "socks-in"
+      ],
+      "out": "direct"
+    }
+  ],
+  "timeout": {
+    "read": 10,
+    "write": 10,
+    "connect": 5,
+    "idle": 60
+  }
+}

@@ -18,6 +18,7 @@
 #include "constants.h"
 #include "net_utils.h"
 #include "request_context.h"
+#include "task_group.h"
 #include "tcp_connect_flow.h"
 #include "tun_tcp_session.h"
 
@@ -241,16 +242,35 @@ boost::asio::awaitable<bool> tun_tcp_session::connect_backend(const route_decisi
 
 boost::asio::awaitable<void> tun_tcp_session::relay_backend(const std::shared_ptr<tcp_outbound_stream>& backend)
 {
-    using boost::asio::experimental::awaitable_operators::operator&&;
     using boost::asio::experimental::awaitable_operators::operator||;
+    auto executor = co_await boost::asio::this_coro::executor;
+    auto& io_context = static_cast<boost::asio::io_context&>(executor.context());
+    task_group tg(io_context);
+    auto self = shared_from_this();
+
+    tg.spawn([self, backend]() -> boost::asio::awaitable<void>
+    {
+        co_await self->client_to_outbound(backend);
+    });
+    tg.spawn([self, backend]() -> boost::asio::awaitable<void>
+    {
+        co_await self->outbound_to_client(backend);
+    });
 
     if (cfg_.timeout.idle == 0)
     {
-        co_await (client_to_outbound(backend) && outbound_to_client(backend));
+        const auto wait_ec = co_await tg.async_wait();
+        (void)wait_ec;
         co_return;
     }
 
-    co_await ((client_to_outbound(backend) && outbound_to_client(backend)) || idle_watchdog());
+    auto wait_or_timeout = co_await (tg.async_wait() || idle_watchdog());
+    if (wait_or_timeout.index() == 1)
+    {
+        tg.emit(boost::asio::cancellation_type::all);
+        const auto wait_ec = co_await tg.async_wait();
+        (void)wait_ec;
+    }
 }
 
 boost::asio::awaitable<void> tun_tcp_session::finish_connected_session(
@@ -284,6 +304,7 @@ boost::asio::awaitable<void> tun_tcp_session::finish_connected_session(
     co_await relay_backend(backend);
     co_await backend->close();
     close_client_connection(false);
+    co_await wait_for_close_completion();
 
     const auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time_).count();
     trace_store::instance().record_event(trace_event{
@@ -533,6 +554,10 @@ boost::asio::awaitable<void> tun_tcp_session::outbound_to_client(const std::shar
             {
                 graceful_shutdown_to_client();
             }
+            else if (ec == boost::asio::error::operation_aborted)
+            {
+                graceful_shutdown_to_client();
+            }
             else
             {
                 LOG_WARN("{} trace {:016x} conn {} client {}:{} target {}:{} stage outbound_to_client read backend failed {}",
@@ -639,6 +664,14 @@ boost::asio::awaitable<void> tun_tcp_session::idle_watchdog()
     }
 }
 
+boost::asio::awaitable<void> tun_tcp_session::wait_for_close_completion()
+{
+    while (close_pending_ && pcb_ != nullptr && !stopped_)
+    {
+        co_await wait_send_event();
+    }
+}
+
 boost::asio::awaitable<void> tun_tcp_session::wait_client_event()
 {
     client_wait_timer_.expires_at(std::chrono::steady_clock::time_point::max());
@@ -671,25 +704,53 @@ void tun_tcp_session::close_client_connection(const bool abort_connection)
         return;
     }
 
+    if (abort_connection)
+    {
+        abort_client_connection();
+        return;
+    }
+
+    if (close_pending_)
+    {
+        return;
+    }
+
+    const auto close_err = tcp_close(pcb_);
+    if (close_err == ERR_OK || close_err == ERR_CLSD)
+    {
+        pcb_ = nullptr;
+        close_pending_ = false;
+        stopped_ = true;
+        signal_all_events();
+        return;
+    }
+
+    if (close_err == ERR_MEM)
+    {
+        close_pending_ = true;
+        signal_send_event();
+        return;
+    }
+
+    abort_client_connection();
+}
+
+void tun_tcp_session::abort_client_connection()
+{
+    if (pcb_ == nullptr)
+    {
+        return;
+    }
+
     auto* pcb = pcb_;
     pcb_ = nullptr;
+    close_pending_ = false;
     tcp_arg(pcb, nullptr);
     tcp_recv(pcb, nullptr);
     tcp_sent(pcb, nullptr);
     tcp_err(pcb, nullptr);
     tcp_poll(pcb, nullptr, 0);
-    if (abort_connection)
-    {
-        tcp_abort(pcb);
-    }
-    else
-    {
-        const auto close_err = tcp_close(pcb);
-        if (close_err != ERR_OK)
-        {
-            tcp_abort(pcb);
-        }
-    }
+    tcp_abort(pcb);
 
     if (queue_ != nullptr)
     {
@@ -699,6 +760,29 @@ void tun_tcp_session::close_client_connection(const bool abort_connection)
 
     stopped_ = true;
     signal_all_events();
+}
+
+void tun_tcp_session::try_finish_client_close()
+{
+    if (!close_pending_ || pcb_ == nullptr || stopped_)
+    {
+        return;
+    }
+
+    const auto close_err = tcp_close(pcb_);
+    if (close_err == ERR_OK || close_err == ERR_CLSD)
+    {
+        pcb_ = nullptr;
+        close_pending_ = false;
+        stopped_ = true;
+        signal_all_events();
+        return;
+    }
+
+    if (close_err != ERR_MEM)
+    {
+        abort_client_connection();
+    }
 }
 
 void tun_tcp_session::graceful_shutdown_to_client()
@@ -788,6 +872,7 @@ err_t tun_tcp_session::on_sent(void* arg, tcp_pcb* pcb, const u16_t len)
     if (self != nullptr)
     {
         self->last_activity_time_ms_ = net::now_ms();
+        self->try_finish_client_close();
         self->signal_send_event();
     }
     return ERR_OK;
@@ -802,6 +887,7 @@ void tun_tcp_session::on_err(void* arg, const err_t err)
     }
 
     self->pcb_ = nullptr;
+    self->close_pending_ = false;
     self->peer_eof_ = true;
     self->stopped_ = true;
     self->signal_all_events();
@@ -822,6 +908,7 @@ err_t tun_tcp_session::on_poll(void* arg, tcp_pcb* pcb)
     auto* self = static_cast<tun_tcp_session*>(arg);
     if (self != nullptr)
     {
+        self->try_finish_client_close();
         self->signal_all_events();
     }
     return ERR_OK;

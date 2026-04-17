@@ -815,15 +815,13 @@ boost::asio::awaitable<void> proxy_tcp_outbound::shutdown_send(boost::system::er
     {
         co_return;
     }
-    co_await connection_->shutdown_send(ec);
-    if (net::is_socket_close_error(ec))
-    {
-        ec.clear();
-    }
-    if (!ec)
-    {
-        send_shutdown_ = true;
-    }
+
+    // The proxy transport carries framed payloads over a single outer TCP session.
+    // Half-closing that outer socket tears down the tunnel and truncates the
+    // server-to-client response path. Keep the tunnel open until close().
+    ec.clear();
+    send_shutdown_ = true;
+    co_return;
 }
 
 boost::asio::awaitable<void> proxy_tcp_outbound::close()
