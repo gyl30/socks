@@ -72,6 +72,7 @@ jobs:
           docker run --rm \
             -v "${{ github.workspace }}:/workspace" \
             -w /workspace \
+            -e ARCH="${{ matrix.arch }}" \
             -e BOOST_VERSION \
             -e BOOST_ARCHIVE \
             -e BOOST_SRC_DIR \
@@ -98,10 +99,13 @@ jobs:
                 ninja-build \
                 pkg-config \
                 ccache \
+                binutils \
+                curl \
                 gcc \
                 g++ \
                 libbrotli-dev \
-                clang
+                clang \
+                python3
 
               mkdir -p /workspace/.cache/boost
               if [ ! -d "/workspace/.cache/boost/${BOOST_SRC_DIR}" ]; then
@@ -173,6 +177,10 @@ jobs:
                 -DCMAKE_PREFIX_PATH="${BOOST_ROOT};${OPENSSL_ROOT}"
 
               cmake --build build --target socks --parallel
+              if [ "${ARCH}" = "x86" ] && [ "${COMPILER}" = "clang" ]; then
+                ctest --test-dir build --output-on-failure
+                bash scripts/test_socks5.sh build/socks
+              fi
               ccache -s
             '
 
