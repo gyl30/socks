@@ -9,6 +9,8 @@ project(
   VERSION 0.0.1
   LANGUAGES C CXX)
 
+include(CTest)
+
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -402,4 +404,18 @@ if(SOCKS_RUNTIME_DIRS)
     socks
     PROPERTIES BUILD_RPATH "${SOCKS_RUNTIME_DIRS}"
                INSTALL_RPATH "${SOCKS_RUNTIME_DIRS}")
+endif()
+
+if(BUILD_TESTING)
+  find_package(Python3 COMPONENTS Interpreter REQUIRED)
+
+  add_test(
+    NAME reality_integration_smoke
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_reality_integration.py --binary $<TARGET_FILE:socks>)
+  set_tests_properties(reality_integration_smoke PROPERTIES TIMEOUT 180)
+
+  add_test(
+    NAME reality_handshake_guardrails
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_reality_handshake_guards.py --binary $<TARGET_FILE:socks>)
+  set_tests_properties(reality_handshake_guardrails PROPERTIES TIMEOUT 180)
 endif()
