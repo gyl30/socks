@@ -13,8 +13,8 @@
 
 #include "log.h"
 #include "config.h"
-#include "app_runtime.h"
 #include "constants.h"
+#include "app_runtime.h"
 #include "scoped_exit.h"
 #include "tls/crypto_util.h"
 
@@ -60,31 +60,45 @@ void dump_x25519()
 
 int run_with_config(const char* prog, const char* config_path)
 {
-    auto usage = make_scoped_exit([prog]() { print_usage(prog); });
     auto cfg = relay::parse_config(config_path);
     if (!cfg.has_value())
     {
-        return -1;
+        return 1;
     }
-    usage.cancel();
+    (void)prog;
 
     init_log(cfg->log.file);
     set_level(cfg->log.level);
     DEFER(shutdown_log());
 
     relay::app_runtime runtime(*cfg);
-    runtime.start();
+    try
+    {
+        runtime.start();
+    }
+    catch (const std::exception& ex)
+    {
+        LOG_ERROR("{} stage runtime_start config {} exception {}", relay::log_event::kConnInit, config_path, ex.what());
+        return 1;
+    }
+    catch (...)
+    {
+        LOG_ERROR("{} stage runtime_start config {} exception unknown", relay::log_event::kConnInit, config_path);
+        return 1;
+    }
 
     auto& signal_worker = runtime.pool().get_io_worker();
     boost::asio::signal_set signals(signal_worker.io_context);
     int ret = register_signal(signals, SIGINT, "sigint");
     if (ret != 0)
     {
+        runtime.stop();
         return ret;
     }
     ret = register_signal(signals, SIGTERM, "sigterm");
     if (ret != 0)
     {
+        runtime.stop();
         return ret;
     }
 
@@ -95,7 +109,22 @@ int run_with_config(const char* prog, const char* config_path)
             boost::asio::co_spawn(signal_worker.io_context, runtime.async_wait_stopped(), boost::asio::detached);
         });
 
-    runtime.pool().run();
+    try
+    {
+        runtime.pool().run();
+    }
+    catch (const std::exception& ex)
+    {
+        LOG_ERROR("{} stage runtime_run config {} exception {}", relay::log_event::kConnClose, config_path, ex.what());
+        runtime.stop();
+        return 1;
+    }
+    catch (...)
+    {
+        LOG_ERROR("{} stage runtime_run config {} exception unknown", relay::log_event::kConnClose, config_path);
+        runtime.stop();
+        return 1;
+    }
     LOG_INFO("{} stage shutdown complete", relay::log_event::kConnClose);
     return 0;
 }

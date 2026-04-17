@@ -4,30 +4,32 @@
 #include <vector>
 #include <cstddef>
 #include <cstdint>
-#include <cstdlib>
 #include <utility>
 #include <optional>
 #include <algorithm>
 
 #include <boost/asio.hpp>
-#include <boost/algorithm/hex.hpp>
 
 #include "log.h"
 #include "config.h"
-#include "tls/core.h"
 #include "constants.h"
 #include "net_utils.h"
-#include "reality/types.h"
 #include "proxy_protocol.h"
 #include "proxy_reality_connection.h"
+#include "reality/types.h"
+#include "reality/config_validation.h"
 #include "reality/handshake/fingerprint.h"
 #include "reality/handshake/client_handshaker.h"
+#include "tls/core.h"
 
 namespace relay
 {
 
 namespace
 {
+constexpr std::size_t kRealityServerKeyBytes = 32;
+constexpr std::size_t kRealityShortIdMinBytes = 1;
+constexpr std::size_t kRealityShortIdMaxBytes = 8;
 
 struct connect_options
 {
@@ -40,60 +42,6 @@ struct connect_options
     uint32_t max_handshake_records = constants::reality_limits::kMaxHandshakeRecords;
     uint32_t connect_mark = 0;
 };
-
-std::string normalize_fingerprint_name(const std::string& name)
-{
-    std::string normalized_name;
-    normalized_name.reserve(name.size());
-    for (const char ch : name)
-    {
-        if (ch == '-' || ch == ' ')
-        {
-            normalized_name.push_back('_');
-            continue;
-        }
-        normalized_name.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
-    }
-    return normalized_name;
-}
-
-std::optional<reality::fingerprint_type> parse_fingerprint_type(const std::string& name)
-{
-    const auto normalized_name = normalize_fingerprint_name(name);
-    if (normalized_name.empty() || normalized_name == "random")
-    {
-        return std::nullopt;
-    }
-
-    struct entry
-    {
-        const char* name;
-        reality::fingerprint_type type;
-    };
-
-    static const entry kEntries[] = {
-        {.name = "chrome", .type = reality::fingerprint_type::kChrome120},
-        {.name = "chrome_120", .type = reality::fingerprint_type::kChrome120},
-        {.name = "chrome_mlkem", .type = reality::fingerprint_type::kChrome120Mlkem768},
-        {.name = "chrome_mlkem768", .type = reality::fingerprint_type::kChrome120Mlkem768},
-        {.name = "chrome_hybrid", .type = reality::fingerprint_type::kChrome120Mlkem768},
-        {.name = "firefox", .type = reality::fingerprint_type::kFirefox120},
-        {.name = "firefox_120", .type = reality::fingerprint_type::kFirefox120},
-        {.name = "ios", .type = reality::fingerprint_type::kIOS14},
-        {.name = "ios_14", .type = reality::fingerprint_type::kIOS14},
-        {.name = "android", .type = reality::fingerprint_type::kAndroid11OkHttp},
-        {.name = "android_11_okhttp", .type = reality::fingerprint_type::kAndroid11OkHttp},
-    };
-
-    for (const auto& entry : kEntries)
-    {
-        if (normalized_name == entry.name)
-        {
-            return entry.type;
-        }
-    }
-    return kEntries[0].type;
-}
 
 bool build_connect_options(const config& cfg, const std::string& outbound_tag, connect_options& options, boost::system::error_code& ec)
 {
@@ -110,9 +58,30 @@ bool build_connect_options(const config& cfg, const std::string& outbound_tag, c
     options.remote_port = std::to_string(settings->port);
     options.max_handshake_records = settings->max_handshake_records;
     options.connect_mark = resolve_socket_mark(cfg);
-    boost::algorithm::unhex(settings->public_key, std::back_inserter(options.server_pub_key));
-    boost::algorithm::unhex(settings->short_id, std::back_inserter(options.short_id_bytes));
-    options.fingerprint_type = parse_fingerprint_type(settings->fingerprint);
+
+    if (reality::decode_hex_field(settings->public_key, kRealityServerKeyBytes, kRealityServerKeyBytes, options.server_pub_key) !=
+        reality::hex_field_status::kOk)
+    {
+        ec = boost::asio::error::invalid_argument;
+        LOG_ERROR("{} out_tag {} stage build_connect_options public_key invalid", log_event::kConnInit, outbound_tag);
+        return false;
+    }
+
+    if (reality::decode_hex_field(settings->short_id, kRealityShortIdMinBytes, kRealityShortIdMaxBytes, options.short_id_bytes) !=
+        reality::hex_field_status::kOk)
+    {
+        ec = boost::asio::error::invalid_argument;
+        LOG_ERROR("{} out_tag {} stage build_connect_options short_id invalid", log_event::kConnInit, outbound_tag);
+        return false;
+    }
+
+    if (!reality::try_parse_fingerprint_type(settings->fingerprint, options.fingerprint_type))
+    {
+        ec = boost::asio::error::invalid_argument;
+        LOG_ERROR("{} out_tag {} stage build_connect_options fingerprint invalid", log_event::kConnInit, outbound_tag);
+        return false;
+    }
+
     return true;
 }
 
