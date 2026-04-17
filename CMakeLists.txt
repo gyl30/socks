@@ -247,6 +247,7 @@ set(SOCKS_SOURCES
     stream_relay.cpp
     stream_relay_transport.cpp
     socks_udp_session.cpp
+    reality/config_validation.cpp
     reality/handshake/client_hello_builder.cpp
     tls/cipher_suite.cpp
     tls/record_validation.cpp

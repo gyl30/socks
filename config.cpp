@@ -31,9 +31,10 @@ extern "C"
 #include <rapidjson/stringbuffer.h>
 
 #include "config.h"
-#include "config_type_facts.h"
-#include "tls/crypto_util.h"
 #include "rule_file_utils.h"
+#include "config_type_facts.h"
+#include "reality/config_validation.h"
+#include "tls/crypto_util.h"
 
 namespace relay
 {
@@ -42,6 +43,8 @@ namespace
 {
 
 constexpr std::size_t kMaxConfigBytes = 1024UL * 1024UL;
+constexpr std::size_t kRealityKeyBytes = 32;
+constexpr std::size_t kRealityShortIdMaxBytes = 8;
 
 [[nodiscard]] std::string read_file_to_string(const std::string& filename)
 {
@@ -196,6 +199,41 @@ template <typename T>
     }
     out = field->GetBool();
     return true;
+}
+
+[[nodiscard]] bool validate_reality_hex_field(const std::string& value,
+                                              const std::string& filename,
+                                              const std::string& path,
+                                              const std::size_t min_bytes,
+                                              const std::size_t max_bytes)
+{
+    const auto status = reality::validate_hex_field(value, min_bytes, max_bytes);
+    if (status == reality::hex_field_status::kOk)
+    {
+        return true;
+    }
+    if (status == reality::hex_field_status::kOddLength)
+    {
+        return fail_config(filename, path + " hex length invalid");
+    }
+    if (status == reality::hex_field_status::kInvalidChar)
+    {
+        return fail_config(filename, path + " hex invalid");
+    }
+    if (status == reality::hex_field_status::kLengthInvalid)
+    {
+        if (min_bytes == max_bytes)
+        {
+            return fail_config(filename, path + " length invalid expected " + std::to_string(min_bytes) + " bytes");
+        }
+        return fail_config(filename,
+                           path + " length invalid expected between " + std::to_string(min_bytes) + " and " + std::to_string(max_bytes) + " bytes");
+    }
+    if (status == reality::hex_field_status::kEmpty)
+    {
+        return fail_config(filename, path + " empty");
+    }
+    return fail_config(filename, path + " invalid");
 }
 
 [[nodiscard]] bool is_ascii_domain_char(const char ch)
@@ -533,11 +571,24 @@ template <typename T>
     {
         return false;
     }
+    if (!validate_reality_hex_field(out.private_key, filename, join_path(path, "private_key"), kRealityKeyBytes, kRealityKeyBytes))
+    {
+        return false;
+    }
     if (!parse_string_field(value, "public_key", path, out.public_key, filename, false))
     {
         return false;
     }
+    if (!out.public_key.empty() &&
+        !validate_reality_hex_field(out.public_key, filename, join_path(path, "public_key"), kRealityKeyBytes, kRealityKeyBytes))
+    {
+        return false;
+    }
     if (!parse_string_field(value, "short_id", path, out.short_id, filename, true))
+    {
+        return false;
+    }
+    if (!validate_reality_hex_field(out.short_id, filename, join_path(path, "short_id"), 1, kRealityShortIdMaxBytes))
     {
         return false;
     }
@@ -573,11 +624,24 @@ template <typename T>
     {
         return false;
     }
+    std::optional<reality::fingerprint_type> fingerprint_type;
+    if (!reality::try_parse_fingerprint_type(out.fingerprint, fingerprint_type))
+    {
+        return fail_config(filename, join_path(path, "fingerprint") + " invalid");
+    }
     if (!parse_string_field(value, "public_key", path, out.public_key, filename, true))
     {
         return false;
     }
+    if (!validate_reality_hex_field(out.public_key, filename, join_path(path, "public_key"), kRealityKeyBytes, kRealityKeyBytes))
+    {
+        return false;
+    }
     if (!parse_string_field(value, "short_id", path, out.short_id, filename, true))
+    {
+        return false;
+    }
+    if (!validate_reality_hex_field(out.short_id, filename, join_path(path, "short_id"), 1, kRealityShortIdMaxBytes))
     {
         return false;
     }

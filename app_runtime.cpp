@@ -1,8 +1,10 @@
-#include <memory>
-#include <vector>
-#include <thread>
 #include <cstdint>
+#include <cstdlib>
+#include <memory>
+#include <thread>
 #include <utility>
+#include <vector>
+#include <exception>
 
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/cancellation_type.hpp>
@@ -41,10 +43,27 @@ void start_inbound_instance(io_context_pool& pool,
                             const TSettings& settings,
                             std::vector<std::shared_ptr<TInbound>>& inbounds)
 {
-    auto inbound_instance = std::make_shared<TInbound>(pool, cfg, inbound_tag, settings);
-    inbounds.push_back(inbound_instance);
-    inbound_instance->start();
-    LOG_INFO("{} inbound_tag {} inbound_type {} stage start started", log_event::kConnInit, inbound_tag, inbound_type);
+    try
+    {
+        auto inbound_instance = std::make_shared<TInbound>(pool, cfg, inbound_tag, settings);
+        inbounds.push_back(inbound_instance);
+        inbound_instance->start();
+        LOG_INFO("{} inbound_tag {} inbound_type {} stage start started", log_event::kConnInit, inbound_tag, inbound_type);
+    }
+    catch (const std::exception& ex)
+    {
+        LOG_ERROR("{} inbound_tag {} inbound_type {} stage start exception {}",
+                  log_event::kConnInit,
+                  inbound_tag,
+                  inbound_type,
+                  ex.what());
+        std::exit(EXIT_FAILURE);
+    }
+    catch (...)
+    {
+        LOG_ERROR("{} inbound_tag {} inbound_type {} stage start exception unknown", log_event::kConnInit, inbound_tag, inbound_type);
+        std::exit(EXIT_FAILURE);
+    }
 }
 
 template <typename TInbound>
