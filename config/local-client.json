@@ -1,0 +1,87 @@
+{
+  "workers": 1,
+  "log": {
+    "level": "info",
+    "file": "config/local-client.log"
+  },
+  "inbounds": [
+    {
+      "type": "socks",
+      "tag": "socks-in",
+      "settings": {
+        "host": "127.0.0.1",
+        "port": 1080,
+        "auth": false
+      }
+    },
+    {
+      "type": "tun",
+      "tag": "tun-in",
+      "settings": {
+        "name": "socks-test",
+        "mtu": 1500,
+        "ipv4": "198.18.0.1",
+        "ipv4_prefix": 32,
+        "ipv6": "fd00::1",
+        "ipv6_prefix": 128
+      }
+    },
+    {
+      "type": "tproxy",
+      "tag": "tproxy-in",
+      "settings": {
+        "listen_host": "::",
+        "tcp_port": 23456,
+        "udp_port": 23456,
+        "mark": 17
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "reality",
+      "tag": "reality-out",
+      "settings": {
+        "host": "127.0.0.1",
+        "port": 14443,
+        "sni": "www.apple.com",
+        "fingerprint": "random",
+        "public_key": "8e9e4aaa52f801da410b42390e8de31602263ef385da0bd677fd4d585c0a727b",
+        "short_id": "0102030405060708",
+        "max_handshake_records": 256
+      }
+    },
+    {
+      "type": "socks",
+      "tag": "socks-out",
+      "settings": {
+        "host": "127.0.0.1",
+        "port": 11080,
+        "auth": false
+      }
+    }
+  ],
+  "routing": [
+    {
+      "type": "inbound",
+      "values": [
+        "socks-in",
+        "tun-in"
+      ],
+      "out": "reality-out"
+    },
+    {
+      "type": "inbound",
+      "values": [
+        "tproxy-in"
+      ],
+      "out": "socks-out"
+    }
+  ],
+  "timeout": {
+    "read": 10,
+    "write": 10,
+    "connect": 5,
+    "idle": 60
+  }
+}

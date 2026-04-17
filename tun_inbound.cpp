@@ -151,6 +151,9 @@ bool tun_inbound::init_stack()
         return false;
     }
 
+    // Keep lwIP's route/output sizing aligned with the actual TUN device MTU.
+    netif_.mtu = static_cast<u16_t>(settings_.mtu);
+
     ip4_addr_t loopback4;
     ip4_addr_t mask4;
     ip4_addr_t gw4;
