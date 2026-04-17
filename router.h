@@ -55,7 +55,16 @@ class router
    private:
     struct compiled_rule;
 
+    [[nodiscard]] std::shared_ptr<compiled_rule> make_compiled_rule(const config::route_rule_t& rule) const;
+    [[nodiscard]] bool populate_compiled_rule_values(const config::route_rule_t& rule, compiled_rule& compiled) const;
+    [[nodiscard]] bool matches_inbound_rule(const compiled_rule& rule) const;
+    [[nodiscard]] route_decision make_match_decision(
+        const compiled_rule& rule, const std::string& match_type, const std::string& match_value) const;
     [[nodiscard]] route_decision make_no_route_decision(const std::string& match_type, const std::string& match_value) const;
+    void log_loaded_rule(const config::route_rule_t& rule, const compiled_rule& compiled) const;
+    void log_route_match(
+        const char* target_field, const std::string& target_value, const route_decision& decision) const;
+    void log_no_route(const char* target_field, const std::string& target_value, const route_decision& decision) const;
 
    private:
     const config& cfg_;
