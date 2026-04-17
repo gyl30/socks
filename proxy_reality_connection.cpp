@@ -98,22 +98,21 @@ std::optional<reality::fingerprint_type> parse_fingerprint_type(const std::strin
 bool build_connect_options(const config& cfg, const std::string& outbound_tag, connect_options& options, boost::system::error_code& ec)
 {
     ec.clear();
-    const auto* outbound = find_outbound_entry(cfg, outbound_tag);
-    if (outbound == nullptr || outbound->type != "reality" || !outbound->reality.has_value())
+    const auto* settings = find_reality_outbound_settings(cfg, outbound_tag);
+    if (settings == nullptr)
     {
         ec = boost::asio::error::operation_not_supported;
         return false;
     }
 
-    const auto& settings = *outbound->reality;
-    options.sni = settings.sni;
-    options.remote_host = settings.host;
-    options.remote_port = std::to_string(settings.port);
-    options.max_handshake_records = settings.max_handshake_records;
+    options.sni = settings->sni;
+    options.remote_host = settings->host;
+    options.remote_port = std::to_string(settings->port);
+    options.max_handshake_records = settings->max_handshake_records;
     options.connect_mark = resolve_socket_mark(cfg);
-    boost::algorithm::unhex(settings.public_key, std::back_inserter(options.server_pub_key));
-    boost::algorithm::unhex(settings.short_id, std::back_inserter(options.short_id_bytes));
-    options.fingerprint_type = parse_fingerprint_type(settings.fingerprint);
+    boost::algorithm::unhex(settings->public_key, std::back_inserter(options.server_pub_key));
+    boost::algorithm::unhex(settings->short_id, std::back_inserter(options.short_id_bytes));
+    options.fingerprint_type = parse_fingerprint_type(settings->fingerprint);
     return true;
 }
 

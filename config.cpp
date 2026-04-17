@@ -1095,6 +1095,26 @@ const config::outbound_entry_t* find_outbound_entry(const config& cfg, const std
     return find_entry_by_tag(cfg.outbounds, tag);
 }
 
+const config::socks_t* find_socks_outbound_settings(const config& cfg, const std::string_view tag)
+{
+    const auto* outbound = find_outbound_entry(cfg, tag);
+    if (outbound == nullptr || outbound->type != config_type::kOutboundSocks || !outbound->socks.has_value())
+    {
+        return nullptr;
+    }
+    return &*outbound->socks;
+}
+
+const config::reality_outbound_t* find_reality_outbound_settings(const config& cfg, const std::string_view tag)
+{
+    const auto* outbound = find_outbound_entry(cfg, tag);
+    if (outbound == nullptr || outbound->type != config_type::kOutboundReality || !outbound->reality.has_value())
+    {
+        return nullptr;
+    }
+    return &*outbound->reality;
+}
+
 uint32_t resolve_socket_mark(const config& cfg)
 {
     return find_tproxy_mark(cfg.inbounds);
