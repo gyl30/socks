@@ -5,22 +5,23 @@ set -euo pipefail
 usage() {
     cat <<'EOF'
 Usage:
-  sudo scripts/test_local_tun_https.sh
+  sudo scripts/test_local_tproxy_http.sh
 
 Environment:
   BINARY                   Path to socks binary. Default: ./build/socks
   SERVER_CONFIG            Server config path. Default: config/local-server.json
   CLIENT_CONFIG            Client config path. Default: config/local-client.json
-  TUN_TEST_USER            User routed into tun. Default: tunuser
+  TPROXY_TEST_USER         User redirected into tproxy. Default: tpuser
   REQUEST_COUNT            Requests per target. Default: 3
   CURL_MAX_TIME            Per-request curl timeout seconds. Default: 20
-  TARGETS                  Space-separated HTTPS URLs. Default: "https://example.com https://example.net"
+  TARGETS                  Space-separated HTTP URLs. Default: "http://example.com http://example.net"
+  TPROXY_TCP_PORTS         Destination TCP ports redirected into tproxy. Default: 80
   KEEP_LOGS                Keep /tmp logs after exit when set to 1. Default: 0
 
 This script:
   1. Starts the local server
-  2. Starts the local client wrapper with tun routing for TUN_TEST_USER
-  3. Runs curl as TUN_TEST_USER against each HTTPS target
+  2. Starts the local client wrapper with user-based tproxy steering
+  3. Runs curl as TPROXY_TEST_USER against each HTTP target
   4. Prints a short summary
   5. Dumps log tails on failure
 EOF
@@ -40,10 +41,11 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 binary="${BINARY:-$repo_root/build/socks}"
 server_config="${SERVER_CONFIG:-$repo_root/config/local-server.json}"
 client_config="${CLIENT_CONFIG:-$repo_root/config/local-client.json}"
-tun_test_user="${TUN_TEST_USER:-tunuser}"
+tproxy_test_user="${TPROXY_TEST_USER:-tpuser}"
 request_count="${REQUEST_COUNT:-3}"
 curl_max_time="${CURL_MAX_TIME:-20}"
-targets_string="${TARGETS:-https://example.com https://example.net}"
+targets_string="${TARGETS:-http://example.com http://example.net}"
+tproxy_tcp_ports="${TPROXY_TCP_PORTS:-80}"
 keep_logs="${KEEP_LOGS:-0}"
 
 for cmd in curl flock id mktemp pkill su tail; do
@@ -70,8 +72,8 @@ if [[ ! -f "$server_config" || ! -f "$client_config" ]]; then
     exit 1
 fi
 
-id "$tun_test_user" >/dev/null 2>&1 || {
-    echo "user not found: $tun_test_user" >&2
+id "$tproxy_test_user" >/dev/null 2>&1 || {
+    echo "user not found: $tproxy_test_user" >&2
     exit 1
 }
 
@@ -137,7 +139,10 @@ rm -f "$repo_root"/.tmp-local-client-wrapper.*.log
 server_pid="$!"
 sleep 1
 
-TUN_TEST_USER="$tun_test_user" KEEP_WRAPPER_LOG=1 /usr/bin/bash "$repo_root/scripts/run_local_client.sh" "$client_config" >"$client_stdout_log" 2>&1 &
+TPROXY_TEST_USER="$tproxy_test_user" \
+TPROXY_TCP_PORTS="$tproxy_tcp_ports" \
+KEEP_WRAPPER_LOG=1 \
+/usr/bin/bash "$repo_root/scripts/run_local_client.sh" "$client_config" >"$client_stdout_log" 2>&1 &
 client_wrapper_pid="$!"
 sleep 4
 
@@ -151,13 +156,13 @@ run_single_request() {
     local attempt="$2"
     local out_log err_log
 
-    out_log="$(mktemp /tmp/socks-tun-curl-out.XXXXXX.log)"
-    err_log="$(mktemp /tmp/socks-tun-curl-err.XXXXXX.log)"
+    out_log="$(mktemp /tmp/socks-tproxy-curl-out.XXXXXX.log)"
+    err_log="$(mktemp /tmp/socks-tproxy-curl-err.XXXXXX.log)"
     curl_out_logs+=("$out_log")
     curl_err_logs+=("$err_log")
 
     echo "=== request $attempt $target_url ==="
-    if su -s /bin/bash -c "/usr/bin/curl '$target_url' -v --max-time '$curl_max_time'" "$tun_test_user" >"$out_log" 2>"$err_log"; then
+    if su -s /bin/bash -c "/usr/bin/curl '$target_url' -v --max-time '$curl_max_time'" "$tproxy_test_user" >"$out_log" 2>"$err_log"; then
         passed=$((passed + 1))
         echo "PASS $target_url"
     else

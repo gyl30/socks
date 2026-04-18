@@ -44,7 +44,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 config_path="${1:-$repo_root/config/local-client.json}"
 binary="${BINARY:-$repo_root/build/socks}"
 
-for cmd in awk getent id ip iptables python3; do
+for cmd in awk getent id ip iptables python3 ss; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
         echo "missing dependency: $cmd" >&2
         exit 1
@@ -133,29 +133,34 @@ wait_for_tcp_listener() {
     local host="$1"
     local port="$2"
     local name="$3"
-    HOST="$host" PORT="$port" NAME="$name" python3 - <<'PY'
-import os
-import socket
-import sys
-import time
-
-host = os.environ["HOST"]
-port = int(os.environ["PORT"])
-name = os.environ["NAME"]
-deadline = time.time() + 15.0
-while time.time() < deadline:
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.settimeout(0.2)
-    try:
-        sock.connect((host, port))
-        sys.exit(0)
-    except OSError:
-        time.sleep(0.1)
-    finally:
-        sock.close()
-print(f"timeout waiting for {name} {host}:{port}", file=sys.stderr)
-sys.exit(1)
-PY
+    local deadline=$((SECONDS + 15))
+    while (( SECONDS < deadline )); do
+        if ss -H -ltn "sport = :$port" | awk -v host="$host" -v port="$port" '
+            {
+                local_addr = $4
+                split(local_addr, parts, ":")
+                local_port = parts[length(parts)]
+                if (local_port != port) {
+                    next
+                }
+                sub(/:[^:]*$/, "", local_addr)
+                if (local_addr == host || local_addr == "*" || local_addr == "0.0.0.0" || local_addr == "[::]" || local_addr == "::") {
+                    found = 1
+                    exit
+                }
+            }
+            END { exit(found ? 0 : 1) }'
+        then
+            return 0
+        fi
+        if [[ -n "$client_pid" ]] && ! kill -0 "$client_pid" >/dev/null 2>&1; then
+            wait "$client_pid"
+            return 1
+        fi
+        sleep 0.2
+    done
+    echo "timeout waiting for $name $host:$port" >&2
+    return 1
 }
 
 load_outbound_hosts() {

@@ -63,11 +63,7 @@ tun_tcp_session::tun_tcp_session(const boost::asio::any_io_executor& executor,
       target_port_(pcb_->local_port),
       last_activity_time_ms_(net::now_ms())
 {
-    tcp_arg(pcb_, this);
-    tcp_recv(pcb_, &tun_tcp_session::on_recv);
-    tcp_sent(pcb_, &tun_tcp_session::on_sent);
-    tcp_err(pcb_, &tun_tcp_session::on_err);
-    tcp_poll(pcb_, &tun_tcp_session::on_poll, 2);
+    attach_lwip_callbacks();
     tcp_nagle_disable(pcb_);
 }
 
@@ -697,6 +693,34 @@ void tun_tcp_session::signal_all_events()
     idle_timer_.cancel();
 }
 
+void tun_tcp_session::attach_lwip_callbacks()
+{
+    if (pcb_ == nullptr)
+    {
+        return;
+    }
+
+    tcp_arg(pcb_, this);
+    tcp_recv(pcb_, &tun_tcp_session::on_recv);
+    tcp_sent(pcb_, &tun_tcp_session::on_sent);
+    tcp_err(pcb_, &tun_tcp_session::on_err);
+    tcp_poll(pcb_, &tun_tcp_session::on_poll, 2);
+}
+
+void tun_tcp_session::detach_lwip_callbacks()
+{
+    if (pcb_ == nullptr)
+    {
+        return;
+    }
+
+    tcp_arg(pcb_, nullptr);
+    tcp_recv(pcb_, nullptr);
+    tcp_sent(pcb_, nullptr);
+    tcp_err(pcb_, nullptr);
+    tcp_poll(pcb_, nullptr, 0);
+}
+
 void tun_tcp_session::close_client_connection(const bool abort_connection)
 {
     if (pcb_ == nullptr)
@@ -715,6 +739,7 @@ void tun_tcp_session::close_client_connection(const bool abort_connection)
         return;
     }
 
+    detach_lwip_callbacks();
     const auto close_err = tcp_close(pcb_);
     if (close_err == ERR_OK || close_err == ERR_CLSD)
     {
@@ -727,6 +752,7 @@ void tun_tcp_session::close_client_connection(const bool abort_connection)
 
     if (close_err == ERR_MEM)
     {
+        attach_lwip_callbacks();
         close_pending_ = true;
         signal_send_event();
         return;
@@ -769,6 +795,7 @@ void tun_tcp_session::try_finish_client_close()
         return;
     }
 
+    detach_lwip_callbacks();
     const auto close_err = tcp_close(pcb_);
     if (close_err == ERR_OK || close_err == ERR_CLSD)
     {
@@ -776,6 +803,12 @@ void tun_tcp_session::try_finish_client_close()
         close_pending_ = false;
         stopped_ = true;
         signal_all_events();
+        return;
+    }
+
+    if (close_err == ERR_MEM)
+    {
+        attach_lwip_callbacks();
         return;
     }
 
