@@ -52,6 +52,8 @@ class tun_tcp_session : public std::enable_shared_from_this<tun_tcp_session>
     void signal_client_event();
     void signal_send_event();
     void signal_all_events();
+    void attach_lwip_callbacks();
+    void detach_lwip_callbacks();
 
     void close_client_connection(bool abort_connection);
     void abort_client_connection();
