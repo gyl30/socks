@@ -909,7 +909,7 @@ err_t tun_tcp_session::on_poll(void* arg, tcp_pcb* pcb)
     if (self != nullptr)
     {
         self->try_finish_client_close();
-        self->signal_all_events();
+        self->signal_send_event();
     }
     return ERR_OK;
 }
