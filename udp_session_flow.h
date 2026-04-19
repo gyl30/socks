@@ -52,6 +52,20 @@ inline void record_udp_session_close_trace(trace_event event,
     trace_store::instance().record_event(std::move(event));
 }
 
+inline void record_udp_session_error_trace(trace_event event,
+                                           const udp_close_reason close_reason,
+                                           const std::string& error_message = {})
+{
+    event.stage = trace_stage::kSessionError;
+    event.result = trace_result::kFail;
+    if (!error_message.empty())
+    {
+        event.error_message = error_message;
+    }
+    event.extra["close_reason"] = to_string(close_reason);
+    trace_store::instance().record_event(std::move(event));
+}
+
 }    // namespace relay
 
 #endif

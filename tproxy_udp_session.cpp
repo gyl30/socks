@@ -228,11 +228,10 @@ boost::asio::awaitable<void> tproxy_udp_session::run()
              outbound_tag_.empty() ? "-" : outbound_tag_);
     if (route_ == route_type::kBlock)
     {
-        trace_store::instance().record_event(trace_event{
+        close_reason_ = udp_close_reason::kRouteBlocked;
+        record_udp_session_error_trace(trace_event{
             .trace_id = trace_id_,
             .conn_id = conn_id_,
-            .stage = trace_stage::kSessionError,
-            .result = trace_result::kFail,
             .inbound_tag = inbound_tag_,
             .inbound_type = "tproxy",
             .outbound_tag = outbound_tag_,
@@ -244,9 +243,9 @@ boost::asio::awaitable<void> tproxy_udp_session::run()
             .route_type = relay::to_string(route_),
             .match_type = match_type_,
             .match_value = match_value_,
-            .error_message = "route blocked",
-        });
-        close_reason_ = udp_close_reason::kRouteBlocked;
+        },
+                                       close_reason_,
+                                       "route blocked");
         notify_closed();
         co_return;
     }
@@ -256,11 +255,9 @@ boost::asio::awaitable<void> tproxy_udp_session::run()
                                                 [this]() { notify_closed(); });
     if (!completed)
     {
-        trace_store::instance().record_event(trace_event{
+        record_udp_session_error_trace(trace_event{
             .trace_id = trace_id_,
             .conn_id = conn_id_,
-            .stage = trace_stage::kSessionError,
-            .result = trace_result::kFail,
             .inbound_tag = inbound_tag_,
             .inbound_type = "tproxy",
             .outbound_tag = outbound_tag_,
@@ -272,7 +269,8 @@ boost::asio::awaitable<void> tproxy_udp_session::run()
             .route_type = relay::to_string(route_),
             .match_type = match_type_,
             .match_value = match_value_,
-        });
+        },
+                                       close_reason_);
         co_return;
     }
     const auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time_).count();
