@@ -218,25 +218,34 @@ boost::asio::awaitable<void> reality_udp_session::start_impl(const proxy::udp_as
              bind_host_,
              bind_port_);
 
-    using boost::asio::experimental::awaitable_operators::operator||;
-    if (cfg_.timeout.idle == 0)
-    {
-        co_await (connection_to_udp() || udp_to_connection());
-    }
-    else
-    {
-        co_await (connection_to_udp() || udp_to_connection() || idle_watchdog());
-    }
-
-    stopping_.store(true);
-    close_reason_ = finalize_udp_close_reason(close_reason_, true);
-    close_udp_socket();
-    co_await close_proxy_outbounds();
-    if (connection_ != nullptr)
-    {
-        boost::system::error_code close_ec;
-        connection_->close(close_ec);
-    }
+    const bool completed = co_await finish_udp_session(
+        [this]() -> boost::asio::awaitable<bool>
+        {
+            using boost::asio::experimental::awaitable_operators::operator||;
+            if (cfg_.timeout.idle == 0)
+            {
+                co_await (connection_to_udp() || udp_to_connection());
+            }
+            else
+            {
+                co_await (connection_to_udp() || udp_to_connection() || idle_watchdog());
+            }
+            co_return true;
+        },
+        close_reason_,
+        [this](const bool) -> boost::asio::awaitable<void>
+        {
+            stopping_.store(true);
+            close_udp_socket();
+            co_await close_proxy_outbounds();
+            if (connection_ != nullptr)
+            {
+                boost::system::error_code close_ec;
+                connection_->close(close_ec);
+            }
+            co_return;
+        });
+    (void)completed;
 
     const auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time_).count();
     trace_store::instance().record_event(trace_event{
@@ -741,9 +750,9 @@ boost::asio::awaitable<void> reality_udp_session::idle_watchdog()
     };
     co_await run_datagram_idle_watchdog(
         relay_context,
+        close_reason_,
         [this]()
         {
-            close_reason_ = udp_close_reason::kIdleTimeout;
             LOG_INFO("{} trace {:016x} conn {} udp session idle timeout bind {}:{}",
                      log_event::kTimeout,
                      trace_id_,

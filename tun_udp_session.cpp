@@ -57,9 +57,10 @@ tun_udp_session::tun_udp_session(io_worker& worker,
 
 boost::asio::awaitable<void> tun_udp_session::start()
 {
-    const bool completed = co_await run();
-    close_reason_ = finalize_udp_close_reason(close_reason_, completed);
-    notify_closed();
+    const bool completed =
+        co_await finish_transparent_udp_session([this]() -> boost::asio::awaitable<bool> { co_return co_await run(); },
+                                                close_reason_,
+                                                [this]() { notify_closed(); });
     if (!completed)
     {
         co_return;
@@ -756,9 +757,9 @@ boost::asio::awaitable<void> tun_udp_session::idle_watchdog()
     };
     co_await run_datagram_idle_watchdog(
         relay_context,
+        close_reason_,
         [this]()
         {
-            close_reason_ = udp_close_reason::kIdleTimeout;
             LOG_INFO("{} trace {:016x} conn {} tun udp idle timeout client {}:{} target {}:{}",
                      log_event::kTimeout,
                      trace_id_,
