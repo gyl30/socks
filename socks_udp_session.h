@@ -17,6 +17,7 @@
 #include "protocol.h"
 #include "request_context.h"
 #include "router.h"
+#include "session_result.h"
 #include "run_loop_spawner.h"
 #include "udp_proxy_outbound.h"
 
@@ -153,6 +154,7 @@ class socks_udp_session : public std::enable_shared_from_this<socks_udp_session>
     lru_cache<std::string, endpoint_cache_entry> resolved_targets_;
     lru_cache<boost::asio::ip::udp::endpoint, peer_cache_entry, net::udp_endpoint_hash, net::udp_endpoint_equal> direct_peers_;
     proxy_outbound_channel_type proxy_outbound_channel_;
+    udp_close_reason close_reason_ = udp_close_reason::kUnknown;
 };
 
 }    // namespace relay

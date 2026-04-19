@@ -19,6 +19,7 @@
 #include "proxy_reality_connection.h"
 #include "request_context.h"
 #include "router.h"
+#include "session_result.h"
 #include "udp_proxy_outbound.h"
 
 namespace relay
@@ -106,6 +107,7 @@ class reality_udp_session : public std::enable_shared_from_this<reality_udp_sess
     lru_cache<std::string, endpoint_cache_entry> resolved_targets_;
     lru_cache<boost::asio::ip::udp::endpoint, peer_cache_entry, net::udp_endpoint_hash, net::udp_endpoint_equal> allowed_reply_peers_;
     std::atomic<bool> stopping_{false};
+    udp_close_reason close_reason_ = udp_close_reason::kUnknown;
 };
 
 }    // namespace relay

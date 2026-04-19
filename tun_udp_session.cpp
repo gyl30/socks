@@ -65,7 +65,7 @@ boost::asio::awaitable<void> tun_udp_session::start()
     }
 
     const auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time_).count();
-    LOG_INFO("{} trace {:016x} conn {} client {}:{} target {}:{} route {} tx_bytes {} rx_bytes {} duration_ms {}",
+    LOG_INFO("{} trace {:016x} conn {} client {}:{} target {}:{} route {} close_reason {} tx_bytes {} rx_bytes {} duration_ms {}",
              log_event::kConnClose,
              trace_id_,
              conn_id_,
@@ -74,6 +74,7 @@ boost::asio::awaitable<void> tun_udp_session::start()
              target_endpoint_.address().to_string(),
              target_endpoint_.port(),
              relay::to_string(route_),
+             to_string(close_reason_),
              tx_bytes_,
              rx_bytes_,
              duration_ms);
@@ -302,6 +303,7 @@ boost::asio::awaitable<bool> tun_udp_session::run()
             .error_message = "route blocked",
             .extra = {},
         });
+        close_reason_ = udp_close_reason::kRouteBlocked;
         LOG_WARN("{} trace {:016x} conn {} blocked tun udp target {}:{}",
                  log_event::kRoute,
                  trace_id_,
@@ -755,6 +757,7 @@ boost::asio::awaitable<void> tun_udp_session::idle_watchdog()
         relay_context,
         [this]()
         {
+            close_reason_ = udp_close_reason::kIdleTimeout;
             LOG_INFO("{} trace {:016x} conn {} tun udp idle timeout client {}:{} target {}:{}",
                      log_event::kTimeout,
                      trace_id_,
@@ -833,6 +836,10 @@ void tun_udp_session::close_impl()
     if (stopped_.exchange(true, std::memory_order_relaxed))
     {
         return;
+    }
+    if (close_reason_ == udp_close_reason::kUnknown)
+    {
+        close_reason_ = udp_close_reason::kStopped;
     }
 
     boost::system::error_code ec;

@@ -17,6 +17,7 @@
 #include "lru_cache.h"
 #include "request_context.h"
 #include "router.h"
+#include "session_result.h"
 #include "udp_proxy_outbound.h"
 
 namespace relay
@@ -101,6 +102,7 @@ class tproxy_udp_session : public std::enable_shared_from_this<tproxy_udp_sessio
     std::function<void()> on_close_;
     packet_channel_type packet_channel_;
     lru_cache<std::string, std::shared_ptr<boost::asio::ip::udp::socket>> reply_sockets_;
+    udp_close_reason close_reason_ = udp_close_reason::kUnknown;
 };
 
 }    // namespace relay
