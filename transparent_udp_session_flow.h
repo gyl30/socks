@@ -6,6 +6,8 @@
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/experimental/awaitable_operators.hpp>
 
+#include "udp_session_flow.h"
+
 namespace relay
 {
 
@@ -42,6 +44,19 @@ boost::asio::awaitable<bool> run_transparent_udp_mode(const uint32_t idle_timeou
     co_await run_transparent_udp_relay_tasks(idle_timeout_sec, forward, reply, idle);
     co_await close_mode();
     co_return true;
+}
+
+template <typename RunFn, typename NotifyFn>
+boost::asio::awaitable<bool> finish_transparent_udp_session(RunFn run_session, udp_close_reason& close_reason, NotifyFn notify_closed)
+{
+    co_return co_await finish_udp_session(
+        run_session,
+        close_reason,
+        [&notify_closed](const bool) -> boost::asio::awaitable<void>
+        {
+            notify_closed();
+            co_return;
+        });
 }
 
 }    // namespace relay

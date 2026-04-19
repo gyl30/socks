@@ -399,25 +399,35 @@ boost::asio::awaitable<void> socks_udp_session::run(const std::string& host, con
     open_direct_udp_socket(direct_udp_socket_v6_, boost::asio::ip::udp::v6(), "v6", direct_socket_ec);
     start_direct_udp_socket_loops();
 
-    using boost::asio::experimental::awaitable_operators::operator||;
-    if (cfg_.timeout.idle == 0)
-    {
-        co_await (udp_socket_loop() || wait_and_proxy_to_udp_sock() || keep_tcp_alive());
-    }
-    else
-    {
-        co_await (udp_socket_loop() || wait_and_proxy_to_udp_sock() || keep_tcp_alive() || idle_watchdog());
-    }
+    const bool completed = co_await finish_udp_session(
+        [this]() -> boost::asio::awaitable<bool>
+        {
+            using boost::asio::experimental::awaitable_operators::operator||;
+            if (cfg_.timeout.idle == 0)
+            {
+                co_await (udp_socket_loop() || wait_and_proxy_to_udp_sock() || keep_tcp_alive());
+            }
+            else
+            {
+                co_await (udp_socket_loop() || wait_and_proxy_to_udp_sock() || keep_tcp_alive() || idle_watchdog());
+            }
 
-    if (proxy_outbound_ != nullptr)
-    {
-        co_await proxy_outbound_->close();
-        proxy_outbound_.reset();
-        proxy_outbound_started_ = false;
-    }
+            if (proxy_outbound_ != nullptr)
+            {
+                co_await proxy_outbound_->close();
+                proxy_outbound_.reset();
+                proxy_outbound_started_ = false;
+            }
+            co_return true;
+        },
+        close_reason_,
+        [this](const bool) -> boost::asio::awaitable<void>
+        {
+            close_impl();
+            co_return;
+        });
+    (void)completed;
 
-    close_reason_ = finalize_udp_close_reason(close_reason_, true);
-    close_impl();
     const auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time_).count();
     trace_store::instance().record_event(trace_event{
         .trace_id = trace_id_,
@@ -1526,9 +1536,9 @@ boost::asio::awaitable<void> socks_udp_session::idle_watchdog()
     };
     co_await run_datagram_idle_watchdog(
         relay_context,
+        close_reason_,
         [this]()
         {
-            close_reason_ = udp_close_reason::kIdleTimeout;
             LOG_WARN("{} trace {:016x} conn {} tcp peer {}:{} udp bind {}:{} client {}:{} last_target {}:{} udp session idle closing",
                      log_event::kSocks,
                      trace_id_,

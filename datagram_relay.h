@@ -227,6 +227,20 @@ struct datagram_idle_watchdog_context
 
 boost::asio::awaitable<void> run_datagram_idle_watchdog(datagram_idle_watchdog_context context, std::function<void()> on_timeout);
 
+template <typename TimeoutFn>
+boost::asio::awaitable<void> run_datagram_idle_watchdog(datagram_idle_watchdog_context context,
+                                                        udp_close_reason& close_reason,
+                                                        TimeoutFn on_timeout)
+{
+    co_await run_datagram_idle_watchdog(
+        context,
+        [&close_reason, &on_timeout]()
+        {
+            close_reason = udp_close_reason::kIdleTimeout;
+            on_timeout();
+        });
+}
+
 }    // namespace relay
 
 #endif

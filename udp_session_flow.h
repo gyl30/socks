@@ -20,6 +20,15 @@ boost::asio::awaitable<udp_proxy_outbound_connect_result> connect_udp_proxy_flow
                                                                                 const std::string& outbound_tag,
                                                                                 const config& cfg);
 
+template <typename RunFn, typename FinalizeFn>
+boost::asio::awaitable<bool> finish_udp_session(RunFn run_session, udp_close_reason& close_reason, FinalizeFn finalize)
+{
+    const bool completed = co_await run_session();
+    close_reason = finalize_udp_close_reason(close_reason, completed);
+    co_await finalize(completed);
+    co_return completed;
+}
+
 }    // namespace relay
 
 #endif
