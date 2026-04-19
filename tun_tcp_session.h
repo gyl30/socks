@@ -63,8 +63,12 @@ class tun_tcp_session : public std::enable_shared_from_this<tun_tcp_session>
     void notify_closed();
     void note_close_reason(stream_relay_result::close_reason reason);
     void apply_client_close_action(stream_relay_result::close_action action);
+    void apply_client_close_reason(stream_relay_result::close_reason reason);
     [[nodiscard]] boost::asio::awaitable<void> apply_backend_close_action(const std::shared_ptr<tcp_outbound_stream>& backend,
                                                                           stream_relay_result::close_action action);
+    [[nodiscard]] boost::asio::awaitable<void> apply_backend_close_reason(const std::shared_ptr<tcp_outbound_stream>& backend,
+                                                                          stream_relay_result::close_reason reason);
+    [[nodiscard]] stream_relay_result::close_reason classify_backend_io_error(const boost::system::error_code& ec) const;
 
     static err_t on_recv(void* arg, tcp_pcb* pcb, pbuf* packet, err_t err);
     static err_t on_sent(void* arg, tcp_pcb* pcb, u16_t len);

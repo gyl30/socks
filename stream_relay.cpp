@@ -47,8 +47,12 @@ struct relay_result_state
     return source_is_inbound ? stream_relay_result::close_reason::kInboundEof : stream_relay_result::close_reason::kOutboundEof;
 }
 
-[[nodiscard]] stream_relay_result::close_reason write_error_reason(const bool destination_is_inbound)
+[[nodiscard]] stream_relay_result::close_reason write_error_reason(const bool destination_is_inbound, const boost::system::error_code& ec)
 {
+    if (net::is_basic_close_error(ec))
+    {
+        return stream_relay_result::close_reason::kStopped;
+    }
     return destination_is_inbound ? stream_relay_result::close_reason::kInboundError : stream_relay_result::close_reason::kOutboundError;
 }
 
@@ -115,12 +119,15 @@ boost::asio::awaitable<void> relay_direction(stream_relay_context& context,
             {
                 const auto reason = io_error_reason(is_tx_direction, ec);
                 result_state.record(reason, ec);
-                LOG_WARN("{} trace {:016x} conn {} stage relay {} read failed {}",
-                         context.log_event_name,
-                         context.trace_id,
-                         context.conn_id,
-                         stage_name,
-                         ec.message());
+                if (reason != stream_relay_result::close_reason::kStopped)
+                {
+                    LOG_WARN("{} trace {:016x} conn {} stage relay {} read failed {}",
+                             context.log_event_name,
+                             context.trace_id,
+                             context.conn_id,
+                             stage_name,
+                             ec.message());
+                }
                 co_await apply_close_policy(context, reason);
             }
             break;
@@ -129,14 +136,17 @@ boost::asio::awaitable<void> relay_direction(stream_relay_context& context,
         const auto bytes_written = co_await destination.write(std::span<const uint8_t>(buffer.data(), bytes_read), ec);
         if (ec)
         {
-            const auto reason = write_error_reason(!is_tx_direction);
+            const auto reason = write_error_reason(!is_tx_direction, ec);
             result_state.record(reason, ec);
-            LOG_WARN("{} trace {:016x} conn {} stage relay {} write failed {}",
-                     context.log_event_name,
-                     context.trace_id,
-                     context.conn_id,
-                     stage_name,
-                     ec.message());
+            if (reason != stream_relay_result::close_reason::kStopped)
+            {
+                LOG_WARN("{} trace {:016x} conn {} stage relay {} write failed {}",
+                         context.log_event_name,
+                         context.trace_id,
+                         context.conn_id,
+                         stage_name,
+                         ec.message());
+            }
             co_await apply_close_policy(context, reason);
             break;
         }
