@@ -557,7 +557,7 @@ boost::asio::awaitable<void> tproxy_tcp_session::finish_connected_session(
         .latency_ms = 0,
         .error_code = 0,
         .error_message = "",
-        .extra = {},
+        .extra = {{"close_reason", to_string(close_reason_)}},
     });
     log_close_summary();
     co_return;
@@ -579,7 +579,8 @@ boost::asio::awaitable<void> tproxy_tcp_session::relay_backend(const std::shared
         .tx_bytes = tx_bytes_,
         .rx_bytes = rx_bytes_,
     };
-    co_await relay_streams(relay_context);
+    const auto relay_result = co_await relay_streams(relay_context);
+    close_reason_ = relay_result.reason;
 }
 
 void tproxy_tcp_session::close_client_socket()
@@ -603,7 +604,7 @@ void tproxy_tcp_session::close_client_socket()
 void tproxy_tcp_session::log_close_summary() const
 {
     const auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time_).count();
-    LOG_INFO("{} trace {:016x} conn {} client {}:{} target {}:{} tx_bytes {} rx_bytes {} duration_ms {}",
+    LOG_INFO("{} trace {:016x} conn {} client {}:{} target {}:{} close_reason {} tx_bytes {} rx_bytes {} duration_ms {}",
              log_event::kConnClose,
              trace_id_,
              conn_id_,
@@ -611,6 +612,7 @@ void tproxy_tcp_session::log_close_summary() const
              client_port_,
              target_addr_.empty() ? "unknown" : target_addr_,
              target_port_,
+             to_string(close_reason_),
              tx_bytes_,
              rx_bytes_,
              duration_ms);

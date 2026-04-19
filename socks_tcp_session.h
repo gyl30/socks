@@ -14,6 +14,7 @@
 #include "router.h"
 #include "constants.h"
 #include "request_context.h"
+#include "session_result.h"
 #include "tcp_outbound_stream.h"
 
 namespace relay
@@ -71,6 +72,7 @@ class socks_tcp_session : public std::enable_shared_from_this<socks_tcp_session>
     uint16_t target_port_ = 0;
     std::string route_name_ = "unknown";
     std::shared_ptr<router> router_;
+    stream_relay_result::close_reason close_reason_ = stream_relay_result::close_reason::kUnknown;
 };
 
 }    // namespace relay

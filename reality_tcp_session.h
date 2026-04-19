@@ -13,6 +13,7 @@
 #include "router.h"
 #include "proxy_protocol.h"
 #include "request_context.h"
+#include "session_result.h"
 #include "tcp_outbound_stream.h"
 #include "proxy_reality_connection.h"
 
@@ -66,6 +67,7 @@ class reality_tcp_session : public std::enable_shared_from_this<reality_tcp_sess
     std::shared_ptr<proxy_reality_connection> connection_;
     std::shared_ptr<router> router_;
     uint64_t last_activity_time_ms_{0};
+    stream_relay_result::close_reason close_reason_ = stream_relay_result::close_reason::kUnknown;
 };
 
 }    // namespace relay

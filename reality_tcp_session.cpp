@@ -99,7 +99,8 @@ boost::asio::awaitable<void> reality_tcp_session::relay_backend(const std::share
         .tx_bytes = tx_bytes_,
         .rx_bytes = rx_bytes_,
     };
-    (void)co_await relay_streams(relay_context);
+    const auto relay_result = co_await relay_streams(relay_context);
+    close_reason_ = relay_result.reason;
 }
 
 boost::asio::awaitable<void> reality_tcp_session::finish_connected_session(const std::shared_ptr<tcp_outbound_stream>& backend)
@@ -125,7 +126,8 @@ boost::asio::awaitable<void> reality_tcp_session::finish_connected_session(const
         .extra = {{"duration_ms", std::to_string(
                                       std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
                                                                                            start_time_)
-                                          .count())}},
+                                          .count())},
+                  {"close_reason", to_string(close_reason_)}},
     });
     log_close_summary();
     co_return;
@@ -397,7 +399,7 @@ boost::asio::awaitable<bool> reality_tcp_session::send_connect_reply(const uint8
 void reality_tcp_session::log_close_summary() const
 {
     const auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time_).count();
-    LOG_INFO("{} trace {:016x} conn {} target {}:{} route {} bind {}:{} tx_bytes {} rx_bytes {} duration_ms {}",
+    LOG_INFO("{} trace {:016x} conn {} target {}:{} route {} bind {}:{} close_reason {} tx_bytes {} rx_bytes {} duration_ms {}",
              log_event::kConnClose,
              trace_id_,
              conn_id_,
@@ -406,6 +408,7 @@ void reality_tcp_session::log_close_summary() const
              route_name_,
              bind_host_,
              bind_port_,
+             to_string(close_reason_),
              tx_bytes_,
              rx_bytes_,
              duration_ms);

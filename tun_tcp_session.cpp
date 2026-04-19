@@ -80,6 +80,7 @@ void tun_tcp_session::stop()
         return;
     }
 
+    note_close_reason(stream_relay_result::close_reason::kStopped);
     stopped_ = true;
     close_client_connection(true);
     signal_all_events();
@@ -326,9 +327,9 @@ boost::asio::awaitable<void> tun_tcp_session::finish_connected_session(
         .latency_ms = static_cast<uint32_t>(duration_ms),
         .error_code = 0,
         .error_message = "",
-        .extra = {},
+        .extra = {{"close_reason", to_string(close_reason_)}},
     });
-    LOG_INFO("{} trace {:016x} conn {} client {}:{} target {}:{} tx_bytes {} rx_bytes {} duration_ms {}",
+    LOG_INFO("{} trace {:016x} conn {} client {}:{} target {}:{} close_reason {} tx_bytes {} rx_bytes {} duration_ms {}",
              log_event::kConnClose,
              trace_id_,
              conn_id_,
@@ -336,6 +337,7 @@ boost::asio::awaitable<void> tun_tcp_session::finish_connected_session(
              client_port_,
              target_addr_,
              target_port_,
+             to_string(close_reason_),
              tx_bytes_,
              rx_bytes_,
              duration_ms);
@@ -502,6 +504,7 @@ boost::asio::awaitable<void> tun_tcp_session::client_to_outbound(const std::shar
                 co_await backend->write(payload, ec);
                 if (ec)
                 {
+                    note_close_reason(stream_relay_result::close_reason::kOutboundError);
                     LOG_WARN("{} trace {:016x} conn {} client {}:{} target {}:{} stage client_to_outbound write backend failed {}",
                              log_event::kDataSend,
                              trace_id_,
@@ -527,8 +530,10 @@ boost::asio::awaitable<void> tun_tcp_session::client_to_outbound(const std::shar
 
         if (peer_eof_)
         {
-            boost::system::error_code shutdown_ec;
-            co_await backend->shutdown_send(shutdown_ec);
+            const auto reason = stream_relay_result::close_reason::kInboundEof;
+            note_close_reason(reason);
+            const auto policy = default_close_policy(reason);
+            co_await apply_backend_close_action(backend, policy.outbound_action);
             co_return;
         }
 
@@ -548,14 +553,22 @@ boost::asio::awaitable<void> tun_tcp_session::outbound_to_client(const std::shar
         {
             if (ec == boost::asio::error::eof)
             {
-                graceful_shutdown_to_client();
+                const auto reason = stream_relay_result::close_reason::kOutboundEof;
+                note_close_reason(reason);
+                const auto policy = default_close_policy(reason);
+                apply_client_close_action(policy.inbound_action);
             }
             else if (ec == boost::asio::error::operation_aborted)
             {
-                graceful_shutdown_to_client();
+                const auto reason = stream_relay_result::close_reason::kOutboundEof;
+                note_close_reason(reason);
+                const auto policy = default_close_policy(reason);
+                apply_client_close_action(policy.inbound_action);
             }
             else
             {
+                const auto reason = stream_relay_result::close_reason::kOutboundError;
+                note_close_reason(reason);
                 LOG_WARN("{} trace {:016x} conn {} client {}:{} target {}:{} stage outbound_to_client read backend failed {}",
                          log_event::kDataRecv,
                          trace_id_,
@@ -565,7 +578,7 @@ boost::asio::awaitable<void> tun_tcp_session::outbound_to_client(const std::shar
                          target_addr_,
                          target_port_,
                          ec.message());
-                close_client_connection(true);
+                apply_client_close_action(stream_relay_result::close_action::kAbort);
             }
             co_return;
         }
@@ -595,6 +608,8 @@ boost::asio::awaitable<void> tun_tcp_session::outbound_to_client(const std::shar
             }
             if (write_err != ERR_OK)
             {
+                const auto reason = stream_relay_result::close_reason::kInboundError;
+                note_close_reason(reason);
                 LOG_WARN("{} trace {:016x} conn {} client {}:{} target {}:{} stage outbound_to_client tcp_write failed {}",
                          log_event::kDataRecv,
                          trace_id_,
@@ -604,13 +619,15 @@ boost::asio::awaitable<void> tun_tcp_session::outbound_to_client(const std::shar
                          target_addr_,
                          target_port_,
                          tun::lwip_error_message(write_err));
-                close_client_connection(true);
+                apply_client_close_action(stream_relay_result::close_action::kAbort);
                 co_return;
             }
 
             const auto output_err = tcp_output(pcb_);
             if (output_err != ERR_OK && output_err != ERR_MEM)
             {
+                const auto reason = stream_relay_result::close_reason::kInboundError;
+                note_close_reason(reason);
                 LOG_WARN("{} trace {:016x} conn {} client {}:{} target {}:{} stage outbound_to_client tcp_output failed {}",
                          log_event::kDataRecv,
                          trace_id_,
@@ -620,7 +637,7 @@ boost::asio::awaitable<void> tun_tcp_session::outbound_to_client(const std::shar
                          target_addr_,
                          target_port_,
                          tun::lwip_error_message(output_err));
-                close_client_connection(true);
+                apply_client_close_action(stream_relay_result::close_action::kAbort);
                 co_return;
             }
 
@@ -646,6 +663,8 @@ boost::asio::awaitable<void> tun_tcp_session::idle_watchdog()
 
         if (net::now_ms() - last_activity_time_ms_ > idle_timeout_ms)
         {
+            const auto reason = stream_relay_result::close_reason::kIdleTimeout;
+            note_close_reason(reason);
             LOG_INFO("{} trace {:016x} conn {} tun tcp idle timeout client {}:{} target {}:{}",
                      log_event::kTimeout,
                      trace_id_,
@@ -654,7 +673,7 @@ boost::asio::awaitable<void> tun_tcp_session::idle_watchdog()
                      client_port_,
                      target_addr_,
                      target_port_);
-            close_client_connection(true);
+            apply_client_close_action(stream_relay_result::close_action::kAbort);
             co_return;
         }
     }
@@ -691,6 +710,55 @@ void tun_tcp_session::signal_all_events()
     signal_client_event();
     signal_send_event();
     idle_timer_.cancel();
+}
+
+void tun_tcp_session::note_close_reason(const stream_relay_result::close_reason reason)
+{
+    if (close_reason_ == stream_relay_result::close_reason::kUnknown)
+    {
+        close_reason_ = reason;
+    }
+}
+
+void tun_tcp_session::apply_client_close_action(const stream_relay_result::close_action action)
+{
+    switch (action)
+    {
+        case stream_relay_result::close_action::kNone:
+            return;
+        case stream_relay_result::close_action::kShutdownSend:
+            graceful_shutdown_to_client();
+            return;
+        case stream_relay_result::close_action::kClose:
+            close_client_connection(false);
+            return;
+        case stream_relay_result::close_action::kAbort:
+            close_client_connection(true);
+            return;
+    }
+}
+
+boost::asio::awaitable<void> tun_tcp_session::apply_backend_close_action(const std::shared_ptr<tcp_outbound_stream>& backend,
+                                                                         const stream_relay_result::close_action action)
+{
+    if (backend == nullptr)
+    {
+        co_return;
+    }
+
+    boost::system::error_code ec;
+    switch (action)
+    {
+        case stream_relay_result::close_action::kNone:
+            co_return;
+        case stream_relay_result::close_action::kShutdownSend:
+            co_await backend->shutdown_send(ec);
+            co_return;
+        case stream_relay_result::close_action::kClose:
+        case stream_relay_result::close_action::kAbort:
+            co_await backend->close();
+            co_return;
+    }
 }
 
 void tun_tcp_session::attach_lwip_callbacks()
@@ -868,6 +936,7 @@ err_t tun_tcp_session::on_recv(void* arg, tcp_pcb* pcb, pbuf* packet, const err_
         {
             pbuf_free(packet);
         }
+        self->note_close_reason(stream_relay_result::close_reason::kInboundError);
         self->close_client_connection(true);
         return err;
     }
@@ -923,6 +992,7 @@ void tun_tcp_session::on_err(void* arg, const err_t err)
     self->close_pending_ = false;
     self->peer_eof_ = true;
     self->stopped_ = true;
+    self->note_close_reason(stream_relay_result::close_reason::kInboundError);
     self->signal_all_events();
     LOG_INFO("{} trace {:016x} conn {} client {}:{} target {}:{} lwip tcp error {}",
              log_event::kConnClose,

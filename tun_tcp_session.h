@@ -15,6 +15,7 @@
 #include "router.h"
 #include "tun_lwip.h"
 #include "request_context.h"
+#include "session_result.h"
 #include "tcp_outbound_stream.h"
 
 namespace relay
@@ -60,6 +61,10 @@ class tun_tcp_session : public std::enable_shared_from_this<tun_tcp_session>
     void try_finish_client_close();
     void graceful_shutdown_to_client();
     void notify_closed();
+    void note_close_reason(stream_relay_result::close_reason reason);
+    void apply_client_close_action(stream_relay_result::close_action action);
+    [[nodiscard]] boost::asio::awaitable<void> apply_backend_close_action(const std::shared_ptr<tcp_outbound_stream>& backend,
+                                                                          stream_relay_result::close_action action);
 
     static err_t on_recv(void* arg, tcp_pcb* pcb, pbuf* packet, err_t err);
     static err_t on_sent(void* arg, tcp_pcb* pcb, u16_t len);
@@ -89,6 +94,7 @@ class tun_tcp_session : public std::enable_shared_from_this<tun_tcp_session>
     bool peer_eof_ = false;
     bool close_pending_ = false;
     bool stopped_ = false;
+    stream_relay_result::close_reason close_reason_ = stream_relay_result::close_reason::kUnknown;
 };
 
 }    // namespace relay
