@@ -67,6 +67,27 @@ boost::asio::awaitable<void> tun_udp_session::start()
     }
 
     const auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time_).count();
+    record_udp_session_close_trace(trace_event{
+        .trace_id = trace_id_,
+        .conn_id = conn_id_,
+        .inbound_tag = inbound_tag_,
+        .inbound_type = "tun",
+        .outbound_tag = outbound_tag_,
+        .outbound_type = outbound_type_,
+        .target_host = target_endpoint_.address().to_string(),
+        .target_port = target_endpoint_.port(),
+        .local_host = "",
+        .local_port = 0,
+        .remote_host = client_endpoint_.address().to_string(),
+        .remote_port = client_endpoint_.port(),
+        .route_type = relay::to_string(route_),
+        .match_type = match_type_,
+        .match_value = match_value_,
+    },
+                                   tx_bytes_,
+                                   rx_bytes_,
+                                   duration_ms,
+                                   close_reason_);
     LOG_INFO("{} trace {:016x} conn {} client {}:{} target {}:{} route {} close_reason {} tx_bytes {} rx_bytes {} duration_ms {}",
              log_event::kConnClose,
              trace_id_,

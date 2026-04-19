@@ -248,11 +248,9 @@ boost::asio::awaitable<void> reality_udp_session::start_impl(const proxy::udp_as
     (void)completed;
 
     const auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time_).count();
-    trace_store::instance().record_event(trace_event{
+    record_udp_session_close_trace(trace_event{
         .trace_id = trace_id_,
         .conn_id = conn_id_,
-        .stage = trace_stage::kSessionClose,
-        .result = trace_result::kOk,
         .inbound_tag = inbound_tag_,
         .inbound_type = "reality",
         .outbound_tag = "unknown",
@@ -263,10 +261,11 @@ boost::asio::awaitable<void> reality_udp_session::start_impl(const proxy::udp_as
         .local_port = bind_port_,
         .remote_host = std::string(connection_ != nullptr ? connection_->remote_host() : std::string_view("unknown")),
         .remote_port = static_cast<uint16_t>(connection_ != nullptr ? connection_->remote_port() : 0U),
-        .bytes_tx = tx_bytes_,
-        .bytes_rx = rx_bytes_,
-        .extra = {{"duration_ms", std::to_string(duration_ms)}, {"close_reason", to_string(close_reason_)}},
-    });
+    },
+                                   tx_bytes_,
+                                   rx_bytes_,
+                                   duration_ms,
+                                   close_reason_);
     LOG_INFO("{} trace {:016x} conn {} bind {}:{} close_reason {} tx_bytes {} rx_bytes {} duration_ms {}",
              log_event::kConnClose,
              trace_id_,
