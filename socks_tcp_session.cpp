@@ -48,7 +48,11 @@ socks_tcp_session::socks_tcp_session(boost::asio::ip::tcp::socket socket,
 
 boost::asio::awaitable<void> socks_tcp_session::start(const std::string& host, uint16_t port) { co_await run(host, port); }
 
-void socks_tcp_session::stop() { close_client_socket(); }
+void socks_tcp_session::stop()
+{
+    close_reason_ = stream_relay_result::close_reason::kStopped;
+    close_client_socket();
+}
 
 request_context socks_tcp_session::make_request_context(const std::string& host, const uint16_t port) const
 {

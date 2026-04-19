@@ -59,6 +59,7 @@ boost::asio::awaitable<void> tproxy_tcp_session::start() { co_await run(); }
 
 void tproxy_tcp_session::stop()
 {
+    close_reason_ = stream_relay_result::close_reason::kStopped;
     idle_timer_.cancel();
 
     boost::system::error_code ec;
