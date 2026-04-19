@@ -97,6 +97,36 @@ struct tcp_flow_result
     tcp_outbound_connect_result connect_result;
 };
 
+enum class udp_close_reason : uint8_t
+{
+    kUnknown = 0,
+    kCompleted,
+    kRouteBlocked,
+    kIdleTimeout,
+    kStopped,
+    kTransportError,
+};
+
+[[nodiscard]] inline const char* to_string(udp_close_reason reason)
+{
+    switch (reason)
+    {
+        case udp_close_reason::kUnknown:
+            return "unknown";
+        case udp_close_reason::kCompleted:
+            return "completed";
+        case udp_close_reason::kRouteBlocked:
+            return "route_blocked";
+        case udp_close_reason::kIdleTimeout:
+            return "idle_timeout";
+        case udp_close_reason::kStopped:
+            return "stopped";
+        case udp_close_reason::kTransportError:
+            return "transport_error";
+    }
+    return "unknown";
+}
+
 enum class udp_flow_mode : uint8_t
 {
     kBlock,

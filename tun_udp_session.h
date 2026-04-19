@@ -18,6 +18,7 @@
 #include "context_pool.h"
 #include "request_context.h"
 #include "router.h"
+#include "session_result.h"
 #include "tun_lwip.h"
 #include "udp_proxy_outbound.h"
 
@@ -96,6 +97,7 @@ class tun_udp_session : public std::enable_shared_from_this<tun_udp_session>
     boost::asio::ip::udp::endpoint target_endpoint_;
     std::function<void()> on_close_;
     packet_channel_type packet_channel_;
+    udp_close_reason close_reason_ = udp_close_reason::kUnknown;
 };
 
 }    // namespace relay

@@ -229,6 +229,10 @@ boost::asio::awaitable<void> reality_udp_session::start_impl(const proxy::udp_as
     }
 
     stopping_.store(true);
+    if (close_reason_ == udp_close_reason::kUnknown)
+    {
+        close_reason_ = udp_close_reason::kCompleted;
+    }
     close_udp_socket();
     co_await close_proxy_outbounds();
     if (connection_ != nullptr)
@@ -255,14 +259,15 @@ boost::asio::awaitable<void> reality_udp_session::start_impl(const proxy::udp_as
         .remote_port = static_cast<uint16_t>(connection_ != nullptr ? connection_->remote_port() : 0U),
         .bytes_tx = tx_bytes_,
         .bytes_rx = rx_bytes_,
-        .extra = {{"duration_ms", std::to_string(duration_ms)}},
+        .extra = {{"duration_ms", std::to_string(duration_ms)}, {"close_reason", to_string(close_reason_)}},
     });
-    LOG_INFO("{} trace {:016x} conn {} bind {}:{} tx_bytes {} rx_bytes {} duration_ms {}",
+    LOG_INFO("{} trace {:016x} conn {} bind {}:{} close_reason {} tx_bytes {} rx_bytes {} duration_ms {}",
              log_event::kConnClose,
              trace_id_,
              conn_id_,
              bind_host_,
              bind_port_,
+             to_string(close_reason_),
              tx_bytes_,
              rx_bytes_,
              duration_ms);
@@ -741,6 +746,7 @@ boost::asio::awaitable<void> reality_udp_session::idle_watchdog()
         relay_context,
         [this]()
         {
+            close_reason_ = udp_close_reason::kIdleTimeout;
             LOG_INFO("{} trace {:016x} conn {} udp session idle timeout bind {}:{}",
                      log_event::kTimeout,
                      trace_id_,

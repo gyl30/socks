@@ -246,6 +246,7 @@ boost::asio::awaitable<void> tproxy_udp_session::run()
             .match_value = match_value_,
             .error_message = "route blocked",
         });
+        close_reason_ = udp_close_reason::kRouteBlocked;
         notify_closed();
         co_return;
     }
@@ -253,6 +254,10 @@ boost::asio::awaitable<void> tproxy_udp_session::run()
     notify_closed();
     if (!completed)
     {
+        if (close_reason_ == udp_close_reason::kUnknown)
+        {
+            close_reason_ = udp_close_reason::kTransportError;
+        }
         trace_store::instance().record_event(trace_event{
             .trace_id = trace_id_,
             .conn_id = conn_id_,
@@ -292,8 +297,9 @@ boost::asio::awaitable<void> tproxy_udp_session::run()
         .bytes_tx = tx_bytes_,
         .bytes_rx = rx_bytes_,
         .latency_ms = static_cast<uint32_t>(duration_ms),
+        .extra = {{"close_reason", to_string(close_reason_)}},
     });
-    LOG_INFO("{} trace {:016x} conn {} client {}:{} target {}:{} route {} tx_bytes {} rx_bytes {} duration_ms {}",
+    LOG_INFO("{} trace {:016x} conn {} client {}:{} target {}:{} route {} close_reason {} tx_bytes {} rx_bytes {} duration_ms {}",
              log_event::kConnClose,
              trace_id_,
              conn_id_,
@@ -302,6 +308,7 @@ boost::asio::awaitable<void> tproxy_udp_session::run()
              target_endpoint_.address().to_string(),
              target_endpoint_.port(),
              relay::to_string(route_),
+             to_string(close_reason_),
              tx_bytes_,
              rx_bytes_,
              duration_ms);
@@ -699,6 +706,7 @@ boost::asio::awaitable<void> tproxy_udp_session::idle_watchdog()
         relay_context,
         [this]()
         {
+            close_reason_ = udp_close_reason::kIdleTimeout;
             LOG_INFO("{} trace {:016x} conn {} udp session idle timeout client {}:{} target {}:{}",
                      log_event::kTimeout,
                      trace_id_,
@@ -848,6 +856,10 @@ void tproxy_udp_session::close_impl()
     if (stopped_.exchange(true, std::memory_order_relaxed))
     {
         return;
+    }
+    if (close_reason_ == udp_close_reason::kUnknown)
+    {
+        close_reason_ = udp_close_reason::kStopped;
     }
 
     idle_timer_.cancel();

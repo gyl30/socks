@@ -250,6 +250,10 @@ void socks_udp_session::close_impl()
     }
 
     stopped_ = true;
+    if (close_reason_ == udp_close_reason::kUnknown)
+    {
+        close_reason_ = udp_close_reason::kStopped;
+    }
     timer_.cancel();
     idle_timer_.cancel();
     proxy_outbound_channel_.close();
@@ -434,9 +438,9 @@ boost::asio::awaitable<void> socks_udp_session::run(const std::string& host, con
         .remote_port = tcp_peer_port_,
         .bytes_tx = tx_bytes_,
         .bytes_rx = rx_bytes_,
-        .extra = {{"duration_ms", std::to_string(duration_ms)}},
+        .extra = {{"duration_ms", std::to_string(duration_ms)}, {"close_reason", to_string(close_reason_)}},
     });
-    LOG_INFO("{} trace {:016x} conn {} tcp peer {}:{} udp bind {}:{} client {}:{} tx_bytes {} rx_bytes {} duration_ms {}",
+    LOG_INFO("{} trace {:016x} conn {} tcp peer {}:{} udp bind {}:{} client {}:{} close_reason {} tx_bytes {} rx_bytes {} duration_ms {}",
              log_event::kConnClose,
              trace_id_,
              conn_id_,
@@ -446,6 +450,7 @@ boost::asio::awaitable<void> socks_udp_session::run(const std::string& host, con
              udp_bind_port_,
              current_client_host(),
              current_client_port(),
+             to_string(close_reason_),
              tx_bytes_,
              rx_bytes_,
              duration_ms);
@@ -1525,6 +1530,7 @@ boost::asio::awaitable<void> socks_udp_session::idle_watchdog()
         relay_context,
         [this]()
         {
+            close_reason_ = udp_close_reason::kIdleTimeout;
             LOG_WARN("{} trace {:016x} conn {} tcp peer {}:{} udp bind {}:{} client {}:{} last_target {}:{} udp session idle closing",
                      log_event::kSocks,
                      trace_id_,
