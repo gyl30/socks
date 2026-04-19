@@ -5,6 +5,7 @@
 #include <memory>
 #include <string>
 
+#include <boost/asio/ip/udp.hpp>
 #include <boost/asio/awaitable.hpp>
 
 #include "config.h"
@@ -64,6 +65,35 @@ inline void record_udp_session_error_trace(trace_event event,
     }
     event.extra["close_reason"] = to_string(close_reason);
     trace_store::instance().record_event(std::move(event));
+}
+
+[[nodiscard]] inline trace_event make_transparent_udp_trace_event(const uint64_t trace_id,
+                                                                  const uint32_t conn_id,
+                                                                  const std::string& inbound_tag,
+                                                                  const std::string& inbound_type,
+                                                                  const std::string& outbound_tag,
+                                                                  const std::string& outbound_type,
+                                                                  const boost::asio::ip::udp::endpoint& client_endpoint,
+                                                                  const boost::asio::ip::udp::endpoint& target_endpoint,
+                                                                  const std::string& route_type,
+                                                                  const std::string& match_type,
+                                                                  const std::string& match_value)
+{
+    return trace_event{
+        .trace_id = trace_id,
+        .conn_id = conn_id,
+        .inbound_tag = inbound_tag,
+        .inbound_type = inbound_type,
+        .outbound_tag = outbound_tag,
+        .outbound_type = outbound_type,
+        .target_host = target_endpoint.address().to_string(),
+        .target_port = target_endpoint.port(),
+        .remote_host = client_endpoint.address().to_string(),
+        .remote_port = client_endpoint.port(),
+        .route_type = route_type,
+        .match_type = match_type,
+        .match_value = match_value,
+    };
 }
 
 }    // namespace relay
