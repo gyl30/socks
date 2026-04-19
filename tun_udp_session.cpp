@@ -301,11 +301,10 @@ boost::asio::awaitable<bool> tun_udp_session::run()
     });
     if (route_ == route_type::kBlock)
     {
-        trace_store::instance().record_event(trace_event{
+        close_reason_ = udp_close_reason::kRouteBlocked;
+        record_udp_session_error_trace(trace_event{
             .trace_id = trace_id_,
             .conn_id = conn_id_,
-            .stage = trace_stage::kSessionError,
-            .result = trace_result::kFail,
             .inbound_tag = inbound_tag_,
             .inbound_type = "tun",
             .outbound_tag = outbound_tag_,
@@ -323,10 +322,10 @@ boost::asio::awaitable<bool> tun_udp_session::run()
             .bytes_rx = 0,
             .latency_ms = 0,
             .error_code = 0,
-            .error_message = "route blocked",
             .extra = {},
-        });
-        close_reason_ = udp_close_reason::kRouteBlocked;
+        },
+                                       close_reason_,
+                                       "route blocked");
         LOG_WARN("{} trace {:016x} conn {} blocked tun udp target {}:{}",
                  log_event::kRoute,
                  trace_id_,
