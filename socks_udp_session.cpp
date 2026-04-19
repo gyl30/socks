@@ -363,18 +363,11 @@ boost::asio::awaitable<bool> socks_udp_session::prepare_udp_associate(const std:
     has_client_ip_ = true;
     tcp_peer_host_ = client_ip_.to_string();
     tcp_peer_port_ = tcp_remote_ep.port();
-    trace_store::instance().record_event(trace_event{
-        .trace_id = trace_id_,
-        .conn_id = conn_id_,
-        .stage = trace_stage::kConnAccepted,
-        .result = trace_result::kOk,
-        .inbound_tag = inbound_tag_,
-        .inbound_type = "socks",
-        .local_host = udp_bind_host_,
-        .local_port = udp_bind_port_,
-        .remote_host = tcp_peer_host_,
-        .remote_port = tcp_peer_port_,
-    });
+    auto accepted_event = make_bound_udp_trace_event(
+        trace_id_, conn_id_, inbound_tag_, "socks", "", "", udp_bind_host_, udp_bind_port_, tcp_peer_host_, tcp_peer_port_);
+    accepted_event.stage = trace_stage::kConnAccepted;
+    accepted_event.result = trace_result::kOk;
+    trace_store::instance().record_event(std::move(accepted_event));
     LOG_INFO("{} trace {:016x} conn {} tcp peer {}:{} udp bind {}:{}",
              log_event::kConnInit,
              trace_id_,
@@ -429,20 +422,18 @@ boost::asio::awaitable<void> socks_udp_session::run(const std::string& host, con
     (void)completed;
 
     const auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time_).count();
-    record_udp_session_close_trace(trace_event{
-        .trace_id = trace_id_,
-        .conn_id = conn_id_,
-        .inbound_tag = inbound_tag_,
-        .inbound_type = "socks",
-        .outbound_tag = proxy_outbound_tag_,
-        .outbound_type = proxy_outbound_ != nullptr ? "proxy" : "direct",
-        .target_host = has_last_target_ ? last_target_addr_ : "unknown",
-        .target_port = static_cast<uint16_t>(has_last_target_ ? last_target_port_ : 0U),
-        .local_host = udp_bind_host_,
-        .local_port = udp_bind_port_,
-        .remote_host = tcp_peer_host_,
-        .remote_port = tcp_peer_port_,
-    },
+    record_udp_session_close_trace(make_bound_udp_trace_event(trace_id_,
+                                                              conn_id_,
+                                                              inbound_tag_,
+                                                              "socks",
+                                                              proxy_outbound_tag_,
+                                                              proxy_outbound_ != nullptr ? "proxy" : "direct",
+                                                              udp_bind_host_,
+                                                              udp_bind_port_,
+                                                              tcp_peer_host_,
+                                                              tcp_peer_port_,
+                                                              has_last_target_ ? last_target_addr_ : "unknown",
+                                                              static_cast<uint16_t>(has_last_target_ ? last_target_port_ : 0U)),
                                    tx_bytes_,
                                    rx_bytes_,
                                    duration_ms,
