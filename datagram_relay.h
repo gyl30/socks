@@ -17,6 +17,7 @@
 #include "net_utils.h"
 #include "trace_store.h"
 #include "proxy_protocol.h"
+#include "session_result.h"
 #include "udp_proxy_outbound.h"
 
 namespace relay
@@ -53,7 +54,10 @@ boost::asio::awaitable<void> relay_packet_channel_payloads(PacketChannel& channe
         co_await send_payload(payload, ec);
         if (ec)
         {
-            on_error(ec);
+            if (!is_stopped_io_error(ec))
+            {
+                on_error(ec);
+            }
             co_return;
         }
 
@@ -96,7 +100,10 @@ boost::asio::awaitable<void> relay_connected_udp_socket_replies(connected_udp_so
             co_await context.socket.async_receive(boost::asio::buffer(buffer), boost::asio::redirect_error(boost::asio::use_awaitable, ec));
         if (ec)
         {
-            on_error(ec);
+            if (!is_stopped_io_error(ec))
+            {
+                on_error(ec);
+            }
             co_return;
         }
 
@@ -123,7 +130,10 @@ boost::asio::awaitable<void> relay_udp_socket_replies(udp_socket_reply_relay_con
             co_await context.socket.async_receive_from(boost::asio::buffer(buffer), sender, boost::asio::as_tuple(boost::asio::use_awaitable));
         if (read_ec)
         {
-            on_error(read_ec);
+            if (!is_stopped_io_error(read_ec))
+            {
+                on_error(read_ec);
+            }
             break;
         }
 
@@ -137,7 +147,10 @@ boost::asio::awaitable<void> relay_udp_socket_replies(udp_socket_reply_relay_con
         const auto accounted_bytes = co_await write_reply(sender, buffer.data(), bytes_read, write_ec);
         if (write_ec)
         {
-            on_error(write_ec);
+            if (!is_stopped_io_error(write_ec))
+            {
+                on_error(write_ec);
+            }
             break;
         }
 
@@ -181,7 +194,10 @@ boost::asio::awaitable<void> relay_proxy_outbound_replies(const std::shared_ptr<
             {
                 continue;
             }
-            on_error(read_ec);
+            if (!is_stopped_io_error(read_ec))
+            {
+                on_error(read_ec);
+            }
             break;
         }
 
@@ -189,7 +205,10 @@ boost::asio::awaitable<void> relay_proxy_outbound_replies(const std::shared_ptr<
         const auto accounted_bytes = co_await write_reply(datagram, write_ec);
         if (write_ec)
         {
-            on_error(write_ec);
+            if (!is_stopped_io_error(write_ec))
+            {
+                on_error(write_ec);
+            }
             break;
         }
 

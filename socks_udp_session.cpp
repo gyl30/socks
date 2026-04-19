@@ -250,10 +250,7 @@ void socks_udp_session::close_impl()
     }
 
     stopped_ = true;
-    if (close_reason_ == udp_close_reason::kUnknown)
-    {
-        close_reason_ = udp_close_reason::kStopped;
-    }
+    close_reason_ = stop_udp_close_reason(close_reason_);
     timer_.cancel();
     idle_timer_.cancel();
     proxy_outbound_channel_.close();
@@ -419,6 +416,7 @@ boost::asio::awaitable<void> socks_udp_session::run(const std::string& host, con
         proxy_outbound_started_ = false;
     }
 
+    close_reason_ = finalize_udp_close_reason(close_reason_, true);
     close_impl();
     const auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time_).count();
     trace_store::instance().record_event(trace_event{

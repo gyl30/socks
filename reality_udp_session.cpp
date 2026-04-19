@@ -229,10 +229,7 @@ boost::asio::awaitable<void> reality_udp_session::start_impl(const proxy::udp_as
     }
 
     stopping_.store(true);
-    if (close_reason_ == udp_close_reason::kUnknown)
-    {
-        close_reason_ = udp_close_reason::kCompleted;
-    }
+    close_reason_ = finalize_udp_close_reason(close_reason_, true);
     close_udp_socket();
     co_await close_proxy_outbounds();
     if (connection_ != nullptr)
