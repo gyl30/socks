@@ -251,13 +251,10 @@ boost::asio::awaitable<void> tproxy_udp_session::run()
         co_return;
     }
     const bool completed = co_await run_selected_mode();
+    close_reason_ = finalize_udp_close_reason(close_reason_, completed);
     notify_closed();
     if (!completed)
     {
-        if (close_reason_ == udp_close_reason::kUnknown)
-        {
-            close_reason_ = udp_close_reason::kTransportError;
-        }
         trace_store::instance().record_event(trace_event{
             .trace_id = trace_id_,
             .conn_id = conn_id_,
@@ -857,10 +854,7 @@ void tproxy_udp_session::close_impl()
     {
         return;
     }
-    if (close_reason_ == udp_close_reason::kUnknown)
-    {
-        close_reason_ = udp_close_reason::kStopped;
-    }
+    close_reason_ = stop_udp_close_reason(close_reason_);
 
     idle_timer_.cancel();
     packet_channel_.close();

@@ -58,6 +58,7 @@ tun_udp_session::tun_udp_session(io_worker& worker,
 boost::asio::awaitable<void> tun_udp_session::start()
 {
     const bool completed = co_await run();
+    close_reason_ = finalize_udp_close_reason(close_reason_, completed);
     notify_closed();
     if (!completed)
     {
@@ -837,10 +838,7 @@ void tun_udp_session::close_impl()
     {
         return;
     }
-    if (close_reason_ == udp_close_reason::kUnknown)
-    {
-        close_reason_ = udp_close_reason::kStopped;
-    }
+    close_reason_ = stop_udp_close_reason(close_reason_);
 
     boost::system::error_code ec;
     idle_timer_.cancel();

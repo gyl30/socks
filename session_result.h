@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <memory>
 
+#include <boost/asio/error.hpp>
 #include <boost/system/error_code.hpp>
 
 #include "router.h"
@@ -125,6 +126,29 @@ enum class udp_close_reason : uint8_t
             return "transport_error";
     }
     return "unknown";
+}
+
+[[nodiscard]] inline udp_close_reason finalize_udp_close_reason(udp_close_reason current, const bool completed)
+{
+    if (current != udp_close_reason::kUnknown)
+    {
+        return current;
+    }
+    return completed ? udp_close_reason::kCompleted : udp_close_reason::kTransportError;
+}
+
+[[nodiscard]] inline udp_close_reason stop_udp_close_reason(udp_close_reason current)
+{
+    if (current != udp_close_reason::kUnknown)
+    {
+        return current;
+    }
+    return udp_close_reason::kStopped;
+}
+
+[[nodiscard]] inline bool is_stopped_io_error(const boost::system::error_code& ec)
+{
+    return ec == boost::asio::error::operation_aborted || ec == boost::asio::error::bad_descriptor;
 }
 
 enum class udp_flow_mode : uint8_t
