@@ -96,6 +96,13 @@ inline void record_udp_session_error_trace(trace_event event,
     };
 }
 
+inline void record_udp_trace_stage(trace_event event, const trace_stage stage, const trace_result result)
+{
+    event.stage = stage;
+    event.result = result;
+    trace_store::instance().record_event(std::move(event));
+}
+
 [[nodiscard]] inline trace_event make_bound_udp_trace_event(const uint64_t trace_id,
                                                             const uint32_t conn_id,
                                                             const std::string& inbound_tag,
