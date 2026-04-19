@@ -199,18 +199,19 @@ boost::asio::awaitable<void> reality_udp_session::start_impl(const proxy::udp_as
         co_return;
     }
 
-    trace_store::instance().record_event(trace_event{
-        .trace_id = trace_id_,
-        .conn_id = conn_id_,
-        .stage = trace_stage::kConnAccepted,
-        .result = trace_result::kOk,
-        .inbound_tag = inbound_tag_,
-        .inbound_type = "reality",
-        .local_host = bind_host_,
-        .local_port = bind_port_,
-        .remote_host = std::string(connection_ != nullptr ? connection_->remote_host() : std::string_view("unknown")),
-        .remote_port = static_cast<uint16_t>(connection_ != nullptr ? connection_->remote_port() : 0U),
-    });
+    auto accepted_event = make_bound_udp_trace_event(trace_id_,
+                                                     conn_id_,
+                                                     inbound_tag_,
+                                                     "reality",
+                                                     "",
+                                                     "",
+                                                     bind_host_,
+                                                     bind_port_,
+                                                     std::string(connection_ != nullptr ? connection_->remote_host() : std::string_view("unknown")),
+                                                     static_cast<uint16_t>(connection_ != nullptr ? connection_->remote_port() : 0U));
+    accepted_event.stage = trace_stage::kConnAccepted;
+    accepted_event.result = trace_result::kOk;
+    trace_store::instance().record_event(std::move(accepted_event));
     LOG_INFO("{} trace {:016x} conn {} udp associate ready bind {}:{}",
              log_event::kConnEstablished,
              trace_id_,
@@ -248,20 +249,16 @@ boost::asio::awaitable<void> reality_udp_session::start_impl(const proxy::udp_as
     (void)completed;
 
     const auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time_).count();
-    record_udp_session_close_trace(trace_event{
-        .trace_id = trace_id_,
-        .conn_id = conn_id_,
-        .inbound_tag = inbound_tag_,
-        .inbound_type = "reality",
-        .outbound_tag = "unknown",
-        .outbound_type = "proxy",
-        .target_host = "unknown",
-        .target_port = 0,
-        .local_host = bind_host_,
-        .local_port = bind_port_,
-        .remote_host = std::string(connection_ != nullptr ? connection_->remote_host() : std::string_view("unknown")),
-        .remote_port = static_cast<uint16_t>(connection_ != nullptr ? connection_->remote_port() : 0U),
-    },
+    record_udp_session_close_trace(make_bound_udp_trace_event(trace_id_,
+                                                              conn_id_,
+                                                              inbound_tag_,
+                                                              "reality",
+                                                              "unknown",
+                                                              "proxy",
+                                                              bind_host_,
+                                                              bind_port_,
+                                                              std::string(connection_ != nullptr ? connection_->remote_host() : std::string_view("unknown")),
+                                                              static_cast<uint16_t>(connection_ != nullptr ? connection_->remote_port() : 0U)),
                                    tx_bytes_,
                                    rx_bytes_,
                                    duration_ms,

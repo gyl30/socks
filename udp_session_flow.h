@@ -96,6 +96,35 @@ inline void record_udp_session_error_trace(trace_event event,
     };
 }
 
+[[nodiscard]] inline trace_event make_bound_udp_trace_event(const uint64_t trace_id,
+                                                            const uint32_t conn_id,
+                                                            const std::string& inbound_tag,
+                                                            const std::string& inbound_type,
+                                                            const std::string& outbound_tag,
+                                                            const std::string& outbound_type,
+                                                            const std::string& bind_host,
+                                                            const uint16_t bind_port,
+                                                            const std::string& remote_host,
+                                                            const uint16_t remote_port,
+                                                            const std::string& target_host = {},
+                                                            const uint16_t target_port = 0)
+{
+    return trace_event{
+        .trace_id = trace_id,
+        .conn_id = conn_id,
+        .inbound_tag = inbound_tag,
+        .inbound_type = inbound_type,
+        .outbound_tag = outbound_tag,
+        .outbound_type = outbound_type,
+        .target_host = target_host,
+        .target_port = target_port,
+        .local_host = bind_host,
+        .local_port = bind_port,
+        .remote_host = remote_host,
+        .remote_port = remote_port,
+    };
+}
+
 }    // namespace relay
 
 #endif
