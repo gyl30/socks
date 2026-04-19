@@ -276,11 +276,9 @@ boost::asio::awaitable<void> tproxy_udp_session::run()
         co_return;
     }
     const auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time_).count();
-    trace_store::instance().record_event(trace_event{
+    record_udp_session_close_trace(trace_event{
         .trace_id = trace_id_,
         .conn_id = conn_id_,
-        .stage = trace_stage::kSessionClose,
-        .result = trace_result::kOk,
         .inbound_tag = inbound_tag_,
         .inbound_type = "tproxy",
         .outbound_tag = outbound_tag_,
@@ -292,11 +290,11 @@ boost::asio::awaitable<void> tproxy_udp_session::run()
         .route_type = relay::to_string(route_),
         .match_type = match_type_,
         .match_value = match_value_,
-        .bytes_tx = tx_bytes_,
-        .bytes_rx = rx_bytes_,
-        .latency_ms = static_cast<uint32_t>(duration_ms),
-        .extra = {{"close_reason", to_string(close_reason_)}},
-    });
+    },
+                                   tx_bytes_,
+                                   rx_bytes_,
+                                   duration_ms,
+                                   close_reason_);
     LOG_INFO("{} trace {:016x} conn {} client {}:{} target {}:{} route {} close_reason {} tx_bytes {} rx_bytes {} duration_ms {}",
              log_event::kConnClose,
              trace_id_,
