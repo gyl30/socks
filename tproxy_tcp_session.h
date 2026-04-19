@@ -13,6 +13,7 @@
 #include "config.h"
 #include "router.h"
 #include "request_context.h"
+#include "session_result.h"
 #include "tcp_outbound_stream.h"
 
 namespace relay
@@ -72,6 +73,7 @@ class tproxy_tcp_session : public std::enable_shared_from_this<tproxy_tcp_sessio
     const config& cfg_;
     config::tproxy_t settings_;
     uint64_t last_activity_time_ms_{0};
+    stream_relay_result::close_reason close_reason_ = stream_relay_result::close_reason::kUnknown;
 };
 
 }    // namespace relay

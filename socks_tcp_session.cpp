@@ -91,7 +91,8 @@ boost::asio::awaitable<void> socks_tcp_session::relay_backend(const std::shared_
         .tx_bytes = tx_bytes_,
         .rx_bytes = rx_bytes_,
     };
-    (void)co_await relay_streams(relay_context);
+    const auto relay_result = co_await relay_streams(relay_context);
+    close_reason_ = relay_result.reason;
 }
 
 boost::asio::awaitable<void> socks_tcp_session::finish_connected_session(
@@ -136,9 +137,9 @@ boost::asio::awaitable<void> socks_tcp_session::finish_connected_session(
         .route_type = route_name_,
         .bytes_tx = tx_bytes_,
         .bytes_rx = rx_bytes_,
-        .extra = {{"duration_ms", std::to_string(duration_ms)}},
+        .extra = {{"duration_ms", std::to_string(duration_ms)}, {"close_reason", to_string(close_reason_)}},
     });
-    LOG_INFO("{} trace {:016x} conn {} client {}:{} local {}:{} target {}:{} route {} tx_bytes {} rx_bytes {} duration_ms {}",
+    LOG_INFO("{} trace {:016x} conn {} client {}:{} local {}:{} target {}:{} route {} close_reason {} tx_bytes {} rx_bytes {} duration_ms {}",
              log_event::kConnClose,
              trace_id_,
              conn_id_,
@@ -149,6 +150,7 @@ boost::asio::awaitable<void> socks_tcp_session::finish_connected_session(
              target_host_,
              target_port_,
              route_name_,
+             to_string(close_reason_),
              tx_bytes_,
              rx_bytes_,
              duration_ms);
