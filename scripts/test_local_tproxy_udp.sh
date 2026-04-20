@@ -89,7 +89,9 @@ if [[ ! -x "$binary" || ! -f "$server_config" || ! -f "$client_config" || ! -f "
 fi
 
 source "$repo_root/scripts/runtime_env.sh"
+enter_private_run_mount_namespace "$@"
 init_runtime_ld_library_path "$binary"
+ensure_netns_mountpoint /run/netns
 
 sanitize_test_id() {
     printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9'
@@ -217,6 +219,7 @@ cleanup() {
     ip route del local 0.0.0.0/0 dev lo table "$tproxy_table" >/dev/null 2>&1 || true
     ip link del "$host_if" >/dev/null 2>&1 || true
     ip netns del "$ns_name" >/dev/null 2>&1 || true
+    cleanup_netns_mountpoint /run/netns
 
     stop_pid "$client_pid"
     stop_pid "$server_pid"

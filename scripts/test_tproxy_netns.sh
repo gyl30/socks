@@ -16,6 +16,7 @@ if [[ "${EUID}" -ne 0 ]]; then
 fi
 
 source "$repo_root/scripts/runtime_env.sh"
+enter_private_run_mount_namespace "$@"
 
 ip link set lo up
 ensure_netns_mountpoint /run/netns
@@ -212,6 +213,8 @@ cleanup() {
         fi
         rm -rf "/etc/netns/$ns" >/dev/null 2>&1 || true
     done
+
+    cleanup_netns_mountpoint /run/netns
 
     if [[ -d "$tmp_dir" ]]; then
         chown -R "$artifact_uid:$artifact_gid" "$tmp_dir" >/dev/null 2>&1 || true

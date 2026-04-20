@@ -54,16 +54,9 @@ is_mountpoint() {
     ' /proc/self/mountinfo
 }
 
-ensure_netns_mountpoint() {
-    local netns_dir="${1:-/run/netns}"
-
-    mkdir -p "$netns_dir"
-
-    if ! is_mountpoint "$netns_dir"; then
-        mount --bind "$netns_dir" "$netns_dir"
-    fi
-
-    if ! awk -v target="$netns_dir" '
+is_shared_mountpoint() {
+    local target="$1"
+    awk -v target="$target" '
         $5 == target {
             found = 1
             for (i = 7; i <= NF && $i != "-"; ++i) {
@@ -71,11 +64,76 @@ ensure_netns_mountpoint() {
                     shared = 1
                 }
             }
+            exit
         }
         END { exit(found && shared ? 0 : 1) }
-    ' /proc/self/mountinfo; then
-        mount --make-shared "$netns_dir"
+    ' /proc/self/mountinfo
+}
+
+enter_private_run_mount_namespace() {
+    if [[ "${SOCKS_PRIVATE_RUN_READY:-0}" != "1" ]]; then
+        if ! command -v unshare >/dev/null 2>&1; then
+            echo "missing dependency: unshare" >&2
+            return 1
+        fi
+
+        exec unshare -m --propagation private env SOCKS_PRIVATE_RUN_READY=1 "${BASH:-bash}" "$0" "$@"
     fi
+
+    if [[ "${SOCKS_PRIVATE_RUN_NETNS_TMPFS_READY:-0}" == "1" ]]; then
+        return
+    fi
+
+    mkdir -p /run/netns
+    mount -t tmpfs tmpfs /run/netns
+    export SOCKS_PRIVATE_RUN_NETNS_TMPFS_READY=1
+}
+
+netns_mountpoint_owned_dir=""
+
+ensure_netns_mountpoint() {
+    local netns_dir="${1:-/run/netns}"
+
+    mkdir -p "$netns_dir"
+
+    if [[ "${netns_mountpoint_owned_dir:-}" == "$netns_dir" ]]; then
+        return
+    fi
+
+    if is_mountpoint "$netns_dir" && is_shared_mountpoint "$netns_dir"; then
+        return
+    fi
+
+    if ! mount --bind "$netns_dir" "$netns_dir"; then
+        return 1
+    fi
+    netns_mountpoint_owned_dir="$netns_dir"
+
+    if ! is_shared_mountpoint "$netns_dir"; then
+        if ! mount --make-shared "$netns_dir"; then
+            umount "$netns_dir" >/dev/null 2>&1 || true
+            netns_mountpoint_owned_dir=""
+            return 1
+        fi
+    fi
+}
+
+cleanup_netns_mountpoint() {
+    local netns_dir="${1:-${netns_mountpoint_owned_dir:-}}"
+
+    if [[ -z "${netns_mountpoint_owned_dir:-}" ]]; then
+        return
+    fi
+
+    if [[ "$netns_mountpoint_owned_dir" != "$netns_dir" ]]; then
+        return
+    fi
+
+    if is_mountpoint "$netns_dir"; then
+        umount "$netns_dir" >/dev/null 2>&1 || true
+    fi
+
+    netns_mountpoint_owned_dir=""
 }
 
 init_runtime_ld_library_path() {

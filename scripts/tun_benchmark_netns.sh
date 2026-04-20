@@ -23,6 +23,7 @@ for cmd in ip python3 openssl awk; do
 done
 
 source "$repo_root/scripts/runtime_env.sh"
+enter_private_run_mount_namespace "$@"
 init_runtime_ld_library_path "$binary"
 
 tmp_dir="${ARTIFACT_DIR:-$(mktemp -d "$repo_root/.tmp-tun-bench.XXXXXX")}"
@@ -80,6 +81,8 @@ cleanup() {
     if [[ -w /proc/sys/net/ipv4/ip_forward ]]; then
         printf '%s\n' "$host_ip_forward_before" >/proc/sys/net/ipv4/ip_forward 2>/dev/null || true
     fi
+
+    cleanup_netns_mountpoint /run/netns
 
     exit "$rc"
 }

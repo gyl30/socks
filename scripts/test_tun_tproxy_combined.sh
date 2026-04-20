@@ -16,6 +16,7 @@ if [[ "${EUID}" -ne 0 ]]; then
 fi
 
 source "$repo_root/scripts/runtime_env.sh"
+enter_private_run_mount_namespace "$@"
 
 ip link set lo up
 ensure_netns_mountpoint /run/netns
@@ -302,6 +303,8 @@ cleanup() {
     if [[ -w /proc/sys/net/ipv4/ip_forward ]]; then
         printf '%s\n' "$host_ip_forward_before" >/proc/sys/net/ipv4/ip_forward 2>/dev/null || true
     fi
+
+    cleanup_netns_mountpoint /run/netns
 
     if [[ -d "$tmp_dir" ]]; then
         chown -R "$artifact_uid:$artifact_gid" "$tmp_dir" >/dev/null 2>&1 || true
