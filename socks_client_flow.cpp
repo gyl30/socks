@@ -74,6 +74,11 @@ boost::asio::awaitable<bool> negotiate_method(
     }
     if (reply[1] == socks::kMethodPassword)
     {
+        if (!settings.auth)
+        {
+            ec = boost::asio::error::operation_not_supported;
+            co_return false;
+        }
         co_return co_await do_password_auth(socket, settings, cfg, ec);
     }
     if (reply[1] != socks::kMethodNoAuth)
