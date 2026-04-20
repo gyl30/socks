@@ -383,6 +383,12 @@ if(UNIX AND NOT APPLE AND NOT ENABLE_STATIC_LINK)
   target_link_options(socks PRIVATE "-Wl,--no-as-needed" "${BROTLICOMMON_LIBRARY}" "-Wl,--as-needed")
 endif()
 
+add_executable(udp_transparent_session_regression scripts/test_udp_transparent_session_regression.cpp)
+target_link_libraries(udp_transparent_session_regression PRIVATE core)
+if(UNIX AND NOT APPLE AND NOT ENABLE_STATIC_LINK)
+  target_link_options(udp_transparent_session_regression PRIVATE "-Wl,--no-as-needed" "${BROTLICOMMON_LIBRARY}" "-Wl,--as-needed")
+endif()
+
 if(ENABLE_FUZZ)
   add_executable(ch_parser_fuzz fuzz/ch_parser_fuzz.cpp)
   target_link_libraries(ch_parser_fuzz PRIVATE fuzz_core)
@@ -408,6 +414,10 @@ list(REMOVE_DUPLICATES SOCKS_RUNTIME_DIRS)
 if(SOCKS_RUNTIME_DIRS)
   set_target_properties(
     socks
+    PROPERTIES BUILD_RPATH "${SOCKS_RUNTIME_DIRS}"
+               INSTALL_RPATH "${SOCKS_RUNTIME_DIRS}")
+  set_target_properties(
+    udp_transparent_session_regression
     PROPERTIES BUILD_RPATH "${SOCKS_RUNTIME_DIRS}"
                INSTALL_RPATH "${SOCKS_RUNTIME_DIRS}")
 endif()

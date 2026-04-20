@@ -227,6 +227,14 @@ boost::asio::awaitable<void> tproxy_udp_session::run()
     if (route_ == route_type::kBlock)
     {
         close_reason_ = udp_close_reason::kRouteBlocked;
+        LOG_WARN("{} trace {:016x} conn {} blocked tproxy udp client {}:{} target {}:{}",
+                 log_event::kRoute,
+                 trace_id_,
+                 conn_id_,
+                 client_endpoint_.address().to_string(),
+                 client_endpoint_.port(),
+                 target_endpoint_.address().to_string(),
+                 target_endpoint_.port());
         record_udp_session_error_trace(make_transparent_udp_trace_event(trace_id_,
                                                                         conn_id_,
                                                                         inbound_tag_,
