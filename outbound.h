@@ -25,9 +25,9 @@ class outbound_handler
     [[nodiscard]] const std::string& tag() const { return tag_; }
     [[nodiscard]] const std::string& type() const { return type_; }
     [[nodiscard]] virtual std::shared_ptr<tcp_outbound_stream> create_tcp_outbound(
-        const boost::asio::any_io_executor& executor, uint32_t conn_id, uint64_t trace_id, const config& cfg) const = 0;
+        const boost::asio::any_io_executor& executor, uint32_t conn_id, uint64_t trace_id, const config& cfg, uint32_t connect_mark) const = 0;
     [[nodiscard]] virtual boost::asio::awaitable<udp_proxy_outbound_connect_result> connect_udp_outbound(
-        const boost::asio::any_io_executor& executor, uint32_t conn_id, uint64_t trace_id, const config& cfg) const = 0;
+        const boost::asio::any_io_executor& executor, uint32_t conn_id, uint64_t trace_id, const config& cfg, uint32_t connect_mark) const = 0;
 
    private:
     std::string tag_;
@@ -36,10 +36,11 @@ class outbound_handler
 
 [[nodiscard]] std::shared_ptr<outbound_handler> make_outbound_handler(const config& cfg, const std::string& outbound_tag);
 [[nodiscard]] boost::asio::awaitable<udp_proxy_outbound_connect_result> connect_udp_proxy_outbound(const boost::asio::any_io_executor& executor,
-                                                                                           uint32_t conn_id,
-                                                                                           uint64_t trace_id,
-                                                                                           const config& cfg,
-                                                                                           const std::string& outbound_tag);
+                                                                                                     uint32_t conn_id,
+                                                                                                     uint64_t trace_id,
+                                                                                                     const config& cfg,
+                                                                                                     const std::string& outbound_tag,
+                                                                                                     uint32_t connect_mark);
 
 }    // namespace relay
 

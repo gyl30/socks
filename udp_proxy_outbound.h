@@ -40,20 +40,23 @@ class udp_proxy_outbound : public std::enable_shared_from_this<udp_proxy_outboun
                                                                                            uint32_t conn_id,
                                                                                            uint64_t trace_id,
                                                                                            const config& cfg,
-                                                                                           const std::string& outbound_tag);
+                                                                                           const std::string& outbound_tag,
+                                                                                           uint32_t connect_mark);
 
     [[nodiscard]] static boost::asio::awaitable<udp_proxy_outbound_connect_result> connect_reality_outbound(
         const boost::asio::any_io_executor& executor,
         uint32_t conn_id,
         uint64_t trace_id,
         const config& cfg,
-        const std::string& outbound_tag);
+        const std::string& outbound_tag,
+        uint32_t connect_mark);
     [[nodiscard]] static boost::asio::awaitable<udp_proxy_outbound_connect_result> connect_socks_outbound(
         const boost::asio::any_io_executor& executor,
         uint32_t conn_id,
         uint64_t trace_id,
         const config& cfg,
-        const std::string& outbound_tag);
+        const std::string& outbound_tag,
+        uint32_t connect_mark);
 
     boost::asio::awaitable<void> close();
     boost::asio::awaitable<void> send_datagram(

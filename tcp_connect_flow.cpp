@@ -36,7 +36,8 @@ boost::asio::awaitable<tcp_connect_flow_result> prepare_tcp_connect_flow(const r
         mark_no_route_flow_decision(result.decision);
         co_return result;
     }
-    result.outbound = handler->create_tcp_outbound(executor, request.conn_id, request.trace_id, cfg);
+    const auto connect_mark = resolve_socket_mark(cfg, request.inbound_tag, result.decision.outbound_tag);
+    result.outbound = handler->create_tcp_outbound(executor, request.conn_id, request.trace_id, cfg, connect_mark);
     if (result.outbound == nullptr && handler->type() != "block")
     {
         LOG_ERROR("{} trace {:016x} conn {} target {}:{} stage prepare_connect_flow out_tag {} create outbound failed",

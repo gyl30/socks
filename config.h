@@ -127,7 +127,7 @@ struct config
 [[nodiscard]] const config::outbound_entry_t* find_outbound_entry(const config& cfg, std::string_view tag);
 [[nodiscard]] const config::socks_t* find_socks_outbound_settings(const config& cfg, std::string_view tag);
 [[nodiscard]] const config::reality_outbound_t* find_reality_outbound_settings(const config& cfg, std::string_view tag);
-[[nodiscard]] uint32_t resolve_socket_mark(const config& cfg);
+[[nodiscard]] uint32_t resolve_socket_mark(const config& cfg, std::string_view inbound_tag, std::string_view outbound_tag);
 
 [[nodiscard]] std::optional<config> parse_config(const std::string& filename);
 [[nodiscard]] std::string dump_config(const config& cfg);

@@ -42,12 +42,14 @@ class tcp_outbound_stream
 [[nodiscard]] std::shared_ptr<tcp_outbound_stream> make_direct_tcp_outbound_stream(const boost::asio::any_io_executor& executor,
                                                                                     uint32_t conn_id,
                                                                                     uint64_t trace_id,
-                                                                                    const config& cfg);
+                                                                                    const config& cfg,
+                                                                                    uint32_t connect_mark);
 [[nodiscard]] std::shared_ptr<tcp_outbound_stream> make_proxy_tcp_outbound_stream(const boost::asio::any_io_executor& executor,
                                                                                    uint32_t conn_id,
                                                                                    uint64_t trace_id,
                                                                                    const config& cfg,
-                                                                                   const std::string& outbound_tag);
+                                                                                   const std::string& outbound_tag,
+                                                                                   uint32_t connect_mark);
 
 }    // namespace relay
 

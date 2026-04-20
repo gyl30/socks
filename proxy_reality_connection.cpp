@@ -43,7 +43,8 @@ struct connect_options
     uint32_t connect_mark = 0;
 };
 
-bool build_connect_options(const config& cfg, const std::string& outbound_tag, connect_options& options, boost::system::error_code& ec)
+bool build_connect_options(
+    const config& cfg, const std::string& outbound_tag, const uint32_t connect_mark, connect_options& options, boost::system::error_code& ec)
 {
     ec.clear();
     const auto* settings = find_reality_outbound_settings(cfg, outbound_tag);
@@ -57,7 +58,7 @@ bool build_connect_options(const config& cfg, const std::string& outbound_tag, c
     options.remote_host = settings->host;
     options.remote_port = std::to_string(settings->port);
     options.max_handshake_records = settings->max_handshake_records;
-    options.connect_mark = resolve_socket_mark(cfg);
+    options.connect_mark = connect_mark;
 
     if (reality::decode_hex_field(settings->public_key, kRealityServerKeyBytes, kRealityServerKeyBytes, options.server_pub_key) !=
         reality::hex_field_status::kOk)
@@ -234,11 +235,12 @@ proxy_reality_connection::proxy_reality_connection(boost::asio::ip::tcp::socket 
 boost::asio::awaitable<std::shared_ptr<proxy_reality_connection>> proxy_reality_connection::connect(const boost::asio::any_io_executor& executor,
                                                                                                     const config& cfg,
                                                                                                     const std::string& outbound_tag,
+                                                                                                    const uint32_t connect_mark,
                                                                                                     const uint32_t conn_id,
                                                                                                     boost::system::error_code& ec)
 {
     connect_options options;
-    if (!build_connect_options(cfg, outbound_tag, options, ec))
+    if (!build_connect_options(cfg, outbound_tag, connect_mark, options, ec))
     {
         LOG_ERROR("{} conn {} stage build_connect_options out_tag {} error {}",
                   log_event::kConnInit,

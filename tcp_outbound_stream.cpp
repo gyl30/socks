@@ -29,8 +29,9 @@ namespace relay
 class direct_tcp_outbound final : public tcp_outbound_stream
 {
    public:
-    explicit direct_tcp_outbound(const boost::asio::any_io_executor& executor, uint32_t conn_id, uint64_t trace_id, const config& cfg)
-        : cfg_(cfg), conn_id_(conn_id), trace_id_(trace_id), socket_(executor), resolver_(executor)
+    explicit direct_tcp_outbound(
+        const boost::asio::any_io_executor& executor, uint32_t conn_id, uint64_t trace_id, const config& cfg, uint32_t connect_mark)
+        : cfg_(cfg), conn_id_(conn_id), trace_id_(trace_id), connect_mark_(connect_mark), socket_(executor), resolver_(executor)
     {
     }
 
@@ -44,6 +45,7 @@ class direct_tcp_outbound final : public tcp_outbound_stream
     const config& cfg_;
     uint32_t conn_id_ = 0;
     uint64_t trace_id_ = 0;
+    uint32_t connect_mark_ = 0;
     std::string target_host_ = "unknown";
     uint16_t target_port_ = 0;
     std::string bind_host_ = "unknown";
@@ -56,10 +58,11 @@ class proxy_tcp_outbound final : public tcp_outbound_stream
 {
    public:
     explicit proxy_tcp_outbound(const boost::asio::any_io_executor& executor,
-                            uint32_t conn_id,
-                            uint64_t trace_id,
-                            const config& cfg,
-                            std::string outbound_tag);
+                                uint32_t conn_id,
+                                uint64_t trace_id,
+                                const config& cfg,
+                                std::string outbound_tag,
+                                uint32_t connect_mark);
 
     boost::asio::awaitable<void> close() override;
     boost::asio::awaitable<void> shutdown_send(boost::system::error_code& ec) override;
@@ -76,6 +79,7 @@ class proxy_tcp_outbound final : public tcp_outbound_stream
     const config& cfg_;
     uint32_t conn_id_ = 0;
     uint64_t trace_id_ = 0;
+    uint32_t connect_mark_ = 0;
     boost::asio::any_io_executor executor_;
     std::string outbound_tag_;
     std::string target_host_ = "unknown";
@@ -90,11 +94,18 @@ class socks_tcp_outbound final : public tcp_outbound_stream
 {
    public:
     explicit socks_tcp_outbound(const boost::asio::any_io_executor& executor,
-                            uint32_t conn_id,
-                            uint64_t trace_id,
-                            const config& cfg,
-                            std::string outbound_tag)
-        : cfg_(cfg), conn_id_(conn_id), trace_id_(trace_id), outbound_tag_(std::move(outbound_tag)), socket_(executor), resolver_(executor)
+                                uint32_t conn_id,
+                                uint64_t trace_id,
+                                const config& cfg,
+                                std::string outbound_tag,
+                                uint32_t connect_mark)
+        : cfg_(cfg),
+          conn_id_(conn_id),
+          trace_id_(trace_id),
+          connect_mark_(connect_mark),
+          outbound_tag_(std::move(outbound_tag)),
+          socket_(executor),
+          resolver_(executor)
     {
     }
 
@@ -114,6 +125,7 @@ class socks_tcp_outbound final : public tcp_outbound_stream
     const config& cfg_;
     uint32_t conn_id_ = 0;
     uint64_t trace_id_ = 0;
+    uint32_t connect_mark_ = 0;
     std::string outbound_tag_;
     std::string target_host_ = "unknown";
     uint16_t target_port_ = 0;
@@ -198,10 +210,9 @@ boost::asio::awaitable<tcp_outbound_connect_result> direct_tcp_outbound::connect
             last_ec = op_ec;
             continue;
         }
-        const auto connect_mark = resolve_socket_mark(cfg_);
-        if (connect_mark != 0)
+        if (connect_mark_ != 0)
         {
-            net::set_socket_mark(socket_.native_handle(), connect_mark, op_ec);
+            net::set_socket_mark(socket_.native_handle(), connect_mark_, op_ec);
             if (op_ec)
             {
                 last_ec = op_ec;
@@ -351,10 +362,9 @@ boost::asio::awaitable<bool> socks_tcp_outbound::connect_server(const config::so
         {
             continue;
         }
-        const auto connect_mark = resolve_socket_mark(cfg_);
-        if (connect_mark != 0)
+        if (connect_mark_ != 0)
         {
-            net::set_socket_mark(socket_.native_handle(), connect_mark, ec);
+            net::set_socket_mark(socket_.native_handle(), connect_mark_, ec);
             if (ec)
             {
                 continue;
@@ -534,17 +544,24 @@ boost::asio::awaitable<void> socks_tcp_outbound::shutdown_send(boost::system::er
 std::shared_ptr<tcp_outbound_stream> make_direct_tcp_outbound_stream(const boost::asio::any_io_executor& executor,
                                                                      uint32_t conn_id,
                                                                      uint64_t trace_id,
-                                                                     const config& cfg)
+                                                                     const config& cfg,
+                                                                     const uint32_t connect_mark)
 {
-    return std::make_shared<direct_tcp_outbound>(executor, conn_id, trace_id, cfg);
+    return std::make_shared<direct_tcp_outbound>(executor, conn_id, trace_id, cfg, connect_mark);
 }
 
 proxy_tcp_outbound::proxy_tcp_outbound(const boost::asio::any_io_executor& executor,
-                               uint32_t conn_id,
-                               uint64_t trace_id,
-                               const config& cfg,
-                               std::string outbound_tag)
-    : cfg_(cfg), conn_id_(conn_id), trace_id_(trace_id), executor_(executor), outbound_tag_(std::move(outbound_tag))
+                                       uint32_t conn_id,
+                                       uint64_t trace_id,
+                                       const config& cfg,
+                                       std::string outbound_tag,
+                                       const uint32_t connect_mark)
+    : cfg_(cfg),
+      conn_id_(conn_id),
+      trace_id_(trace_id),
+      connect_mark_(connect_mark),
+      executor_(executor),
+      outbound_tag_(std::move(outbound_tag))
 {
 }
 
@@ -552,7 +569,8 @@ std::shared_ptr<tcp_outbound_stream> make_proxy_tcp_outbound_stream(const boost:
                                                                     uint32_t conn_id,
                                                                     uint64_t trace_id,
                                                                     const config& cfg,
-                                                                    const std::string& outbound_tag)
+                                                                    const std::string& outbound_tag,
+                                                                    const uint32_t connect_mark)
 {
     const auto* outbound = find_outbound_entry(cfg, outbound_tag);
     if (outbound == nullptr)
@@ -562,11 +580,11 @@ std::shared_ptr<tcp_outbound_stream> make_proxy_tcp_outbound_stream(const boost:
     const auto outbound_kind = config_type::classify_proxy_outbound_type(outbound->type);
     if (outbound_kind == config_type::proxy_outbound_kind::kReality)
     {
-        return std::make_shared<proxy_tcp_outbound>(executor, conn_id, trace_id, cfg, outbound_tag);
+        return std::make_shared<proxy_tcp_outbound>(executor, conn_id, trace_id, cfg, outbound_tag, connect_mark);
     }
     if (outbound_kind == config_type::proxy_outbound_kind::kSocks)
     {
-        return std::make_shared<socks_tcp_outbound>(executor, conn_id, trace_id, cfg, outbound_tag);
+        return std::make_shared<socks_tcp_outbound>(executor, conn_id, trace_id, cfg, outbound_tag, connect_mark);
     }
     return nullptr;
 }
@@ -718,7 +736,7 @@ boost::asio::awaitable<tcp_outbound_connect_result> proxy_tcp_outbound::connect(
     send_shutdown_ = false;
     boost::system::error_code ec;
     connection_.reset();
-    connection_ = co_await proxy_reality_connection::connect(executor_, cfg_, outbound_tag_, conn_id_, ec);
+    connection_ = co_await proxy_reality_connection::connect(executor_, cfg_, outbound_tag_, connect_mark_, conn_id_, ec);
     if (connection_ == nullptr)
     {
         if (!ec)

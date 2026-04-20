@@ -22,13 +22,13 @@ class block_outbound final : public outbound_handler
     explicit block_outbound(std::string tag) : outbound_handler(std::move(tag), "block") {}
 
     [[nodiscard]] std::shared_ptr<tcp_outbound_stream> create_tcp_outbound(
-        const boost::asio::any_io_executor&, uint32_t, uint64_t, const config&) const override
+        const boost::asio::any_io_executor&, uint32_t, uint64_t, const config&, uint32_t) const override
     {
         return nullptr;
     }
 
     [[nodiscard]] boost::asio::awaitable<udp_proxy_outbound_connect_result> connect_udp_outbound(
-        const boost::asio::any_io_executor&, uint32_t, uint64_t, const config&) const override
+        const boost::asio::any_io_executor&, uint32_t, uint64_t, const config&, uint32_t) const override
     {
         udp_proxy_outbound_connect_result result;
         result.ec = boost::system::errc::make_error_code(boost::system::errc::permission_denied);

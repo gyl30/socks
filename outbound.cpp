@@ -40,10 +40,11 @@ std::shared_ptr<outbound_handler> make_outbound_handler(const config& cfg, const
 }
 
 boost::asio::awaitable<udp_proxy_outbound_connect_result> connect_udp_proxy_outbound(const boost::asio::any_io_executor& executor,
-                                                                             uint32_t conn_id,
-                                                                             uint64_t trace_id,
-                                                                             const config& cfg,
-                                                                             const std::string& outbound_tag)
+                                                                                      uint32_t conn_id,
+                                                                                      uint64_t trace_id,
+                                                                                      const config& cfg,
+                                                                                      const std::string& outbound_tag,
+                                                                                      const uint32_t connect_mark)
 {
     const auto handler = make_outbound_handler(cfg, outbound_tag);
     if (handler == nullptr)
@@ -53,7 +54,7 @@ boost::asio::awaitable<udp_proxy_outbound_connect_result> connect_udp_proxy_outb
         result.socks_rep = socks::map_connect_error_to_socks_rep(result.ec);
         co_return result;
     }
-    co_return co_await handler->connect_udp_outbound(executor, conn_id, trace_id, cfg);
+    co_return co_await handler->connect_udp_outbound(executor, conn_id, trace_id, cfg, connect_mark);
 }
 
 }    // namespace relay

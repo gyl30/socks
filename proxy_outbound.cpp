@@ -21,15 +21,23 @@ class proxy_outbound final : public outbound_handler
     proxy_outbound(std::string tag, std::string type) : outbound_handler(std::move(tag), std::move(type)) {}
 
     [[nodiscard]] std::shared_ptr<tcp_outbound_stream> create_tcp_outbound(
-        const boost::asio::any_io_executor& executor, uint32_t conn_id, uint64_t trace_id, const config& cfg) const override
+        const boost::asio::any_io_executor& executor,
+        uint32_t conn_id,
+        uint64_t trace_id,
+        const config& cfg,
+        uint32_t connect_mark) const override
     {
-        return make_proxy_tcp_outbound_stream(executor, conn_id, trace_id, cfg, tag());
+        return make_proxy_tcp_outbound_stream(executor, conn_id, trace_id, cfg, tag(), connect_mark);
     }
 
     [[nodiscard]] boost::asio::awaitable<udp_proxy_outbound_connect_result> connect_udp_outbound(
-        const boost::asio::any_io_executor& executor, uint32_t conn_id, uint64_t trace_id, const config& cfg) const override
+        const boost::asio::any_io_executor& executor,
+        uint32_t conn_id,
+        uint64_t trace_id,
+        const config& cfg,
+        uint32_t connect_mark) const override
     {
-        co_return co_await udp_proxy_outbound::connect(executor, conn_id, trace_id, cfg, tag());
+        co_return co_await udp_proxy_outbound::connect(executor, conn_id, trace_id, cfg, tag(), connect_mark);
     }
 };
 

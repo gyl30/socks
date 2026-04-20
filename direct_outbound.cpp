@@ -23,13 +23,13 @@ class direct_outbound final : public outbound_handler
     explicit direct_outbound(std::string tag) : outbound_handler(std::move(tag), "direct") {}
 
     [[nodiscard]] std::shared_ptr<tcp_outbound_stream> create_tcp_outbound(
-        const boost::asio::any_io_executor& executor, uint32_t conn_id, uint64_t trace_id, const config& cfg) const override
+        const boost::asio::any_io_executor& executor, uint32_t conn_id, uint64_t trace_id, const config& cfg, uint32_t connect_mark) const override
     {
-        return make_direct_tcp_outbound_stream(executor, conn_id, trace_id, cfg);
+        return make_direct_tcp_outbound_stream(executor, conn_id, trace_id, cfg, connect_mark);
     }
 
     [[nodiscard]] boost::asio::awaitable<udp_proxy_outbound_connect_result> connect_udp_outbound(
-        const boost::asio::any_io_executor&, uint32_t, uint64_t, const config&) const override
+        const boost::asio::any_io_executor&, uint32_t, uint64_t, const config&, uint32_t) const override
     {
         udp_proxy_outbound_connect_result result;
         result.ec = boost::asio::error::operation_not_supported;

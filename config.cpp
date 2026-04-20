@@ -1179,18 +1179,6 @@ template <typename Entry>
     return nullptr;
 }
 
-[[nodiscard]] uint32_t find_tproxy_mark(const std::vector<config::inbound_entry_t>& inbounds)
-{
-    for (const auto& inbound : inbounds)
-    {
-        if (inbound.type == config_type::kInboundTproxy && inbound.mark != 0)
-        {
-            return inbound.mark;
-        }
-    }
-    return 0;
-}
-
 #include "config_dump.inc"
 
 }    // namespace
@@ -1225,9 +1213,27 @@ const config::reality_outbound_t* find_reality_outbound_settings(const config& c
     return &*outbound->reality;
 }
 
-uint32_t resolve_socket_mark(const config& cfg)
+uint32_t resolve_socket_mark(const config& cfg, const std::string_view inbound_tag, const std::string_view outbound_tag)
 {
-    return find_tproxy_mark(cfg.inbounds);
+    if (!outbound_tag.empty())
+    {
+        const auto* outbound = find_outbound_entry(cfg, outbound_tag);
+        if (outbound != nullptr && outbound->mark != 0)
+        {
+            return outbound->mark;
+        }
+    }
+
+    if (!inbound_tag.empty())
+    {
+        const auto* inbound = find_inbound_entry(cfg, inbound_tag);
+        if (inbound != nullptr && inbound->mark != 0)
+        {
+            return inbound->mark;
+        }
+    }
+
+    return 0;
 }
 
 std::optional<config> parse_config(const std::string& filename)

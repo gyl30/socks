@@ -403,7 +403,7 @@ boost::asio::awaitable<bool> tproxy_udp_session::open_direct_socket()
         co_return false;
     }
 
-    const auto connect_mark = resolve_socket_mark(cfg_);
+    const auto connect_mark = resolve_socket_mark(cfg_, inbound_tag_, outbound_tag_);
     if (connect_mark != 0)
     {
         net::set_socket_mark(upstream_socket_.native_handle(), connect_mark, ec);
@@ -838,7 +838,7 @@ std::shared_ptr<boost::asio::ip::udp::socket> tproxy_udp_session::get_or_create_
         return nullptr;
     }
 
-    const auto connect_mark = resolve_socket_mark(cfg_);
+    const auto connect_mark = resolve_socket_mark(cfg_, inbound_tag_, outbound_tag_);
     if (connect_mark != 0)
     {
         net::set_socket_mark(socket->native_handle(), connect_mark, ec);

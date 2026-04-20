@@ -549,28 +549,6 @@ void socks_udp_session::open_direct_udp_socket(boost::asio::ip::udp::socket& dir
                  ec.message());
         return;
     }
-    const auto connect_mark = resolve_socket_mark(cfg_);
-    if (connect_mark != 0)
-    {
-        net::set_socket_mark(direct_socket.native_handle(), connect_mark, ec);
-        if (ec)
-        {
-            LOG_WARN("{} trace {:016x} conn {} tcp peer {}:{} udp bind {}:{} set direct udp {} mark failed {}",
-                     log_event::kRoute,
-                     trace_id_,
-                     conn_id_,
-                     tcp_peer_host_,
-                     tcp_peer_port_,
-                     udp_bind_host_,
-                     udp_bind_port_,
-                     family,
-                     ec.message());
-            boost::system::error_code close_ec;
-            close_ec = direct_socket.close(close_ec);
-            (void)close_ec;
-            return;
-        }
-    }
     ec = direct_socket.bind(boost::asio::ip::udp::endpoint(protocol, 0), ec);
     if (ec)
     {
@@ -589,6 +567,38 @@ void socks_udp_session::open_direct_udp_socket(boost::asio::ip::udp::socket& dir
         (void)close_ec;
         return;
     }
+}
+
+bool socks_udp_session::apply_direct_socket_mark(boost::asio::ip::udp::socket& direct_socket,
+                                                 const std::string_view outbound_tag,
+                                                 const boost::asio::ip::udp::endpoint& target,
+                                                 boost::system::error_code& ec) const
+{
+    const auto connect_mark = resolve_socket_mark(cfg_, inbound_tag_, outbound_tag);
+    if (connect_mark == 0)
+    {
+        ec.clear();
+        return true;
+    }
+
+    net::set_socket_mark(direct_socket.native_handle(), connect_mark, ec);
+    if (!ec)
+    {
+        return true;
+    }
+
+    LOG_WARN("{} trace {:016x} conn {} client {}:{} udp bind {}:{} set direct udp mark failed {}:{} error {}",
+             log_event::kRoute,
+             trace_id_,
+             conn_id_,
+             current_client_host(),
+             current_client_port(),
+             udp_bind_host_,
+             udp_bind_port_,
+             target.address().to_string(),
+             target.port(),
+             ec.message());
+    return false;
 }
 
 boost::asio::ip::udp::socket* socks_udp_session::select_direct_udp_socket(const boost::asio::ip::udp::endpoint& target)
@@ -707,7 +717,7 @@ boost::asio::awaitable<bool> socks_udp_session::process_udp_packet(const socks_u
     }
 
     boost::system::error_code ec;
-    co_await forward_direct_packet(udp_header, payload, payload_len, ec);
+    co_await forward_direct_packet(udp_header, decision, payload, payload_len, ec);
     if (ec)
     {
         co_return false;
@@ -840,6 +850,7 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> socks_udp_session::resolv
 }
 
 boost::asio::awaitable<void> socks_udp_session::forward_direct_packet(const socks_udp_header& header,
+                                                                      const route_decision& decision,
                                                                       const uint8_t* payload,
                                                                       const std::size_t payload_len,
                                                                       boost::system::error_code& ec)
@@ -868,6 +879,10 @@ boost::asio::awaitable<void> socks_udp_session::forward_direct_packet(const sock
                  target.address().to_string(),
                  target.port(),
                  direct_socket_ec.message());
+        co_return;
+    }
+    if (!apply_direct_socket_mark(*direct_socket, decision.outbound_tag, target, ec))
+    {
         co_return;
     }
     const auto [send_ec, send_n] =

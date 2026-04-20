@@ -78,6 +78,7 @@ class socks_udp_session : public std::enable_shared_from_this<socks_udp_session>
     boost::asio::awaitable<void> direct_udp_socket_loop(boost::asio::ip::udp::socket& direct_socket);
     void start_direct_udp_socket_loops();
     boost::asio::awaitable<void> forward_direct_packet(const socks_udp_header& header,
+                                                       const route_decision& decision,
                                                        const uint8_t* payload,
                                                        std::size_t payload_len,
                                                        boost::system::error_code& ec);
@@ -92,6 +93,10 @@ class socks_udp_session : public std::enable_shared_from_this<socks_udp_session>
                                 const boost::asio::ip::udp& protocol,
                                 const char* family,
                                 boost::system::error_code& ec) const;
+    [[nodiscard]] bool apply_direct_socket_mark(boost::asio::ip::udp::socket& direct_socket,
+                                                std::string_view outbound_tag,
+                                                const boost::asio::ip::udp::endpoint& target,
+                                                boost::system::error_code& ec) const;
     [[nodiscard]] boost::asio::ip::udp::socket* select_direct_udp_socket(const boost::asio::ip::udp::endpoint& target);
     void clear_proxy_outbound_if_current(const std::shared_ptr<udp_proxy_outbound>& upstream);
     boost::asio::awaitable<void> wait_and_proxy_to_udp_sock();
