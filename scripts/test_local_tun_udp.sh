@@ -105,17 +105,13 @@ cleanup() {
     cleanup_done=1
     stop_pid "$client_wrapper_pid"
     stop_pid "$server_pid"
-    pkill -INT -f "$repo_root/scripts/run_local_client.sh $client_config" >/dev/null 2>&1 || true
-    pkill -INT -f "$binary -c $client_config" >/dev/null 2>&1 || true
-    pkill -INT -f "$binary -c $server_config" >/dev/null 2>&1 || true
-    sleep 1
     if [[ "$keep_logs" != "1" ]]; then
         rm -f "$server_stdout_log" "$client_stdout_log" "${probe_err_logs[@]:-}" "${probe_out_logs[@]:-}"
     fi
     rm -f "${probe_runner:-}"
 }
 
-trap cleanup EXIT
+trap cleanup EXIT INT TERM
 
 rm -f "$repo_root"/config/local-client.log "$repo_root"/config/local-server.log
 rm -f "$repo_root"/.tmp-local-client-wrapper.*.log

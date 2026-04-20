@@ -21,6 +21,8 @@ Environment:
   TPROXY_TCP_PORTS         Optional comma-separated destination TCP ports to redirect. Default: all
   TPROXY_UDP_PORTS         Optional comma-separated destination UDP ports to redirect. Default: all
   TPROXY_EXCLUDE_CIDRS     Extra comma-separated CIDRs bypassed from local tproxy redirection. Default: empty
+  TPROXY_NAT_CHAIN         Custom nat chain name for local tproxy rules. Default: SOCKS_LOCAL_TPROXY_NAT
+  TPROXY_RULE_COMMENT      iptables comment added to local tproxy rules. Default: socks-local-tproxy
   KEEP_WRAPPER_LOG         Set to 1 to keep the wrapper log file after exit. Default: 0
 
 Examples:
@@ -77,7 +79,8 @@ TPROXY_UDP_PORT="${TPROXY_UDP_PORT:-23456}"
 TPROXY_TCP_PORTS="${TPROXY_TCP_PORTS:-}"
 TPROXY_UDP_PORTS="${TPROXY_UDP_PORTS:-}"
 TPROXY_EXCLUDE_CIDRS="${TPROXY_EXCLUDE_CIDRS:-}"
-TPROXY_NAT_CHAIN="SOCKS_LOCAL_TPROXY_NAT"
+TPROXY_NAT_CHAIN="${TPROXY_NAT_CHAIN:-SOCKS_LOCAL_TPROXY_NAT}"
+TPROXY_RULE_COMMENT="${TPROXY_RULE_COMMENT:-socks-local-tproxy}"
 KEEP_WRAPPER_LOG="${KEEP_WRAPPER_LOG:-0}"
 
 if [[ -z "$TUN_TEST_USER" && -z "$TPROXY_TEST_USER" ]]; then
@@ -111,6 +114,28 @@ resolve_uid() {
 run_client() {
     env LD_LIBRARY_PATH="$runtime_ld_library_path" "$binary" -c "$config_path" >>"$wrapper_log" 2>&1 &
     client_pid="$!"
+}
+
+ensure_tun_device_available() {
+    if [[ -z "$tun_uid" ]]; then
+        return 0
+    fi
+    if ip link show dev "$TUN_NAME" >/dev/null 2>&1; then
+        echo "tun device already exists: $TUN_NAME" >&2
+        echo "set TUN_NAME to a dedicated test device before running this script" >&2
+        exit 1
+    fi
+}
+
+ensure_tproxy_chain_available() {
+    if [[ -z "$tproxy_uid" ]]; then
+        return 0
+    fi
+    if iptables -t nat -S "$TPROXY_NAT_CHAIN" >/dev/null 2>&1; then
+        echo "iptables nat chain already exists: $TPROXY_NAT_CHAIN" >&2
+        echo "set TPROXY_NAT_CHAIN to a dedicated value before running this script" >&2
+        exit 1
+    fi
 }
 
 wait_for_tun_device() {
@@ -272,8 +297,7 @@ install_tproxy_rules() {
     split_csv "$TPROXY_TCP_PORTS" tcp_ports
     split_csv "$TPROXY_UDP_PORTS" udp_ports
 
-    iptables -t nat -N "$TPROXY_NAT_CHAIN" >/dev/null 2>&1 || true
-    iptables -t nat -F "$TPROXY_NAT_CHAIN"
+    iptables -t nat -N "$TPROXY_NAT_CHAIN"
 
     for cidr in \
         0.0.0.0/8 \
@@ -286,33 +310,34 @@ install_tproxy_rules() {
         240.0.0.0/4 \
         "${extra_excludes[@]}"; do
         [[ -n "$cidr" ]] || continue
-        iptables -t nat -A "$TPROXY_NAT_CHAIN" -d "$cidr" -j RETURN
+        iptables -t nat -A "$TPROXY_NAT_CHAIN" -m comment --comment "$TPROXY_RULE_COMMENT" -d "$cidr" -j RETURN
     done
 
     for host in "${bypass_hosts[@]}"; do
         bypass_ip="$(getent ahostsv4 "$host" | awk 'NR==1 {print $1}')"
         [[ -n "$bypass_ip" ]] || continue
-        iptables -t nat -A "$TPROXY_NAT_CHAIN" -d "$bypass_ip/32" -j RETURN
+        iptables -t nat -A "$TPROXY_NAT_CHAIN" -m comment --comment "$TPROXY_RULE_COMMENT" -d "$bypass_ip/32" -j RETURN
     done
 
     if (( ${#tcp_ports[@]} == 0 )); then
-        iptables -t nat -A "$TPROXY_NAT_CHAIN" -p tcp -j REDIRECT --to-ports "$TPROXY_TCP_PORT"
+        iptables -t nat -A "$TPROXY_NAT_CHAIN" -m comment --comment "$TPROXY_RULE_COMMENT" -p tcp -j REDIRECT --to-ports "$TPROXY_TCP_PORT"
     else
         for port in "${tcp_ports[@]}"; do
-            iptables -t nat -A "$TPROXY_NAT_CHAIN" -p tcp --dport "$port" -j REDIRECT --to-ports "$TPROXY_TCP_PORT"
+            iptables -t nat -A "$TPROXY_NAT_CHAIN" -m comment --comment "$TPROXY_RULE_COMMENT" -p tcp --dport "$port" -j REDIRECT --to-ports "$TPROXY_TCP_PORT"
         done
     fi
 
     if (( ${#udp_ports[@]} == 0 )); then
-        iptables -t nat -A "$TPROXY_NAT_CHAIN" -p udp -j REDIRECT --to-ports "$TPROXY_UDP_PORT"
+        iptables -t nat -A "$TPROXY_NAT_CHAIN" -m comment --comment "$TPROXY_RULE_COMMENT" -p udp -j REDIRECT --to-ports "$TPROXY_UDP_PORT"
     else
         for port in "${udp_ports[@]}"; do
-            iptables -t nat -A "$TPROXY_NAT_CHAIN" -p udp --dport "$port" -j REDIRECT --to-ports "$TPROXY_UDP_PORT"
+            iptables -t nat -A "$TPROXY_NAT_CHAIN" -m comment --comment "$TPROXY_RULE_COMMENT" -p udp --dport "$port" -j REDIRECT --to-ports "$TPROXY_UDP_PORT"
         done
     fi
 
-    iptables -t nat -D OUTPUT -m owner --uid-owner "$tproxy_uid" -j "$TPROXY_NAT_CHAIN" >/dev/null 2>&1 || true
-    iptables -t nat -A OUTPUT -m owner --uid-owner "$tproxy_uid" -j "$TPROXY_NAT_CHAIN"
+    iptables -t nat -D OUTPUT -m owner --uid-owner "$tproxy_uid" -m comment --comment "$TPROXY_RULE_COMMENT" -j "$TPROXY_NAT_CHAIN" \
+        >/dev/null 2>&1 || true
+    iptables -t nat -A OUTPUT -m owner --uid-owner "$tproxy_uid" -m comment --comment "$TPROXY_RULE_COMMENT" -j "$TPROXY_NAT_CHAIN"
 }
 
 remove_tproxy_rules() {
@@ -320,7 +345,8 @@ remove_tproxy_rules() {
         return 0
     fi
 
-    iptables -t nat -D OUTPUT -m owner --uid-owner "$tproxy_uid" -j "$TPROXY_NAT_CHAIN" >/dev/null 2>&1 || true
+    iptables -t nat -D OUTPUT -m owner --uid-owner "$tproxy_uid" -m comment --comment "$TPROXY_RULE_COMMENT" -j "$TPROXY_NAT_CHAIN" \
+        >/dev/null 2>&1 || true
     iptables -t nat -F "$TPROXY_NAT_CHAIN" >/dev/null 2>&1 || true
     iptables -t nat -X "$TPROXY_NAT_CHAIN" >/dev/null 2>&1 || true
 }
@@ -369,6 +395,8 @@ for host in "${bypass_hosts[@]}"; do
     install_bypass_route "$host"
 done
 
+ensure_tun_device_available
+ensure_tproxy_chain_available
 run_client
 if [[ -n "$tun_uid" ]]; then
     wait_for_tun_device

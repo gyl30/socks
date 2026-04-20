@@ -20,6 +20,11 @@ Environment:
   TPROXY_UDP_PORTS         Destination UDP ports intercepted. Default: 53
   TPROXY_TABLE             Policy routing table for test traffic. Default: 233
   TPROXY_MARK_HEX          Mark used by TPROXY rules. Default: 0x233
+  TPROXY_NETNS_NAME        Network namespace name used by the test. Default: socks-tproxy-udp
+  TPROXY_HOST_IF           Host-side veth name. Default: veth-tp-h
+  TPROXY_NS_IF             Namespace-side veth name. Default: veth-tp-n
+  TPROXY_CHAIN             Custom mangle chain name for test rules. Default: SOCKS_LOCAL_TPROXY_UDP_TEST
+  TPROXY_RULE_COMMENT      iptables comment added to test rules. Default: socks-local-tproxy-udp
   KEEP_LOGS                Keep /tmp logs after exit when set to 1. Default: 0
 
 This script:
@@ -89,13 +94,14 @@ server_pid=""
 client_pid=""
 cleanup_done=0
 
-ns_name="socks-tproxy-udp"
-host_if="veth-tp-h"
-ns_if="veth-tp-n"
+ns_name="${TPROXY_NETNS_NAME:-socks-tproxy-udp}"
+host_if="${TPROXY_HOST_IF:-veth-tp-h}"
+ns_if="${TPROXY_NS_IF:-veth-tp-n}"
 host_ip="192.0.2.1"
 ns_ip="192.0.2.2"
 ns_cidr="${ns_ip}/24"
-tproxy_chain="SOCKS_LOCAL_TPROXY_UDP_TEST"
+tproxy_chain="${TPROXY_CHAIN:-SOCKS_LOCAL_TPROXY_UDP_TEST}"
+tproxy_rule_comment="${TPROXY_RULE_COMMENT:-socks-local-tproxy-udp}"
 
 stop_pid() {
     local pid="$1"
@@ -141,7 +147,7 @@ cleanup() {
     fi
     cleanup_done=1
 
-    iptables -t mangle -D PREROUTING -i "$host_if" -j "$tproxy_chain" >/dev/null 2>&1 || true
+    iptables -t mangle -D PREROUTING -i "$host_if" -m comment --comment "$tproxy_rule_comment" -j "$tproxy_chain" >/dev/null 2>&1 || true
     iptables -t mangle -F "$tproxy_chain" >/dev/null 2>&1 || true
     iptables -t mangle -X "$tproxy_chain" >/dev/null 2>&1 || true
     ip rule del fwmark "$tproxy_mark_hex" lookup "$tproxy_table" >/dev/null 2>&1 || true
@@ -152,22 +158,33 @@ cleanup() {
     stop_pid "$client_pid"
     stop_pid "$server_pid"
 
-    pkill -INT -f "$binary -c $client_config" >/dev/null 2>&1 || true
-    pkill -INT -f "$binary -c $server_config" >/dev/null 2>&1 || true
-    sleep 1
-
     rm -f "${probe_runner:-}"
     if [[ "$keep_logs" != "1" ]]; then
         rm -f "$server_stdout_log" "$client_stdout_log" "${probe_err_logs[@]:-}" "${probe_out_logs[@]:-}"
     fi
 }
 
-trap cleanup EXIT
+trap cleanup EXIT INT TERM
+
+ensure_test_resources_available() {
+    if ip netns list | awk '{print $1}' | grep -Fxq "$ns_name"; then
+        echo "test netns already exists: $ns_name" >&2
+        echo "set TPROXY_NETNS_NAME to a dedicated value before running this script" >&2
+        exit 1
+    fi
+    if ip link show "$host_if" >/dev/null 2>&1; then
+        echo "test host interface already exists: $host_if" >&2
+        echo "set TPROXY_HOST_IF to a dedicated value before running this script" >&2
+        exit 1
+    fi
+    if iptables -t mangle -S "$tproxy_chain" >/dev/null 2>&1; then
+        echo "iptables mangle chain already exists: $tproxy_chain" >&2
+        echo "set TPROXY_CHAIN to a dedicated value before running this script" >&2
+        exit 1
+    fi
+}
 
 setup_namespace() {
-    ip netns del "$ns_name" >/dev/null 2>&1 || true
-    ip link del "$host_if" >/dev/null 2>&1 || true
-
     ip netns add "$ns_name"
     ip link add "$host_if" type veth peer name "$ns_if"
     ip link set "$ns_if" netns "$ns_name"
@@ -190,10 +207,11 @@ install_tproxy_rules() {
     iptables -t mangle -F "$tproxy_chain"
     for port in "${udp_ports[@]}"; do
         [[ -n "$port" ]] || continue
-        iptables -t mangle -A "$tproxy_chain" -p udp --dport "$port" -j TPROXY --on-port "$tproxy_udp_port" --tproxy-mark "${tproxy_mark_hex}/${tproxy_mark_hex}"
+        iptables -t mangle -A "$tproxy_chain" -m comment --comment "$tproxy_rule_comment" -p udp --dport "$port" -j TPROXY --on-port \
+            "$tproxy_udp_port" --tproxy-mark "${tproxy_mark_hex}/${tproxy_mark_hex}"
     done
-    iptables -t mangle -D PREROUTING -i "$host_if" -j "$tproxy_chain" >/dev/null 2>&1 || true
-    iptables -t mangle -A PREROUTING -i "$host_if" -j "$tproxy_chain"
+    iptables -t mangle -D PREROUTING -i "$host_if" -m comment --comment "$tproxy_rule_comment" -j "$tproxy_chain" >/dev/null 2>&1 || true
+    iptables -t mangle -A PREROUTING -i "$host_if" -m comment --comment "$tproxy_rule_comment" -j "$tproxy_chain"
 
     ip rule del fwmark "$tproxy_mark_hex" lookup "$tproxy_table" >/dev/null 2>&1 || true
     ip route del local 0.0.0.0/0 dev lo table "$tproxy_table" >/dev/null 2>&1 || true
@@ -206,6 +224,7 @@ probe_runner="$(mktemp /tmp/socks-udp-dns-probe.XXXXXX.py)"
 cp "$probe_script" "$probe_runner"
 chmod 755 "$probe_runner"
 
+ensure_test_resources_available
 env LD_LIBRARY_PATH="$runtime_ld_library_path" "$binary" -c "$server_config" >"$server_stdout_log" 2>&1 &
 server_pid="$!"
 sleep 1
