@@ -5,34 +5,14 @@ import http.server
 import json
 import os
 import pathlib
-import re
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
 import threading
 import time
 
-
-class ManagedProcess:
-    def __init__(self, args, stdout_path, extra_env=None):
-        self.stdout_path = stdout_path
-        self.stdout_handle = open(stdout_path, "w", encoding="utf-8")
-        env = os.environ.copy()
-        if extra_env is not None:
-            env.update(extra_env)
-        self.process = subprocess.Popen(args, stdout=self.stdout_handle, stderr=subprocess.STDOUT, text=True, env=env)
-
-    def terminate(self):
-        if self.process.poll() is None:
-            self.process.terminate()
-        try:
-            self.process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            self.process.kill()
-            self.process.wait(timeout=5)
-        self.stdout_handle.close()
+from testlib import ManagedProcess, allocate_tcp_port, build_runtime_env, parse_key_output, run_checked, save_json, tail_file, wait_for_log_text, wait_for_port
 
 
 class SlowHttpServer:
@@ -81,123 +61,6 @@ class SlowHttpServer:
         self._server.shutdown()
         self._server.server_close()
         self._thread.join(timeout=5)
-
-
-def run_checked(args, cwd=None, env=None, capture_output=False):
-    result = subprocess.run(args, cwd=cwd, env=env, text=True, capture_output=capture_output)
-    if result.returncode != 0:
-        stdout = result.stdout if result.stdout is not None else ""
-        stderr = result.stderr if result.stderr is not None else ""
-        raise RuntimeError(f"command failed: {' '.join(args)}\nstdout:\n{stdout}\nstderr:\n{stderr}")
-    return result
-
-
-def allocate_tcp_port():
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
-    finally:
-        sock.close()
-
-
-def save_json(path, value):
-    with open(path, "w", encoding="utf-8") as handle:
-        json.dump(value, handle, indent=2)
-        handle.write("\n")
-
-
-def build_runtime_env(binary):
-    runtime_dirs = []
-
-    def append_runtime_dir(path):
-        if not path or not os.path.isdir(path) or path in runtime_dirs:
-            return
-        runtime_dirs.append(path)
-
-    def append_runtime_dirs(raw):
-        if not raw:
-            return
-        for path in raw.split(":"):
-            append_runtime_dir(path)
-
-    def append_root_runtime_dirs(root):
-        if not root:
-            return
-        append_runtime_dir(os.path.join(root, "lib64"))
-        append_runtime_dir(os.path.join(root, "lib"))
-
-    def read_binary_runpath(path):
-        try:
-            result = subprocess.run(["readelf", "-d", str(path)], text=True, capture_output=True, check=False)
-        except FileNotFoundError:
-            return ""
-        if result.returncode != 0:
-            return ""
-        match = re.search(r"\((?:RUNPATH|RPATH)\).*?\[(.*?)\]", result.stdout)
-        if match is None:
-            return ""
-        return match.group(1)
-
-    append_runtime_dirs(os.environ.get("SOCKS_RUNTIME_LIB_DIRS", ""))
-    append_root_runtime_dirs(os.environ.get("OPENSSL_ROOT_DIR", ""))
-    append_root_runtime_dirs(os.environ.get("BROTLI_ROOT_DIR", ""))
-    append_runtime_dirs(read_binary_runpath(binary))
-    append_runtime_dirs(os.environ.get("LD_LIBRARY_PATH", ""))
-    if not runtime_dirs:
-        return {}
-    return {"LD_LIBRARY_PATH": ":".join(runtime_dirs)}
-
-
-def parse_key_output(output):
-    private_match = re.search(r"private key:\s+(\S+)", output)
-    public_match = re.search(r"public key:\s+(\S+)", output)
-    if private_match is None or public_match is None:
-        raise RuntimeError("failed to parse x25519 key output")
-    return private_match.group(1), public_match.group(1)
-
-
-def wait_for_port(host, port, deadline_seconds, label, processes=None):
-    deadline = time.time() + deadline_seconds
-    last_error = None
-    while time.time() < deadline:
-        if processes is not None:
-            for process in processes:
-                if process.process.poll() is not None:
-                    raise RuntimeError(f"process exited early while waiting for {label}")
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(0.2)
-        try:
-            sock.connect((host, port))
-            return
-        except OSError as exc:
-            last_error = exc
-            time.sleep(0.2)
-        finally:
-            sock.close()
-    raise RuntimeError(f"timeout waiting for {label} {host}:{port} last_error={last_error}")
-
-
-def tail_file(path, lines=120):
-    if not path.exists():
-        return ""
-    data = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    return "\n".join(data[-lines:])
-
-
-def wait_for_log_text(path, needle, deadline_seconds, label, processes=None):
-    deadline = time.time() + deadline_seconds
-    while time.time() < deadline:
-        if processes is not None:
-            for process in processes:
-                if process.process.poll() is not None:
-                    raise RuntimeError(f"process exited early while waiting for {label}")
-        if path.exists():
-            text = path.read_text(encoding="utf-8", errors="replace")
-            if needle in text:
-                return text
-        time.sleep(0.2)
-    raise RuntimeError(f"timeout waiting for {label} log text {needle!r}")
 
 
 def fetch_json(url, proxy_url=None):

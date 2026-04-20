@@ -12,7 +12,7 @@ import tempfile
 import threading
 import time
 
-from test_reality_integration import allocate_tcp_port, build_runtime_env, parse_key_output, save_json, start_process, tail_file, wait_for_log_text
+from testlib import allocate_tcp_port, build_runtime_env, parse_key_output, save_json, start_process, tail_file, wait_for_log_text
 
 
 def assert_no_usage(case_name, output):

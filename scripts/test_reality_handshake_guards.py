@@ -3,12 +3,12 @@
 import argparse
 import pathlib
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
 
-from test_reality_integration import (
+from testlib import (
+    allocate_tcp_port,
     build_cert,
     build_runtime_env,
     parse_key_output,
@@ -19,15 +19,6 @@ from test_reality_integration import (
     wait_for_log_text,
     wait_for_port,
 )
-
-
-def allocate_tcp_port():
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
-    finally:
-        sock.close()
 
 
 def run_guard_case(repo_root, binary, runtime_env, temp_root, case_name, client_outbound_overrides, expected_server_log="", expected_client_log=""):

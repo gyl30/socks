@@ -1,73 +1,26 @@
 #!/usr/bin/env python3
 
 import argparse
-import json
 import os
 import pathlib
-import re
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
 import time
-
-
-class ManagedProcess:
-    def __init__(self, args, stdout_path, extra_env=None):
-        self.stdout_path = stdout_path
-        self.stdout_handle = open(stdout_path, "w", encoding="utf-8")
-        env = os.environ.copy()
-        if extra_env is not None:
-            env.update(extra_env)
-        self.process = subprocess.Popen(args, stdout=self.stdout_handle, stderr=subprocess.STDOUT, text=True, env=env)
-
-    def terminate(self):
-        if self.process.poll() is None:
-            self.process.terminate()
-        try:
-            self.process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            self.process.kill()
-            self.process.wait(timeout=5)
-        self.stdout_handle.close()
-
-
-def run_checked(args, cwd=None, env=None, capture_output=False):
-    result = subprocess.run(args, cwd=cwd, env=env, text=True, capture_output=capture_output)
-    if result.returncode != 0:
-        stdout = result.stdout if result.stdout is not None else ""
-        stderr = result.stderr if result.stderr is not None else ""
-        raise RuntimeError(f"command failed: {' '.join(args)}\nstdout:\n{stdout}\nstderr:\n{stderr}")
-    return result
-
-
-def wait_for_port(host, port, deadline_seconds, label):
-    deadline = time.time() + deadline_seconds
-    last_error = None
-    while time.time() < deadline:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(0.2)
-        try:
-            sock.connect((host, port))
-            return
-        except OSError as exc:
-            last_error = exc
-            time.sleep(0.2)
-        finally:
-            sock.close()
-    raise RuntimeError(f"timeout waiting for {label} {host}:{port} last_error={last_error}")
-
-
-def wait_for_log_text(path, needle, deadline_seconds, label):
-    deadline = time.time() + deadline_seconds
-    while time.time() < deadline:
-        if path.exists():
-            text = path.read_text(encoding="utf-8", errors="replace")
-            if needle in text:
-                return text
-        time.sleep(0.2)
-    raise RuntimeError(f"timeout waiting for log text {needle!r} in {label}")
+from testlib import (
+    allocate_tcp_port,
+    allocate_udp_port,
+    build_cert,
+    build_runtime_env,
+    parse_key_output,
+    run_checked,
+    save_json,
+    start_process,
+    tail_file,
+    wait_for_log_text,
+    wait_for_port,
+)
 
 
 def wait_for_https_proxy_ready(proxy_url, cert_path, https_url, deadline_seconds, processes):
@@ -102,147 +55,6 @@ def wait_for_https_proxy_ready(proxy_url, cert_path, https_url, deadline_seconds
         time.sleep(0.2)
 
     raise RuntimeError(f"timeout waiting for https proxy ready last_error={last_error}")
-
-
-def tail_file(path, lines=80):
-    if not path.exists():
-        return ""
-    data = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    return "\n".join(data[-lines:])
-
-
-def allocate_tcp_port():
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
-    finally:
-        sock.close()
-
-
-def allocate_udp_port():
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
-    finally:
-        sock.close()
-
-
-def save_json(path, value):
-    with open(path, "w", encoding="utf-8") as handle:
-        json.dump(value, handle, indent=2)
-        handle.write("\n")
-
-
-def parse_key_output(output):
-    private_match = re.search(r"private key:\s+(\S+)", output)
-    public_match = re.search(r"public key:\s+(\S+)", output)
-    if private_match is None or public_match is None:
-        raise RuntimeError("failed to parse x25519 key output")
-    return private_match.group(1), public_match.group(1)
-
-
-def build_cert(tmp_dir, hostname):
-    key_path = tmp_dir / "origin.key"
-    cert_path = tmp_dir / "origin.crt"
-    openssl_conf = tmp_dir / "openssl.cnf"
-    openssl_conf.write_text(
-        "\n".join(
-            [
-                "[req]",
-                "distinguished_name = req_distinguished_name",
-                "x509_extensions = v3_req",
-                "prompt = no",
-                "",
-                "[req_distinguished_name]",
-                f"CN = {hostname}",
-                "",
-                "[v3_req]",
-                "subjectAltName = @alt_names",
-                "",
-                "[alt_names]",
-                f"DNS.1 = {hostname}",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    run_checked(
-        [
-            "openssl",
-            "req",
-            "-x509",
-            "-newkey",
-            "rsa:2048",
-            "-nodes",
-            "-days",
-            "1",
-            "-keyout",
-            str(key_path),
-            "-out",
-            str(cert_path),
-            "-config",
-            str(openssl_conf),
-            "-extensions",
-            "v3_req",
-        ]
-    )
-    return key_path, cert_path
-
-
-def start_process(args, stdout_path, extra_env=None):
-    return ManagedProcess(args, stdout_path, extra_env=extra_env)
-
-
-def append_runtime_dir(runtime_dirs, path):
-    if not path or not os.path.isdir(path) or path in runtime_dirs:
-        return
-    runtime_dirs.append(path)
-
-
-def append_runtime_dirs(runtime_dirs, raw):
-    if not raw:
-        return
-    for path in raw.split(":"):
-        append_runtime_dir(runtime_dirs, path)
-
-
-def append_root_runtime_dirs(runtime_dirs, root):
-    if not root:
-        return
-    append_runtime_dir(runtime_dirs, os.path.join(root, "lib64"))
-    append_runtime_dir(runtime_dirs, os.path.join(root, "lib"))
-
-
-def read_binary_runpath(binary):
-    try:
-        result = subprocess.run(
-            ["readelf", "-d", str(binary)],
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-    except FileNotFoundError:
-        return ""
-    if result.returncode != 0:
-        return ""
-    match = re.search(r"\((?:RUNPATH|RPATH)\).*?\[(.*?)\]", result.stdout)
-    if match is None:
-        return ""
-    return match.group(1)
-
-
-def build_runtime_env(binary):
-    runtime_dirs = []
-    append_runtime_dirs(runtime_dirs, os.environ.get("SOCKS_RUNTIME_LIB_DIRS", ""))
-    append_root_runtime_dirs(runtime_dirs, os.environ.get("OPENSSL_ROOT_DIR", ""))
-    append_root_runtime_dirs(runtime_dirs, os.environ.get("BROTLI_ROOT_DIR", ""))
-    append_runtime_dirs(runtime_dirs, read_binary_runpath(binary))
-    append_runtime_dirs(runtime_dirs, os.environ.get("LD_LIBRARY_PATH", ""))
-    if not runtime_dirs:
-        return {}
-    return {"LD_LIBRARY_PATH": ":".join(runtime_dirs)}
 
 
 def main():
