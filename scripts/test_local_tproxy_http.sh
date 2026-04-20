@@ -86,12 +86,14 @@ sanitize_test_id() {
 }
 
 test_id_slug=""
+wrapper_log_pattern=".tmp-local-client-wrapper.*.log"
 if [[ -n "$test_id" ]]; then
     test_id_slug="$(sanitize_test_id "$test_id")"
     if [[ -z "$test_id_slug" ]]; then
         echo "TEST_ID must contain at least one alphanumeric character" >&2
         exit 1
     fi
+    wrapper_log_pattern=".tmp-local-client-wrapper.${test_id_slug}.*.log"
 fi
 
 server_stdout_log="$(mktemp /tmp/socks-local-server.XXXXXX.log)"
@@ -171,7 +173,7 @@ if [[ "$dry_run" == "1" ]]; then
 fi
 
 rm -f "$repo_root"/config/local-client.log "$repo_root"/config/local-server.log
-rm -f "$repo_root"/.tmp-local-client-wrapper.*.log
+rm -f "$repo_root"/$wrapper_log_pattern
 if [[ -n "$test_id_slug" ]]; then
     server_stdout_log="$(mktemp "/tmp/socks-local-server.${test_id_slug}.XXXXXX.log")"
     client_stdout_log="$(mktemp "/tmp/socks-local-client.${test_id_slug}.XXXXXX.log")"
@@ -248,7 +250,7 @@ if (( failed > 0 )); then
     echo
     echo "client wrapper stdout tail:"
     tail -n 80 "$client_stdout_log" || true
-    latest_wrapper_log="$(find "$repo_root" -maxdepth 1 -type f -name '.tmp-local-client-wrapper.*.log' | sort | tail -n 1)"
+    latest_wrapper_log="$(find "$repo_root" -maxdepth 1 -type f -name "$wrapper_log_pattern" | sort | tail -n 1)"
     if [[ -n "$latest_wrapper_log" ]]; then
         echo
         echo "client runtime tail:"
