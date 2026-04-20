@@ -450,6 +450,11 @@ if(BUILD_TESTING)
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_config_roundtrip.py --binary $<TARGET_FILE:socks>)
   set_tests_properties(config_roundtrip_smoke PROPERTIES TIMEOUT 60)
 
+  add_test(
+    NAME protocol_guardrails
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_protocol_guards.py --binary $<TARGET_FILE:socks>)
+  set_tests_properties(protocol_guardrails PROPERTIES TIMEOUT 60)
+
   add_test(NAME socket_mark_regression COMMAND $<TARGET_FILE:socket_mark_regression>)
   set_tests_properties(socket_mark_regression PROPERTIES TIMEOUT 30)
 endif()
