@@ -63,8 +63,6 @@ void write_tproxy_settings(rapidjson::PrettyWriter<rapidjson::StringBuffer>& wri
     writer.Uint(value.tcp_port);
     writer.Key("udp_port");
     writer.Uint(value.udp_port);
-    writer.Key("mark");
-    writer.Uint(value.mark);
 }
 
 void write_tun_settings(rapidjson::PrettyWriter<rapidjson::StringBuffer>& writer, const config::tun_t& value)

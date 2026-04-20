@@ -71,6 +71,20 @@ def run_invalid_reality_config_case(binary, runtime_env, temp_root, case_name, c
     assert_no_usage(case_name, combined)
 
 
+def run_invalid_config_value_case(binary, runtime_env, temp_root, case_name, config_value, expected_error):
+    config_path = temp_root / f"{case_name}.json"
+    save_json(config_path, config_value)
+
+    result = subprocess.run([str(binary), "-c", str(config_path)], env=runtime_env, text=True, capture_output=True, check=False)
+    if result.returncode == 0:
+        raise RuntimeError(f"{case_name} unexpectedly succeeded")
+
+    combined = (result.stdout or "") + (result.stderr or "")
+    if expected_error not in combined:
+        raise RuntimeError(f"{case_name} missing error {expected_error!r} output={combined!r}")
+    assert_no_usage(case_name, combined)
+
+
 def run_invalid_reality_config_cases(binary, runtime_env, temp_root):
     base_cfg = dump_default_config(binary, runtime_env)
     key_output = subprocess.run([str(binary), "x25519"], env=runtime_env, text=True, capture_output=True, check=False)
@@ -184,6 +198,69 @@ def run_invalid_route_config_case(binary, runtime_env, temp_root):
     assert_no_usage("invalid_route", combined)
 
 
+def run_invalid_general_config_cases(binary, runtime_env, temp_root):
+    base_cfg = dump_default_config(binary, runtime_env)
+
+    invalid_port = copy.deepcopy(base_cfg)
+    invalid_port["inbounds"][0]["settings"]["port"] = 70000
+    run_invalid_config_value_case(
+        binary,
+        runtime_env,
+        temp_root,
+        "invalid_socks_port_overflow",
+        invalid_port,
+        "inbounds[0].settings.port out_of_range",
+    )
+
+    invalid_auth_username = copy.deepcopy(base_cfg)
+    invalid_auth_username["inbounds"][0]["settings"]["auth"] = True
+    run_invalid_config_value_case(
+        binary,
+        runtime_env,
+        temp_root,
+        "invalid_socks_auth_missing_username",
+        invalid_auth_username,
+        "inbounds[0].settings.username required_when_auth_enabled",
+    )
+
+    invalid_auth_password = copy.deepcopy(base_cfg)
+    invalid_auth_password["inbounds"][0]["settings"]["auth"] = True
+    invalid_auth_password["inbounds"][0]["settings"]["username"] = "user"
+    run_invalid_config_value_case(
+        binary,
+        runtime_env,
+        temp_root,
+        "invalid_socks_auth_missing_password",
+        invalid_auth_password,
+        "inbounds[0].settings.password required_when_auth_enabled",
+    )
+
+    invalid_tun_prefix = copy.deepcopy(base_cfg)
+    invalid_tun_prefix["inbounds"] = [
+        {
+            "type": "tun",
+            "tag": "tun-in",
+            "settings": {
+                "name": "socks-test",
+                "mtu": 1500,
+                "ipv4": "198.18.0.1",
+                "ipv4_prefix": 33,
+                "ipv6": "fd00::1",
+                "ipv6_prefix": 128,
+            },
+        }
+    ]
+    invalid_tun_prefix["routing"] = [{"type": "inbound", "values": ["tun-in"], "out": "direct"}]
+    run_invalid_config_value_case(
+        binary,
+        runtime_env,
+        temp_root,
+        "invalid_tun_ipv4_prefix",
+        invalid_tun_prefix,
+        "inbounds[0].settings.ipv4_prefix out_of_range",
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(description="Config dump/parse smoke test")
     parser.add_argument("--binary", default=str(pathlib.Path("build") / "socks"), help="path to the socks binary")
@@ -204,6 +281,8 @@ def main():
         run_invalid_config_case(binary, runtime_env, temp_root)
         print("invalid_config ok")
         run_invalid_reality_config_cases(binary, runtime_env, temp_root)
+        run_invalid_general_config_cases(binary, runtime_env, temp_root)
+        print("invalid_general_config ok")
         run_invalid_route_config_case(binary, runtime_env, temp_root)
         print("invalid_route ok")
         return 0

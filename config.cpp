@@ -13,8 +13,10 @@
 #include <sstream>
 #include <algorithm>
 #include <charconv>
+#include <limits>
 #include <stdexcept>
 #include <string_view>
+#include <type_traits>
 #include <unordered_set>
 
 #include <boost/asio/ip/address.hpp>
@@ -149,6 +151,7 @@ template <typename T>
                                         const std::string& filename,
                                         const bool required)
 {
+    static_assert(std::is_unsigned_v<T>, "parse_unsigned_field requires unsigned target type");
     const auto* field = find_member_object(value, key);
     if (field == nullptr)
     {
@@ -164,7 +167,12 @@ template <typename T>
         {
             return fail_config(filename, join_path(path, key) + " type invalid");
         }
-        out = static_cast<T>(field->GetUint());
+        const auto parsed = field->GetUint();
+        if (parsed > static_cast<uint64_t>(std::numeric_limits<T>::max()))
+        {
+            return fail_config(filename, join_path(path, key) + " out_of_range");
+        }
+        out = static_cast<T>(parsed);
     }
     else
     {
@@ -172,7 +180,12 @@ template <typename T>
         {
             return fail_config(filename, join_path(path, key) + " type invalid");
         }
-        out = static_cast<T>(field->GetUint64());
+        const auto parsed = field->GetUint64();
+        if (parsed > std::numeric_limits<T>::max())
+        {
+            return fail_config(filename, join_path(path, key) + " out_of_range");
+        }
+        out = static_cast<T>(parsed);
     }
     return true;
 }
@@ -472,6 +485,17 @@ template <typename T>
     {
         return false;
     }
+    if (out.auth)
+    {
+        if (out.username.empty())
+        {
+            return fail_config(filename, join_path(path, "username") + " required_when_auth_enabled");
+        }
+        if (out.password.empty())
+        {
+            return fail_config(filename, join_path(path, "password") + " required_when_auth_enabled");
+        }
+    }
     return true;
 }
 
@@ -494,10 +518,6 @@ template <typename T>
         return false;
     }
     if (!parse_unsigned_field(value, "udp_port", path, out.udp_port, filename, true))
-    {
-        return false;
-    }
-    if (!parse_unsigned_field(value, "mark", path, out.mark, filename, true))
     {
         return false;
     }
@@ -538,6 +558,14 @@ template <typename T>
     if (!parse_unsigned_field(value, "ipv6_prefix", path, out.ipv6_prefix, filename, true))
     {
         return false;
+    }
+    if (out.ipv4_prefix > 32)
+    {
+        return fail_config(filename, join_path(path, "ipv4_prefix") + " out_of_range");
+    }
+    if (out.ipv6_prefix > 128)
+    {
+        return fail_config(filename, join_path(path, "ipv6_prefix") + " out_of_range");
     }
     return true;
 }
@@ -727,6 +755,10 @@ template <typename T>
     {
         return false;
     }
+    if (!parse_unsigned_field(entry, "mark", entry_path, parsed.mark, filename, false))
+    {
+        return false;
+    }
     if (!seen_tags.insert(parsed.tag).second)
     {
         return fail_config(filename, entry_path + " duplicate_tag");
@@ -796,6 +828,10 @@ template <typename T>
         return fail_config(filename, entry_path + " unsupported_in_current_build");
     }
     if (!parse_string_field(entry, "tag", entry_path, parsed.tag, filename, true))
+    {
+        return false;
+    }
+    if (!parse_unsigned_field(entry, "mark", entry_path, parsed.mark, filename, false))
     {
         return false;
     }
@@ -1061,6 +1097,11 @@ void write_inbound_entry(
     writer.String(inbound.type.c_str());
     writer.Key("tag");
     writer.String(inbound.tag.c_str());
+    if (inbound.mark != 0)
+    {
+        writer.Key("mark");
+        writer.Uint(inbound.mark);
+    }
     writer.Key("settings");
     writer.StartObject();
     write_inbound_entry_settings(writer, inbound);
@@ -1089,6 +1130,11 @@ void write_outbound_entry(
     writer.String(outbound.type.c_str());
     writer.Key("tag");
     writer.String(outbound.tag.c_str());
+    if (outbound.mark != 0)
+    {
+        writer.Key("mark");
+        writer.Uint(outbound.mark);
+    }
     if (config_type::outbound_type_requires_settings(outbound.type))
     {
         writer.Key("settings");
@@ -1137,9 +1183,9 @@ template <typename Entry>
 {
     for (const auto& inbound : inbounds)
     {
-        if (inbound.type == config_type::kInboundTproxy && inbound.tproxy.has_value())
+        if (inbound.type == config_type::kInboundTproxy && inbound.mark != 0)
         {
-            return inbound.tproxy->mark;
+            return inbound.mark;
         }
     }
     return 0;

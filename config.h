@@ -34,7 +34,6 @@ struct config
         std::string listen_host = "::";
         uint16_t tcp_port = 1081;
         uint16_t udp_port = 0;
-        uint32_t mark = 0x11;
     };
 
     struct tun_t
@@ -90,6 +89,7 @@ struct config
     {
         std::string type;
         std::string tag;
+        uint32_t mark = 0;
         std::optional<socks_t> socks;
         std::optional<tproxy_t> tproxy;
         std::optional<tun_t> tun;
@@ -100,6 +100,7 @@ struct config
     {
         std::string type;
         std::string tag;
+        uint32_t mark = 0;
         std::optional<reality_outbound_t> reality;
         std::optional<socks_t> socks;
     };
