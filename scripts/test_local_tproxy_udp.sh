@@ -11,6 +11,7 @@ Environment:
   BINARY                   Path to socks binary. Default: ./build/socks
   SERVER_CONFIG            Server config path. Default: config/local-server.json
   CLIENT_CONFIG            Client config path. Default: config/local-client.json
+  TEST_ID                  Optional test identifier used to derive isolated resource names. Default: empty
   REQUEST_COUNT            Requests per target. Default: 3
   UDP_TIMEOUT              Per-request UDP timeout seconds. Default: 5
   PROBE_RETRIES            Extra retries per request before marking failure. Default: 1
@@ -54,6 +55,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 binary="${BINARY:-$repo_root/build/socks}"
 server_config="${SERVER_CONFIG:-$repo_root/config/local-server.json}"
 client_config="${CLIENT_CONFIG:-$repo_root/config/local-client.json}"
+test_id="${TEST_ID:-}"
 request_count="${REQUEST_COUNT:-3}"
 udp_timeout="${UDP_TIMEOUT:-5}"
 probe_retries="${PROBE_RETRIES:-1}"
@@ -67,7 +69,7 @@ dry_run="${DRY_RUN:-0}"
 keep_logs="${KEEP_LOGS:-0}"
 probe_script="$repo_root/scripts/udp_dns_probe.py"
 
-for cmd in flock ip iptables mktemp python3 ss tail; do
+for cmd in flock ip iptables mktemp python3 ss tail tr; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
         echo "missing dependency: $cmd" >&2
         exit 1
@@ -89,6 +91,14 @@ fi
 source "$repo_root/scripts/runtime_env.sh"
 init_runtime_ld_library_path "$binary"
 
+sanitize_test_id() {
+    printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9'
+}
+
+uppercase_text() {
+    printf '%s' "$1" | tr '[:lower:]' '[:upper:]'
+}
+
 server_stdout_log="/tmp/socks-local-server.dry-run.log"
 client_stdout_log="/tmp/socks-local-client.dry-run.log"
 declare -a probe_err_logs=()
@@ -106,6 +116,33 @@ ns_ip="${TPROXY_NS_IP:-192.0.2.2}"
 ns_cidr="${ns_ip}/24"
 tproxy_chain="${TPROXY_CHAIN:-SOCKS_LOCAL_TPROXY_UDP_TEST}"
 tproxy_rule_comment="${TPROXY_RULE_COMMENT:-socks-local-tproxy-udp}"
+
+test_id_slug=""
+test_id_short=""
+if [[ -n "$test_id" ]]; then
+    test_id_slug="$(sanitize_test_id "$test_id")"
+    if [[ -z "$test_id_slug" ]]; then
+        echo "TEST_ID must contain at least one alphanumeric character" >&2
+        exit 1
+    fi
+    test_id_short="${test_id_slug:0:12}"
+
+    if [[ -z "${TPROXY_NETNS_NAME:-}" ]]; then
+        ns_name="socks-tproxy-udp-${test_id_slug:0:20}"
+    fi
+    if [[ -z "${TPROXY_HOST_IF:-}" ]]; then
+        host_if="tp${test_id_short}h"
+    fi
+    if [[ -z "${TPROXY_NS_IF:-}" ]]; then
+        ns_if="tp${test_id_short}n"
+    fi
+    if [[ -z "${TPROXY_CHAIN:-}" ]]; then
+        tproxy_chain="SOCKS_TPU_$(uppercase_text "${test_id_slug:0:12}")"
+    fi
+    if [[ -z "${TPROXY_RULE_COMMENT:-}" ]]; then
+        tproxy_rule_comment="socks-tpu-${test_id_slug:0:24}"
+    fi
+fi
 
 stop_pid() {
     local pid="$1"
@@ -151,11 +188,27 @@ wait_for_udp_listener() {
     return 1
 }
 
+emit_manual_cleanup_commands() {
+    echo "manual cleanup commands:"
+    print_cmd iptables -t mangle -D PREROUTING -i "$host_if" -m comment --comment "$tproxy_rule_comment" -j "$tproxy_chain"
+    print_cmd iptables -t mangle -F "$tproxy_chain"
+    print_cmd iptables -t mangle -X "$tproxy_chain"
+    print_cmd ip rule del fwmark "$tproxy_mark_hex" lookup "$tproxy_table"
+    print_cmd ip route del local 0.0.0.0/0 dev lo table "$tproxy_table"
+    print_cmd ip link del "$host_if"
+    print_cmd ip netns del "$ns_name"
+}
+
 cleanup() {
+    local exit_code=$?
+
     if (( cleanup_done )); then
-        return
+        exit "$exit_code"
     fi
     cleanup_done=1
+    trap - EXIT INT TERM
+
+    set +e
 
     iptables -t mangle -D PREROUTING -i "$host_if" -m comment --comment "$tproxy_rule_comment" -j "$tproxy_chain" >/dev/null 2>&1 || true
     iptables -t mangle -F "$tproxy_chain" >/dev/null 2>&1 || true
@@ -172,6 +225,12 @@ cleanup() {
     if [[ "$keep_logs" != "1" ]]; then
         rm -f "$server_stdout_log" "$client_stdout_log" "${probe_err_logs[@]:-}" "${probe_out_logs[@]:-}"
     fi
+
+    if (( exit_code != 0 )); then
+        emit_manual_cleanup_commands
+    fi
+
+    exit "$exit_code"
 }
 
 trap cleanup EXIT INT TERM
@@ -343,11 +402,21 @@ if [[ "$dry_run" == "1" ]]; then
 fi
 
 rm -f "$repo_root"/config/local-client.log "$repo_root"/config/local-server.log
-server_stdout_log="$(mktemp /tmp/socks-local-server.XXXXXX.log)"
-client_stdout_log="$(mktemp /tmp/socks-local-client.XXXXXX.log)"
-probe_runner="$(mktemp /tmp/socks-udp-dns-probe.XXXXXX.py)"
+if [[ -n "$test_id_slug" ]]; then
+    server_stdout_log="$(mktemp "/tmp/socks-local-server.${test_id_slug}.XXXXXX.log")"
+    client_stdout_log="$(mktemp "/tmp/socks-local-client.${test_id_slug}.XXXXXX.log")"
+    probe_runner="$(mktemp "/tmp/socks-udp-dns-probe.${test_id_slug}.XXXXXX.py")"
+else
+    server_stdout_log="$(mktemp /tmp/socks-local-server.XXXXXX.log)"
+    client_stdout_log="$(mktemp /tmp/socks-local-client.XXXXXX.log)"
+    probe_runner="$(mktemp /tmp/socks-udp-dns-probe.XXXXXX.py)"
+fi
 cp "$probe_script" "$probe_runner"
 chmod 755 "$probe_runner"
+
+if [[ -n "$test_id_slug" ]]; then
+    echo "test id: $test_id resource_suffix:$test_id_slug"
+fi
 
 env LD_LIBRARY_PATH="$runtime_ld_library_path" "$binary" -c "$server_config" >"$server_stdout_log" 2>&1 &
 server_pid="$!"
@@ -372,8 +441,13 @@ run_single_probe() {
     local port="${target##*:}"
     local out_log err_log
 
-    out_log="$(mktemp /tmp/socks-tproxy-udp-out.XXXXXX.log)"
-    err_log="$(mktemp /tmp/socks-tproxy-udp-err.XXXXXX.log)"
+    if [[ -n "$test_id_slug" ]]; then
+        out_log="$(mktemp "/tmp/socks-tproxy-udp-out.${test_id_slug}.XXXXXX.log")"
+        err_log="$(mktemp "/tmp/socks-tproxy-udp-err.${test_id_slug}.XXXXXX.log")"
+    else
+        out_log="$(mktemp /tmp/socks-tproxy-udp-out.XXXXXX.log)"
+        err_log="$(mktemp /tmp/socks-tproxy-udp-err.XXXXXX.log)"
+    fi
     probe_out_logs+=("$out_log")
     probe_err_logs+=("$err_log")
 

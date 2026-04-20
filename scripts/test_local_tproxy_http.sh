@@ -11,6 +11,7 @@ Environment:
   BINARY                   Path to socks binary. Default: ./build/socks
   SERVER_CONFIG            Server config path. Default: config/local-server.json
   CLIENT_CONFIG            Client config path. Default: config/local-client.json
+  TEST_ID                  Optional test identifier forwarded to child scripts and log prefixes. Default: empty
   TPROXY_TEST_USER         User redirected into tproxy. Default: tpuser
   REQUEST_COUNT            Requests per target. Default: 3
   CURL_MAX_TIME            Per-request curl timeout seconds. Default: 20
@@ -42,6 +43,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 binary="${BINARY:-$repo_root/build/socks}"
 server_config="${SERVER_CONFIG:-$repo_root/config/local-server.json}"
 client_config="${CLIENT_CONFIG:-$repo_root/config/local-client.json}"
+test_id="${TEST_ID:-}"
 tproxy_test_user="${TPROXY_TEST_USER:-tpuser}"
 request_count="${REQUEST_COUNT:-3}"
 curl_max_time="${CURL_MAX_TIME:-20}"
@@ -50,7 +52,7 @@ tproxy_tcp_ports="${TPROXY_TCP_PORTS:-80}"
 dry_run="${DRY_RUN:-0}"
 keep_logs="${KEEP_LOGS:-0}"
 
-for cmd in curl flock id mktemp su tail; do
+for cmd in curl flock id mktemp su tail tr; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
         echo "missing dependency: $cmd" >&2
         exit 1
@@ -78,6 +80,19 @@ id "$tproxy_test_user" >/dev/null 2>&1 || {
     echo "user not found: $tproxy_test_user" >&2
     exit 1
 }
+
+sanitize_test_id() {
+    printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9'
+}
+
+test_id_slug=""
+if [[ -n "$test_id" ]]; then
+    test_id_slug="$(sanitize_test_id "$test_id")"
+    if [[ -z "$test_id_slug" ]]; then
+        echo "TEST_ID must contain at least one alphanumeric character" >&2
+        exit 1
+    fi
+fi
 
 server_stdout_log="$(mktemp /tmp/socks-local-server.XXXXXX.log)"
 client_stdout_log="$(mktemp /tmp/socks-local-client.XXXXXX.log)"
@@ -141,8 +156,13 @@ if [[ "$dry_run" == "1" ]]; then
     echo "server command:"
     print_cmd "$binary" -c "$server_config"
     echo "client wrapper command:"
-    print_cmd env TPROXY_TEST_USER="$tproxy_test_user" TPROXY_TCP_PORTS="$tproxy_tcp_ports" DRY_RUN=1 KEEP_WRAPPER_LOG=1 \
-        /usr/bin/bash "$repo_root/scripts/run_local_client.sh" "$client_config"
+    if [[ -n "$test_id" ]]; then
+        print_cmd env TEST_ID="$test_id" TPROXY_TEST_USER="$tproxy_test_user" TPROXY_TCP_PORTS="$tproxy_tcp_ports" DRY_RUN=1 KEEP_WRAPPER_LOG=1 \
+            /usr/bin/bash "$repo_root/scripts/run_local_client.sh" "$client_config"
+    else
+        print_cmd env TPROXY_TEST_USER="$tproxy_test_user" TPROXY_TCP_PORTS="$tproxy_tcp_ports" DRY_RUN=1 KEEP_WRAPPER_LOG=1 \
+            /usr/bin/bash "$repo_root/scripts/run_local_client.sh" "$client_config"
+    fi
     echo "request commands:"
     for target in "${targets[@]}"; do
         print_cmd su -s /bin/bash -c "/usr/bin/curl '$target' -v --max-time '$curl_max_time'" "$tproxy_test_user"
@@ -152,15 +172,28 @@ fi
 
 rm -f "$repo_root"/config/local-client.log "$repo_root"/config/local-server.log
 rm -f "$repo_root"/.tmp-local-client-wrapper.*.log
+if [[ -n "$test_id_slug" ]]; then
+    server_stdout_log="$(mktemp "/tmp/socks-local-server.${test_id_slug}.XXXXXX.log")"
+    client_stdout_log="$(mktemp "/tmp/socks-local-client.${test_id_slug}.XXXXXX.log")"
+    echo "test id: $test_id resource_suffix:$test_id_slug"
+fi
 
 "$binary" -c "$server_config" >"$server_stdout_log" 2>&1 &
 server_pid="$!"
 sleep 1
 
-TPROXY_TEST_USER="$tproxy_test_user" \
-TPROXY_TCP_PORTS="$tproxy_tcp_ports" \
-KEEP_WRAPPER_LOG=1 \
-/usr/bin/bash "$repo_root/scripts/run_local_client.sh" "$client_config" >"$client_stdout_log" 2>&1 &
+if [[ -n "$test_id" ]]; then
+    TEST_ID="$test_id" \
+    TPROXY_TEST_USER="$tproxy_test_user" \
+    TPROXY_TCP_PORTS="$tproxy_tcp_ports" \
+    KEEP_WRAPPER_LOG=1 \
+    /usr/bin/bash "$repo_root/scripts/run_local_client.sh" "$client_config" >"$client_stdout_log" 2>&1 &
+else
+    TPROXY_TEST_USER="$tproxy_test_user" \
+    TPROXY_TCP_PORTS="$tproxy_tcp_ports" \
+    KEEP_WRAPPER_LOG=1 \
+    /usr/bin/bash "$repo_root/scripts/run_local_client.sh" "$client_config" >"$client_stdout_log" 2>&1 &
+fi
 client_wrapper_pid="$!"
 sleep 4
 
@@ -174,8 +207,13 @@ run_single_request() {
     local attempt="$2"
     local out_log err_log
 
-    out_log="$(mktemp /tmp/socks-tproxy-curl-out.XXXXXX.log)"
-    err_log="$(mktemp /tmp/socks-tproxy-curl-err.XXXXXX.log)"
+    if [[ -n "$test_id_slug" ]]; then
+        out_log="$(mktemp "/tmp/socks-tproxy-curl-out.${test_id_slug}.XXXXXX.log")"
+        err_log="$(mktemp "/tmp/socks-tproxy-curl-err.${test_id_slug}.XXXXXX.log")"
+    else
+        out_log="$(mktemp /tmp/socks-tproxy-curl-out.XXXXXX.log)"
+        err_log="$(mktemp /tmp/socks-tproxy-curl-err.XXXXXX.log)"
+    fi
     curl_out_logs+=("$out_log")
     curl_err_logs+=("$err_log")
 

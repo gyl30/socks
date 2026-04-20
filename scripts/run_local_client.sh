@@ -9,6 +9,7 @@ Usage:
 
 Environment:
   BINARY                   Path to socks binary. Default: ./build/socks
+  TEST_ID                  Optional test identifier used to derive isolated resource names. Default: empty
   TUN_NAME                 TUN device name. Default: socks-test
   TUN_TEST_USER            Linux user whose traffic should go through TUN. Default: empty
   TUN_ROUTES               Comma-separated CIDRs routed into TUN for TUN_TEST_USER. Default: 0.0.0.0/1,128.0.0.0/1
@@ -47,7 +48,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 config_path="${1:-$repo_root/config/local-client.json}"
 binary="${BINARY:-$repo_root/build/socks}"
 
-for cmd in awk getent id ip iptables python3 ss; do
+for cmd in awk getent id ip iptables python3 ss tr; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
         echo "missing dependency: $cmd" >&2
         exit 1
@@ -67,7 +68,16 @@ fi
 source "$repo_root/scripts/runtime_env.sh"
 init_runtime_ld_library_path "$binary"
 
-TUN_NAME="${TUN_NAME:-socks-test}"
+sanitize_test_id() {
+    printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9'
+}
+
+uppercase_text() {
+    printf '%s' "$1" | tr '[:lower:]' '[:upper:]'
+}
+
+TEST_ID="${TEST_ID:-}"
+TUN_NAME="${TUN_NAME:-}"
 TUN_TEST_USER="${TUN_TEST_USER:-}"
 TUN_ROUTES="${TUN_ROUTES:-0.0.0.0/1,128.0.0.0/1}"
 TUN_IPV6_ROUTES="${TUN_IPV6_ROUTES:-}"
@@ -80,8 +90,8 @@ TPROXY_UDP_PORT="${TPROXY_UDP_PORT:-23456}"
 TPROXY_TCP_PORTS="${TPROXY_TCP_PORTS:-}"
 TPROXY_UDP_PORTS="${TPROXY_UDP_PORTS:-}"
 TPROXY_EXCLUDE_CIDRS="${TPROXY_EXCLUDE_CIDRS:-}"
-TPROXY_NAT_CHAIN="${TPROXY_NAT_CHAIN:-SOCKS_LOCAL_TPROXY_NAT}"
-TPROXY_RULE_COMMENT="${TPROXY_RULE_COMMENT:-socks-local-tproxy}"
+TPROXY_NAT_CHAIN="${TPROXY_NAT_CHAIN:-}"
+TPROXY_RULE_COMMENT="${TPROXY_RULE_COMMENT:-}"
 DRY_RUN="${DRY_RUN:-0}"
 KEEP_WRAPPER_LOG="${KEEP_WRAPPER_LOG:-0}"
 
@@ -90,9 +100,48 @@ if [[ -z "$TUN_TEST_USER" && -z "$TPROXY_TEST_USER" ]]; then
     exit 1
 fi
 
+test_id_slug=""
+test_id_short=""
+if [[ -n "$TEST_ID" ]]; then
+    test_id_slug="$(sanitize_test_id "$TEST_ID")"
+    if [[ -z "$test_id_slug" ]]; then
+        echo "TEST_ID must contain at least one alphanumeric character" >&2
+        exit 1
+    fi
+    test_id_short="${test_id_slug:0:9}"
+fi
+
+if [[ -z "$TUN_NAME" ]]; then
+    if [[ -n "$test_id_short" ]]; then
+        TUN_NAME="socks-${test_id_short}"
+    else
+        TUN_NAME="socks-test"
+    fi
+fi
+
+if [[ -z "$TPROXY_NAT_CHAIN" ]]; then
+    if [[ -n "$test_id_slug" ]]; then
+        TPROXY_NAT_CHAIN="SOCKS_LTP_$(uppercase_text "${test_id_slug:0:12}")"
+    else
+        TPROXY_NAT_CHAIN="SOCKS_LOCAL_TPROXY_NAT"
+    fi
+fi
+
+if [[ -z "$TPROXY_RULE_COMMENT" ]]; then
+    if [[ -n "$test_id_slug" ]]; then
+        TPROXY_RULE_COMMENT="socks-local-${test_id_slug:0:24}"
+    else
+        TPROXY_RULE_COMMENT="socks-local-tproxy"
+    fi
+fi
+
 wrapper_log="$repo_root/.tmp-local-client-wrapper.dry-run.log"
 if [[ "$DRY_RUN" != "1" ]]; then
-    wrapper_log="$(mktemp "$repo_root/.tmp-local-client-wrapper.XXXXXX.log")"
+    if [[ -n "$test_id_slug" ]]; then
+        wrapper_log="$(mktemp "$repo_root/.tmp-local-client-wrapper.${test_id_slug}.XXXXXX.log")"
+    else
+        wrapper_log="$(mktemp "$repo_root/.tmp-local-client-wrapper.XXXXXX.log")"
+    fi
 fi
 client_pid=""
 cleanup_done=0
@@ -344,6 +393,30 @@ preview_run_local_client() {
     fi
 }
 
+emit_manual_cleanup_commands() {
+    local -a tun_routes tun_ipv6_routes
+    local ip_addr
+
+    split_csv "$TUN_ROUTES" tun_routes
+    split_csv "$TUN_IPV6_ROUTES" tun_ipv6_routes
+
+    echo "manual cleanup commands:"
+    if [[ -n "$tproxy_uid" ]]; then
+        print_cmd iptables -t nat -D OUTPUT -m owner --uid-owner "$tproxy_uid" -m comment --comment "$TPROXY_RULE_COMMENT" \
+            -j "$TPROXY_NAT_CHAIN"
+        print_cmd iptables -t nat -F "$TPROXY_NAT_CHAIN"
+        print_cmd iptables -t nat -X "$TPROXY_NAT_CHAIN"
+    fi
+    if [[ -n "$tun_uid" && ( ${#tun_routes[@]} > 0 || ${#tun_ipv6_routes[@]} > 0 ) ]]; then
+        print_cmd ip rule del pref "$TUN_PRIORITY" uidrange "${tun_uid}-${tun_uid}" lookup "$TUN_TABLE"
+        print_cmd /usr/bin/bash "$repo_root/scripts/tun_linux_route.sh" --table "$TUN_TABLE" down "$TUN_NAME" \
+            "${tun_routes[@]}" "${tun_ipv6_routes[@]}"
+    fi
+    for ip_addr in "${bypass_route_ips[@]:-}"; do
+        print_cmd ip route del "${ip_addr}/32"
+    done
+}
+
 load_outbound_hosts() {
     local host
     while IFS= read -r host; do
@@ -533,6 +606,10 @@ cleanup() {
         rm -f "$wrapper_log"
     fi
 
+    if (( exit_code != 0 )); then
+        emit_manual_cleanup_commands
+    fi
+
     exit "$exit_code"
 }
 
@@ -546,6 +623,9 @@ if [[ -n "$TPROXY_TEST_USER" ]]; then
 fi
 
 echo "wrapper log: $wrapper_log"
+if [[ -n "$test_id_slug" ]]; then
+    echo "test id: $TEST_ID resource_suffix:$test_id_slug"
+fi
 load_outbound_hosts
 ensure_tun_priority_available
 ensure_tun_table_available
