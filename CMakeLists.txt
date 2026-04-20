@@ -389,6 +389,12 @@ if(UNIX AND NOT APPLE AND NOT ENABLE_STATIC_LINK)
   target_link_options(udp_transparent_session_regression PRIVATE "-Wl,--no-as-needed" "${BROTLICOMMON_LIBRARY}" "-Wl,--as-needed")
 endif()
 
+add_executable(socket_mark_regression scripts/test_socket_mark_regression.cpp)
+target_link_libraries(socket_mark_regression PRIVATE core)
+if(UNIX AND NOT APPLE AND NOT ENABLE_STATIC_LINK)
+  target_link_options(socket_mark_regression PRIVATE "-Wl,--no-as-needed" "${BROTLICOMMON_LIBRARY}" "-Wl,--as-needed")
+endif()
+
 if(ENABLE_FUZZ)
   add_executable(ch_parser_fuzz fuzz/ch_parser_fuzz.cpp)
   target_link_libraries(ch_parser_fuzz PRIVATE fuzz_core)
@@ -420,6 +426,10 @@ if(SOCKS_RUNTIME_DIRS)
     udp_transparent_session_regression
     PROPERTIES BUILD_RPATH "${SOCKS_RUNTIME_DIRS}"
                INSTALL_RPATH "${SOCKS_RUNTIME_DIRS}")
+  set_target_properties(
+    socket_mark_regression
+    PROPERTIES BUILD_RPATH "${SOCKS_RUNTIME_DIRS}"
+               INSTALL_RPATH "${SOCKS_RUNTIME_DIRS}")
 endif()
 
 if(BUILD_TESTING)
@@ -439,4 +449,7 @@ if(BUILD_TESTING)
     NAME config_roundtrip_smoke
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_config_roundtrip.py --binary $<TARGET_FILE:socks>)
   set_tests_properties(config_roundtrip_smoke PROPERTIES TIMEOUT 60)
+
+  add_test(NAME socket_mark_regression COMMAND $<TARGET_FILE:socket_mark_regression>)
+  set_tests_properties(socket_mark_regression PROPERTIES TIMEOUT 30)
 endif()

@@ -29,11 +29,11 @@
     {
       "type": "tproxy",
       "tag": "tproxy-in",
+      "mark": 17,
       "settings": {
         "listen_host": "::",
         "tcp_port": 23456,
-        "udp_port": 23456,
-        "mark": 17
+        "udp_port": 23456
       }
     }
   ],

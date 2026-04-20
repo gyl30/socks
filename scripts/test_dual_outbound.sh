@@ -186,11 +186,11 @@ cat >"$tmp_dir/client.json" <<EOF
     {
       "type": "tproxy",
       "tag": "tproxy-in",
+      "mark": 17,
       "settings": {
         "listen_host": "::",
         "tcp_port": $client_tproxy_tcp_port,
-        "udp_port": $client_tproxy_udp_port,
-        "mark": 17
+        "udp_port": $client_tproxy_udp_port
       }
     }
   ],
