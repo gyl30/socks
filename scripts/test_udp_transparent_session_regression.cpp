@@ -886,6 +886,168 @@ void run_idle_timeout()
     }
 }
 
+void run_tproxy_concurrent_sessions_case()
+{
+    io_worker_runtime runtime;
+    const auto cfg = make_direct_config(1);
+    auto route = std::make_shared<relay::router>(cfg, "tproxy-in");
+    if (!route->load())
+    {
+        throw std::runtime_error("load tproxy router failed");
+    }
+
+    udp_blackhole_server blackhole;
+    const auto target_endpoint = blackhole.endpoint();
+    const std::array<uint16_t, 3> client_ports{{43101, 43102, 43103}};
+    const std::array<uint32_t, 3> conn_ids{{701, 702, 703}};
+    std::vector<std::future<void>> closed_futures;
+    std::vector<std::shared_ptr<std::promise<void>>> close_promises;
+    std::vector<std::shared_ptr<relay::tproxy_udp_session>> sessions;
+    closed_futures.reserve(client_ports.size());
+    close_promises.reserve(client_ports.size());
+    sessions.reserve(client_ports.size());
+
+    for (std::size_t i = 0; i < client_ports.size(); ++i)
+    {
+        auto close_promise = std::make_shared<std::promise<void>>();
+        closed_futures.push_back(close_promise->get_future());
+        close_promises.push_back(close_promise);
+
+        auto session = std::make_shared<relay::tproxy_udp_session>(runtime.worker(),
+                                                                   route,
+                                                                   boost::asio::ip::udp::endpoint(
+                                                                       boost::asio::ip::make_address("127.0.0.1"), client_ports[i]),
+                                                                   target_endpoint,
+                                                                   conn_ids[i],
+                                                                   "tproxy-in",
+                                                                   cfg,
+                                                                   [close_promise]() { close_promise->set_value(); });
+        session->start();
+        sessions.push_back(std::move(session));
+    }
+
+    for (auto& session : sessions)
+    {
+        auto enqueue_future = boost::asio::co_spawn(
+            runtime.worker().io_context, session->enqueue_packet(std::vector<uint8_t>{'c', 'o', 'n', 'c'}), boost::asio::use_future);
+        if (enqueue_future.get() != relay::udp_enqueue_result::kEnqueued)
+        {
+            throw std::runtime_error("enqueue tproxy concurrent packet failed");
+        }
+    }
+
+    for (std::size_t i = 0; i < closed_futures.size(); ++i)
+    {
+        wait_close(closed_futures[i], "tproxy concurrent conn " + std::to_string(conn_ids[i]));
+    }
+    runtime.wait_until_idle();
+
+    for (const auto conn_id : conn_ids)
+    {
+        const auto snapshot = require_trace_by_conn_id("tproxy-in", conn_id);
+        expect_idle_timeout_trace(snapshot, "tproxy");
+    }
+}
+
+void run_tun_concurrent_sessions_case()
+{
+    io_worker_runtime runtime;
+    const auto cfg = make_direct_config(1);
+    auto route = std::make_shared<relay::router>(cfg, "tun-in");
+    if (!route->load())
+    {
+        throw std::runtime_error("load tun router failed");
+    }
+
+    udp_blackhole_server blackhole;
+    const auto target_endpoint = blackhole.endpoint();
+    const std::array<uint16_t, 3> client_ports{{43201, 43202, 43203}};
+    const std::array<uint32_t, 3> conn_ids{{801, 802, 803}};
+    std::vector<std::future<void>> closed_futures;
+    std::vector<std::shared_ptr<std::promise<void>>> close_promises;
+    std::vector<std::shared_ptr<relay::tun_udp_session>> sessions;
+    std::vector<std::unique_ptr<lwip_udp_pcb_holder>> pcb_holders;
+    closed_futures.reserve(client_ports.size());
+    close_promises.reserve(client_ports.size());
+    sessions.reserve(client_ports.size());
+    pcb_holders.reserve(client_ports.size());
+
+    for (std::size_t i = 0; i < client_ports.size(); ++i)
+    {
+        auto close_promise = std::make_shared<std::promise<void>>();
+        closed_futures.push_back(close_promise->get_future());
+        close_promises.push_back(close_promise);
+
+        auto pcb_holder = std::make_unique<lwip_udp_pcb_holder>();
+        auto session = std::make_shared<relay::tun_udp_session>(runtime.worker(),
+                                                                route,
+                                                                pcb_holder->release(),
+                                                                boost::asio::ip::udp::endpoint(
+                                                                    boost::asio::ip::make_address("127.0.0.1"), client_ports[i]),
+                                                                target_endpoint,
+                                                                conn_ids[i],
+                                                                "tun-in",
+                                                                cfg,
+                                                                [close_promise]() { close_promise->set_value(); });
+        runtime.worker().group.spawn([session]() { return session->start(); });
+        sessions.push_back(std::move(session));
+        pcb_holders.push_back(std::move(pcb_holder));
+    }
+
+    for (auto& session : sessions)
+    {
+        session->enqueue_packet(make_udp_pbuf("conc"));
+    }
+
+    for (std::size_t i = 0; i < closed_futures.size(); ++i)
+    {
+        wait_close(closed_futures[i], "tun concurrent conn " + std::to_string(conn_ids[i]));
+    }
+    runtime.wait_until_idle();
+
+    for (const auto conn_id : conn_ids)
+    {
+        const auto snapshot = require_trace_by_conn_id("tun-in", conn_id);
+        expect_idle_timeout_trace(snapshot, "tun");
+    }
+}
+
+void run_concurrent_sessions()
+{
+    int passed = 0;
+    int failed = 0;
+
+    try
+    {
+        run_tproxy_concurrent_sessions_case();
+        ++passed;
+        std::cout << "PASS concurrent_sessions tproxy\n";
+    }
+    catch (const std::exception& ex)
+    {
+        ++failed;
+        std::cerr << "FAIL concurrent_sessions tproxy: " << ex.what() << '\n';
+    }
+
+    try
+    {
+        run_tun_concurrent_sessions_case();
+        ++passed;
+        std::cout << "PASS concurrent_sessions tun\n";
+    }
+    catch (const std::exception& ex)
+    {
+        ++failed;
+        std::cerr << "FAIL concurrent_sessions tun: " << ex.what() << '\n';
+    }
+
+    std::cout << "summary: passed=" << passed << " failed=" << failed << " total=" << (passed + failed) << '\n';
+    if (failed != 0)
+    {
+        throw std::runtime_error("concurrent_sessions regression failed");
+    }
+}
+
 void run_tproxy_stopped_case()
 {
     io_worker_runtime runtime;
@@ -1263,7 +1425,8 @@ int main(int argc, char** argv)
         if (argc != 2)
         {
             throw std::runtime_error(
-                "usage: udp_transparent_session_regression <route_blocked|idle_timeout|stopped|proxy_connect_fail|transport_error>");
+                "usage: udp_transparent_session_regression "
+                "<route_blocked|idle_timeout|concurrent_sessions|stopped|proxy_connect_fail|transport_error>");
         }
 
         lwip_init();
@@ -1282,6 +1445,11 @@ int main(int argc, char** argv)
         if (scenario == "stopped")
         {
             run_stopped();
+            return 0;
+        }
+        if (scenario == "concurrent_sessions")
+        {
+            run_concurrent_sessions();
             return 0;
         }
         if (scenario == "proxy_connect_fail")
