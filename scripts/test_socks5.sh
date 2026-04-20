@@ -10,38 +10,23 @@ if [[ ! -x "$binary" ]]; then
     exit 1
 fi
 
-for cmd in python3 curl; do
-    if ! command -v "$cmd" >/dev/null 2>&1; then
-        echo "missing dependency: $cmd" >&2
-        exit 1
-    fi
-done
-
 source "$repo_root/scripts/runtime_env.sh"
+source "$repo_root/scripts/testlib.sh"
+require_commands python3 curl
 init_runtime_ld_library_path "$binary"
 
-tmp_dir="$(mktemp -d "$repo_root/.tmp-socks5-test.XXXXXX")"
+tmp_dir="$(create_test_tmp_dir "$repo_root" ".tmp-socks5-test.XXXXXX")"
 keep_artifacts="${KEEP_TEST_ARTIFACTS:-0}"
 declare -a pids=()
 
 cleanup() {
     local exit_code=$?
     trap - EXIT
-    for pid in "${pids[@]:-}"; do
-        if kill -0 "$pid" >/dev/null 2>&1; then
-            kill "$pid" >/dev/null 2>&1 || true
-            wait "$pid" >/dev/null 2>&1 || true
-        fi
-    done
+    cleanup_managed_pids pids
 
     if [[ $exit_code -ne 0 ]]; then
         echo "test failed logs kept at $tmp_dir" >&2
-        for log_file in "$tmp_dir"/*.log; do
-            if [[ -f "$log_file" ]]; then
-                echo "===== $(basename "$log_file") =====" >&2
-                tail -n 80 "$log_file" >&2 || true
-            fi
-        done
+        print_test_logs "$tmp_dir" 80 "*.log"
         exit "$exit_code"
     fi
 
@@ -208,44 +193,8 @@ env LD_LIBRARY_PATH="$runtime_ld_library_path" "$binary" -c "$tmp_dir/client.jso
 client_pid=$!
 pids+=("$client_pid")
 
-wait_for_port() {
-    local host="$1"
-    local port="$2"
-    local name="$3"
-    HOST="$host" PORT="$port" NAME="$name" SERVER_PID="$server_pid" CLIENT_PID="$client_pid" python3 - <<'PY'
-import os
-import socket
-import sys
-import time
-
-host = os.environ["HOST"]
-port = int(os.environ["PORT"])
-name = os.environ["NAME"]
-deadline = time.time() + 10.0
-while time.time() < deadline:
-    for pid_env in ("SERVER_PID", "CLIENT_PID"):
-        pid = int(os.environ[pid_env])
-        try:
-            os.kill(pid, 0)
-        except OSError:
-            print(f"{name} owner process exited early", file=sys.stderr)
-            sys.exit(1)
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.settimeout(0.2)
-    try:
-        sock.connect((host, port))
-        sys.exit(0)
-    except OSError:
-        time.sleep(0.1)
-    finally:
-        sock.close()
-print(f"timeout waiting for {name} {host}:{port}", file=sys.stderr)
-sys.exit(1)
-PY
-}
-
-wait_for_port 127.0.0.1 "$server_port" "reality_server"
-wait_for_port 127.0.0.1 "$socks_port" "socks5_listener"
+wait_for_tcp_port 127.0.0.1 "$server_port" "reality_server" 10 "$server_pid" "$client_pid"
+wait_for_tcp_port 127.0.0.1 "$socks_port" "socks5_listener" 10 "$server_pid" "$client_pid"
 
 wait_for_proxy_ready() {
     local socks_port="$1"
