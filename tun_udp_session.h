@@ -69,6 +69,7 @@ class tun_udp_session : public std::enable_shared_from_this<tun_udp_session>
     [[nodiscard]] boost::asio::awaitable<bool> send_to_client(const boost::asio::ip::udp::endpoint& source,
                                                               const uint8_t* payload,
                                                               std::size_t payload_len);
+    void mark_transport_error(const boost::system::error_code& ec);
     void close_impl();
     void notify_closed();
 
@@ -98,6 +99,7 @@ class tun_udp_session : public std::enable_shared_from_this<tun_udp_session>
     std::function<void()> on_close_;
     packet_channel_type packet_channel_;
     udp_close_reason close_reason_ = udp_close_reason::kUnknown;
+    std::string last_error_message_;
 };
 
 }    // namespace relay

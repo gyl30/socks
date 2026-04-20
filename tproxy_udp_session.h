@@ -74,6 +74,7 @@ class tproxy_udp_session : public std::enable_shared_from_this<tproxy_udp_sessio
     [[nodiscard]] std::shared_ptr<boost::asio::ip::udp::socket> get_or_create_reply_socket(const boost::asio::ip::udp::endpoint& source,
                                                                                            boost::system::error_code& ec);
     [[nodiscard]] static std::string endpoint_key(const boost::asio::ip::udp::endpoint& endpoint);
+    void mark_transport_error(const boost::system::error_code& ec);
     void notify_closed();
     void close_impl();
 
@@ -103,6 +104,7 @@ class tproxy_udp_session : public std::enable_shared_from_this<tproxy_udp_sessio
     packet_channel_type packet_channel_;
     lru_cache<std::string, std::shared_ptr<boost::asio::ip::udp::socket>> reply_sockets_;
     udp_close_reason close_reason_ = udp_close_reason::kUnknown;
+    std::string last_error_message_;
 };
 
 }    // namespace relay

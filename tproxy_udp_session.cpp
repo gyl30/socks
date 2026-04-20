@@ -268,7 +268,8 @@ boost::asio::awaitable<void> tproxy_udp_session::run()
                                                                         relay::to_string(route_),
                                                                         match_type_,
                                                                         match_value_),
-                                       close_reason_);
+                                       close_reason_,
+                                       last_error_message_);
         co_return;
     }
     const auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time_).count();
@@ -304,18 +305,19 @@ boost::asio::awaitable<void> tproxy_udp_session::run()
 
 boost::asio::awaitable<bool> tproxy_udp_session::run_direct_mode()
 {
-    co_return co_await run_transparent_udp_mode(
+    const bool completed = co_await run_transparent_udp_mode(
         cfg_.timeout.idle,
         [this]() -> boost::asio::awaitable<bool> { co_return co_await open_direct_socket(); },
         [this]() -> boost::asio::awaitable<void> { co_await packets_to_direct(); },
         [this]() -> boost::asio::awaitable<void> { co_await direct_to_client(); },
         [this]() -> boost::asio::awaitable<void> { co_await idle_watchdog(); },
         []() -> boost::asio::awaitable<void> { co_return; });
+    co_return completed && close_reason_ != udp_close_reason::kTransportError;
 }
 
 boost::asio::awaitable<bool> tproxy_udp_session::run_proxy_mode()
 {
-    co_return co_await run_transparent_udp_mode(
+    const bool completed = co_await run_transparent_udp_mode(
         cfg_.timeout.idle,
         [this]() -> boost::asio::awaitable<bool> { co_return co_await open_proxy_outbound(); },
         [this]() -> boost::asio::awaitable<void> { co_await packets_to_proxy(); },
@@ -329,6 +331,7 @@ boost::asio::awaitable<bool> tproxy_udp_session::run_proxy_mode()
                 proxy_outbound_.reset();
             }
         });
+    co_return completed && close_reason_ != udp_close_reason::kTransportError;
 }
 
 void tproxy_udp_session::record_open_direct_socket_result(const bool success,
@@ -587,6 +590,7 @@ boost::asio::awaitable<void> tproxy_udp_session::packets_to_direct()
                      target_endpoint_.address().to_string(),
                      target_endpoint_.port(),
                      ec.message());
+            mark_transport_error(ec);
         });
 }
 
@@ -603,7 +607,19 @@ boost::asio::awaitable<void> tproxy_udp_session::direct_to_client()
         {
             co_return co_await send_to_client(normalized_target, payload, payload_len);
         },
-        [](const boost::system::error_code&) {});
+        [this](const boost::system::error_code& ec)
+        {
+            LOG_WARN("{} trace {:016x} conn {} client {}:{} target {}:{} read direct udp reply failed {}",
+                     log_event::kRelay,
+                     trace_id_,
+                     conn_id_,
+                     client_endpoint_.address().to_string(),
+                     client_endpoint_.port(),
+                     target_endpoint_.address().to_string(),
+                     target_endpoint_.port(),
+                     ec.message());
+            mark_transport_error(ec);
+        });
 }
 
 boost::asio::awaitable<void> tproxy_udp_session::packets_to_proxy()
@@ -636,6 +652,7 @@ boost::asio::awaitable<void> tproxy_udp_session::packets_to_proxy()
                      target_endpoint_.address().to_string(),
                      target_endpoint_.port(),
                      ec.message());
+            mark_transport_error(ec);
         });
 }
 
@@ -680,7 +697,19 @@ boost::asio::awaitable<void> tproxy_udp_session::proxy_to_client()
             }
             co_return 0;
         },
-        [](const boost::system::error_code&) {});
+        [this](const boost::system::error_code& ec)
+        {
+            LOG_WARN("{} trace {:016x} conn {} client {}:{} target {}:{} read proxy udp datagram failed {}",
+                     log_event::kRoute,
+                     trace_id_,
+                     conn_id_,
+                     client_endpoint_.address().to_string(),
+                     client_endpoint_.port(),
+                     target_endpoint_.address().to_string(),
+                     target_endpoint_.port(),
+                     ec.message());
+            mark_transport_error(ec);
+        });
 }
 
 boost::asio::awaitable<void> tproxy_udp_session::idle_watchdog()
@@ -837,6 +866,19 @@ std::string tproxy_udp_session::endpoint_key(const boost::asio::ip::udp::endpoin
 {
     const auto normalized = net::normalize_endpoint(endpoint);
     return normalized.address().to_string() + "|" + std::to_string(normalized.port());
+}
+
+void tproxy_udp_session::mark_transport_error(const boost::system::error_code& ec)
+{
+    if (close_reason_ == udp_close_reason::kUnknown)
+    {
+        close_reason_ = udp_close_reason::kTransportError;
+    }
+    if (last_error_message_.empty())
+    {
+        last_error_message_ = ec.message();
+    }
+    close_impl();
 }
 
 void tproxy_udp_session::close_impl()

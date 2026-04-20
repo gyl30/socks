@@ -1,4 +1,5 @@
 #include <chrono>
+#include <array>
 #include <cstdint>
 #include <exception>
 #include <future>
@@ -18,6 +19,7 @@
 
 #include "config.h"
 #include "context_pool.h"
+#include "protocol.h"
 #include "router.h"
 #include "tproxy_udp_session.h"
 #include "trace_store.h"
@@ -115,6 +117,86 @@ class udp_blackhole_server
     boost::asio::ip::udp::socket socket_;
 };
 
+class fake_socks_udp_server
+{
+   public:
+    fake_socks_udp_server()
+        : acceptor_(io_context_, boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 0)),
+          udp_socket_(io_context_, boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 0)),
+          thread_([this]() { serve(); })
+    {
+    }
+
+    ~fake_socks_udp_server()
+    {
+        stop();
+        if (thread_.joinable())
+        {
+            thread_.join();
+        }
+    }
+
+    [[nodiscard]] uint16_t tcp_port() const { return acceptor_.local_endpoint().port(); }
+
+    void join()
+    {
+        if (thread_.joinable())
+        {
+            thread_.join();
+        }
+        if (server_exception_ != nullptr)
+        {
+            std::rethrow_exception(server_exception_);
+        }
+    }
+
+   private:
+    void stop()
+    {
+        boost::system::error_code ec;
+        acceptor_.close(ec);
+        udp_socket_.close(ec);
+    }
+
+    void serve()
+    {
+        try
+        {
+            boost::asio::ip::tcp::socket tcp_socket(io_context_);
+            acceptor_.accept(tcp_socket);
+
+            std::array<uint8_t, 3> method_request{};
+            boost::asio::read(tcp_socket, boost::asio::buffer(method_request));
+            const std::array<uint8_t, 2> method_reply{{socks::kVer, socks::kMethodNoAuth}};
+            boost::asio::write(tcp_socket, boost::asio::buffer(method_reply));
+
+            std::array<uint8_t, 10> udp_associate_request{};
+            boost::asio::read(tcp_socket, boost::asio::buffer(udp_associate_request));
+            const auto udp_endpoint = udp_socket_.local_endpoint();
+            const auto udp_associate_reply = socks::make_reply(socks::kRepSuccess, udp_endpoint.address(), udp_endpoint.port());
+            boost::asio::write(tcp_socket, boost::asio::buffer(udp_associate_reply));
+
+            std::array<uint8_t, 4096> packet{};
+            boost::asio::ip::udp::endpoint sender;
+            udp_socket_.receive_from(boost::asio::buffer(packet), sender);
+
+            const std::array<uint8_t, 3> malformed_reply{{0x00, 0x00, 0x00}};
+            udp_socket_.send_to(boost::asio::buffer(malformed_reply), sender);
+        }
+        catch (...)
+        {
+            server_exception_ = std::current_exception();
+        }
+    }
+
+   private:
+    boost::asio::io_context io_context_;
+    boost::asio::ip::tcp::acceptor acceptor_;
+    boost::asio::ip::udp::socket udp_socket_;
+    std::thread thread_;
+    std::exception_ptr server_exception_;
+};
+
 relay::config make_route_blocked_config()
 {
     relay::config cfg;
@@ -186,6 +268,39 @@ relay::config make_proxy_fail_config(const uint16_t socks_port)
     cfg.timeout.write = 2;
     cfg.timeout.connect = 1;
     cfg.timeout.idle = 5;
+
+    relay::config::outbound_entry_t socks_outbound;
+    socks_outbound.type = "socks";
+    socks_outbound.tag = "socks-out";
+    socks_outbound.socks = relay::config::socks_t{};
+    socks_outbound.socks->host = "127.0.0.1";
+    socks_outbound.socks->port = socks_port;
+    socks_outbound.socks->auth = false;
+    cfg.outbounds.push_back(std::move(socks_outbound));
+
+    relay::config::route_rule_t tproxy_rule;
+    tproxy_rule.type = "inbound";
+    tproxy_rule.values = {"tproxy-in"};
+    tproxy_rule.out = "socks-out";
+    cfg.routing.push_back(std::move(tproxy_rule));
+
+    relay::config::route_rule_t tun_rule;
+    tun_rule.type = "inbound";
+    tun_rule.values = {"tun-in"};
+    tun_rule.out = "socks-out";
+    cfg.routing.push_back(std::move(tun_rule));
+
+    return cfg;
+}
+
+relay::config make_proxy_config(const uint16_t socks_port)
+{
+    relay::config cfg;
+    cfg.workers = 1;
+    cfg.timeout.read = 2;
+    cfg.timeout.write = 2;
+    cfg.timeout.connect = 2;
+    cfg.timeout.idle = 10;
 
     relay::config::outbound_entry_t socks_outbound;
     socks_outbound.type = "socks";
@@ -498,6 +613,57 @@ void expect_proxy_connect_fail_trace(const relay::trace_session_snapshot& snapsh
     if (connect_done == nullptr || connect_done->result != relay::trace_result::kFail || connect_done->error_message.empty())
     {
         throw std::runtime_error("unexpected outbound_connect_done for " + std::string(inbound_type));
+    }
+
+    const auto* session_error = find_event(snapshot, relay::trace_stage::kSessionError);
+    if (session_error == nullptr || session_error->result != relay::trace_result::kFail)
+    {
+        throw std::runtime_error("unexpected session_error for " + std::string(inbound_type));
+    }
+    const auto close_reason_it = session_error->extra.find("close_reason");
+    if (close_reason_it == session_error->extra.end() || close_reason_it->second != "transport_error")
+    {
+        throw std::runtime_error("unexpected close_reason for " + std::string(inbound_type));
+    }
+
+    if (find_event(snapshot, relay::trace_stage::kSessionClose) != nullptr)
+    {
+        throw std::runtime_error("unexpected session_close for " + std::string(inbound_type));
+    }
+}
+
+void expect_transport_error_trace(const relay::trace_session_snapshot& snapshot, std::string_view inbound_type)
+{
+    const auto& summary = snapshot.summary;
+    if (summary.status != relay::trace_status::kFailed)
+    {
+        throw std::runtime_error("unexpected trace status for " + std::string(inbound_type));
+    }
+    if (summary.inbound_type != inbound_type)
+    {
+        throw std::runtime_error("unexpected inbound_type for " + std::string(inbound_type) + ": " + summary.inbound_type);
+    }
+    if (summary.outbound_tag != "socks-out")
+    {
+        throw std::runtime_error("unexpected outbound_tag for " + std::string(inbound_type) + ": " + summary.outbound_tag);
+    }
+    if (summary.route_type != "proxy")
+    {
+        throw std::runtime_error("unexpected route_type for " + std::string(inbound_type) + ": " + summary.route_type);
+    }
+    if (!summary.lifecycle.outbound_connect_done)
+    {
+        throw std::runtime_error("outbound_connect_done missing for " + std::string(inbound_type));
+    }
+    if (!summary.lifecycle.session_error || summary.lifecycle.session_close)
+    {
+        throw std::runtime_error("unexpected session lifecycle for " + std::string(inbound_type));
+    }
+
+    const auto* connect_done = find_event(snapshot, relay::trace_stage::kOutboundConnectDone);
+    if (connect_done == nullptr || connect_done->result != relay::trace_result::kOk)
+    {
+        throw std::runtime_error("unexpected outbound_connect_done result for " + std::string(inbound_type));
     }
 
     const auto* session_error = find_event(snapshot, relay::trace_stage::kSessionError);
@@ -944,6 +1110,114 @@ void run_proxy_connect_fail()
     }
 }
 
+void run_tproxy_transport_error_case()
+{
+    io_worker_runtime runtime;
+    fake_socks_udp_server server;
+    const auto cfg = make_proxy_config(server.tcp_port());
+    auto route = std::make_shared<relay::router>(cfg, "tproxy-in");
+    if (!route->load())
+    {
+        throw std::runtime_error("load tproxy router failed");
+    }
+
+    std::promise<void> closed_promise;
+    auto closed_future = closed_promise.get_future();
+    auto session = std::make_shared<relay::tproxy_udp_session>(runtime.worker(),
+                                                               route,
+                                                               boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 44001),
+                                                               boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 53021),
+                                                               601,
+                                                               "tproxy-in",
+                                                               cfg,
+                                                               [&closed_promise]() { closed_promise.set_value(); });
+    session->start();
+
+    auto enqueue_future = boost::asio::co_spawn(
+        runtime.worker().io_context, session->enqueue_packet(std::vector<uint8_t>{'b', 'a', 'd'}), boost::asio::use_future);
+    if (enqueue_future.get() != relay::udp_enqueue_result::kEnqueued)
+    {
+        throw std::runtime_error("enqueue tproxy transport packet failed");
+    }
+
+    wait_close(closed_future, "tproxy transport_error");
+    runtime.wait_until_idle();
+    server.join();
+
+    const auto snapshot = require_trace_by_conn_id("tproxy-in", 601);
+    expect_transport_error_trace(snapshot, "tproxy");
+}
+
+void run_tun_transport_error_case()
+{
+    io_worker_runtime runtime;
+    fake_socks_udp_server server;
+    const auto cfg = make_proxy_config(server.tcp_port());
+    auto route = std::make_shared<relay::router>(cfg, "tun-in");
+    if (!route->load())
+    {
+        throw std::runtime_error("load tun router failed");
+    }
+
+    lwip_udp_pcb_holder pcb_holder;
+    std::promise<void> closed_promise;
+    auto closed_future = closed_promise.get_future();
+    auto session = std::make_shared<relay::tun_udp_session>(runtime.worker(),
+                                                            route,
+                                                            pcb_holder.release(),
+                                                            boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 44002),
+                                                            boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 53022),
+                                                            602,
+                                                            "tun-in",
+                                                            cfg,
+                                                            [&closed_promise]() { closed_promise.set_value(); });
+    runtime.worker().group.spawn([session]() { return session->start(); });
+    session->enqueue_packet(make_udp_pbuf("bad"));
+
+    wait_close(closed_future, "tun transport_error");
+    runtime.wait_until_idle();
+    server.join();
+
+    const auto snapshot = require_trace_by_conn_id("tun-in", 602);
+    expect_transport_error_trace(snapshot, "tun");
+}
+
+void run_transport_error()
+{
+    int passed = 0;
+    int failed = 0;
+
+    try
+    {
+        run_tproxy_transport_error_case();
+        ++passed;
+        std::cout << "PASS transport_error tproxy\n";
+    }
+    catch (const std::exception& ex)
+    {
+        ++failed;
+        std::cerr << "FAIL transport_error tproxy: " << ex.what() << '\n';
+    }
+
+    try
+    {
+        run_tun_transport_error_case();
+        ++passed;
+        std::cout << "PASS transport_error tun\n";
+    }
+    catch (const std::exception& ex)
+    {
+        ++failed;
+        std::cerr << "FAIL transport_error tun: " << ex.what() << '\n';
+    }
+
+    std::cout << "summary: passed=" << passed << " failed=" << failed << " total=" << (passed + failed) << '\n';
+    if (failed != 0)
+    {
+        throw std::runtime_error("transport_error regression failed");
+    }
+}
+
 void run_route_blocked()
 {
     int passed = 0;
@@ -988,7 +1262,8 @@ int main(int argc, char** argv)
     {
         if (argc != 2)
         {
-            throw std::runtime_error("usage: udp_transparent_session_regression <route_blocked|idle_timeout|stopped>");
+            throw std::runtime_error(
+                "usage: udp_transparent_session_regression <route_blocked|idle_timeout|stopped|proxy_connect_fail|transport_error>");
         }
 
         lwip_init();
@@ -1012,6 +1287,11 @@ int main(int argc, char** argv)
         if (scenario == "proxy_connect_fail")
         {
             run_proxy_connect_fail();
+            return 0;
+        }
+        if (scenario == "transport_error")
+        {
+            run_transport_error();
             return 0;
         }
 
