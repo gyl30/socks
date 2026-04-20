@@ -17,6 +17,7 @@ Environment:
   PROBE_RETRIES            Extra retries per request before marking failure. Default: 1
   DNS_NAME                 DNS name queried over UDP. Default: example.com
   TARGETS                  Space-separated host:port targets. Default: "1.1.1.1:53 8.8.8.8:53"
+  DRY_RUN                  Print planned commands and exit without changing system state. Default: 0
   KEEP_LOGS                Keep /tmp logs after exit when set to 1. Default: 0
 EOF
 }
@@ -41,11 +42,12 @@ udp_timeout="${UDP_TIMEOUT:-5}"
 probe_retries="${PROBE_RETRIES:-1}"
 dns_name="${DNS_NAME:-example.com}"
 targets_string="${TARGETS:-8.8.8.8:53}"
+dry_run="${DRY_RUN:-0}"
 keep_logs="${KEEP_LOGS:-0}"
 probe_script="$repo_root/scripts/udp_dns_probe.py"
 probe_runner=""
 
-for cmd in flock id mktemp pkill su tail python3; do
+for cmd in flock id mktemp su tail python3; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
         echo "missing dependency: $cmd" >&2
         exit 1
@@ -98,6 +100,12 @@ stop_pid() {
     wait "$pid" >/dev/null 2>&1 || true
 }
 
+print_cmd() {
+    printf '  '
+    printf '%q ' "$@"
+    printf '\n'
+}
+
 cleanup() {
     if (( cleanup_done )); then
         return
@@ -112,6 +120,23 @@ cleanup() {
 }
 
 trap cleanup EXIT INT TERM
+
+if [[ "$dry_run" == "1" ]]; then
+    read -r -a targets <<<"$targets_string"
+    echo "dry-run: no commands will be executed"
+    echo "server command:"
+    print_cmd "$binary" -c "$server_config"
+    echo "client wrapper command:"
+    print_cmd env TUN_TEST_USER="$tun_test_user" DRY_RUN=1 KEEP_WRAPPER_LOG=1 /usr/bin/bash "$repo_root/scripts/run_local_client.sh" \
+        "$client_config"
+    echo "probe commands:"
+    for target in "${targets[@]}"; do
+        host="${target%%:*}"
+        port="${target##*:}"
+        print_cmd su -s /bin/bash -c "/usr/bin/python3 '$probe_script' '$host' '$port' '$dns_name' '$udp_timeout'" "$tun_test_user"
+    done
+    exit 0
+fi
 
 rm -f "$repo_root"/config/local-client.log "$repo_root"/config/local-server.log
 rm -f "$repo_root"/.tmp-local-client-wrapper.*.log

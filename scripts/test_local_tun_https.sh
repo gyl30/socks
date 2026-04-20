@@ -15,6 +15,7 @@ Environment:
   REQUEST_COUNT            Requests per target. Default: 3
   CURL_MAX_TIME            Per-request curl timeout seconds. Default: 20
   TARGETS                  Space-separated HTTPS URLs. Default: "https://example.com https://example.net"
+  DRY_RUN                  Print planned commands and exit without changing system state. Default: 0
   KEEP_LOGS                Keep /tmp logs after exit when set to 1. Default: 0
 
 This script:
@@ -44,9 +45,10 @@ tun_test_user="${TUN_TEST_USER:-tunuser}"
 request_count="${REQUEST_COUNT:-3}"
 curl_max_time="${CURL_MAX_TIME:-20}"
 targets_string="${TARGETS:-https://example.com https://example.net}"
+dry_run="${DRY_RUN:-0}"
 keep_logs="${KEEP_LOGS:-0}"
 
-for cmd in curl flock id mktemp pkill su tail; do
+for cmd in curl flock id mktemp su tail; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
         echo "missing dependency: $cmd" >&2
         exit 1
@@ -109,6 +111,12 @@ stop_pid() {
     wait "$pid" >/dev/null 2>&1 || true
 }
 
+print_cmd() {
+    printf '  '
+    printf '%q ' "$@"
+    printf '\n'
+}
+
 cleanup() {
     if (( cleanup_done )); then
         return
@@ -124,6 +132,21 @@ cleanup() {
 }
 
 trap cleanup EXIT INT TERM
+
+if [[ "$dry_run" == "1" ]]; then
+    read -r -a targets <<<"$targets_string"
+    echo "dry-run: no commands will be executed"
+    echo "server command:"
+    print_cmd "$binary" -c "$server_config"
+    echo "client wrapper command:"
+    print_cmd env TUN_TEST_USER="$tun_test_user" DRY_RUN=1 KEEP_WRAPPER_LOG=1 /usr/bin/bash "$repo_root/scripts/run_local_client.sh" \
+        "$client_config"
+    echo "request commands:"
+    for target in "${targets[@]}"; do
+        print_cmd su -s /bin/bash -c "/usr/bin/curl '$target' -v --max-time '$curl_max_time'" "$tun_test_user"
+    done
+    exit 0
+fi
 
 rm -f "$repo_root"/config/local-client.log "$repo_root"/config/local-server.log
 rm -f "$repo_root"/.tmp-local-client-wrapper.*.log

@@ -23,6 +23,7 @@ Environment:
   TPROXY_EXCLUDE_CIDRS     Extra comma-separated CIDRs bypassed from local tproxy redirection. Default: empty
   TPROXY_NAT_CHAIN         Custom nat chain name for local tproxy rules. Default: SOCKS_LOCAL_TPROXY_NAT
   TPROXY_RULE_COMMENT      iptables comment added to local tproxy rules. Default: socks-local-tproxy
+  DRY_RUN                  Print planned commands and exit without changing system state. Default: 0
   KEEP_WRAPPER_LOG         Set to 1 to keep the wrapper log file after exit. Default: 0
 
 Examples:
@@ -81,6 +82,7 @@ TPROXY_UDP_PORTS="${TPROXY_UDP_PORTS:-}"
 TPROXY_EXCLUDE_CIDRS="${TPROXY_EXCLUDE_CIDRS:-}"
 TPROXY_NAT_CHAIN="${TPROXY_NAT_CHAIN:-SOCKS_LOCAL_TPROXY_NAT}"
 TPROXY_RULE_COMMENT="${TPROXY_RULE_COMMENT:-socks-local-tproxy}"
+DRY_RUN="${DRY_RUN:-0}"
 KEEP_WRAPPER_LOG="${KEEP_WRAPPER_LOG:-0}"
 
 if [[ -z "$TUN_TEST_USER" && -z "$TPROXY_TEST_USER" ]]; then
@@ -88,7 +90,10 @@ if [[ -z "$TUN_TEST_USER" && -z "$TPROXY_TEST_USER" ]]; then
     exit 1
 fi
 
-wrapper_log="$(mktemp "$repo_root/.tmp-local-client-wrapper.XXXXXX.log")"
+wrapper_log="$repo_root/.tmp-local-client-wrapper.dry-run.log"
+if [[ "$DRY_RUN" != "1" ]]; then
+    wrapper_log="$(mktemp "$repo_root/.tmp-local-client-wrapper.XXXXXX.log")"
+fi
 client_pid=""
 cleanup_done=0
 tun_uid=""
@@ -104,6 +109,12 @@ split_csv() {
         return 0
     fi
     IFS=',' read -r -a out_ref <<<"$input"
+}
+
+print_cmd() {
+    printf '  '
+    printf '%q ' "$@"
+    printf '\n'
 }
 
 resolve_uid() {
@@ -127,6 +138,36 @@ ensure_tun_device_available() {
     fi
 }
 
+ensure_tun_priority_available() {
+    if [[ -z "$tun_uid" ]]; then
+        return 0
+    fi
+    if ip rule show | awk -v pref="${TUN_PRIORITY}:" '$1 == pref { found = 1; exit } END { exit(found ? 0 : 1) }'; then
+        echo "ip rule priority already exists: $TUN_PRIORITY" >&2
+        echo "set TUN_PRIORITY to a dedicated value before running this script" >&2
+        exit 1
+    fi
+}
+
+ensure_tun_table_available() {
+    local -a tun_routes tun_ipv6_routes
+    if [[ -z "$tun_uid" ]]; then
+        return 0
+    fi
+
+    split_csv "$TUN_ROUTES" tun_routes
+    split_csv "$TUN_IPV6_ROUTES" tun_ipv6_routes
+    if (( ${#tun_routes[@]} == 0 && ${#tun_ipv6_routes[@]} == 0 )); then
+        return 0
+    fi
+
+    if ip route show table "$TUN_TABLE" | grep -q . || ip -6 route show table "$TUN_TABLE" | grep -q .; then
+        echo "routing table already has entries: $TUN_TABLE" >&2
+        echo "set TUN_TABLE to a dedicated value before running this script" >&2
+        exit 1
+    fi
+}
+
 ensure_tproxy_chain_available() {
     if [[ -z "$tproxy_uid" ]]; then
         return 0
@@ -136,6 +177,38 @@ ensure_tproxy_chain_available() {
         echo "set TPROXY_NAT_CHAIN to a dedicated value before running this script" >&2
         exit 1
     fi
+}
+
+ensure_listener_port_available() {
+    local protocol="$1"
+    local port="$2"
+
+    case "$protocol" in
+        tcp)
+            if ss -H -ltn "sport = :$port" | grep -q .; then
+                echo "tcp port already in use: $port" >&2
+                exit 1
+            fi
+            ;;
+        udp)
+            if ss -H -lun "sport = :$port" | grep -q .; then
+                echo "udp port already in use: $port" >&2
+                exit 1
+            fi
+            ;;
+        *)
+            echo "unsupported protocol: $protocol" >&2
+            exit 1
+            ;;
+    esac
+}
+
+ensure_tproxy_ports_available() {
+    if [[ -z "$tproxy_uid" ]]; then
+        return 0
+    fi
+    ensure_listener_port_available tcp "$TPROXY_TCP_PORT"
+    ensure_listener_port_available udp "$TPROXY_UDP_PORT"
 }
 
 wait_for_tun_device() {
@@ -186,6 +259,89 @@ wait_for_tcp_listener() {
     done
     echo "timeout waiting for $name $host:$port" >&2
     return 1
+}
+
+preview_run_local_client() {
+    local host
+    local -a tun_routes tun_ipv6_routes tcp_ports udp_ports extra_excludes
+
+    echo "dry-run: no commands will be executed"
+    echo "client command:"
+    print_cmd env LD_LIBRARY_PATH="$runtime_ld_library_path" "$binary" -c "$config_path"
+
+    if (( ${#bypass_hosts[@]} > 0 )); then
+        echo "bypass routes for outbound hosts:"
+        for host in "${bypass_hosts[@]}"; do
+            print_cmd ip route replace "<resolved-${host}>/32" via "<current-gateway>" dev "<current-dev>"
+        done
+    fi
+
+    if [[ -n "$tun_uid" ]]; then
+        split_csv "$TUN_ROUTES" tun_routes
+        split_csv "$TUN_IPV6_ROUTES" tun_ipv6_routes
+        if (( ${#tun_routes[@]} > 0 || ${#tun_ipv6_routes[@]} > 0 )); then
+            echo "tun setup:"
+            print_cmd /usr/bin/bash "$repo_root/scripts/tun_linux_route.sh" --table "$TUN_TABLE" up "$TUN_NAME" \
+                "${tun_routes[@]}" "${tun_ipv6_routes[@]}"
+            print_cmd ip rule add pref "$TUN_PRIORITY" uidrange "${tun_uid}-${tun_uid}" lookup "$TUN_TABLE"
+        fi
+    fi
+
+    if [[ -n "$tproxy_uid" ]]; then
+        split_csv "$TPROXY_EXCLUDE_CIDRS" extra_excludes
+        split_csv "$TPROXY_TCP_PORTS" tcp_ports
+        split_csv "$TPROXY_UDP_PORTS" udp_ports
+
+        echo "tproxy nat setup:"
+        print_cmd iptables -t nat -N "$TPROXY_NAT_CHAIN"
+        for host in "${bypass_hosts[@]}"; do
+            print_cmd iptables -t nat -A "$TPROXY_NAT_CHAIN" -m comment --comment "$TPROXY_RULE_COMMENT" \
+                -d "<resolved-${host}>/32" -j RETURN
+        done
+        for cidr in 0.0.0.0/8 10.0.0.0/8 127.0.0.0/8 169.254.0.0/16 172.16.0.0/12 192.168.0.0/16 224.0.0.0/4 240.0.0.0/4 \
+            "${extra_excludes[@]}"; do
+            [[ -n "$cidr" ]] || continue
+            print_cmd iptables -t nat -A "$TPROXY_NAT_CHAIN" -m comment --comment "$TPROXY_RULE_COMMENT" -d "$cidr" -j RETURN
+        done
+
+        if (( ${#tcp_ports[@]} == 0 )); then
+            print_cmd iptables -t nat -A "$TPROXY_NAT_CHAIN" -m comment --comment "$TPROXY_RULE_COMMENT" -p tcp -j REDIRECT \
+                --to-ports "$TPROXY_TCP_PORT"
+        else
+            for port in "${tcp_ports[@]}"; do
+                [[ -n "$port" ]] || continue
+                print_cmd iptables -t nat -A "$TPROXY_NAT_CHAIN" -m comment --comment "$TPROXY_RULE_COMMENT" -p tcp --dport "$port" \
+                    -j REDIRECT --to-ports "$TPROXY_TCP_PORT"
+            done
+        fi
+
+        if (( ${#udp_ports[@]} == 0 )); then
+            print_cmd iptables -t nat -A "$TPROXY_NAT_CHAIN" -m comment --comment "$TPROXY_RULE_COMMENT" -p udp -j REDIRECT \
+                --to-ports "$TPROXY_UDP_PORT"
+        else
+            for port in "${udp_ports[@]}"; do
+                [[ -n "$port" ]] || continue
+                print_cmd iptables -t nat -A "$TPROXY_NAT_CHAIN" -m comment --comment "$TPROXY_RULE_COMMENT" -p udp --dport "$port" \
+                    -j REDIRECT --to-ports "$TPROXY_UDP_PORT"
+            done
+        fi
+
+        print_cmd iptables -t nat -A OUTPUT -m owner --uid-owner "$tproxy_uid" -m comment --comment "$TPROXY_RULE_COMMENT" \
+            -j "$TPROXY_NAT_CHAIN"
+    fi
+
+    echo "cleanup:"
+    if [[ -n "$tun_uid" && ( ${#tun_routes[@]} > 0 || ${#tun_ipv6_routes[@]} > 0 ) ]]; then
+        print_cmd ip rule del pref "$TUN_PRIORITY" uidrange "${tun_uid}-${tun_uid}" lookup "$TUN_TABLE"
+        print_cmd /usr/bin/bash "$repo_root/scripts/tun_linux_route.sh" --table "$TUN_TABLE" down "$TUN_NAME" \
+            "${tun_routes[@]}" "${tun_ipv6_routes[@]}"
+    fi
+    if [[ -n "$tproxy_uid" ]]; then
+        print_cmd iptables -t nat -D OUTPUT -m owner --uid-owner "$tproxy_uid" -m comment --comment "$TPROXY_RULE_COMMENT" \
+            -j "$TPROXY_NAT_CHAIN"
+        print_cmd iptables -t nat -F "$TPROXY_NAT_CHAIN"
+        print_cmd iptables -t nat -X "$TPROXY_NAT_CHAIN"
+    fi
 }
 
 load_outbound_hosts() {
@@ -391,12 +547,21 @@ fi
 
 echo "wrapper log: $wrapper_log"
 load_outbound_hosts
+ensure_tun_priority_available
+ensure_tun_table_available
+ensure_tun_device_available
+ensure_tproxy_chain_available
+ensure_tproxy_ports_available
+
+if [[ "$DRY_RUN" == "1" ]]; then
+    preview_run_local_client
+    exit 0
+fi
+
 for host in "${bypass_hosts[@]}"; do
     install_bypass_route "$host"
 done
 
-ensure_tun_device_available
-ensure_tproxy_chain_available
 run_client
 if [[ -n "$tun_uid" ]]; then
     wait_for_tun_device
