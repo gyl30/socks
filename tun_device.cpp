@@ -46,7 +46,6 @@
 #include <boost/system/errc.hpp>
 #ifdef _WIN32
 #include "tun_device_windows_helper.h"
-#include "wintun.h"
 #pragma comment(lib, "iphlpapi.lib")
 #endif
 

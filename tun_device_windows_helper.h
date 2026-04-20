@@ -11,7 +11,14 @@
 #include <netioapi.h>
 #include <winsock2.h>
 
-#include "wintun.h"
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+#include <wintun.h>
+#ifdef __cplusplus
+}
+#endif
 
 #ifdef __cplusplus
 
