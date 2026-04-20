@@ -1048,6 +1048,149 @@ void run_concurrent_sessions()
     }
 }
 
+void run_tproxy_closed_no_io_case()
+{
+    io_worker_runtime runtime;
+    const auto cfg = make_direct_config(30);
+    auto route = std::make_shared<relay::router>(cfg, "tproxy-in");
+    if (!route->load())
+    {
+        throw std::runtime_error("load tproxy router failed");
+    }
+
+    udp_blackhole_server blackhole;
+    const auto client_endpoint = boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 43301);
+    const auto target_endpoint = blackhole.endpoint();
+    constexpr uint32_t conn_id = 901;
+
+    std::promise<void> closed_promise;
+    auto closed_future = closed_promise.get_future();
+    auto session = std::make_shared<relay::tproxy_udp_session>(runtime.worker(),
+                                                               route,
+                                                               client_endpoint,
+                                                               target_endpoint,
+                                                               conn_id,
+                                                               "tproxy-in",
+                                                               cfg,
+                                                               [&closed_promise]() { closed_promise.set_value(); });
+    session->start();
+
+    auto enqueue_future = boost::asio::co_spawn(
+        runtime.worker().io_context, session->enqueue_packet(std::vector<uint8_t>{'c', 'l', 'o', 's'}), boost::asio::use_future);
+    if (enqueue_future.get() != relay::udp_enqueue_result::kEnqueued)
+    {
+        throw std::runtime_error("enqueue tproxy close packet failed");
+    }
+
+    wait_for_trace_stage("tproxy-in", conn_id, relay::trace_stage::kOutboundConnectDone, "tproxy closed_no_io");
+    session->stop();
+    wait_close(closed_future, "tproxy closed_no_io");
+    runtime.wait_until_idle();
+
+    const auto before = require_trace_by_conn_id("tproxy-in", conn_id);
+    expect_stopped_trace(before, "tproxy");
+
+    auto late_enqueue_future = boost::asio::co_spawn(
+        runtime.worker().io_context, session->enqueue_packet(std::vector<uint8_t>{'l', 'a', 't', 'e'}), boost::asio::use_future);
+    if (late_enqueue_future.get() != relay::udp_enqueue_result::kClosed)
+    {
+        throw std::runtime_error("late tproxy enqueue should be closed");
+    }
+    runtime.wait_until_idle();
+
+    const auto after = require_trace_by_conn_id("tproxy-in", conn_id);
+    if (after.events.size() != before.events.size())
+    {
+        throw std::runtime_error("tproxy trace changed after close");
+    }
+    expect_stopped_trace(after, "tproxy");
+}
+
+void run_tun_closed_no_io_case()
+{
+    io_worker_runtime runtime;
+    const auto cfg = make_direct_config(30);
+    auto route = std::make_shared<relay::router>(cfg, "tun-in");
+    if (!route->load())
+    {
+        throw std::runtime_error("load tun router failed");
+    }
+
+    udp_blackhole_server blackhole;
+    const auto client_endpoint = boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 43302);
+    const auto target_endpoint = blackhole.endpoint();
+    constexpr uint32_t conn_id = 902;
+
+    lwip_udp_pcb_holder pcb_holder;
+    std::promise<void> closed_promise;
+    auto closed_future = closed_promise.get_future();
+    auto session = std::make_shared<relay::tun_udp_session>(runtime.worker(),
+                                                            route,
+                                                            pcb_holder.release(),
+                                                            client_endpoint,
+                                                            target_endpoint,
+                                                            conn_id,
+                                                            "tun-in",
+                                                            cfg,
+                                                            [&closed_promise]() { closed_promise.set_value(); });
+    runtime.worker().group.spawn([session]() { return session->start(); });
+    session->enqueue_packet(make_udp_pbuf("clos"));
+
+    wait_for_trace_stage("tun-in", conn_id, relay::trace_stage::kOutboundConnectDone, "tun closed_no_io");
+    session->stop();
+    wait_close(closed_future, "tun closed_no_io");
+    runtime.wait_until_idle();
+
+    const auto before = require_trace_by_conn_id("tun-in", conn_id);
+    expect_stopped_trace(before, "tun");
+
+    session->enqueue_packet(make_udp_pbuf("late"));
+    runtime.wait_until_idle();
+
+    const auto after = require_trace_by_conn_id("tun-in", conn_id);
+    if (after.events.size() != before.events.size())
+    {
+        throw std::runtime_error("tun trace changed after close");
+    }
+    expect_stopped_trace(after, "tun");
+}
+
+void run_closed_no_io()
+{
+    int passed = 0;
+    int failed = 0;
+
+    try
+    {
+        run_tproxy_closed_no_io_case();
+        ++passed;
+        std::cout << "PASS closed_no_io tproxy\n";
+    }
+    catch (const std::exception& ex)
+    {
+        ++failed;
+        std::cerr << "FAIL closed_no_io tproxy: " << ex.what() << '\n';
+    }
+
+    try
+    {
+        run_tun_closed_no_io_case();
+        ++passed;
+        std::cout << "PASS closed_no_io tun\n";
+    }
+    catch (const std::exception& ex)
+    {
+        ++failed;
+        std::cerr << "FAIL closed_no_io tun: " << ex.what() << '\n';
+    }
+
+    std::cout << "summary: passed=" << passed << " failed=" << failed << " total=" << (passed + failed) << '\n';
+    if (failed != 0)
+    {
+        throw std::runtime_error("closed_no_io regression failed");
+    }
+}
+
 void run_tproxy_stopped_case()
 {
     io_worker_runtime runtime;
@@ -1426,7 +1569,7 @@ int main(int argc, char** argv)
         {
             throw std::runtime_error(
                 "usage: udp_transparent_session_regression "
-                "<route_blocked|idle_timeout|concurrent_sessions|stopped|proxy_connect_fail|transport_error>");
+                "<route_blocked|idle_timeout|concurrent_sessions|closed_no_io|stopped|proxy_connect_fail|transport_error>");
         }
 
         lwip_init();
@@ -1450,6 +1593,11 @@ int main(int argc, char** argv)
         if (scenario == "concurrent_sessions")
         {
             run_concurrent_sessions();
+            return 0;
+        }
+        if (scenario == "closed_no_io")
+        {
+            run_closed_no_io();
             return 0;
         }
         if (scenario == "proxy_connect_fail")
