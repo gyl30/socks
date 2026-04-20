@@ -1,11 +1,11 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
+#include <string>
+#include <vector>
 #include <cstdint>
 #include <optional>
-#include <string>
 #include <string_view>
-#include <vector>
 
 namespace relay
 {

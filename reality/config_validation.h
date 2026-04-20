@@ -1,8 +1,8 @@
 #ifndef REALITY_CONFIG_VALIDATION_H
 #define REALITY_CONFIG_VALIDATION_H
 
-#include <vector>
 #include <string>
+#include <vector>
 #include <cstddef>
 #include <cstdint>
 #include <optional>

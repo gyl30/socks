@@ -1,10 +1,10 @@
 #ifndef TRACE_WEB_QUERY_H
 #define TRACE_WEB_QUERY_H
 
+#include <string>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
-#include <string>
 #include <string_view>
 #include <unordered_map>
 

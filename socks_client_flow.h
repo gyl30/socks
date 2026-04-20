@@ -1,8 +1,8 @@
 #ifndef SOCKS_CLIENT_FLOW_H
 #define SOCKS_CLIENT_FLOW_H
 
-#include <boost/asio/awaitable.hpp>
 #include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/awaitable.hpp>
 #include <boost/system/error_code.hpp>
 
 #include "config.h"

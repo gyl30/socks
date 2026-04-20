@@ -9,10 +9,10 @@
 #include <boost/asio/awaitable.hpp>
 
 #include "config.h"
-#include "request_context.h"
 #include "router.h"
-#include "session_result.h"
 #include "trace_store.h"
+#include "session_result.h"
+#include "request_context.h"
 
 namespace relay
 {

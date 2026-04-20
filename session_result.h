@@ -1,8 +1,8 @@
 #ifndef SESSION_RESULT_H
 #define SESSION_RESULT_H
 
-#include <cstdint>
 #include <memory>
+#include <cstdint>
 
 #include <boost/asio/error.hpp>
 #include <boost/system/error_code.hpp>

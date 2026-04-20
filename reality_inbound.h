@@ -10,14 +10,14 @@
 #include <boost/asio/awaitable.hpp>
 
 #include "config.h"
+#include "router.h"
 #include "context_pool.h"
 #include "replay_cache.h"
+#include "reality/types.h"
 #include "site_material.h"
-#include "router.h"
 #include "reality/policy/fallback_gate.h"
 #include "reality/policy/fallback_executor.h"
 #include "reality/handshake/server_handshake_context.h"
-#include "reality/types.h"
 
 namespace relay
 {

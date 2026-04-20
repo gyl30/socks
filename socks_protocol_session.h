@@ -2,13 +2,13 @@
 #define SOCKS_PROTOCOL_SESSION_H
 
 #include <array>
-#include <cstdint>
-#include <optional>
 #include <string>
 #include <vector>
+#include <cstdint>
+#include <optional>
 
-#include <boost/asio/awaitable.hpp>
 #include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/awaitable.hpp>
 
 #include "config.h"
 #include "context_pool.h"

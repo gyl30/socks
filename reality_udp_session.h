@@ -13,14 +13,14 @@
 #include <boost/asio/steady_timer.hpp>
 
 #include "config.h"
+#include "router.h"
 #include "lru_cache.h"
 #include "net_utils.h"
 #include "proxy_protocol.h"
-#include "proxy_reality_connection.h"
-#include "request_context.h"
-#include "router.h"
 #include "session_result.h"
+#include "request_context.h"
 #include "udp_proxy_outbound.h"
+#include "proxy_reality_connection.h"
 
 namespace relay
 {

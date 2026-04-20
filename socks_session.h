@@ -1,18 +1,18 @@
 #ifndef SOCKS_CONTROL_SESSION_H
 #define SOCKS_CONTROL_SESSION_H
 
-#include <cstdint>
 #include <memory>
 #include <string>
+#include <cstdint>
 
-#include <boost/asio/awaitable.hpp>
 #include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/awaitable.hpp>
 
 #include "config.h"
-#include "constants.h"
 #include "router.h"
-#include "run_loop_spawner.h"
+#include "constants.h"
 #include "trace_store.h"
+#include "run_loop_spawner.h"
 
 namespace relay
 {

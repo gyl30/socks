@@ -5,8 +5,8 @@
 #include <string>
 #include <cstdint>
 
-#include <boost/asio/any_io_executor.hpp>
 #include <boost/asio/awaitable.hpp>
+#include <boost/asio/any_io_executor.hpp>
 
 #include "config.h"
 #include "udp_proxy_outbound.h"

@@ -13,8 +13,8 @@
 #include "config.h"
 #include "router.h"
 #include "constants.h"
-#include "request_context.h"
 #include "session_result.h"
+#include "request_context.h"
 #include "tcp_outbound_stream.h"
 
 namespace relay

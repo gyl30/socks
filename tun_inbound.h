@@ -14,8 +14,8 @@
 #include <boost/asio/posix/stream_descriptor.hpp>
 #endif
 
-#include "router.h"
 #include "config.h"
+#include "router.h"
 #include "tun_lwip.h"
 #include "tun_device.h"
 #include "context_pool.h"

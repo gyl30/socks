@@ -1,17 +1,17 @@
 #ifndef STREAM_RELAY_TRANSPORT_H
 #define STREAM_RELAY_TRANSPORT_H
 
-#include <cstddef>
-#include <memory>
 #include <span>
+#include <memory>
 #include <vector>
+#include <cstddef>
 
 #include <boost/asio.hpp>
 #include <boost/asio/awaitable.hpp>
 
 #include "config.h"
-#include "proxy_reality_connection.h"
 #include "tcp_outbound_stream.h"
+#include "proxy_reality_connection.h"
 
 namespace relay
 {

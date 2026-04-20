@@ -8,8 +8,8 @@
 #endif
 #include <stdint.h>
 #include <windows.h>
-#include <winsock2.h>
 #include <netioapi.h>
+#include <winsock2.h>
 
 #include "wintun.h"
 

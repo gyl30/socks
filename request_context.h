@@ -1,9 +1,9 @@
 #ifndef REQUEST_CONTEXT_H
 #define REQUEST_CONTEXT_H
 
+#include <string>
 #include <cstdint>
 #include <optional>
-#include <string>
 
 namespace relay
 {

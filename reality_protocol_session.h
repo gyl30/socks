@@ -1,17 +1,17 @@
 #ifndef REALITY_PROTOCOL_SESSION_H
 #define REALITY_PROTOCOL_SESSION_H
 
-#include <cstdint>
 #include <memory>
 #include <string>
+#include <cstdint>
 
 #include <boost/asio/awaitable.hpp>
 
 #include "config.h"
-#include "context_pool.h"
-#include "proxy_reality_connection.h"
 #include "router.h"
 #include "trace_store.h"
+#include "context_pool.h"
+#include "proxy_reality_connection.h"
 
 namespace relay
 {

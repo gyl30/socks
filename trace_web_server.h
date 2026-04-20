@@ -4,8 +4,8 @@
 #include <atomic>
 #include <memory>
 
-#include <boost/asio/awaitable.hpp>
 #include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/awaitable.hpp>
 
 #include "config.h"
 #include "context_pool.h"

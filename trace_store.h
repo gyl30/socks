@@ -1,17 +1,17 @@
 #ifndef TRACE_STORE_H
 #define TRACE_STORE_H
 
+#include <map>
+#include <deque>
 #include <atomic>
+#include <string>
+#include <vector>
 #include <cstddef>
 #include <cstdint>
-#include <deque>
-#include <map>
 #include <optional>
-#include <shared_mutex>
-#include <string>
 #include <string_view>
+#include <shared_mutex>
 #include <unordered_map>
-#include <vector>
 
 namespace relay
 {

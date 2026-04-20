@@ -3,12 +3,12 @@
 
 #include <memory>
 
-#include <boost/asio/any_io_executor.hpp>
 #include <boost/asio/awaitable.hpp>
+#include <boost/asio/any_io_executor.hpp>
 
 #include "config.h"
-#include "request_context.h"
 #include "router.h"
+#include "request_context.h"
 #include "tcp_outbound_stream.h"
 
 namespace relay

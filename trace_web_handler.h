@@ -1,8 +1,8 @@
 #ifndef TRACE_WEB_HANDLER_H
 #define TRACE_WEB_HANDLER_H
 
-#include <ostream>
 #include <string>
+#include <ostream>
 #include <string_view>
 
 #include <boost/beast/http/status.hpp>
