@@ -534,26 +534,56 @@ boost::asio::awaitable<proxy::udp_datagram> udp_proxy_outbound::receive_datagram
     }
 
     std::vector<uint8_t> packet(constants::udp::kMaxPacketSize);
-    boost::asio::ip::udp::endpoint sender;
-    const auto packet_len = co_await receive_udp_packet_with_timeout(*socks_udp_socket_, packet, sender, timeout_sec, ec);
-    if (ec)
+    const auto normalized_server = net::normalize_endpoint(socks_udp_server_endpoint_);
+    for (;;)
     {
-        co_return proxy::udp_datagram{};
-    }
+        boost::asio::ip::udp::endpoint sender;
+        const auto packet_len = co_await receive_udp_packet_with_timeout(*socks_udp_socket_, packet, sender, timeout_sec, ec);
+        if (ec)
+        {
+            co_return proxy::udp_datagram{};
+        }
 
-    socks_udp_header header;
-    if (!socks_codec::decode_udp_header(packet.data(), packet_len, header) || header.header_len > packet_len)
-    {
-        ec = boost::asio::error::invalid_argument;
-        co_return proxy::udp_datagram{};
-    }
+        const auto normalized_sender = net::normalize_endpoint(sender);
+        if (normalized_sender != normalized_server)
+        {
+            LOG_WARN("{} stage receive_udp_datagram ignore unexpected sender {}:{} expected {}:{}",
+                     log_event::kRoute,
+                     normalized_sender.address().to_string(),
+                     normalized_sender.port(),
+                     normalized_server.address().to_string(),
+                     normalized_server.port());
+            continue;
+        }
 
-    proxy::udp_datagram datagram;
-    datagram.target_host = header.addr;
-    datagram.target_port = header.port;
-    datagram.payload.assign(packet.begin() + static_cast<std::ptrdiff_t>(header.header_len),
-                            packet.begin() + static_cast<std::ptrdiff_t>(packet_len));
-    co_return datagram;
+        socks_udp_header header;
+        if (!socks_codec::decode_udp_header(packet.data(), packet_len, header) || header.header_len > packet_len)
+        {
+            LOG_WARN("{} stage receive_udp_datagram invalid socks udp header sender {}:{} packet_size {}",
+                     log_event::kRoute,
+                     normalized_sender.address().to_string(),
+                     normalized_sender.port(),
+                     packet_len);
+            ec = boost::asio::error::invalid_argument;
+            co_return proxy::udp_datagram{};
+        }
+        if (header.frag != 0x00)
+        {
+            LOG_WARN("{} stage receive_udp_datagram ignore fragmented packet sender {}:{} frag {}",
+                     log_event::kRoute,
+                     normalized_sender.address().to_string(),
+                     normalized_sender.port(),
+                     header.frag);
+            continue;
+        }
+
+        proxy::udp_datagram datagram;
+        datagram.target_host = header.addr;
+        datagram.target_port = header.port;
+        datagram.payload.assign(packet.begin() + static_cast<std::ptrdiff_t>(header.header_len),
+                                packet.begin() + static_cast<std::ptrdiff_t>(packet_len));
+        co_return datagram;
+    }
 }
 
 }    // namespace relay
