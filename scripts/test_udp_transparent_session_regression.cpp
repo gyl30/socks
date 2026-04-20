@@ -178,6 +178,39 @@ relay::config make_direct_config(const uint32_t idle_timeout_sec)
     return cfg;
 }
 
+relay::config make_proxy_fail_config(const uint16_t socks_port)
+{
+    relay::config cfg;
+    cfg.workers = 1;
+    cfg.timeout.read = 2;
+    cfg.timeout.write = 2;
+    cfg.timeout.connect = 1;
+    cfg.timeout.idle = 5;
+
+    relay::config::outbound_entry_t socks_outbound;
+    socks_outbound.type = "socks";
+    socks_outbound.tag = "socks-out";
+    socks_outbound.socks = relay::config::socks_t{};
+    socks_outbound.socks->host = "127.0.0.1";
+    socks_outbound.socks->port = socks_port;
+    socks_outbound.socks->auth = false;
+    cfg.outbounds.push_back(std::move(socks_outbound));
+
+    relay::config::route_rule_t tproxy_rule;
+    tproxy_rule.type = "inbound";
+    tproxy_rule.values = {"tproxy-in"};
+    tproxy_rule.out = "socks-out";
+    cfg.routing.push_back(std::move(tproxy_rule));
+
+    relay::config::route_rule_t tun_rule;
+    tun_rule.type = "inbound";
+    tun_rule.values = {"tun-in"};
+    tun_rule.out = "socks-out";
+    cfg.routing.push_back(std::move(tun_rule));
+
+    return cfg;
+}
+
 relay::trace_session_snapshot require_single_trace(const std::string& inbound_tag)
 {
     relay::trace_query query;
@@ -426,6 +459,61 @@ void expect_stopped_trace(const relay::trace_session_snapshot& snapshot, std::st
     if (!summary.lifecycle.session_error || summary.lifecycle.session_close)
     {
         throw std::runtime_error("unexpected lifecycle for stopped session_error " + std::string(inbound_type));
+    }
+}
+
+void expect_proxy_connect_fail_trace(const relay::trace_session_snapshot& snapshot, std::string_view inbound_type)
+{
+    const auto& summary = snapshot.summary;
+    if (summary.status != relay::trace_status::kFailed)
+    {
+        throw std::runtime_error("unexpected trace status for " + std::string(inbound_type));
+    }
+    if (summary.inbound_type != inbound_type)
+    {
+        throw std::runtime_error("unexpected inbound_type for " + std::string(inbound_type) + ": " + summary.inbound_type);
+    }
+    if (summary.outbound_tag != "socks-out")
+    {
+        throw std::runtime_error("unexpected outbound_tag for " + std::string(inbound_type) + ": " + summary.outbound_tag);
+    }
+    if (summary.route_type != "proxy")
+    {
+        throw std::runtime_error("unexpected route_type for " + std::string(inbound_type) + ": " + summary.route_type);
+    }
+    if (!summary.lifecycle.route_decide_done)
+    {
+        throw std::runtime_error("route_decide_done missing for " + std::string(inbound_type));
+    }
+    if (!summary.lifecycle.outbound_connect_start || !summary.lifecycle.outbound_connect_done)
+    {
+        throw std::runtime_error("outbound_connect lifecycle missing for " + std::string(inbound_type));
+    }
+    if (!summary.lifecycle.session_error || summary.lifecycle.session_close)
+    {
+        throw std::runtime_error("unexpected session terminal lifecycle for " + std::string(inbound_type));
+    }
+
+    const auto* connect_done = find_event(snapshot, relay::trace_stage::kOutboundConnectDone);
+    if (connect_done == nullptr || connect_done->result != relay::trace_result::kFail || connect_done->error_message.empty())
+    {
+        throw std::runtime_error("unexpected outbound_connect_done for " + std::string(inbound_type));
+    }
+
+    const auto* session_error = find_event(snapshot, relay::trace_stage::kSessionError);
+    if (session_error == nullptr || session_error->result != relay::trace_result::kFail)
+    {
+        throw std::runtime_error("unexpected session_error for " + std::string(inbound_type));
+    }
+    const auto close_reason_it = session_error->extra.find("close_reason");
+    if (close_reason_it == session_error->extra.end() || close_reason_it->second != "transport_error")
+    {
+        throw std::runtime_error("unexpected close_reason for " + std::string(inbound_type));
+    }
+
+    if (find_event(snapshot, relay::trace_stage::kSessionClose) != nullptr)
+    {
+        throw std::runtime_error("unexpected session_close for " + std::string(inbound_type));
     }
 }
 
@@ -753,6 +841,109 @@ void run_stopped()
     }
 }
 
+uint16_t pick_unused_tcp_port()
+{
+    boost::asio::io_context io_context;
+    boost::asio::ip::tcp::acceptor acceptor(io_context, {boost::asio::ip::make_address("127.0.0.1"), 0});
+    return acceptor.local_endpoint().port();
+}
+
+void run_tproxy_proxy_connect_fail_case()
+{
+    io_worker_runtime runtime;
+    const auto cfg = make_proxy_fail_config(pick_unused_tcp_port());
+    auto route = std::make_shared<relay::router>(cfg, "tproxy-in");
+    if (!route->load())
+    {
+        throw std::runtime_error("load tproxy router failed");
+    }
+
+    std::promise<void> closed_promise;
+    auto closed_future = closed_promise.get_future();
+    auto session = std::make_shared<relay::tproxy_udp_session>(runtime.worker(),
+                                                               route,
+                                                               boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 43001),
+                                                               boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 53011),
+                                                               501,
+                                                               "tproxy-in",
+                                                               cfg,
+                                                               [&closed_promise]() { closed_promise.set_value(); });
+    session->start();
+
+    wait_close(closed_future, "tproxy proxy_connect_fail");
+    runtime.wait_until_idle();
+
+    const auto snapshot = require_trace_by_conn_id("tproxy-in", 501);
+    expect_proxy_connect_fail_trace(snapshot, "tproxy");
+}
+
+void run_tun_proxy_connect_fail_case()
+{
+    io_worker_runtime runtime;
+    const auto cfg = make_proxy_fail_config(pick_unused_tcp_port());
+    auto route = std::make_shared<relay::router>(cfg, "tun-in");
+    if (!route->load())
+    {
+        throw std::runtime_error("load tun router failed");
+    }
+
+    lwip_udp_pcb_holder pcb_holder;
+    std::promise<void> closed_promise;
+    auto closed_future = closed_promise.get_future();
+    auto session = std::make_shared<relay::tun_udp_session>(runtime.worker(),
+                                                            route,
+                                                            pcb_holder.release(),
+                                                            boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 43002),
+                                                            boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 53012),
+                                                            502,
+                                                            "tun-in",
+                                                            cfg,
+                                                            [&closed_promise]() { closed_promise.set_value(); });
+    runtime.worker().group.spawn([session]() { return session->start(); });
+
+    wait_close(closed_future, "tun proxy_connect_fail");
+    runtime.wait_until_idle();
+
+    const auto snapshot = require_trace_by_conn_id("tun-in", 502);
+    expect_proxy_connect_fail_trace(snapshot, "tun");
+}
+
+void run_proxy_connect_fail()
+{
+    int passed = 0;
+    int failed = 0;
+
+    try
+    {
+        run_tproxy_proxy_connect_fail_case();
+        ++passed;
+        std::cout << "PASS proxy_connect_fail tproxy\n";
+    }
+    catch (const std::exception& ex)
+    {
+        ++failed;
+        std::cerr << "FAIL proxy_connect_fail tproxy: " << ex.what() << '\n';
+    }
+
+    try
+    {
+        run_tun_proxy_connect_fail_case();
+        ++passed;
+        std::cout << "PASS proxy_connect_fail tun\n";
+    }
+    catch (const std::exception& ex)
+    {
+        ++failed;
+        std::cerr << "FAIL proxy_connect_fail tun: " << ex.what() << '\n';
+    }
+
+    std::cout << "summary: passed=" << passed << " failed=" << failed << " total=" << (passed + failed) << '\n';
+    if (failed != 0)
+    {
+        throw std::runtime_error("proxy_connect_fail regression failed");
+    }
+}
+
 void run_route_blocked()
 {
     int passed = 0;
@@ -816,6 +1007,11 @@ int main(int argc, char** argv)
         if (scenario == "stopped")
         {
             run_stopped();
+            return 0;
+        }
+        if (scenario == "proxy_connect_fail")
+        {
+            run_proxy_connect_fail();
             return 0;
         }
 

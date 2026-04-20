@@ -63,6 +63,18 @@ boost::asio::awaitable<void> tun_udp_session::start()
                                                 [this]() { notify_closed(); });
     if (!completed)
     {
+        record_udp_session_error_trace(make_transparent_udp_trace_event(trace_id_,
+                                                                        conn_id_,
+                                                                        inbound_tag_,
+                                                                        "tun",
+                                                                        outbound_tag_,
+                                                                        outbound_type_,
+                                                                        client_endpoint_,
+                                                                        target_endpoint_,
+                                                                        relay::to_string(route_),
+                                                                        match_type_,
+                                                                        match_value_),
+                                       close_reason_);
         co_return;
     }
 
