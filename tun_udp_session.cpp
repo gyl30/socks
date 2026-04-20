@@ -376,6 +376,7 @@ boost::asio::awaitable<bool> tun_udp_session::open_direct_socket()
     upstream_socket_.bind(boost::asio::ip::udp::endpoint(protocol, 0), ec);
     if (ec)
     {
+        record_open_direct_socket_result(false, ec, connect_start);
         LOG_WARN("{} trace {:016x} conn {} client {}:{} target {}:{} bind tun direct udp socket failed {}",
                  log_event::kConnInit,
                  trace_id_,

@@ -683,6 +683,57 @@ void expect_transport_error_trace(const relay::trace_session_snapshot& snapshot,
     }
 }
 
+void expect_direct_connect_fail_trace(const relay::trace_session_snapshot& snapshot, std::string_view inbound_type)
+{
+    const auto& summary = snapshot.summary;
+    if (summary.status != relay::trace_status::kFailed)
+    {
+        throw std::runtime_error("unexpected trace status for " + std::string(inbound_type));
+    }
+    if (summary.inbound_type != inbound_type)
+    {
+        throw std::runtime_error("unexpected inbound_type for " + std::string(inbound_type) + ": " + summary.inbound_type);
+    }
+    if (summary.outbound_tag != "direct")
+    {
+        throw std::runtime_error("unexpected outbound_tag for " + std::string(inbound_type) + ": " + summary.outbound_tag);
+    }
+    if (summary.route_type != "direct")
+    {
+        throw std::runtime_error("unexpected route_type for " + std::string(inbound_type) + ": " + summary.route_type);
+    }
+    if (!summary.lifecycle.outbound_connect_start || !summary.lifecycle.outbound_connect_done)
+    {
+        throw std::runtime_error("outbound_connect lifecycle missing for " + std::string(inbound_type));
+    }
+    if (!summary.lifecycle.session_error || summary.lifecycle.session_close)
+    {
+        throw std::runtime_error("unexpected session lifecycle for " + std::string(inbound_type));
+    }
+
+    const auto* connect_done = find_event(snapshot, relay::trace_stage::kOutboundConnectDone);
+    if (connect_done == nullptr || connect_done->result != relay::trace_result::kFail || connect_done->error_message.empty())
+    {
+        throw std::runtime_error("unexpected outbound_connect_done for " + std::string(inbound_type));
+    }
+
+    const auto* session_error = find_event(snapshot, relay::trace_stage::kSessionError);
+    if (session_error == nullptr || session_error->result != relay::trace_result::kFail)
+    {
+        throw std::runtime_error("unexpected session_error for " + std::string(inbound_type));
+    }
+    const auto close_reason_it = session_error->extra.find("close_reason");
+    if (close_reason_it == session_error->extra.end() || close_reason_it->second != "transport_error")
+    {
+        throw std::runtime_error("unexpected close_reason for " + std::string(inbound_type));
+    }
+
+    if (find_event(snapshot, relay::trace_stage::kSessionClose) != nullptr)
+    {
+        throw std::runtime_error("unexpected session_close for " + std::string(inbound_type));
+    }
+}
+
 void wait_close(std::future<void>& closed_future, std::string_view label)
 {
     if (closed_future.wait_for(5s) != std::future_status::ready)
@@ -1191,6 +1242,102 @@ void run_closed_no_io()
     }
 }
 
+void run_tproxy_direct_connect_fail_case()
+{
+    io_worker_runtime runtime;
+    const auto cfg = make_direct_config(5);
+    auto route = std::make_shared<relay::router>(cfg, "tproxy-in");
+    if (!route->load())
+    {
+        throw std::runtime_error("load tproxy router failed");
+    }
+
+    std::promise<void> closed_promise;
+    auto closed_future = closed_promise.get_future();
+    auto session = std::make_shared<relay::tproxy_udp_session>(runtime.worker(),
+                                                               route,
+                                                               boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("::1"), 43401),
+                                                               boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("fe80::1"), 53031),
+                                                               951,
+                                                               "tproxy-in",
+                                                               cfg,
+                                                               [&closed_promise]() { closed_promise.set_value(); });
+    session->start();
+
+    wait_close(closed_future, "tproxy direct_connect_fail");
+    runtime.wait_until_idle();
+
+    const auto snapshot = require_trace_by_conn_id("tproxy-in", 951);
+    expect_direct_connect_fail_trace(snapshot, "tproxy");
+}
+
+void run_tun_direct_connect_fail_case()
+{
+    io_worker_runtime runtime;
+    const auto cfg = make_direct_config(5);
+    auto route = std::make_shared<relay::router>(cfg, "tun-in");
+    if (!route->load())
+    {
+        throw std::runtime_error("load tun router failed");
+    }
+
+    lwip_udp_pcb_holder pcb_holder;
+    std::promise<void> closed_promise;
+    auto closed_future = closed_promise.get_future();
+    auto session = std::make_shared<relay::tun_udp_session>(runtime.worker(),
+                                                            route,
+                                                            pcb_holder.release(),
+                                                            boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("::1"), 43402),
+                                                            boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("fe80::1"), 53032),
+                                                            952,
+                                                            "tun-in",
+                                                            cfg,
+                                                            [&closed_promise]() { closed_promise.set_value(); });
+    runtime.worker().group.spawn([session]() { return session->start(); });
+
+    wait_close(closed_future, "tun direct_connect_fail");
+    runtime.wait_until_idle();
+
+    const auto snapshot = require_trace_by_conn_id("tun-in", 952);
+    expect_direct_connect_fail_trace(snapshot, "tun");
+}
+
+void run_direct_connect_fail()
+{
+    int passed = 0;
+    int failed = 0;
+
+    try
+    {
+        run_tproxy_direct_connect_fail_case();
+        ++passed;
+        std::cout << "PASS direct_connect_fail tproxy\n";
+    }
+    catch (const std::exception& ex)
+    {
+        ++failed;
+        std::cerr << "FAIL direct_connect_fail tproxy: " << ex.what() << '\n';
+    }
+
+    try
+    {
+        run_tun_direct_connect_fail_case();
+        ++passed;
+        std::cout << "PASS direct_connect_fail tun\n";
+    }
+    catch (const std::exception& ex)
+    {
+        ++failed;
+        std::cerr << "FAIL direct_connect_fail tun: " << ex.what() << '\n';
+    }
+
+    std::cout << "summary: passed=" << passed << " failed=" << failed << " total=" << (passed + failed) << '\n';
+    if (failed != 0)
+    {
+        throw std::runtime_error("direct_connect_fail regression failed");
+    }
+}
+
 void run_tproxy_stopped_case()
 {
     io_worker_runtime runtime;
@@ -1569,7 +1716,7 @@ int main(int argc, char** argv)
         {
             throw std::runtime_error(
                 "usage: udp_transparent_session_regression "
-                "<route_blocked|idle_timeout|concurrent_sessions|closed_no_io|stopped|proxy_connect_fail|transport_error>");
+                "<route_blocked|idle_timeout|concurrent_sessions|closed_no_io|stopped|proxy_connect_fail|direct_connect_fail|transport_error>");
         }
 
         lwip_init();
@@ -1603,6 +1750,11 @@ int main(int argc, char** argv)
         if (scenario == "proxy_connect_fail")
         {
             run_proxy_connect_fail();
+            return 0;
+        }
+        if (scenario == "direct_connect_fail")
+        {
+            run_direct_connect_fail();
             return 0;
         }
         if (scenario == "transport_error")
