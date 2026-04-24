@@ -11,6 +11,7 @@
 #include <boost/asio.hpp>
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/steady_timer.hpp>
+#include <boost/asio/experimental/concurrent_channel.hpp>
 
 #include "config.h"
 #include "router.h"
@@ -19,6 +20,7 @@
 #include "proxy_protocol.h"
 #include "session_result.h"
 #include "request_context.h"
+#include "task_group.h"
 #include "udp_proxy_outbound.h"
 #include "proxy_reality_connection.h"
 
@@ -59,6 +61,8 @@ class reality_udp_session : public std::enable_shared_from_this<reality_udp_sess
     boost::asio::awaitable<void> connection_to_udp();
     boost::asio::awaitable<void> udp_to_connection();
     boost::asio::awaitable<void> proxy_to_connection(const std::string& outbound_tag, const std::shared_ptr<udp_proxy_outbound>& upstream);
+    boost::asio::awaitable<void> connection_writer();
+    [[nodiscard]] boost::asio::awaitable<bool> enqueue_connection_packet(std::vector<uint8_t> packet, boost::system::error_code& ec);
     boost::asio::awaitable<void> idle_watchdog();
     [[nodiscard]] boost::asio::awaitable<route_decision> decide_route(const proxy::udp_datagram& datagram) const;
     [[nodiscard]] boost::asio::awaitable<std::shared_ptr<udp_proxy_outbound>> get_proxy_outbound(const std::string& outbound_tag);
@@ -87,6 +91,9 @@ class reality_udp_session : public std::enable_shared_from_this<reality_udp_sess
         uint64_t expires_at = 0;
     };
 
+    using connection_write_channel_type =
+        boost::asio::experimental::concurrent_channel<void(boost::system::error_code, std::vector<uint8_t>)>;
+
     uint32_t conn_id_ = 0;
     uint64_t trace_id_ = 0;
     std::string inbound_tag_;
@@ -100,6 +107,8 @@ class reality_udp_session : public std::enable_shared_from_this<reality_udp_sess
     boost::asio::steady_timer idle_timer_;
     boost::asio::ip::udp::socket udp_socket_;
     boost::asio::ip::udp::resolver udp_resolver_;
+    connection_write_channel_type connection_write_channel_;
+    task_group proxy_reader_group_;
     std::shared_ptr<proxy_reality_connection> connection_;
     std::shared_ptr<router> router_;
     uint64_t last_activity_time_ms_{0};

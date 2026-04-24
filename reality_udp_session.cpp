@@ -10,8 +10,6 @@
 
 #include <boost/asio.hpp>
 #include <boost/asio/as_tuple.hpp>
-#include <boost/asio/co_spawn.hpp>
-#include <boost/asio/detached.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/asio/redirect_error.hpp>
 #include <boost/asio/experimental/awaitable_operators.hpp>
@@ -48,6 +46,8 @@ reality_udp_session::reality_udp_session(boost::asio::io_context& io_context,
       idle_timer_(io_context),
       udp_socket_(io_context),
       udp_resolver_(io_context),
+      connection_write_channel_(io_context, constants::udp::kPacketChannelCapacity),
+      proxy_reader_group_(io_context),
       connection_(std::move(connection)),
       router_(std::move(router)),
       resolved_targets_(constants::udp::kMaxCacheEntries),
@@ -225,11 +225,11 @@ boost::asio::awaitable<void> reality_udp_session::start_impl(const proxy::udp_as
             using boost::asio::experimental::awaitable_operators::operator||;
             if (cfg_.timeout.idle == 0)
             {
-                co_await (connection_to_udp() || udp_to_connection());
+                co_await (connection_to_udp() || udp_to_connection() || connection_writer());
             }
             else
             {
-                co_await (connection_to_udp() || udp_to_connection() || idle_watchdog());
+                co_await (connection_to_udp() || udp_to_connection() || connection_writer() || idle_watchdog());
             }
             co_return true;
         },
@@ -237,8 +237,12 @@ boost::asio::awaitable<void> reality_udp_session::start_impl(const proxy::udp_as
         [this](const bool) -> boost::asio::awaitable<void>
         {
             stopping_.store(true);
+            connection_write_channel_.close();
+            proxy_reader_group_.emit(boost::asio::cancellation_type::all);
             close_udp_socket();
             co_await close_proxy_outbounds();
+            const auto wait_ec = co_await proxy_reader_group_.async_wait();
+            (void)wait_ec;
             if (connection_ != nullptr)
             {
                 boost::system::error_code close_ec;
@@ -370,12 +374,9 @@ boost::asio::awaitable<std::shared_ptr<udp_proxy_outbound>> reality_udp_session:
              connect_result.outbound->bind_host(),
              connect_result.outbound->bind_port());
 
-    boost::asio::co_spawn(udp_socket_.get_executor(),
-                          [self = shared_from_this(), outbound_tag, outbound = connect_result.outbound]() -> boost::asio::awaitable<void>
-                          {
-                              co_await self->proxy_to_connection(outbound_tag, outbound);
-                          },
-                          boost::asio::detached);
+    proxy_reader_group_.spawn(
+        [self = shared_from_this(), outbound_tag, outbound = connect_result.outbound]() -> boost::asio::awaitable<void>
+        { co_await self->proxy_to_connection(outbound_tag, outbound); });
 
     co_return connect_result.outbound;
 }
@@ -538,8 +539,7 @@ boost::asio::awaitable<std::size_t> reality_udp_session::forward_proxy_reply_to_
         co_return 0;
     }
 
-    co_await connection_->write_packet(packet, ec);
-    if (ec)
+    if (!(co_await enqueue_connection_packet(std::move(packet), ec)))
     {
         LOG_WARN("{} trace {:016x} conn {} bind {}:{} out_tag {} write proxy udp reply failed {}",
                  log_event::kRoute,
@@ -563,6 +563,65 @@ boost::asio::awaitable<std::size_t> reality_udp_session::forward_proxy_reply_to_
              datagram.target_port,
              datagram.payload.size());
     co_return datagram.payload.size();
+}
+
+boost::asio::awaitable<bool> reality_udp_session::enqueue_connection_packet(std::vector<uint8_t> packet, boost::system::error_code& ec)
+{
+    if (stopping_.load())
+    {
+        ec = boost::asio::error::operation_aborted;
+        co_return false;
+    }
+
+    const auto [send_ec] = co_await connection_write_channel_.async_send(
+        boost::system::error_code{}, std::move(packet), boost::asio::as_tuple(boost::asio::use_awaitable));
+    ec = send_ec;
+    co_return !ec;
+}
+
+boost::asio::awaitable<void> reality_udp_session::connection_writer()
+{
+    for (;;)
+    {
+        auto [recv_ec, packet] = co_await connection_write_channel_.async_receive(boost::asio::as_tuple(boost::asio::use_awaitable));
+        if (recv_ec)
+        {
+            co_return;
+        }
+        if (stopping_.load() || connection_ == nullptr)
+        {
+            co_return;
+        }
+
+        boost::system::error_code write_ec;
+        co_await connection_->write_packet(packet, write_ec);
+        if (!write_ec)
+        {
+            continue;
+        }
+
+        if (close_reason_ == udp_close_reason::kUnknown)
+        {
+            close_reason_ = udp_close_reason::kTransportError;
+        }
+        LOG_WARN("{} trace {:016x} conn {} bind {}:{} write queued udp packet failed {}",
+                 log_event::kRoute,
+                 trace_id_,
+                 conn_id_,
+                 bind_host_,
+                 bind_port_,
+                 write_ec.message());
+
+        stopping_.store(true);
+        connection_write_channel_.close();
+        close_udp_socket();
+        boost::system::error_code close_ec;
+        if (connection_ != nullptr)
+        {
+            connection_->close(close_ec);
+        }
+        co_return;
+    }
 }
 
 boost::asio::awaitable<void> reality_udp_session::connection_to_udp()
@@ -674,8 +733,7 @@ boost::asio::awaitable<void> reality_udp_session::udp_to_connection()
                 co_return 0;
             }
 
-            co_await connection_->write_packet(packet, ec);
-            if (ec)
+            if (!(co_await enqueue_connection_packet(std::move(packet), ec)))
             {
                 co_return 0;
             }
