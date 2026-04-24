@@ -39,27 +39,32 @@ cleanup() {
 
 trap cleanup EXIT
 
-read -r server_port socks_port http_port udp_port < <(
+read -r server_port socks_port http_port web_port udp_port udp_a_port udp_b_port < <(
     python3 - <<'PY'
 import socket
 
 socks = []
 tcp_ports = []
-for _ in range(3):
+for _ in range(4):
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.bind(("127.0.0.1", 0))
     tcp_ports.append(sock.getsockname()[1])
     socks.append(sock)
 
-udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-udp_sock.bind(("127.0.0.1", 0))
-udp_port = udp_sock.getsockname()[1]
+udp_socks = []
+udp_ports = []
+for _ in range(3):
+    udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    udp_sock.bind(("127.0.0.1", 0))
+    udp_ports.append(udp_sock.getsockname()[1])
+    udp_socks.append(udp_sock)
 
-print(*tcp_ports, udp_port)
+print(*tcp_ports, *udp_ports)
 
 for sock in socks:
     sock.close()
-udp_sock.close()
+for sock in udp_socks:
+    sock.close()
 PY
 )
 
@@ -150,6 +155,32 @@ cat >"$tmp_dir/client.json" <<EOF
       }
     },
     {
+      "type": "reality",
+      "tag": "reality-out-a",
+      "settings": {
+        "host": "127.0.0.1",
+        "port": $server_port,
+        "sni": "$sni",
+        "fingerprint": "random",
+        "public_key": "$public_key",
+        "short_id": "$short_id",
+        "max_handshake_records": 256
+      }
+    },
+    {
+      "type": "reality",
+      "tag": "reality-out-b",
+      "settings": {
+        "host": "127.0.0.1",
+        "port": $server_port,
+        "sni": "$sni",
+        "fingerprint": "random",
+        "public_key": "$public_key",
+        "short_id": "$short_id",
+        "max_handshake_records": 256
+      }
+    },
+    {
       "type": "direct",
       "tag": "direct"
     },
@@ -159,6 +190,16 @@ cat >"$tmp_dir/client.json" <<EOF
     }
   ],
   "routing": [
+    {
+      "type": "ip",
+      "values": ["127.0.0.2/32"],
+      "out": "reality-out-a"
+    },
+    {
+      "type": "ip",
+      "values": ["127.0.0.3/32"],
+      "out": "reality-out-b"
+    },
     {
       "type": "inbound",
       "values": ["socks-in"],
@@ -170,6 +211,11 @@ cat >"$tmp_dir/client.json" <<EOF
     "write": 5,
     "connect": 5,
     "idle": 30
+  },
+  "web": {
+    "enabled": true,
+    "host": "127.0.0.1",
+    "port": $web_port
   }
 }
 EOF
@@ -185,6 +231,14 @@ python3 "$repo_root/scripts/socks5_udp_echo_server.py" --host 127.0.0.1 --port "
 udp_echo_pid=$!
 pids+=("$udp_echo_pid")
 
+python3 "$repo_root/scripts/socks5_udp_echo_server.py" --host 127.0.0.2 --port "$udp_a_port" >"$tmp_dir/udp-echo-a.log" 2>&1 &
+udp_echo_a_pid=$!
+pids+=("$udp_echo_a_pid")
+
+python3 "$repo_root/scripts/socks5_udp_echo_server.py" --host 127.0.0.3 --port "$udp_b_port" >"$tmp_dir/udp-echo-b.log" 2>&1 &
+udp_echo_b_pid=$!
+pids+=("$udp_echo_b_pid")
+
 env LD_LIBRARY_PATH="$runtime_ld_library_path" "$binary" -c "$tmp_dir/server.json" >"$tmp_dir/server.stdout.log" 2>&1 &
 server_pid=$!
 pids+=("$server_pid")
@@ -195,6 +249,7 @@ pids+=("$client_pid")
 
 wait_for_tcp_port 127.0.0.1 "$server_port" "reality_server" 10 "$server_pid" "$client_pid"
 wait_for_tcp_port 127.0.0.1 "$socks_port" "socks5_listener" 10 "$server_pid" "$client_pid"
+wait_for_tcp_port 127.0.0.1 "$web_port" "trace_web" 10 "$server_pid" "$client_pid"
 
 wait_for_proxy_ready() {
     local socks_port="$1"
@@ -283,9 +338,47 @@ if [[ "$udp_payload" != "udp-smoke" ]]; then
     exit 1
 fi
 
+python3 "$repo_root/scripts/socks5_udp_multi_target.py" \
+    --socks-host 127.0.0.1 \
+    --socks-port "$socks_port" \
+    --target-a-host 127.0.0.2 \
+    --target-a-port "$udp_a_port" \
+    --target-b-host 127.0.0.3 \
+    --target-b-port "$udp_b_port"
+
+python3 - "$web_port" <<'PY'
+import json
+import sys
+import time
+import urllib.request
+
+web_port = int(sys.argv[1])
+deadline = time.time() + 5.0
+last_payload = None
+
+while time.time() < deadline:
+    with urllib.request.urlopen(f"http://127.0.0.1:{web_port}/api/traces/events?stage=route_decide_done&limit=100", timeout=2) as response:
+        payload = json.load(response)
+    last_payload = payload
+    events = payload.get("items") or payload.get("events") or []
+    socks_udp_events = [
+        event
+        for event in events
+        if event.get("inbound_tag") == "socks-in"
+        and event.get("target_host") in {"127.0.0.2", "127.0.0.3"}
+    ]
+    tags_by_target = {event.get("target_host"): event.get("outbound_tag") for event in socks_udp_events}
+    if tags_by_target.get("127.0.0.2") == "reality-out-a" and tags_by_target.get("127.0.0.3") == "reality-out-b":
+        sys.exit(0)
+    time.sleep(0.1)
+
+raise RuntimeError(f"missing socks udp multi outbound trace events: {last_payload}")
+PY
+
 echo "socks5 tcp smoke ok"
 echo "socks5 parallel proxy ok"
 echo "socks5 udp associate ok"
+echo "socks5 udp multi outbound ok"
 
 python3 "$repo_root/scripts/socks5_edge_cases.py" \
     --socks-host 127.0.0.1 \
