@@ -110,7 +110,14 @@ boost::asio::awaitable<void> tun_udp_session::start()
              duration_ms);
 }
 
-void tun_udp_session::stop() { close_impl(); }
+void tun_udp_session::stop()
+{
+    boost::asio::dispatch(worker_.io_context,
+                          [self = shared_from_this()]
+                          {
+                              self->close_impl();
+                          });
+}
 
 void tun_udp_session::enqueue_packet(pbuf* packet)
 {

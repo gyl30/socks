@@ -213,7 +213,11 @@ proxy_reality_connection::proxy_reality_connection(boost::asio::ip::tcp::socket 
                                                    reality::reality_record_context record_context,
                                                    const config& cfg,
                                                    const uint32_t conn_id)
-    : cfg_(cfg), conn_id_(conn_id), socket_(std::move(socket)), reality_engine_(std::move(record_context))
+    : cfg_(cfg),
+      conn_id_(conn_id),
+      strand_(boost::asio::make_strand(socket.get_executor())),
+      socket_(std::move(socket)),
+      reality_engine_(std::move(record_context))
 {
     boost::system::error_code ec;
     const auto local_endpoint = socket_.local_endpoint(ec);
@@ -298,6 +302,7 @@ boost::asio::awaitable<void> proxy_reality_connection::write(const std::span<con
     {
         co_return;
     }
+    co_await boost::asio::dispatch(strand_, boost::asio::use_awaitable);
 
     const std::vector<uint8_t> plaintext(data.begin(), data.end());
     const auto ciphertext = reality_engine_.encrypt_record(plaintext, ec);
@@ -361,6 +366,7 @@ boost::asio::awaitable<bool> proxy_reality_connection::ensure_plaintext_availabl
         auto record = reality_engine_.decrypt_record(ec);
         if (ec)
         {
+            const auto error_message = ec.message();
             LOG_WARN("{} conn {} local {}:{} remote {}:{} stage decrypt_record error {}",
                      log_event::kDataRecv,
                      conn_id_,
@@ -368,7 +374,7 @@ boost::asio::awaitable<bool> proxy_reality_connection::ensure_plaintext_availabl
                      local_port_,
                      remote_host_,
                      remote_port_,
-                     ec.message());
+                     error_message);
             co_return false;
         }
         if (record.has_value())
@@ -402,8 +408,9 @@ boost::asio::awaitable<bool> proxy_reality_connection::ensure_plaintext_availabl
         const auto bytes_read = co_await net::wait_read_some_with_timeout(socket_, read_buffer, timeout_sec, ec);
         if (ec)
         {
-            if (ec != boost::asio::error::eof)
+            if (!net::is_socket_close_error(ec))
             {
+                const auto error_message = ec.message();
                 LOG_WARN("{} conn {} local {}:{} remote {}:{} stage read_ciphertext error {}",
                          log_event::kDataRecv,
                          conn_id_,
@@ -411,7 +418,7 @@ boost::asio::awaitable<bool> proxy_reality_connection::ensure_plaintext_availabl
                          local_port_,
                          remote_host_,
                          remote_port_,
-                         ec.message());
+                         error_message);
             }
             co_return false;
         }
@@ -429,6 +436,7 @@ boost::asio::awaitable<std::size_t> proxy_reality_connection::read_some(std::vec
                                                                         const uint32_t timeout_sec,
                                                                         boost::system::error_code& ec)
 {
+    co_await boost::asio::dispatch(strand_, boost::asio::use_awaitable);
     if (buffer.empty())
     {
         buffer.resize(constants::net::kBufferSize);
@@ -464,6 +472,7 @@ boost::asio::awaitable<bool> proxy_reality_connection::read_exact(std::vector<ui
 
 boost::asio::awaitable<std::vector<uint8_t>> proxy_reality_connection::read_packet(const uint32_t timeout_sec, boost::system::error_code& ec)
 {
+    co_await boost::asio::dispatch(strand_, boost::asio::use_awaitable);
     std::vector<uint8_t> header;
     if (!(co_await read_exact(header, 4, timeout_sec, ec)))
     {
@@ -497,6 +506,7 @@ boost::asio::awaitable<std::vector<uint8_t>> proxy_reality_connection::read_pack
 
 boost::asio::awaitable<void> proxy_reality_connection::shutdown_send(boost::system::error_code& ec)
 {
+    co_await boost::asio::dispatch(strand_, boost::asio::use_awaitable);
     ec = socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
     if (ec == boost::asio::error::not_connected)
     {
@@ -506,6 +516,24 @@ boost::asio::awaitable<void> proxy_reality_connection::shutdown_send(boost::syst
 }
 
 void proxy_reality_connection::close(boost::system::error_code& ec)
+{
+    ec.clear();
+    auto self = shared_from_this();
+    if (strand_.running_in_this_thread())
+    {
+        close_on_strand(ec);
+        return;
+    }
+
+    boost::asio::dispatch(strand_,
+                          [self]()
+                          {
+                              boost::system::error_code ignored_ec;
+                              self->close_on_strand(ignored_ec);
+                          });
+}
+
+void proxy_reality_connection::close_on_strand(boost::system::error_code& ec)
 {
     ec = socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
     if (ec == boost::asio::error::not_connected)

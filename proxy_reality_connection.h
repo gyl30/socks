@@ -18,7 +18,7 @@
 namespace relay
 {
 
-class proxy_reality_connection
+class proxy_reality_connection : public std::enable_shared_from_this<proxy_reality_connection>
 {
    public:
     proxy_reality_connection(boost::asio::ip::tcp::socket socket,
@@ -52,6 +52,7 @@ class proxy_reality_connection
                                                           uint32_t timeout_sec,
                                                           boost::system::error_code& ec);
     [[nodiscard]] std::size_t consume_plaintext(std::span<uint8_t> output);
+    void close_on_strand(boost::system::error_code& ec);
 
    private:
     const config& cfg_;
@@ -60,6 +61,7 @@ class proxy_reality_connection
     uint16_t local_port_ = 0;
     std::string remote_host_ = "unknown";
     uint16_t remote_port_ = 0;
+    boost::asio::strand<boost::asio::any_io_executor> strand_;
     boost::asio::ip::tcp::socket socket_;
     reality_engine reality_engine_;
     std::vector<uint8_t> pending_plaintext_;

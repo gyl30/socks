@@ -82,7 +82,14 @@ void tproxy_udp_session::start()
     worker_.group.spawn([self = shared_from_this()]() -> boost::asio::awaitable<void> { co_await self->run(); });
 }
 
-void tproxy_udp_session::stop() { close_impl(); }
+void tproxy_udp_session::stop()
+{
+    boost::asio::dispatch(worker_.io_context,
+                          [self = shared_from_this()]
+                          {
+                              self->close_impl();
+                          });
+}
 
 boost::asio::awaitable<udp_enqueue_result> tproxy_udp_session::enqueue_packet(std::vector<uint8_t> payload)
 {
