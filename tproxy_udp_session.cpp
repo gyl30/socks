@@ -325,10 +325,12 @@ boost::asio::awaitable<bool> tproxy_udp_session::run_proxy_mode()
         [this]() -> boost::asio::awaitable<void> { co_await idle_watchdog(); },
         [this]() -> boost::asio::awaitable<void>
         {
-            if (proxy_outbound_ != nullptr)
+            for (const auto& outbound : proxy_outbounds_.take_all())
             {
-                co_await proxy_outbound_->close();
-                proxy_outbound_.reset();
+                if (outbound != nullptr)
+                {
+                    co_await outbound->close();
+                }
             }
         });
     co_return completed && close_reason_ != udp_close_reason::kTransportError;
@@ -531,7 +533,7 @@ boost::asio::awaitable<bool> tproxy_udp_session::apply_open_proxy_outbound_resul
         co_return false;
     }
 
-    proxy_outbound_ = connect_result.outbound;
+    proxy_outbounds_.put(outbound_tag_, connect_result.outbound);
     LOG_INFO("{} trace {:016x} conn {} opened proxy udp outbound client {}:{} target {}:{} bind {}:{}",
              log_event::kConnInit,
              trace_id_,
@@ -540,8 +542,8 @@ boost::asio::awaitable<bool> tproxy_udp_session::apply_open_proxy_outbound_resul
              client_endpoint_.port(),
              target_endpoint_.address().to_string(),
              target_endpoint_.port(),
-             proxy_outbound_->bind_host(),
-             proxy_outbound_->bind_port());
+             connect_result.outbound->bind_host(),
+             connect_result.outbound->bind_port());
     trace_store::instance().record_event(trace_event{
         .trace_id = trace_id_,
         .conn_id = conn_id_,
@@ -625,7 +627,8 @@ boost::asio::awaitable<void> tproxy_udp_session::direct_to_client()
 
 boost::asio::awaitable<void> tproxy_udp_session::packets_to_proxy()
 {
-    if (proxy_outbound_ == nullptr)
+    const auto outbound = proxy_outbounds_.get(outbound_tag_);
+    if (outbound == nullptr)
     {
         co_return;
     }
@@ -637,9 +640,9 @@ boost::asio::awaitable<void> tproxy_udp_session::packets_to_proxy()
     co_await relay_packet_channel_payloads(
         packet_channel_,
         relay_context,
-        [this](const std::vector<uint8_t>& payload, boost::system::error_code& ec) -> boost::asio::awaitable<void>
+        [this, outbound](const std::vector<uint8_t>& payload, boost::system::error_code& ec) -> boost::asio::awaitable<void>
         {
-            co_await proxy_outbound_->send_datagram(target_endpoint_.address().to_string(), target_endpoint_.port(), payload.data(), payload.size(), ec);
+            co_await outbound->send_datagram(target_endpoint_.address().to_string(), target_endpoint_.port(), payload.data(), payload.size(), ec);
             co_return;
         },
         [this](const boost::system::error_code& ec)
@@ -659,7 +662,8 @@ boost::asio::awaitable<void> tproxy_udp_session::packets_to_proxy()
 
 boost::asio::awaitable<void> tproxy_udp_session::proxy_to_client()
 {
-    if (proxy_outbound_ == nullptr)
+    const auto outbound = proxy_outbounds_.get(outbound_tag_);
+    if (outbound == nullptr)
     {
         co_return;
     }
@@ -670,7 +674,7 @@ boost::asio::awaitable<void> tproxy_udp_session::proxy_to_client()
         .rx_bytes = rx_bytes_,
     };
     co_await relay_proxy_outbound_replies(
-        proxy_outbound_,
+        outbound,
         relay_context,
         [this]() { return stopped_.load(std::memory_order_relaxed); },
         [this](const proxy::udp_datagram& datagram, boost::system::error_code& ec) -> boost::asio::awaitable<std::size_t>
@@ -892,10 +896,12 @@ void tproxy_udp_session::close_impl()
 
     idle_timer_.cancel();
     packet_channel_.close();
-    if (proxy_outbound_ != nullptr)
+    for (const auto& outbound : proxy_outbounds_.take_all())
     {
-        worker_.group.spawn([outbound = proxy_outbound_]() -> boost::asio::awaitable<void> { co_await outbound->close(); });
-        proxy_outbound_.reset();
+        if (outbound != nullptr)
+        {
+            worker_.group.spawn([outbound]() -> boost::asio::awaitable<void> { co_await outbound->close(); });
+        }
     }
 
     boost::system::error_code ec;

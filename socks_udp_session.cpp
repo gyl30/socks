@@ -231,8 +231,7 @@ socks_udp_session::socks_udp_session(boost::asio::ip::tcp::socket socket,
       direct_udp_socket_v6_(worker.io_context),
       router_(std::move(router)),
       resolved_targets_(constants::udp::kMaxCacheEntries),
-      direct_peers_(constants::udp::kMaxCacheEntries),
-      proxy_outbound_channel_(worker.io_context, 1)
+      direct_peers_(constants::udp::kMaxCacheEntries)
 {
     last_activity_time_ms_ = net::now_ms();
 }
@@ -253,12 +252,13 @@ void socks_udp_session::close_impl()
     close_reason_ = stop_udp_close_reason(close_reason_);
     timer_.cancel();
     idle_timer_.cancel();
-    proxy_outbound_channel_.close();
-    if (proxy_outbound_ != nullptr)
+
+    for (const auto& outbound : proxy_outbounds_.take_all())
     {
-        worker_.group.spawn([outbound = proxy_outbound_]() -> boost::asio::awaitable<void> { co_await outbound->close(); });
-        proxy_outbound_.reset();
-        proxy_outbound_started_ = false;
+        if (outbound != nullptr)
+        {
+            worker_.group.spawn([outbound]() -> boost::asio::awaitable<void> { co_await outbound->close(); });
+        }
     }
 
     boost::system::error_code tcp_close_ec;
@@ -398,18 +398,11 @@ boost::asio::awaitable<void> socks_udp_session::run(const std::string& host, con
             using boost::asio::experimental::awaitable_operators::operator||;
             if (cfg_.timeout.idle == 0)
             {
-                co_await (udp_socket_loop() || wait_and_proxy_to_udp_sock() || keep_tcp_alive());
+                co_await (udp_socket_loop() || keep_tcp_alive());
             }
             else
             {
-                co_await (udp_socket_loop() || wait_and_proxy_to_udp_sock() || keep_tcp_alive() || idle_watchdog());
-            }
-
-            if (proxy_outbound_ != nullptr)
-            {
-                co_await proxy_outbound_->close();
-                proxy_outbound_.reset();
-                proxy_outbound_started_ = false;
+                co_await (udp_socket_loop() || keep_tcp_alive() || idle_watchdog());
             }
             co_return true;
         },
@@ -427,7 +420,7 @@ boost::asio::awaitable<void> socks_udp_session::run(const std::string& host, con
                                                               inbound_tag_,
                                                               "socks",
                                                               proxy_outbound_tag_,
-                                                              proxy_outbound_ != nullptr ? "proxy" : "direct",
+                                                              proxy_outbounds_.empty() ? "direct" : "proxy",
                                                               udp_bind_host_,
                                                               udp_bind_port_,
                                                               tcp_peer_host_,
@@ -679,12 +672,7 @@ boost::asio::awaitable<bool> socks_udp_session::process_udp_packet(const socks_u
     if (decision.route == route_type::kProxy)
     {
         boost::system::error_code open_ec;
-        if (!(co_await ensure_proxy_outbound(open_ec)))
-        {
-            co_return false;
-        }
-
-        const auto outbound = proxy_outbound_;
+        const auto outbound = co_await ensure_proxy_outbound(decision.outbound_tag, open_ec);
         if (outbound == nullptr)
         {
             co_return false;
@@ -694,7 +682,7 @@ boost::asio::awaitable<bool> socks_udp_session::process_udp_packet(const socks_u
         co_await outbound->send_datagram(udp_header.addr, udp_header.port, payload, payload_len, write_ec);
         if (write_ec)
         {
-            clear_proxy_outbound_if_current(outbound);
+            clear_proxy_outbound_if_current(decision.outbound_tag, outbound);
             co_await outbound->close();
             LOG_WARN("{} trace {:016x} conn {} client {}:{} udp bind {}:{} target {}:{} write proxy udp datagram failed {}",
                      log_event::kSocks,
@@ -1131,7 +1119,8 @@ boost::asio::awaitable<std::size_t> socks_udp_session::forward_proxy_reply_to_cl
     co_return send_n;
 }
 
-boost::asio::awaitable<bool> socks_udp_session::connect_proxy_outbound(boost::system::error_code& ec)
+boost::asio::awaitable<std::shared_ptr<udp_proxy_outbound>> socks_udp_session::connect_proxy_outbound(const std::string& outbound_tag,
+                                                                                                      boost::system::error_code& ec)
 {
     trace_store::instance().record_event(trace_event{
         .trace_id = trace_id_,
@@ -1140,7 +1129,7 @@ boost::asio::awaitable<bool> socks_udp_session::connect_proxy_outbound(boost::sy
         .result = trace_result::kOk,
         .inbound_tag = inbound_tag_,
         .inbound_type = "socks",
-        .outbound_tag = proxy_outbound_tag_,
+        .outbound_tag = outbound_tag,
         .outbound_type = "proxy",
         .target_host = has_last_target_ ? last_target_addr_ : "unknown",
         .target_port = static_cast<uint16_t>(has_last_target_ ? last_target_port_ : 0U),
@@ -1150,11 +1139,13 @@ boost::asio::awaitable<bool> socks_udp_session::connect_proxy_outbound(boost::sy
         .remote_port = tcp_peer_port_,
     });
     const auto request = make_proxy_outbound_request();
-    const auto connect_result = co_await connect_udp_proxy_flow(worker_.io_context.get_executor(), request, proxy_outbound_tag_, cfg_);
-    co_return co_await apply_proxy_outbound_connect_result(connect_result, ec);
+    const auto connect_result = co_await connect_udp_proxy_flow(worker_.io_context.get_executor(), request, outbound_tag, cfg_);
+    co_return co_await apply_proxy_outbound_connect_result(outbound_tag, connect_result, ec);
 }
 
-void socks_udp_session::record_proxy_outbound_connect_result(const bool success, const boost::system::error_code& ec) const
+void socks_udp_session::record_proxy_outbound_connect_result(const std::string& outbound_tag,
+                                                             const bool success,
+                                                             const boost::system::error_code& ec) const
 {
     trace_event event{
         .trace_id = trace_id_,
@@ -1163,7 +1154,7 @@ void socks_udp_session::record_proxy_outbound_connect_result(const bool success,
         .result = success ? trace_result::kOk : trace_result::kFail,
         .inbound_tag = inbound_tag_,
         .inbound_type = "socks",
-        .outbound_tag = proxy_outbound_tag_,
+        .outbound_tag = outbound_tag,
         .outbound_type = "proxy",
         .target_host = has_last_target_ ? last_target_addr_ : "unknown",
         .target_port = static_cast<uint16_t>(has_last_target_ ? last_target_port_ : 0U),
@@ -1180,13 +1171,13 @@ void socks_udp_session::record_proxy_outbound_connect_result(const bool success,
     trace_store::instance().record_event(std::move(event));
 }
 
-boost::asio::awaitable<bool> socks_udp_session::apply_proxy_outbound_connect_result(
-    const udp_proxy_outbound_connect_result& connect_result, boost::system::error_code& ec)
+boost::asio::awaitable<std::shared_ptr<udp_proxy_outbound>> socks_udp_session::apply_proxy_outbound_connect_result(
+    const std::string& outbound_tag, const udp_proxy_outbound_connect_result& connect_result, boost::system::error_code& ec)
 {
     if (connect_result.ec || connect_result.outbound == nullptr)
     {
         ec = connect_result.ec ? connect_result.ec : boost::asio::error::not_connected;
-        record_proxy_outbound_connect_result(false, ec);
+        record_proxy_outbound_connect_result(outbound_tag, false, ec);
         LOG_WARN("{} trace {:016x} conn {} client {}:{} udp bind {}:{} target {}:{} connect proxy udp outbound failed {} rep {}",
                  log_event::kSocks,
                  trace_id_,
@@ -1199,11 +1190,11 @@ boost::asio::awaitable<bool> socks_udp_session::apply_proxy_outbound_connect_res
                  has_last_target_ ? last_target_port_ : 0,
                  ec.message(),
                  connect_result.socks_rep);
-        co_return false;
+        co_return nullptr;
     }
 
-    proxy_outbound_ = connect_result.outbound;
-    record_proxy_outbound_connect_result(true, {});
+    proxy_outbounds_.put(outbound_tag, connect_result.outbound);
+    record_proxy_outbound_connect_result(outbound_tag, true, {});
     LOG_INFO("{} trace {:016x} conn {} client {}:{} udp bind {}:{} target {}:{} proxy udp outbound ready bind {}:{}",
              log_event::kSocks,
              trace_id_,
@@ -1214,71 +1205,37 @@ boost::asio::awaitable<bool> socks_udp_session::apply_proxy_outbound_connect_res
              udp_bind_port_,
              has_last_target_ ? last_target_addr_ : "unknown",
              has_last_target_ ? last_target_port_ : 0,
-             proxy_outbound_->bind_host(),
-             proxy_outbound_->bind_port());
-    co_return true;
+             connect_result.outbound->bind_host(),
+             connect_result.outbound->bind_port());
+    start_proxy_outbound_reader(outbound_tag, connect_result.outbound);
+    co_return connect_result.outbound;
 }
 
-boost::asio::awaitable<bool> socks_udp_session::start_proxy_outbound_reader(boost::system::error_code& ec)
+void socks_udp_session::start_proxy_outbound_reader(const std::string& outbound_tag, const std::shared_ptr<udp_proxy_outbound>& outbound)
 {
-    const auto [send_ec] =
-        co_await proxy_outbound_channel_.async_send(boost::system::error_code{}, proxy_outbound_, boost::asio::as_tuple(boost::asio::use_awaitable));
-    if (send_ec)
-    {
-        ec = send_ec;
-        LOG_WARN("{} trace {:016x} conn {} client {}:{} udp bind {}:{} target {}:{} start proxy udp reader failed {}",
-                 log_event::kSocks,
-                 trace_id_,
-                 conn_id_,
-                 current_client_host(),
-                 current_client_port(),
-                 udp_bind_host_,
-                 udp_bind_port_,
-                 has_last_target_ ? last_target_addr_ : "unknown",
-                 has_last_target_ ? last_target_port_ : 0,
-                 ec.message());
-        auto outbound = proxy_outbound_;
-        proxy_outbound_.reset();
-        proxy_outbound_started_ = false;
-        if (outbound != nullptr)
-        {
-            co_await outbound->close();
-        }
-        co_return false;
-    }
-    proxy_outbound_started_ = true;
-    co_return true;
+    worker_.group.spawn([self = shared_from_this(), outbound_tag, outbound]() -> boost::asio::awaitable<void>
+                         { co_await self->proxy_to_udp_sock(outbound_tag, outbound); });
 }
 
-boost::asio::awaitable<bool> socks_udp_session::ensure_proxy_outbound(boost::system::error_code& ec)
+boost::asio::awaitable<std::shared_ptr<udp_proxy_outbound>> socks_udp_session::ensure_proxy_outbound(const std::string& outbound_tag,
+                                                                                                     boost::system::error_code& ec)
 {
-    if (proxy_outbound_ == nullptr)
+    if (outbound_tag.empty())
     {
-        if (!(co_await connect_proxy_outbound(ec)))
-        {
-            co_return false;
-        }
+        ec = boost::asio::error::operation_not_supported;
+        co_return nullptr;
+    }
+    if (const auto outbound = proxy_outbounds_.get(outbound_tag); outbound != nullptr)
+    {
+        co_return outbound;
     }
 
-    if (!proxy_outbound_started_)
-    {
-        if (!(co_await start_proxy_outbound_reader(ec)))
-        {
-            co_return false;
-        }
-    }
-    co_return true;
+    co_return co_await connect_proxy_outbound(outbound_tag, ec);
 }
 
-void socks_udp_session::clear_proxy_outbound_if_current(const std::shared_ptr<udp_proxy_outbound>& outbound)
+void socks_udp_session::clear_proxy_outbound_if_current(const std::string& outbound_tag, const std::shared_ptr<udp_proxy_outbound>& outbound)
 {
-    if (outbound == nullptr || proxy_outbound_ != outbound)
-    {
-        return;
-    }
-
-    proxy_outbound_.reset();
-    proxy_outbound_started_ = false;
+    proxy_outbounds_.erase_if_current(outbound_tag, outbound);
 }
 
 boost::asio::awaitable<void> socks_udp_session::udp_socket_loop()
@@ -1407,25 +1364,7 @@ boost::asio::awaitable<void> socks_udp_session::udp_socket_loop()
     }
 }
 
-boost::asio::awaitable<void> socks_udp_session::wait_and_proxy_to_udp_sock()
-{
-    while (true)
-    {
-        auto [read_ec, outbound] = co_await proxy_outbound_channel_.async_receive(boost::asio::as_tuple(boost::asio::use_awaitable));
-        if (read_ec)
-        {
-            co_return;
-        }
-        if (outbound == nullptr)
-        {
-            continue;
-        }
-
-        co_await proxy_to_udp_sock(outbound);
-    }
-}
-
-boost::asio::awaitable<void> socks_udp_session::proxy_to_udp_sock(std::shared_ptr<udp_proxy_outbound> outbound)
+boost::asio::awaitable<void> socks_udp_session::proxy_to_udp_sock(std::string outbound_tag, std::shared_ptr<udp_proxy_outbound> outbound)
 {
     bool send_reply_failed = false;
     proxy_outbound_reply_relay_context relay_context{
@@ -1442,9 +1381,9 @@ boost::asio::awaitable<void> socks_udp_session::proxy_to_udp_sock(std::shared_pt
         {
             co_return co_await forward_proxy_reply_to_client(datagram, ec, send_reply_failed);
         },
-        [this, &outbound, &send_reply_failed](const boost::system::error_code& ec)
+        [this, &outbound_tag, &outbound, &send_reply_failed](const boost::system::error_code& ec)
         {
-            clear_proxy_outbound_if_current(outbound);
+            clear_proxy_outbound_if_current(outbound_tag, outbound);
             if (send_reply_failed)
             {
                 close_impl();
@@ -1463,7 +1402,7 @@ boost::asio::awaitable<void> socks_udp_session::proxy_to_udp_sock(std::shared_pt
                          ec.message());
             }
         });
-    clear_proxy_outbound_if_current(outbound);
+    clear_proxy_outbound_if_current(outbound_tag, outbound);
     if (!stopped_)
     {
         co_await outbound->close();

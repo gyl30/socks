@@ -293,9 +293,9 @@ boost::asio::awaitable<std::shared_ptr<udp_proxy_outbound>> reality_udp_session:
         co_return nullptr;
     }
 
-    if (const auto it = proxy_outbounds_.find(outbound_tag); it != proxy_outbounds_.end())
+    if (const auto outbound = proxy_outbounds_.get(outbound_tag); outbound != nullptr)
     {
-        co_return it->second;
+        co_return outbound;
     }
 
     trace_store::instance().record_event(trace_event{
@@ -364,7 +364,7 @@ boost::asio::awaitable<std::shared_ptr<udp_proxy_outbound>> reality_udp_session:
         co_return nullptr;
     }
 
-    proxy_outbounds_.insert_or_assign(outbound_tag, connect_result.outbound);
+    proxy_outbounds_.put(outbound_tag, connect_result.outbound);
     record_proxy_outbound_connect_result(outbound_tag, true, {});
     LOG_INFO("{} trace {:016x} conn {} out_tag {} proxy udp outbound ready bind {}:{}",
              log_event::kRoute,
@@ -383,19 +383,7 @@ boost::asio::awaitable<std::shared_ptr<udp_proxy_outbound>> reality_udp_session:
 
 boost::asio::awaitable<void> reality_udp_session::close_proxy_outbounds()
 {
-    std::vector<std::shared_ptr<udp_proxy_outbound>> outbounds;
-    outbounds.reserve(proxy_outbounds_.size());
-    for (const auto& [outbound_tag, outbound] : proxy_outbounds_)
-    {
-        (void)outbound_tag;
-        if (outbound != nullptr)
-        {
-            outbounds.push_back(outbound);
-        }
-    }
-    proxy_outbounds_.clear();
-
-    for (const auto& outbound : outbounds)
+    for (const auto& outbound : proxy_outbounds_.take_all())
     {
         if (outbound != nullptr)
         {
@@ -785,10 +773,7 @@ boost::asio::awaitable<void> reality_udp_session::proxy_to_connection(const std:
                      ec.message());
         });
 
-    if (const auto it = proxy_outbounds_.find(outbound_tag); it != proxy_outbounds_.end() && it->second == outbound)
-    {
-        proxy_outbounds_.erase(it);
-    }
+    proxy_outbounds_.erase_if_current(outbound_tag, outbound);
     if (!stopping_.load())
     {
         co_await outbound->close();

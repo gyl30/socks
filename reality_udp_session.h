@@ -6,7 +6,6 @@
 #include <memory>
 #include <string>
 #include <cstdint>
-#include <unordered_map>
 
 #include <boost/asio.hpp>
 #include <boost/asio/awaitable.hpp>
@@ -22,6 +21,7 @@
 #include "request_context.h"
 #include "task_group.h"
 #include "udp_proxy_outbound.h"
+#include "udp_proxy_outbound_registry.h"
 #include "proxy_reality_connection.h"
 
 namespace relay
@@ -112,7 +112,7 @@ class reality_udp_session : public std::enable_shared_from_this<reality_udp_sess
     std::shared_ptr<proxy_reality_connection> connection_;
     std::shared_ptr<router> router_;
     uint64_t last_activity_time_ms_{0};
-    std::unordered_map<std::string, std::shared_ptr<udp_proxy_outbound>> proxy_outbounds_;
+    udp_proxy_outbound_registry proxy_outbounds_;
     lru_cache<std::string, endpoint_cache_entry> resolved_targets_;
     lru_cache<boost::asio::ip::udp::endpoint, peer_cache_entry, net::udp_endpoint_hash, net::udp_endpoint_equal> allowed_reply_peers_;
     std::atomic<bool> stopping_{false};

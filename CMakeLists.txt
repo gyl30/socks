@@ -457,4 +457,20 @@ if(BUILD_TESTING)
 
   add_test(NAME socket_mark_regression COMMAND $<TARGET_FILE:socket_mark_regression>)
   set_tests_properties(socket_mark_regression PROPERTIES TIMEOUT 30)
+
+  foreach(UDP_TRANSPARENT_SCENARIO
+          route_blocked
+          idle_timeout
+          concurrent_sessions
+          closed_no_io
+          stopped
+          proxy_connect_fail
+          direct_connect_fail
+          transport_error
+          multi_outbound)
+    add_test(
+      NAME udp_transparent_${UDP_TRANSPARENT_SCENARIO}
+      COMMAND $<TARGET_FILE:udp_transparent_session_regression> ${UDP_TRANSPARENT_SCENARIO})
+    set_tests_properties(udp_transparent_${UDP_TRANSPARENT_SCENARIO} PROPERTIES TIMEOUT 30)
+  endforeach()
 endif()
