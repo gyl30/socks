@@ -26,6 +26,16 @@ namespace relay
 namespace
 {
 
+struct socks_udp_associate_result
+{
+    boost::system::error_code ec;
+    std::shared_ptr<boost::asio::ip::tcp::socket> control_socket;
+    std::string bind_host;
+    uint16_t bind_port = 0;
+    uint8_t socks_rep = socks::kRepSuccess;
+    bool success = false;
+};
+
 void set_connect_failure(udp_proxy_outbound_connect_result& result, const boost::system::error_code& ec)
 {
     result.ec = ec;
@@ -124,6 +134,51 @@ boost::asio::awaitable<bool> read_udp_associate_reply(boost::asio::ip::tcp::sock
     }
 
     co_return co_await socks_client::read_reply_address(socket, header[3], cfg, bind_host, bind_port, ec);
+}
+
+socks_udp_associate_result make_socks_udp_associate_failure(boost::system::error_code ec, const uint8_t socks_rep)
+{
+    socks_udp_associate_result result;
+    result.ec = ec;
+    result.socks_rep = socks_rep;
+    return result;
+}
+
+boost::asio::awaitable<socks_udp_associate_result> open_socks_udp_associate(const boost::asio::any_io_executor& executor,
+                                                                            const config::socks_t& settings,
+                                                                            const config& cfg,
+                                                                            const uint32_t conn_id,
+                                                                            const std::string& outbound_tag,
+                                                                            const uint32_t connect_mark)
+{
+    auto control_socket = std::make_shared<boost::asio::ip::tcp::socket>(executor);
+    boost::asio::ip::tcp::resolver tcp_resolver(executor);
+    boost::system::error_code ec;
+    if (!(co_await connect_socks_server(*control_socket, tcp_resolver, settings, cfg, conn_id, outbound_tag, connect_mark, ec)))
+    {
+        co_return make_socks_udp_associate_failure(ec ? ec : boost::asio::error::host_unreachable, socks::kRepSuccess);
+    }
+    if (!(co_await socks_client::negotiate_method(*control_socket, settings, cfg, ec)))
+    {
+        co_return make_socks_udp_associate_failure(
+            ec ? ec : boost::system::errc::make_error_code(boost::system::errc::permission_denied), socks::kRepSuccess);
+    }
+    if (!(co_await send_udp_associate_request(*control_socket, cfg, ec)))
+    {
+        co_return make_socks_udp_associate_failure(ec ? ec : boost::asio::error::operation_aborted, socks::kRepSuccess);
+    }
+
+    socks_udp_associate_result result;
+    result.control_socket = std::move(control_socket);
+    if (!(co_await read_udp_associate_reply(*result.control_socket, cfg, result.bind_host, result.bind_port, result.socks_rep, ec)))
+    {
+        result.ec = result.socks_rep != socks::kRepSuccess ? socks::map_socks_rep_to_connect_error(result.socks_rep)
+                                                           : (ec ? ec : boost::asio::error::operation_aborted);
+        co_return result;
+    }
+
+    result.success = true;
+    co_return result;
 }
 
 boost::asio::awaitable<boost::asio::ip::udp::endpoint> resolve_udp_endpoint(const boost::asio::any_io_executor& executor,
@@ -340,33 +395,11 @@ boost::asio::awaitable<udp_proxy_outbound_connect_result> udp_proxy_outbound::co
         co_return result;
     }
 
-    auto control_socket = std::make_shared<boost::asio::ip::tcp::socket>(executor);
-    boost::asio::ip::tcp::resolver tcp_resolver(executor);
-    boost::system::error_code ec;
-    if (!(co_await connect_socks_server(*control_socket, tcp_resolver, *settings, cfg, conn_id, outbound_tag, connect_mark, ec)))
+    auto associate = co_await open_socks_udp_associate(executor, *settings, cfg, conn_id, outbound_tag, connect_mark);
+    if (!associate.success)
     {
-        set_connect_failure(result, ec ? ec : boost::asio::error::host_unreachable);
-        co_return result;
-    }
-    if (!(co_await socks_client::negotiate_method(*control_socket, *settings, cfg, ec)))
-    {
-        set_connect_failure(result, ec ? ec : boost::system::errc::make_error_code(boost::system::errc::permission_denied));
-        co_return result;
-    }
-    if (!(co_await send_udp_associate_request(*control_socket, cfg, ec)))
-    {
-        set_connect_failure(result, ec ? ec : boost::asio::error::operation_aborted);
-        co_return result;
-    }
-
-    std::string bind_host;
-    uint16_t bind_port = 0;
-    uint8_t socks_rep = socks::kRepSuccess;
-    if (!(co_await read_udp_associate_reply(*control_socket, cfg, bind_host, bind_port, socks_rep, ec)))
-    {
-        result.socks_rep = socks_rep;
-        result.ec = socks_rep != socks::kRepSuccess ? socks::map_socks_rep_to_connect_error(socks_rep)
-                                                    : (ec ? ec : boost::asio::error::operation_aborted);
+        result.socks_rep = associate.socks_rep;
+        result.ec = associate.ec;
         if (result.socks_rep == socks::kRepSuccess)
         {
             result.socks_rep = socks::map_connect_error_to_socks_rep(result.ec);
@@ -374,8 +407,9 @@ boost::asio::awaitable<udp_proxy_outbound_connect_result> udp_proxy_outbound::co
         co_return result;
     }
 
-    const auto udp_host = select_socks_udp_host(bind_host, *control_socket);
-    auto udp_server_endpoint = co_await resolve_udp_endpoint(executor, udp_host, bind_port, cfg, ec);
+    boost::system::error_code ec;
+    const auto udp_host = select_socks_udp_host(associate.bind_host, *associate.control_socket);
+    auto udp_server_endpoint = co_await resolve_udp_endpoint(executor, udp_host, associate.bind_port, cfg, ec);
     if (ec)
     {
         set_connect_failure(result, ec);
@@ -389,10 +423,10 @@ boost::asio::awaitable<udp_proxy_outbound_connect_result> udp_proxy_outbound::co
         co_return result;
     }
 
-    auto upstream = std::make_shared<udp_proxy_outbound>(control_socket, udp_socket, udp_server_endpoint, cfg);
-    upstream->bind_host_ = bind_host;
-    upstream->bind_port_ = bind_port;
-    apply_bind_endpoint_result(result, bind_host, bind_port);
+    auto upstream = std::make_shared<udp_proxy_outbound>(associate.control_socket, udp_socket, udp_server_endpoint, cfg);
+    upstream->bind_host_ = associate.bind_host;
+    upstream->bind_port_ = associate.bind_port;
+    apply_bind_endpoint_result(result, associate.bind_host, associate.bind_port);
     result.outbound = std::move(upstream);
     co_return result;
 }
