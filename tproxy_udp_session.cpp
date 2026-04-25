@@ -280,34 +280,21 @@ boost::asio::awaitable<void> tproxy_udp_session::run()
         co_return;
     }
     const auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time_).count();
-    record_udp_session_close_trace(make_transparent_udp_trace_event(trace_id_,
-                                                                    conn_id_,
-                                                                    inbound_tag_,
-                                                                    "tproxy",
-                                                                    outbound_tag_,
-                                                                    outbound_type_,
-                                                                    client_endpoint_,
-                                                                    target_endpoint_,
-                                                                    relay::to_string(route_),
-                                                                    match_type_,
-                                                                    match_value_),
-                                   tx_bytes_,
-                                   rx_bytes_,
-                                   duration_ms,
-                                   close_reason_);
-    LOG_INFO("{} trace {:016x} conn {} client {}:{} target {}:{} route {} close_reason {} tx_bytes {} rx_bytes {} duration_ms {}",
-             log_event::kConnClose,
-             trace_id_,
-             conn_id_,
-             client_endpoint_.address().to_string(),
-             client_endpoint_.port(),
-             target_endpoint_.address().to_string(),
-             target_endpoint_.port(),
-             relay::to_string(route_),
-             to_string(close_reason_),
-             tx_bytes_,
-             rx_bytes_,
-             duration_ms);
+    record_transparent_udp_session_close(make_transparent_udp_trace_event(trace_id_,
+                                                                          conn_id_,
+                                                                          inbound_tag_,
+                                                                          "tproxy",
+                                                                          outbound_tag_,
+                                                                          outbound_type_,
+                                                                          client_endpoint_,
+                                                                          target_endpoint_,
+                                                                          relay::to_string(route_),
+                                                                          match_type_,
+                                                                          match_value_),
+                                         tx_bytes_,
+                                         rx_bytes_,
+                                         duration_ms,
+                                         close_reason_);
 }
 
 boost::asio::awaitable<bool> tproxy_udp_session::run_direct_mode()

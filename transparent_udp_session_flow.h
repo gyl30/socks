@@ -8,6 +8,7 @@
 #include <boost/asio/experimental/awaitable_operators.hpp>
 
 #include "udp_session_flow.h"
+#include "log.h"
 
 namespace relay
 {
@@ -84,6 +85,36 @@ void close_transparent_udp_proxy_outbounds(Worker& worker, Registry& proxy_outbo
             worker.group.spawn([outbound]() -> boost::asio::awaitable<void> { co_await outbound->close(); });
         }
     }
+}
+
+inline void record_transparent_udp_session_close(trace_event event,
+                                                 const uint64_t tx_bytes,
+                                                 const uint64_t rx_bytes,
+                                                 const uint64_t duration_ms,
+                                                 const udp_close_reason close_reason)
+{
+    const auto trace_id = event.trace_id;
+    const auto conn_id = event.conn_id;
+    const auto client_host = event.remote_host;
+    const auto client_port = event.remote_port;
+    const auto target_host = event.target_host;
+    const auto target_port = event.target_port;
+    const auto route = event.route_type;
+
+    record_udp_session_close_trace(std::move(event), tx_bytes, rx_bytes, duration_ms, close_reason);
+    LOG_INFO("{} trace {:016x} conn {} client {}:{} target {}:{} route {} close_reason {} tx_bytes {} rx_bytes {} duration_ms {}",
+             log_event::kConnClose,
+             trace_id,
+             conn_id,
+             client_host,
+             client_port,
+             target_host,
+             target_port,
+             route,
+             to_string(close_reason),
+             tx_bytes,
+             rx_bytes,
+             duration_ms);
 }
 
 }    // namespace relay
