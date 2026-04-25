@@ -855,14 +855,7 @@ boost::asio::awaitable<bool> tun_udp_session::send_to_client(const boost::asio::
 
 void tun_udp_session::mark_transport_error(const boost::system::error_code& ec)
 {
-    if (close_reason_ == udp_close_reason::kUnknown)
-    {
-        close_reason_ = udp_close_reason::kTransportError;
-    }
-    if (last_error_message_.empty())
-    {
-        last_error_message_ = ec.message();
-    }
+    mark_transparent_udp_transport_error(close_reason_, last_error_message_, ec);
     close_impl();
 }
 
@@ -877,13 +870,7 @@ void tun_udp_session::close_impl()
     boost::system::error_code ec;
     idle_timer_.cancel();
     packet_channel_.close();
-    for (const auto& outbound : proxy_outbounds_.take_all())
-    {
-        if (outbound != nullptr)
-        {
-            worker_.group.spawn([outbound]() -> boost::asio::awaitable<void> { co_await outbound->close(); });
-        }
-    }
+    close_transparent_udp_proxy_outbounds(worker_, proxy_outbounds_);
     upstream_socket_.close(ec);
 
     if (pcb_ != nullptr)

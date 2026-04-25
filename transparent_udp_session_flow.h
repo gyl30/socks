@@ -2,6 +2,7 @@
 #define TRANSPARENT_UDP_SESSION_FLOW_H
 
 #include <cstdint>
+#include <string>
 
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/experimental/awaitable_operators.hpp>
@@ -57,6 +58,32 @@ boost::asio::awaitable<bool> finish_transparent_udp_session(RunFn run_session, u
             notify_closed();
             co_return;
         });
+}
+
+inline void mark_transparent_udp_transport_error(udp_close_reason& close_reason,
+                                                std::string& last_error_message,
+                                                const boost::system::error_code& ec)
+{
+    if (close_reason == udp_close_reason::kUnknown)
+    {
+        close_reason = udp_close_reason::kTransportError;
+    }
+    if (last_error_message.empty())
+    {
+        last_error_message = ec.message();
+    }
+}
+
+template <typename Worker, typename Registry>
+void close_transparent_udp_proxy_outbounds(Worker& worker, Registry& proxy_outbounds)
+{
+    for (const auto& outbound : proxy_outbounds.take_all())
+    {
+        if (outbound != nullptr)
+        {
+            worker.group.spawn([outbound]() -> boost::asio::awaitable<void> { co_await outbound->close(); });
+        }
+    }
 }
 
 }    // namespace relay
