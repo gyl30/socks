@@ -299,20 +299,21 @@ boost::asio::awaitable<void> tproxy_udp_session::run()
 
 boost::asio::awaitable<bool> tproxy_udp_session::run_direct_mode()
 {
-    const bool completed = co_await run_transparent_udp_mode(
+    co_return co_await run_transparent_udp_mode_until_transport_error(
         cfg_.timeout.idle,
+        close_reason_,
         [this]() -> boost::asio::awaitable<bool> { co_return co_await open_direct_socket(); },
         [this]() -> boost::asio::awaitable<void> { co_await packets_to_direct(); },
         [this]() -> boost::asio::awaitable<void> { co_await direct_to_client(); },
         [this]() -> boost::asio::awaitable<void> { co_await idle_watchdog(); },
         []() -> boost::asio::awaitable<void> { co_return; });
-    co_return completed && close_reason_ != udp_close_reason::kTransportError;
 }
 
 boost::asio::awaitable<bool> tproxy_udp_session::run_proxy_mode()
 {
-    const bool completed = co_await run_transparent_udp_mode(
+    co_return co_await run_transparent_udp_mode_until_transport_error(
         cfg_.timeout.idle,
+        close_reason_,
         [this]() -> boost::asio::awaitable<bool> { co_return co_await open_proxy_outbound(); },
         [this]() -> boost::asio::awaitable<void> { co_await packets_to_proxy(); },
         [this]() -> boost::asio::awaitable<void> { co_await proxy_to_client(); },
@@ -327,7 +328,6 @@ boost::asio::awaitable<bool> tproxy_udp_session::run_proxy_mode()
                 }
             }
         });
-    co_return completed && close_reason_ != udp_close_reason::kTransportError;
 }
 
 void tproxy_udp_session::record_open_direct_socket_result(const bool success,

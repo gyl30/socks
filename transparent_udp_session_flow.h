@@ -48,6 +48,19 @@ boost::asio::awaitable<bool> run_transparent_udp_mode(const uint32_t idle_timeou
     co_return true;
 }
 
+template <typename OpenFn, typename ForwardFn, typename ReplyFn, typename IdleFn, typename CloseFn>
+boost::asio::awaitable<bool> run_transparent_udp_mode_until_transport_error(const uint32_t idle_timeout_sec,
+                                                                            udp_close_reason& close_reason,
+                                                                            OpenFn open_mode,
+                                                                            ForwardFn forward,
+                                                                            ReplyFn reply,
+                                                                            IdleFn idle,
+                                                                            CloseFn close_mode)
+{
+    const bool completed = co_await run_transparent_udp_mode(idle_timeout_sec, open_mode, forward, reply, idle, close_mode);
+    co_return completed && close_reason != udp_close_reason::kTransportError;
+}
+
 template <typename RunFn, typename NotifyFn>
 boost::asio::awaitable<bool> finish_transparent_udp_session(RunFn run_session, udp_close_reason& close_reason, NotifyFn notify_closed)
 {
