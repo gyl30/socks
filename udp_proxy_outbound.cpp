@@ -145,6 +145,67 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> resolve_udp_endpoint(cons
     co_return results.begin()->endpoint();
 }
 
+std::string select_socks_udp_host(const std::string& bind_host, boost::asio::ip::tcp::socket& control_socket)
+{
+    if (!bind_host.empty() && bind_host != "0.0.0.0" && bind_host != "::")
+    {
+        return bind_host;
+    }
+
+    boost::system::error_code remote_ec;
+    const auto remote_endpoint = control_socket.remote_endpoint(remote_ec);
+    if (remote_ec)
+    {
+        return bind_host;
+    }
+    return remote_endpoint.address().to_string();
+}
+
+void apply_bind_endpoint_result(udp_proxy_outbound_connect_result& result, const std::string& bind_host, const uint16_t bind_port)
+{
+    boost::system::error_code bind_ec;
+    const auto bind_addr = boost::asio::ip::make_address(bind_host, bind_ec);
+    if (bind_ec)
+    {
+        return;
+    }
+
+    result.bind_addr = socks_codec::normalize_ip_address(bind_addr);
+    result.bind_port = bind_port;
+    result.has_bind_endpoint = true;
+}
+
+boost::asio::awaitable<std::shared_ptr<boost::asio::ip::udp::socket>> open_socks_udp_socket(
+    const boost::asio::any_io_executor& executor,
+    const boost::asio::ip::udp::endpoint& udp_server_endpoint,
+    const uint32_t connect_mark,
+    boost::system::error_code& ec)
+{
+    auto udp_socket = std::make_shared<boost::asio::ip::udp::socket>(executor);
+    ec = udp_socket->open(udp_server_endpoint.protocol(), ec);
+    if (ec)
+    {
+        co_return nullptr;
+    }
+
+    if (connect_mark != 0)
+    {
+        net::set_socket_mark(udp_socket->native_handle(), connect_mark, ec);
+        if (ec)
+        {
+            co_return nullptr;
+        }
+    }
+
+    udp_socket->bind(boost::asio::ip::udp::endpoint(udp_server_endpoint.protocol(), 0), ec);
+    if (ec)
+    {
+        co_return nullptr;
+    }
+
+    co_return udp_socket;
+}
+
 boost::asio::awaitable<void> send_udp_packet_with_timeout(boost::asio::ip::udp::socket& socket,
                                                           const boost::asio::ip::udp::endpoint& endpoint,
                                                           const std::vector<uint8_t>& packet,
@@ -250,13 +311,9 @@ boost::asio::awaitable<udp_proxy_outbound_connect_result> udp_proxy_outbound::co
         co_return result;
     }
 
-    boost::system::error_code bind_ec;
-    const auto bind_addr = boost::asio::ip::make_address(reply.bind_host, bind_ec);
-    if (!bind_ec)
+    apply_bind_endpoint_result(result, reply.bind_host, reply.bind_port);
+    if (result.has_bind_endpoint)
     {
-        result.bind_addr = socks_codec::normalize_ip_address(bind_addr);
-        result.bind_port = reply.bind_port;
-        result.has_bind_endpoint = true;
         upstream->bind_host_ = result.bind_addr.to_string();
         upstream->bind_port_ = result.bind_port;
     }
@@ -317,16 +374,7 @@ boost::asio::awaitable<udp_proxy_outbound_connect_result> udp_proxy_outbound::co
         co_return result;
     }
 
-    std::string udp_host = bind_host;
-    boost::system::error_code remote_ec;
-    const auto remote_endpoint = control_socket->remote_endpoint(remote_ec);
-    if (udp_host.empty() || udp_host == "0.0.0.0" || udp_host == "::")
-    {
-        if (!remote_ec)
-        {
-            udp_host = remote_endpoint.address().to_string();
-        }
-    }
+    const auto udp_host = select_socks_udp_host(bind_host, *control_socket);
     auto udp_server_endpoint = co_await resolve_udp_endpoint(executor, udp_host, bind_port, cfg, ec);
     if (ec)
     {
@@ -334,24 +382,8 @@ boost::asio::awaitable<udp_proxy_outbound_connect_result> udp_proxy_outbound::co
         co_return result;
     }
 
-    auto udp_socket = std::make_shared<boost::asio::ip::udp::socket>(executor);
-    ec = udp_socket->open(udp_server_endpoint.protocol(), ec);
-    if (ec)
-    {
-        set_connect_failure(result, ec);
-        co_return result;
-    }
-    if (connect_mark != 0)
-    {
-        net::set_socket_mark(udp_socket->native_handle(), connect_mark, ec);
-        if (ec)
-        {
-            set_connect_failure(result, ec);
-            co_return result;
-        }
-    }
-    udp_socket->bind(boost::asio::ip::udp::endpoint(udp_server_endpoint.protocol(), 0), ec);
-    if (ec)
+    auto udp_socket = co_await open_socks_udp_socket(executor, udp_server_endpoint, connect_mark, ec);
+    if (udp_socket == nullptr)
     {
         set_connect_failure(result, ec);
         co_return result;
@@ -360,14 +392,7 @@ boost::asio::awaitable<udp_proxy_outbound_connect_result> udp_proxy_outbound::co
     auto upstream = std::make_shared<udp_proxy_outbound>(control_socket, udp_socket, udp_server_endpoint, cfg);
     upstream->bind_host_ = bind_host;
     upstream->bind_port_ = bind_port;
-    boost::system::error_code bind_ec;
-    const auto bind_addr = boost::asio::ip::make_address(bind_host, bind_ec);
-    if (!bind_ec)
-    {
-        result.bind_addr = socks_codec::normalize_ip_address(bind_addr);
-        result.bind_port = bind_port;
-        result.has_bind_endpoint = true;
-    }
+    apply_bind_endpoint_result(result, bind_host, bind_port);
     result.outbound = std::move(upstream);
     co_return result;
 }
