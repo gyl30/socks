@@ -531,27 +531,39 @@ boost::asio::awaitable<proxy::udp_datagram> udp_proxy_outbound::receive_datagram
 {
     if (mode_ == upstream_mode::kReality)
     {
-        if (connection_ == nullptr)
-        {
-            ec = boost::asio::error::not_connected;
-            co_return proxy::udp_datagram{};
-        }
-
-        const auto packet = co_await connection_->read_packet(timeout_sec, ec);
-        if (ec)
-        {
-            co_return proxy::udp_datagram{};
-        }
-
-        proxy::udp_datagram datagram;
-        if (!proxy::decode_udp_datagram(packet.data(), packet.size(), datagram))
-        {
-            ec = boost::asio::error::invalid_argument;
-            co_return proxy::udp_datagram{};
-        }
-        co_return datagram;
+        co_return co_await receive_reality_datagram(timeout_sec, ec);
     }
 
+    co_return co_await receive_socks_datagram(timeout_sec, ec);
+}
+
+boost::asio::awaitable<proxy::udp_datagram> udp_proxy_outbound::receive_reality_datagram(const uint32_t timeout_sec,
+                                                                                         boost::system::error_code& ec)
+{
+    if (connection_ == nullptr)
+    {
+        ec = boost::asio::error::not_connected;
+        co_return proxy::udp_datagram{};
+    }
+
+    const auto packet = co_await connection_->read_packet(timeout_sec, ec);
+    if (ec)
+    {
+        co_return proxy::udp_datagram{};
+    }
+
+    proxy::udp_datagram datagram;
+    if (!proxy::decode_udp_datagram(packet.data(), packet.size(), datagram))
+    {
+        ec = boost::asio::error::invalid_argument;
+        co_return proxy::udp_datagram{};
+    }
+    co_return datagram;
+}
+
+boost::asio::awaitable<proxy::udp_datagram> udp_proxy_outbound::receive_socks_datagram(const uint32_t timeout_sec,
+                                                                                       boost::system::error_code& ec)
+{
     if (socks_udp_socket_ == nullptr)
     {
         ec = boost::asio::error::not_connected;

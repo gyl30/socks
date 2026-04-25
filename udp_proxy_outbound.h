@@ -74,6 +74,8 @@ class udp_proxy_outbound : public std::enable_shared_from_this<udp_proxy_outboun
     };
 
     [[nodiscard]] uint32_t associate_reply_timeout() const;
+    [[nodiscard]] boost::asio::awaitable<proxy::udp_datagram> receive_reality_datagram(uint32_t timeout_sec, boost::system::error_code& ec);
+    [[nodiscard]] boost::asio::awaitable<proxy::udp_datagram> receive_socks_datagram(uint32_t timeout_sec, boost::system::error_code& ec);
 
    private:
     const config& cfg_;
