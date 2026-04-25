@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import ipaddress
 import json
 import os
 import pathlib
@@ -36,6 +37,59 @@ def recv_exact(sock, size):
             raise RuntimeError("unexpected eof")
         data.extend(chunk)
     return bytes(data)
+
+
+def parse_socks_address(sock):
+    atyp = recv_exact(sock, 1)[0]
+    if atyp == 0x01:
+        host = socket.inet_ntoa(recv_exact(sock, 4))
+    elif atyp == 0x03:
+        host_len = recv_exact(sock, 1)[0]
+        host = recv_exact(sock, host_len).decode("utf-8")
+    elif atyp == 0x04:
+        host = socket.inet_ntop(socket.AF_INET6, recv_exact(sock, 16))
+    else:
+        raise RuntimeError(f"unsupported atyp {atyp}")
+    port = struct.unpack("!H", recv_exact(sock, 2))[0]
+    return host, port
+
+
+def encode_socks_udp_header(host, port):
+    addr = ipaddress.ip_address(host)
+    header = bytearray(b"\x00\x00\x00")
+    if addr.version == 4:
+        header.append(0x01)
+        header.extend(addr.packed)
+    else:
+        header.append(0x04)
+        header.extend(addr.packed)
+    header.extend(struct.pack("!H", port))
+    return bytes(header)
+
+
+def send_udp_associate_and_close(socks_host, socks_port, target_host, target_port, payload, timeout=3.0):
+    tcp_sock = socket.create_connection((socks_host, socks_port), timeout=timeout)
+    tcp_sock.settimeout(timeout)
+    udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    udp_sock.settimeout(timeout)
+    try:
+        tcp_sock.sendall(b"\x05\x01\x00")
+        method_reply = recv_exact(tcp_sock, 2)
+        if method_reply != b"\x05\x00":
+            raise RuntimeError(f"unexpected method reply {method_reply!r}")
+
+        tcp_sock.sendall(b"\x05\x03\x00\x01\x00\x00\x00\x00\x00\x00")
+        version, rep, _rsv = recv_exact(tcp_sock, 3)
+        if version != 0x05 or rep != 0x00:
+            raise RuntimeError(f"udp associate failed version={version} rep={rep}")
+        relay_host, relay_port = parse_socks_address(tcp_sock)
+
+        packet = encode_socks_udp_header(target_host, target_port) + payload
+        udp_sock.sendto(packet, (relay_host, relay_port))
+        time.sleep(0.2)
+    finally:
+        udp_sock.close()
+        tcp_sock.close()
 
 
 class FakeSocksUdpEchoServer:
@@ -195,7 +249,7 @@ def main():
         client_log = temp_root / "client.log"
         https_log = temp_root / "https.log"
         udp_log = temp_root / "udp.log"
-        fake_socks_server = FakeSocksUdpEchoServer(expected_sessions=2)
+        fake_socks_server = FakeSocksUdpEchoServer(expected_sessions=3)
 
         https_process = start_process(
             [
@@ -463,6 +517,14 @@ def main():
         if udp_result.stdout.strip() != "udp-smoke":
             raise RuntimeError(f"unexpected udp response {udp_result.stdout!r}")
 
+        send_udp_associate_and_close(
+            socks_host,
+            socks_port,
+            "127.0.0.2",
+            53100,
+            b"udp-close-while-reply-pending",
+        )
+
         multi_udp_result = run_checked(
             [
                 sys.executable,
@@ -510,6 +572,7 @@ def main():
         print("reality_sni_hijack ok")
         print("parallel_proxy ok")
         print("udp_associate ok")
+        print("udp_associate_early_close ok")
         print("reality_udp_multi_outbound ok")
         if args.real_url:
             print("real_https_url ok")
