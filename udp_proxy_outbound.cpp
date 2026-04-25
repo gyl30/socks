@@ -485,28 +485,40 @@ boost::asio::awaitable<void> udp_proxy_outbound::send_datagram(
 {
     if (mode_ == upstream_mode::kReality)
     {
-        if (connection_ == nullptr)
-        {
-            ec = boost::asio::error::not_connected;
-            co_return;
-        }
-
-        proxy::udp_datagram datagram;
-        datagram.target_host = host;
-        datagram.target_port = port;
-        datagram.payload.assign(payload, payload + static_cast<std::ptrdiff_t>(payload_len));
-
-        std::vector<uint8_t> packet;
-        if (!proxy::encode_udp_datagram(datagram, packet))
-        {
-            ec = boost::asio::error::message_size;
-            co_return;
-        }
-
-        co_await connection_->write_packet(packet, ec);
+        co_await send_reality_datagram(host, port, payload, payload_len, ec);
         co_return;
     }
 
+    co_await send_socks_datagram(host, port, payload, payload_len, ec);
+}
+
+boost::asio::awaitable<void> udp_proxy_outbound::send_reality_datagram(
+    const std::string& host, const uint16_t port, const uint8_t* payload, const std::size_t payload_len, boost::system::error_code& ec)
+{
+    if (connection_ == nullptr)
+    {
+        ec = boost::asio::error::not_connected;
+        co_return;
+    }
+
+    proxy::udp_datagram datagram;
+    datagram.target_host = host;
+    datagram.target_port = port;
+    datagram.payload.assign(payload, payload + static_cast<std::ptrdiff_t>(payload_len));
+
+    std::vector<uint8_t> packet;
+    if (!proxy::encode_udp_datagram(datagram, packet))
+    {
+        ec = boost::asio::error::message_size;
+        co_return;
+    }
+
+    co_await connection_->write_packet(packet, ec);
+}
+
+boost::asio::awaitable<void> udp_proxy_outbound::send_socks_datagram(
+    const std::string& host, const uint16_t port, const uint8_t* payload, const std::size_t payload_len, boost::system::error_code& ec)
+{
     if (socks_udp_socket_ == nullptr)
     {
         ec = boost::asio::error::not_connected;
