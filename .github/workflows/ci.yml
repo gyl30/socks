@@ -176,10 +176,12 @@ jobs:
                 -DOPENSSL_ROOT_DIR="${OPENSSL_ROOT}" \
                 -DCMAKE_PREFIX_PATH="${BOOST_ROOT};${OPENSSL_ROOT}"
 
-              cmake --build build --target socks --parallel
               if [ "${ARCH}" = "x86" ] && [ "${COMPILER}" = "clang" ]; then
+                cmake --build build --parallel
                 ctest --test-dir build --output-on-failure
                 bash scripts/test_socks5.sh build/socks
+              else
+                cmake --build build --target socks --parallel
               fi
               ccache -s
             '
@@ -211,6 +213,7 @@ jobs:
                 bzip2 \
                 tar \
                 wget \
+                python3 \
                 perl \
                 cmake \
                 ninja \

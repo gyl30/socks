@@ -11,10 +11,10 @@
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
-#include <netioapi.h>
-#include <windows.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <windows.h>
+#include <netioapi.h>
 #else
 #include <fcntl.h>
 #include <unistd.h>

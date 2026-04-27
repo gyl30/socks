@@ -7,9 +7,10 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <stdint.h>
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #include <windows.h>
 #include <netioapi.h>
-#include <winsock2.h>
 
 #ifdef __cplusplus
 extern "C"
