@@ -10,7 +10,8 @@
 namespace relay::proxy
 {
 
-constexpr uint32_t kMaxPacketSize = 1024U * 1024U;
+// message_type + atyp + domain_len + max_domain + port + max_udp_payload
+constexpr uint32_t kMaxPacketSize = 1U + 1U + 1U + 255U + 2U + 65507U;
 
 enum class message_type : uint8_t
 {

@@ -69,8 +69,8 @@ constexpr std::size_t kMaxCacheEntries = 1024;
 constexpr uint64_t kCacheTtlMs = 10ULL * 60ULL * 1000ULL;
 constexpr uint64_t kNegativeCacheTtlMs = 3ULL * 1000ULL;
 constexpr std::size_t kMaxReplySockets = 512;
-constexpr std::size_t kMaxPacketSize = 8192;
 constexpr std::size_t kMaxPayload = 65507;
+constexpr std::size_t kMaxPacketSize = kMaxPayload;
 constexpr std::size_t kTcpControlReadBufferSize = 1024;
 constexpr std::size_t kTcpControlIgnoreLimitBytes = 4096;
 }    // namespace udp
