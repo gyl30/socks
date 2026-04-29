@@ -10,8 +10,9 @@
 #include <boost/asio/awaitable.hpp>
 
 #include "config.h"
-#include "tcp_outbound_stream.h"
+#include "proxy_protocol.h"
 #include "proxy_reality_connection.h"
+#include "tcp_outbound_stream.h"
 
 namespace relay
 {
@@ -56,7 +57,8 @@ class proxy_connection_stream_relay_transport final : public stream_relay_transp
     std::shared_ptr<proxy_reality_connection> connection_;
     const config::timeout_t& timeout_;
     std::vector<uint8_t> pending_read_data_;
-    bool recv_shutdown_ = false;
+    relay::proxy::tcp_stream_recv_state recv_state_;
+    relay::proxy::tcp_stream_send_state send_state_;
 };
 
 class outbound_stream_relay_transport final : public stream_relay_transport

@@ -260,6 +260,30 @@ std::string_view message_name(const message_type type)
     return "unknown";
 }
 
+bool tcp_stream_send_state::can_send_data(const std::span<const uint8_t> payload) const
+{
+    return !shutdown_sent_ && !payload.empty() && payload.size() + 1U <= kMaxPacketSize;
+}
+
+bool tcp_stream_recv_state::accept(const tcp_stream_frame& frame)
+{
+    switch (frame.kind)
+    {
+        case tcp_stream_frame_kind::kData:
+            return !shutdown_seen_ && !frame.payload.empty();
+        case tcp_stream_frame_kind::kShutdown:
+            if (shutdown_seen_)
+            {
+                return false;
+            }
+            shutdown_seen_ = true;
+            return true;
+        case tcp_stream_frame_kind::kInvalid:
+        default:
+            return false;
+    }
+}
+
 bool encode_tcp_connect_request(const tcp_connect_request& request, std::vector<uint8_t>& out)
 {
     out.clear();
@@ -400,7 +424,8 @@ bool decode_udp_datagram(const uint8_t* data, const std::size_t len, udp_datagra
 
 bool encode_tcp_stream_data(const std::span<const uint8_t> payload, std::vector<uint8_t>& out)
 {
-    if (payload.empty() || payload.size() + 1U > kMaxPacketSize)
+    const tcp_stream_send_state state;
+    if (!state.can_send_data(payload))
     {
         return false;
     }
@@ -447,7 +472,8 @@ bool decode_tcp_stream_frame(const uint8_t* data, const std::size_t len, tcp_str
 
     out.kind = tcp_stream_frame_kind::kData;
     out.payload.assign(data + static_cast<std::ptrdiff_t>(pos), data + static_cast<std::ptrdiff_t>(len));
-    return true;
+    tcp_stream_recv_state state;
+    return state.accept(out);
 }
 
 }    // namespace relay::proxy

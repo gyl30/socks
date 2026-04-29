@@ -71,6 +71,30 @@ struct tcp_stream_frame
     std::vector<uint8_t> payload;
 };
 
+class tcp_stream_send_state
+{
+   public:
+    [[nodiscard]] bool can_send_data(std::span<const uint8_t> payload) const;
+    [[nodiscard]] bool can_send_shutdown() const { return !shutdown_sent_; }
+    void mark_shutdown_sent() { shutdown_sent_ = true; }
+    void reset() { shutdown_sent_ = false; }
+    [[nodiscard]] bool shutdown_sent() const { return shutdown_sent_; }
+
+   private:
+    bool shutdown_sent_ = false;
+};
+
+class tcp_stream_recv_state
+{
+   public:
+    [[nodiscard]] bool accept(const tcp_stream_frame& frame);
+    void reset() { shutdown_seen_ = false; }
+    [[nodiscard]] bool shutdown_seen() const { return shutdown_seen_; }
+
+   private:
+    bool shutdown_seen_ = false;
+};
+
 [[nodiscard]] std::string_view message_name(message_type type);
 
 [[nodiscard]] bool encode_tcp_connect_request(const tcp_connect_request& request, std::vector<uint8_t>& out);

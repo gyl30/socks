@@ -100,7 +100,7 @@ boost::asio::awaitable<std::size_t> proxy_connection_stream_relay_transport::rea
     {
         co_return consume_pending_read_data(pending_read_data_, buffer);
     }
-    if (recv_shutdown_)
+    if (recv_state_.shutdown_seen())
     {
         ec = boost::asio::error::eof;
         co_return 0;
@@ -121,10 +121,13 @@ boost::asio::awaitable<std::size_t> proxy_connection_stream_relay_transport::rea
             ec = boost::asio::error::invalid_argument;
             co_return 0;
         }
-
-        if (frame.kind == proxy::tcp_stream_frame_kind::kShutdown)
+        if (!recv_state_.accept(frame))
         {
-            recv_shutdown_ = true;
+            ec = boost::asio::error::invalid_argument;
+            co_return 0;
+        }
+        if (recv_state_.shutdown_seen())
+        {
             ec = boost::asio::error::eof;
             co_return 0;
         }
@@ -143,6 +146,11 @@ boost::asio::awaitable<std::size_t> proxy_connection_stream_relay_transport::wri
     if (connection_ == nullptr)
     {
         ec = boost::asio::error::operation_aborted;
+        co_return 0;
+    }
+    if (!send_state_.can_send_data(data))
+    {
+        ec = send_state_.shutdown_sent() ? boost::asio::error::broken_pipe : boost::asio::error::message_size;
         co_return 0;
     }
 
@@ -169,6 +177,10 @@ boost::asio::awaitable<void> proxy_connection_stream_relay_transport::shutdown_s
         ec = boost::asio::error::operation_aborted;
         co_return;
     }
+    if (!send_state_.can_send_shutdown())
+    {
+        co_return;
+    }
 
     std::vector<uint8_t> packet;
     if (!proxy::encode_tcp_stream_shutdown(packet))
@@ -177,6 +189,10 @@ boost::asio::awaitable<void> proxy_connection_stream_relay_transport::shutdown_s
         co_return;
     }
     co_await connection_->write_packet(packet, ec);
+    if (!ec)
+    {
+        send_state_.mark_shutdown_sent();
+    }
 }
 
 boost::asio::awaitable<void> proxy_connection_stream_relay_transport::close()
@@ -188,6 +204,9 @@ boost::asio::awaitable<void> proxy_connection_stream_relay_transport::close()
 
     boost::system::error_code ec;
     connection_->close(ec);
+    pending_read_data_.clear();
+    recv_state_.reset();
+    send_state_.reset();
     co_return;
 }
 

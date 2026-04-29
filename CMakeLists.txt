@@ -395,6 +395,12 @@ if(UNIX AND NOT APPLE AND NOT ENABLE_STATIC_LINK)
   target_link_options(socket_mark_regression PRIVATE "-Wl,--no-as-needed" "${BROTLICOMMON_LIBRARY}" "-Wl,--as-needed")
 endif()
 
+add_executable(proxy_protocol_regression scripts/test_proxy_protocol_regression.cpp)
+target_link_libraries(proxy_protocol_regression PRIVATE core)
+if(UNIX AND NOT APPLE AND NOT ENABLE_STATIC_LINK)
+  target_link_options(proxy_protocol_regression PRIVATE "-Wl,--no-as-needed" "${BROTLICOMMON_LIBRARY}" "-Wl,--as-needed")
+endif()
+
 if(ENABLE_FUZZ)
   add_executable(ch_parser_fuzz fuzz/ch_parser_fuzz.cpp)
   target_link_libraries(ch_parser_fuzz PRIVATE fuzz_core)
@@ -430,6 +436,10 @@ if(SOCKS_RUNTIME_DIRS)
     socket_mark_regression
     PROPERTIES BUILD_RPATH "${SOCKS_RUNTIME_DIRS}"
                INSTALL_RPATH "${SOCKS_RUNTIME_DIRS}")
+  set_target_properties(
+    proxy_protocol_regression
+    PROPERTIES BUILD_RPATH "${SOCKS_RUNTIME_DIRS}"
+               INSTALL_RPATH "${SOCKS_RUNTIME_DIRS}")
 endif()
 
 if(BUILD_TESTING)
@@ -457,6 +467,9 @@ if(BUILD_TESTING)
 
   add_test(NAME socket_mark_regression COMMAND $<TARGET_FILE:socket_mark_regression>)
   set_tests_properties(socket_mark_regression PROPERTIES TIMEOUT 30)
+
+  add_test(NAME proxy_protocol_regression COMMAND $<TARGET_FILE:proxy_protocol_regression>)
+  set_tests_properties(proxy_protocol_regression PROPERTIES TIMEOUT 30)
 
   foreach(UDP_TRANSPARENT_SCENARIO
           route_blocked
