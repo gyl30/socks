@@ -138,6 +138,121 @@ def run_socks_outbound_auth_guard_case(binary, runtime_env, temp_root):
         raise RuntimeError(f"unexpected outbound auth payload leaked {server_state['extra_data']!r}")
 
 
+def run_socks_outbound_required_auth_reply_guard_case(binary, runtime_env, temp_root):
+    listen_host = "127.0.0.1"
+    listen_port = allocate_tcp_port()
+    upstream_port = allocate_tcp_port()
+    log_path = temp_root / "socks-outbound-required-auth-reply-guard.log"
+    run_log = temp_root / "socks-outbound-required-auth-reply-guard.stdout.log"
+
+    cfg = {
+        "workers": 1,
+        "log": {
+            "level": "debug",
+            "file": str(log_path),
+        },
+        "timeout": {
+            "read": 5,
+            "write": 5,
+            "connect": 5,
+            "idle": 5,
+        },
+        "inbounds": [
+            {
+                "type": "socks",
+                "tag": "socks-in",
+                "settings": {
+                    "host": listen_host,
+                    "port": listen_port,
+                    "auth": False,
+                },
+            }
+        ],
+        "outbounds": [
+            {
+                "type": "socks",
+                "tag": "socks-out",
+                "settings": {
+                    "host": listen_host,
+                    "port": upstream_port,
+                    "auth": True,
+                    "username": "secret-user",
+                    "password": "secret-pass",
+                },
+            }
+        ],
+        "routing": [
+            {
+                "type": "inbound",
+                "values": ["socks-in"],
+                "out": "socks-out",
+            }
+        ],
+    }
+
+    config_path = temp_root / "socks-outbound-required-auth-reply-guard.json"
+    save_json(config_path, cfg)
+
+    server_ready = threading.Event()
+    server_state = {"greeting": b"", "extra_data": b""}
+    server_error = []
+
+    def fake_upstream_server():
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server.bind((listen_host, upstream_port))
+        server.listen(1)
+        server_ready.set()
+        try:
+            conn, _ = server.accept()
+            with conn:
+                conn.settimeout(2)
+                server_state["greeting"] = recv_exact(conn, 3)
+                conn.sendall(b"\x05\x00")
+                try:
+                    server_state["extra_data"] = conn.recv(256)
+                except socket.timeout:
+                    server_state["extra_data"] = b""
+        except Exception as exc:
+            server_error.append(str(exc))
+        finally:
+            server.close()
+
+    server_thread = threading.Thread(target=fake_upstream_server, daemon=True)
+    server_thread.start()
+    if not server_ready.wait(timeout=5):
+        raise RuntimeError("fake upstream socks required auth reply guard server did not start")
+
+    process = start_process([str(binary), "-c", str(config_path)], str(run_log), extra_env=runtime_env)
+    try:
+        wait_for_log_text(log_path, f"listen {listen_host}:{listen_port} socks listening", 20, "socks outbound required auth reply guard log")
+
+        client = socket.create_connection((listen_host, listen_port), timeout=5)
+        with client:
+            client.settimeout(5)
+            client.sendall(b"\x05\x01\x00")
+            method_reply = recv_exact(client, 2)
+            if method_reply != b"\x05\x00":
+                raise RuntimeError(f"unexpected inbound method reply {method_reply!r}")
+
+            client.sendall(b"\x05\x01\x00\x03\x0bexample.com\x00\x50")
+            connect_reply = recv_exact(client, 10)
+            if connect_reply[1] == 0x00:
+                raise RuntimeError(f"unexpected outbound connect success {connect_reply!r}")
+    finally:
+        process.terminate()
+
+    server_thread.join(timeout=5)
+    if server_thread.is_alive():
+        raise RuntimeError("fake upstream socks required auth reply guard server did not exit")
+    if server_error:
+        raise RuntimeError(f"fake upstream socks required auth reply guard server failed: {server_error[0]}")
+    if server_state["greeting"] != b"\x05\x01\x02":
+        raise RuntimeError(f"unexpected outbound greeting {server_state['greeting']!r}")
+    if server_state["extra_data"]:
+        raise RuntimeError(f"unexpected outbound auth payload leaked {server_state['extra_data']!r}")
+
+
 def run_socks_udp_outbound_reply_guard_case(binary, runtime_env, temp_root):
     repo_root = pathlib.Path(__file__).resolve().parents[1]
     listen_host = "127.0.0.1"
@@ -313,6 +428,8 @@ def main():
         runtime_env = build_runtime_env(binary)
         run_socks_outbound_auth_guard_case(binary, runtime_env, temp_root)
         print("socks_outbound_auth_guard ok")
+        run_socks_outbound_required_auth_reply_guard_case(binary, runtime_env, temp_root)
+        print("socks_outbound_required_auth_reply_guard ok")
         run_socks_udp_outbound_reply_guard_case(binary, runtime_env, temp_root)
         print("socks_udp_outbound_reply_guard ok")
         return 0

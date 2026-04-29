@@ -72,19 +72,14 @@ boost::asio::awaitable<bool> negotiate_method(
         ec = boost::system::errc::make_error_code(boost::system::errc::permission_denied);
         co_return false;
     }
-    if (reply[1] == socks::kMethodPassword)
-    {
-        if (!settings.auth)
-        {
-            ec = boost::asio::error::operation_not_supported;
-            co_return false;
-        }
-        co_return co_await do_password_auth(socket, settings, cfg, ec);
-    }
-    if (reply[1] != socks::kMethodNoAuth)
+    if (reply[1] != method)
     {
         ec = boost::asio::error::operation_not_supported;
         co_return false;
+    }
+    if (method == socks::kMethodPassword)
+    {
+        co_return co_await do_password_auth(socket, settings, cfg, ec);
     }
     co_return true;
 }
