@@ -465,6 +465,11 @@ if(BUILD_TESTING)
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_protocol_guards.py --binary $<TARGET_FILE:socks>)
   set_tests_properties(protocol_guardrails PROPERTIES TIMEOUT 60)
 
+  add_test(
+    NAME outbound_consistency
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_outbound_consistency.py --binary $<TARGET_FILE:socks>)
+  set_tests_properties(outbound_consistency PROPERTIES TIMEOUT 180)
+
   add_test(NAME socket_mark_regression COMMAND $<TARGET_FILE:socket_mark_regression>)
   set_tests_properties(socket_mark_regression PROPERTIES TIMEOUT 30)
 
