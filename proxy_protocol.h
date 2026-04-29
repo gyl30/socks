@@ -5,12 +5,13 @@
 #include <vector>
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <string_view>
 
 namespace relay::proxy
 {
 
-// message_type + atyp + domain_len + max_domain + port + max_udp_payload
+// Covers framed TCP control/data messages and the largest supported UDP datagram.
 constexpr uint32_t kMaxPacketSize = 1U + 1U + 1U + 255U + 2U + 65507U;
 
 enum class message_type : uint8_t
@@ -20,6 +21,8 @@ enum class message_type : uint8_t
     kUdpAssociateRequest = 0x03,
     kUdpAssociateReply = 0x04,
     kUdpDatagram = 0x05,
+    kTcpData = 0x06,
+    kTcpShutdown = 0x07,
 };
 
 struct tcp_connect_request
@@ -55,6 +58,19 @@ struct udp_datagram
     std::vector<uint8_t> payload;
 };
 
+enum class tcp_stream_frame_kind : uint8_t
+{
+    kInvalid = 0,
+    kData,
+    kShutdown,
+};
+
+struct tcp_stream_frame
+{
+    tcp_stream_frame_kind kind = tcp_stream_frame_kind::kInvalid;
+    std::vector<uint8_t> payload;
+};
+
 [[nodiscard]] std::string_view message_name(message_type type);
 
 [[nodiscard]] bool encode_tcp_connect_request(const tcp_connect_request& request, std::vector<uint8_t>& out);
@@ -76,6 +92,12 @@ struct udp_datagram
 [[nodiscard]] bool encode_udp_datagram(const udp_datagram& datagram, std::vector<uint8_t>& out);
 
 [[nodiscard]] bool decode_udp_datagram(const uint8_t* data, std::size_t len, udp_datagram& out);
+
+[[nodiscard]] bool encode_tcp_stream_data(std::span<const uint8_t> payload, std::vector<uint8_t>& out);
+
+[[nodiscard]] bool encode_tcp_stream_shutdown(std::vector<uint8_t>& out);
+
+[[nodiscard]] bool decode_tcp_stream_frame(const uint8_t* data, std::size_t len, tcp_stream_frame& out);
 
 }    // namespace relay::proxy
 

@@ -252,6 +252,10 @@ std::string_view message_name(const message_type type)
             return "udp_associate_reply";
         case message_type::kUdpDatagram:
             return "udp_datagram";
+        case message_type::kTcpData:
+            return "tcp_data";
+        case message_type::kTcpShutdown:
+            return "tcp_shutdown";
     }
     return "unknown";
 }
@@ -390,6 +394,58 @@ bool decode_udp_datagram(const uint8_t* data, const std::size_t len, udp_datagra
     {
         return false;
     }
+    out.payload.assign(data + static_cast<std::ptrdiff_t>(pos), data + static_cast<std::ptrdiff_t>(len));
+    return true;
+}
+
+bool encode_tcp_stream_data(const std::span<const uint8_t> payload, std::vector<uint8_t>& out)
+{
+    if (payload.empty() || payload.size() + 1U > kMaxPacketSize)
+    {
+        return false;
+    }
+
+    out.clear();
+    out.reserve(payload.size() + 1U);
+    out.push_back(static_cast<uint8_t>(message_type::kTcpData));
+    out.insert(out.end(), payload.begin(), payload.end());
+    return true;
+}
+
+bool encode_tcp_stream_shutdown(std::vector<uint8_t>& out)
+{
+    out.clear();
+    out.push_back(static_cast<uint8_t>(message_type::kTcpShutdown));
+    return true;
+}
+
+bool decode_tcp_stream_frame(const uint8_t* data, const std::size_t len, tcp_stream_frame& out)
+{
+    out = {};
+    if (data == nullptr || len == 0)
+    {
+        return false;
+    }
+
+    std::size_t pos = 0;
+    uint8_t raw_type = 0;
+    if (!read_u8(data, len, pos, raw_type))
+    {
+        return false;
+    }
+
+    if (raw_type == static_cast<uint8_t>(message_type::kTcpShutdown))
+    {
+        out.kind = tcp_stream_frame_kind::kShutdown;
+        return pos == len;
+    }
+
+    if (raw_type != static_cast<uint8_t>(message_type::kTcpData) || pos == len)
+    {
+        return false;
+    }
+
+    out.kind = tcp_stream_frame_kind::kData;
     out.payload.assign(data + static_cast<std::ptrdiff_t>(pos), data + static_cast<std::ptrdiff_t>(len));
     return true;
 }

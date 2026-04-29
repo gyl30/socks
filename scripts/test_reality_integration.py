@@ -92,6 +92,34 @@ def send_udp_associate_and_close(socks_host, socks_port, target_host, target_por
         tcp_sock.close()
 
 
+def run_socks_tcp_half_close_case(socks_host, socks_port, target_host, target_port, payload, expected_reply, timeout=5.0):
+    tcp_sock = socket.create_connection((socks_host, socks_port), timeout=timeout)
+    tcp_sock.settimeout(timeout)
+    try:
+        tcp_sock.sendall(b"\x05\x01\x00")
+        method_reply = recv_exact(tcp_sock, 2)
+        if method_reply != b"\x05\x00":
+            raise RuntimeError(f"unexpected method reply {method_reply!r}")
+
+        request = bytearray(b"\x05\x01\x00\x01")
+        request.extend(socket.inet_aton(target_host))
+        request.extend(struct.pack("!H", target_port))
+        tcp_sock.sendall(request)
+
+        version, rep, _rsv = recv_exact(tcp_sock, 3)
+        if version != 0x05 or rep != 0x00:
+            raise RuntimeError(f"tcp connect failed version={version} rep={rep}")
+        _bind_host, _bind_port = parse_socks_address(tcp_sock)
+
+        tcp_sock.sendall(payload)
+        tcp_sock.shutdown(socket.SHUT_WR)
+        reply = recv_exact(tcp_sock, len(expected_reply))
+        if reply != expected_reply:
+            raise RuntimeError(f"unexpected half-close reply {reply!r}")
+    finally:
+        tcp_sock.close()
+
+
 class FakeSocksUdpEchoServer:
     def __init__(self, expected_sessions=1):
         self.expected_sessions = expected_sessions
@@ -147,6 +175,54 @@ class FakeSocksUdpEchoServer:
                     conn.close()
                 except OSError:
                     pass
+            self.close()
+
+
+class EofReplyTcpServer:
+    def __init__(self, reply_payload):
+        self.reply_payload = reply_payload
+        self.error = None
+        self.received = b""
+        self.saw_eof = False
+        self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.server.bind(("127.0.0.1", 0))
+        self.server.listen(1)
+        self.host, self.port = self.server.getsockname()
+        self.thread = threading.Thread(target=self._serve, daemon=True)
+        self.thread.start()
+
+    def close(self):
+        try:
+            self.server.close()
+        except OSError:
+            pass
+
+    def join(self):
+        self.thread.join(timeout=5)
+        if self.thread.is_alive():
+            raise RuntimeError("eof reply tcp server did not exit")
+        if self.error is not None:
+            raise self.error
+
+    def _serve(self):
+        try:
+            self.server.settimeout(10)
+            conn, _peer = self.server.accept()
+            with conn:
+                conn.settimeout(10)
+                chunks = []
+                while True:
+                    data = conn.recv(4096)
+                    if not data:
+                        self.saw_eof = True
+                        break
+                    chunks.append(data)
+                self.received = b"".join(chunks)
+                conn.sendall(self.reply_payload)
+        except Exception as exc:
+            self.error = exc
+        finally:
             self.close()
 
 
@@ -251,6 +327,7 @@ def main():
         https_log = temp_root / "https.log"
         udp_log = temp_root / "udp.log"
         fake_socks_server = FakeSocksUdpEchoServer(expected_sessions=3)
+        half_close_server = EofReplyTcpServer(b"half-close-ok")
 
         https_process = start_process(
             [
@@ -499,6 +576,20 @@ def main():
         if "sni=localhost" not in https_text:
             raise RuntimeError("missing upstream https sni log for localhost")
 
+        run_socks_tcp_half_close_case(
+            socks_host,
+            socks_port,
+            half_close_server.host,
+            half_close_server.port,
+            b"half-close-body",
+            b"half-close-ok",
+        )
+        half_close_server.join()
+        if not half_close_server.saw_eof:
+            raise RuntimeError("backend did not observe eof through reality tcp path")
+        if half_close_server.received != b"half-close-body":
+            raise RuntimeError(f"unexpected half-close backend payload {half_close_server.received!r}")
+
         udp_result = run_checked(
             [
                 sys.executable,
@@ -573,6 +664,7 @@ def main():
         print("reality_https_proxy ok")
         print("reality_sni_hijack ok")
         print("parallel_proxy ok")
+        print("tcp_half_close ok")
         print("udp_associate ok")
         print("udp_associate_early_close ok")
         print("reality_udp_multi_outbound ok")

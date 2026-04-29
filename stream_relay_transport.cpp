@@ -1,5 +1,6 @@
 #include "stream_relay_transport.h"
 
+#include <algorithm>
 #include <vector>
 
 #include <boost/asio/buffer.hpp>
@@ -7,9 +8,23 @@
 #include <boost/asio/use_awaitable.hpp>
 
 #include "net_utils.h"
+#include "proxy_protocol.h"
 
 namespace relay
 {
+
+namespace
+{
+
+std::size_t consume_pending_read_data(std::vector<uint8_t>& pending_read_data, std::vector<uint8_t>& buffer)
+{
+    const auto size = std::min(buffer.size(), pending_read_data.size());
+    std::copy_n(pending_read_data.begin(), static_cast<std::ptrdiff_t>(size), buffer.begin());
+    pending_read_data.erase(pending_read_data.begin(), pending_read_data.begin() + static_cast<std::ptrdiff_t>(size));
+    return size;
+}
+
+}    // namespace
 
 tcp_socket_stream_relay_transport::tcp_socket_stream_relay_transport(boost::asio::ip::tcp::socket& socket, const config::timeout_t& timeout)
     : socket_(socket), timeout_(timeout)
@@ -72,14 +87,54 @@ proxy_connection_stream_relay_transport::proxy_connection_stream_relay_transport
 boost::asio::awaitable<std::size_t> proxy_connection_stream_relay_transport::read(std::vector<uint8_t>& buffer, boost::system::error_code& ec)
 {
     ec.clear();
+    if (buffer.empty())
+    {
+        co_return 0;
+    }
     if (connection_ == nullptr)
     {
         ec = boost::asio::error::operation_aborted;
         co_return 0;
     }
+    if (!pending_read_data_.empty())
+    {
+        co_return consume_pending_read_data(pending_read_data_, buffer);
+    }
+    if (recv_shutdown_)
+    {
+        ec = boost::asio::error::eof;
+        co_return 0;
+    }
 
     const auto read_timeout = timeout_.idle == 0 ? timeout_.read : std::max(timeout_.read, timeout_.idle + 2U);
-    co_return co_await connection_->read_some(buffer, read_timeout, ec);
+    for (;;)
+    {
+        const auto packet = co_await connection_->read_packet(read_timeout, ec);
+        if (ec)
+        {
+            co_return 0;
+        }
+
+        proxy::tcp_stream_frame frame;
+        if (!proxy::decode_tcp_stream_frame(packet.data(), packet.size(), frame))
+        {
+            ec = boost::asio::error::invalid_argument;
+            co_return 0;
+        }
+
+        if (frame.kind == proxy::tcp_stream_frame_kind::kShutdown)
+        {
+            recv_shutdown_ = true;
+            ec = boost::asio::error::eof;
+            co_return 0;
+        }
+
+        pending_read_data_ = std::move(frame.payload);
+        if (!pending_read_data_.empty())
+        {
+            co_return consume_pending_read_data(pending_read_data_, buffer);
+        }
+    }
 }
 
 boost::asio::awaitable<std::size_t> proxy_connection_stream_relay_transport::write(std::span<const uint8_t> data, boost::system::error_code& ec)
@@ -91,7 +146,14 @@ boost::asio::awaitable<std::size_t> proxy_connection_stream_relay_transport::wri
         co_return 0;
     }
 
-    co_await connection_->write(data, ec);
+    std::vector<uint8_t> packet;
+    if (!proxy::encode_tcp_stream_data(data, packet))
+    {
+        ec = boost::asio::error::message_size;
+        co_return 0;
+    }
+
+    co_await connection_->write_packet(packet, ec);
     if (ec)
     {
         co_return 0;
@@ -108,7 +170,13 @@ boost::asio::awaitable<void> proxy_connection_stream_relay_transport::shutdown_s
         co_return;
     }
 
-    co_await connection_->shutdown_send(ec);
+    std::vector<uint8_t> packet;
+    if (!proxy::encode_tcp_stream_shutdown(packet))
+    {
+        ec = boost::asio::error::invalid_argument;
+        co_return;
+    }
+    co_await connection_->write_packet(packet, ec);
 }
 
 boost::asio::awaitable<void> proxy_connection_stream_relay_transport::close()
