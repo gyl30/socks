@@ -145,6 +145,16 @@ def run_invalid_reality_config_cases(binary, runtime_env, temp_root):
         )
     )
 
+    invalid_outbound_port_zero = copy.deepcopy(base_cfg)
+    invalid_outbound_port_zero["outbounds"][0]["settings"]["port"] = 0
+    cases.append(
+        (
+            "invalid_outbound_port_zero",
+            invalid_outbound_port_zero,
+            "outbounds[0].settings.port out_of_range",
+        )
+    )
+
     invalid_inbound_private_key = copy.deepcopy(base_cfg)
     invalid_inbound_private_key["inbounds"] = [
         {
@@ -194,6 +204,39 @@ def run_invalid_reality_config_cases(binary, runtime_env, temp_root):
             "invalid_inbound_short_id",
             invalid_inbound_short_id,
             "inbounds[0].settings.short_id hex length invalid",
+        )
+    )
+
+    valid_inbound_reality = copy.deepcopy(invalid_inbound_short_id)
+    valid_inbound_reality["inbounds"][0]["settings"]["short_id"] = "0102030405060708"
+
+    invalid_inbound_port_zero = copy.deepcopy(valid_inbound_reality)
+    invalid_inbound_port_zero["inbounds"][0]["settings"]["port"] = 0
+    cases.append(
+        (
+            "invalid_inbound_port_zero",
+            invalid_inbound_port_zero,
+            "inbounds[0].settings.port out_of_range",
+        )
+    )
+
+    invalid_inbound_site_port_zero = copy.deepcopy(valid_inbound_reality)
+    invalid_inbound_site_port_zero["inbounds"][0]["settings"]["site_port"] = 0
+    cases.append(
+        (
+            "invalid_inbound_site_port_zero",
+            invalid_inbound_site_port_zero,
+            "inbounds[0].settings.site_port out_of_range",
+        )
+    )
+
+    invalid_inbound_replay_cache_zero = copy.deepcopy(valid_inbound_reality)
+    invalid_inbound_replay_cache_zero["inbounds"][0]["settings"]["replay_cache_max_entries"] = 0
+    cases.append(
+        (
+            "invalid_inbound_replay_cache_zero",
+            invalid_inbound_replay_cache_zero,
+            "inbounds[0].settings.replay_cache_max_entries out_of_range",
         )
     )
 
@@ -247,6 +290,17 @@ def run_invalid_general_config_cases(binary, runtime_env, temp_root):
         "inbounds[0].settings.port out_of_range",
     )
 
+    invalid_zero_port = copy.deepcopy(base_cfg)
+    invalid_zero_port["inbounds"][0]["settings"]["port"] = 0
+    run_invalid_config_value_case(
+        binary,
+        runtime_env,
+        temp_root,
+        "invalid_socks_port_zero",
+        invalid_zero_port,
+        "inbounds[0].settings.port out_of_range",
+    )
+
     invalid_auth_username = copy.deepcopy(base_cfg)
     invalid_auth_username["inbounds"][0]["settings"]["auth"] = True
     run_invalid_config_value_case(
@@ -293,6 +347,21 @@ def run_invalid_general_config_cases(binary, runtime_env, temp_root):
         "invalid_tun_ipv4_prefix",
         invalid_tun_prefix,
         "inbounds[0].settings.ipv4_prefix out_of_range",
+    )
+
+    invalid_web_port = copy.deepcopy(base_cfg)
+    invalid_web_port["web"] = {
+        "enabled": True,
+        "host": "127.0.0.1",
+        "port": 0,
+    }
+    run_invalid_config_value_case(
+        binary,
+        runtime_env,
+        temp_root,
+        "invalid_web_port_zero",
+        invalid_web_port,
+        "web.port out_of_range",
     )
 
     invalid_duplicate_inbound_tag = copy.deepcopy(base_cfg)

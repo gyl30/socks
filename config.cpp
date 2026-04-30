@@ -452,6 +452,10 @@ template <typename T>
     {
         return false;
     }
+    if (out.port == 0)
+    {
+        return fail_config(filename, "web.port out_of_range");
+    }
     return true;
 }
 
@@ -472,6 +476,10 @@ template <typename T>
     if (!parse_unsigned_field(value, "port", path, out.port, filename, true))
     {
         return false;
+    }
+    if (out.port == 0)
+    {
+        return fail_config(filename, join_path(path, "port") + " out_of_range");
     }
     if (!parse_bool_field(value, "auth", path, out.auth, filename, true))
     {
@@ -587,6 +595,10 @@ template <typename T>
     {
         return false;
     }
+    if (out.port == 0)
+    {
+        return fail_config(filename, join_path(path, "port") + " out_of_range");
+    }
     if (!parse_string_field(value, "sni", path, out.sni, filename, true))
     {
         return false;
@@ -594,6 +606,10 @@ template <typename T>
     if (!parse_unsigned_field(value, "site_port", path, out.site_port, filename, false))
     {
         return false;
+    }
+    if (out.site_port == 0)
+    {
+        return fail_config(filename, join_path(path, "site_port") + " out_of_range");
     }
     if (!parse_string_field(value, "private_key", path, out.private_key, filename, true))
     {
@@ -624,6 +640,10 @@ template <typename T>
     {
         return false;
     }
+    if (out.replay_cache_max_entries == 0)
+    {
+        return fail_config(filename, join_path(path, "replay_cache_max_entries") + " out_of_range");
+    }
     return true;
 }
 
@@ -643,6 +663,10 @@ template <typename T>
     if (!parse_unsigned_field(value, "port", path, out.port, filename, true))
     {
         return false;
+    }
+    if (out.port == 0)
+    {
+        return fail_config(filename, join_path(path, "port") + " out_of_range");
     }
     if (!parse_string_field(value, "sni", path, out.sni, filename, true))
     {
