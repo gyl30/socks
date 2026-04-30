@@ -163,7 +163,7 @@ boost::asio::awaitable<void> relay_direction(stream_relay_context& context,
     }
 }
 
-boost::asio::awaitable<void> relay_idle_watchdog(stream_relay_context& context)
+boost::asio::awaitable<void> relay_idle_watchdog(stream_relay_context& context, relay_result_state& result_state)
 {
     const auto idle_timeout_ms = static_cast<uint64_t>(context.timeout.idle) * 1000ULL;
     while (true)
@@ -184,6 +184,7 @@ boost::asio::awaitable<void> relay_idle_watchdog(stream_relay_context& context)
                  context.trace_id,
                  context.conn_id,
                  context.timeout.idle);
+        result_state.record(stream_relay_result::close_reason::kIdleTimeout, boost::asio::error::timed_out);
         co_await apply_close_policy(context, stream_relay_result::close_reason::kIdleTimeout);
         break;
     }
@@ -224,10 +225,9 @@ boost::asio::awaitable<stream_relay_result> relay_streams(stream_relay_context& 
     }
     else
     {
-        auto wait_or_timeout = co_await (tg.async_wait() || relay_idle_watchdog(context));
+        auto wait_or_timeout = co_await (tg.async_wait() || relay_idle_watchdog(context, result_state));
         if (wait_or_timeout.index() == 1)
         {
-            result_state.record(stream_relay_result::close_reason::kIdleTimeout, boost::asio::error::timed_out);
             tg.emit(boost::asio::cancellation_type::all);
             const auto wait_ec = co_await tg.async_wait();
             (void)wait_ec;

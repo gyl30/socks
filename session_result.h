@@ -98,6 +98,16 @@ struct tcp_flow_result
     tcp_outbound_connect_result connect_result;
 };
 
+enum class session_close_reason : uint8_t
+{
+    kUnknown = 0,
+    kCompleted,
+    kRouteBlocked,
+    kIdleTimeout,
+    kStopped,
+    kTransportError,
+};
+
 enum class udp_close_reason : uint8_t
 {
     kUnknown = 0,
@@ -149,6 +159,66 @@ enum class udp_close_reason : uint8_t
 [[nodiscard]] inline bool is_stopped_io_error(const boost::system::error_code& ec)
 {
     return ec == boost::asio::error::operation_aborted || ec == boost::asio::error::bad_descriptor;
+}
+
+[[nodiscard]] inline const char* to_string(session_close_reason reason)
+{
+    switch (reason)
+    {
+        case session_close_reason::kUnknown:
+            return "unknown";
+        case session_close_reason::kCompleted:
+            return "completed";
+        case session_close_reason::kRouteBlocked:
+            return "route_blocked";
+        case session_close_reason::kIdleTimeout:
+            return "idle_timeout";
+        case session_close_reason::kStopped:
+            return "stopped";
+        case session_close_reason::kTransportError:
+            return "transport_error";
+    }
+    return "unknown";
+}
+
+[[nodiscard]] inline session_close_reason to_session_close_reason(stream_relay_result::close_reason reason)
+{
+    switch (reason)
+    {
+        case stream_relay_result::close_reason::kUnknown:
+            return session_close_reason::kUnknown;
+        case stream_relay_result::close_reason::kInboundEof:
+        case stream_relay_result::close_reason::kOutboundEof:
+            return session_close_reason::kCompleted;
+        case stream_relay_result::close_reason::kInboundError:
+        case stream_relay_result::close_reason::kOutboundError:
+            return session_close_reason::kTransportError;
+        case stream_relay_result::close_reason::kIdleTimeout:
+            return session_close_reason::kIdleTimeout;
+        case stream_relay_result::close_reason::kStopped:
+            return session_close_reason::kStopped;
+    }
+    return session_close_reason::kUnknown;
+}
+
+[[nodiscard]] inline session_close_reason to_session_close_reason(udp_close_reason reason)
+{
+    switch (reason)
+    {
+        case udp_close_reason::kUnknown:
+            return session_close_reason::kUnknown;
+        case udp_close_reason::kCompleted:
+            return session_close_reason::kCompleted;
+        case udp_close_reason::kRouteBlocked:
+            return session_close_reason::kRouteBlocked;
+        case udp_close_reason::kIdleTimeout:
+            return session_close_reason::kIdleTimeout;
+        case udp_close_reason::kStopped:
+            return session_close_reason::kStopped;
+        case udp_close_reason::kTransportError:
+            return session_close_reason::kTransportError;
+    }
+    return session_close_reason::kUnknown;
 }
 
 enum class udp_flow_mode : uint8_t

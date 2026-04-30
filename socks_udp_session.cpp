@@ -441,7 +441,7 @@ boost::asio::awaitable<void> socks_udp_session::run(const std::string& host, con
              udp_bind_port_,
              current_client_host(),
              current_client_port(),
-             to_string(close_reason_),
+             to_string(to_session_close_reason(close_reason_)),
              tx_bytes_,
              rx_bytes_,
              duration_ms);

@@ -107,6 +107,7 @@ boost::asio::awaitable<void> reality_tcp_session::finish_connected_session(const
 {
     co_await relay_backend(backend);
     co_await backend->close();
+    const auto session_reason = to_session_close_reason(close_reason_);
     trace_store::instance().record_event(trace_event{
         .trace_id = trace_id_,
         .conn_id = conn_id_,
@@ -127,7 +128,7 @@ boost::asio::awaitable<void> reality_tcp_session::finish_connected_session(const
                                       std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
                                                                                            start_time_)
                                           .count())},
-                  {"close_reason", to_string(close_reason_)}},
+                  {"close_reason", to_string(session_reason)}},
     });
     log_close_summary();
     co_return;
@@ -408,7 +409,7 @@ void reality_tcp_session::log_close_summary() const
              route_name_,
              bind_host_,
              bind_port_,
-             to_string(close_reason_),
+             to_string(to_session_close_reason(close_reason_)),
              tx_bytes_,
              rx_bytes_,
              duration_ms);

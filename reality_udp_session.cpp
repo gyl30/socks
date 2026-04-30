@@ -273,7 +273,7 @@ boost::asio::awaitable<void> reality_udp_session::start_impl(const proxy::udp_as
              conn_id_,
              bind_host_,
              bind_port_,
-             to_string(close_reason_),
+             to_string(to_session_close_reason(close_reason_)),
              tx_bytes_,
              rx_bytes_,
              duration_ms);

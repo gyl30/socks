@@ -304,6 +304,7 @@ boost::asio::awaitable<void> tun_tcp_session::finish_connected_session(
     co_await wait_for_close_completion();
 
     const auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time_).count();
+    const auto session_reason = to_session_close_reason(close_reason_);
     trace_store::instance().record_event(trace_event{
         .trace_id = trace_id_,
         .conn_id = conn_id_,
@@ -327,7 +328,7 @@ boost::asio::awaitable<void> tun_tcp_session::finish_connected_session(
         .latency_ms = static_cast<uint32_t>(duration_ms),
         .error_code = 0,
         .error_message = "",
-        .extra = {{"close_reason", to_string(close_reason_)}},
+        .extra = {{"close_reason", to_string(session_reason)}},
     });
     LOG_INFO("{} trace {:016x} conn {} client {}:{} target {}:{} close_reason {} tx_bytes {} rx_bytes {} duration_ms {}",
              log_event::kConnClose,
@@ -337,7 +338,7 @@ boost::asio::awaitable<void> tun_tcp_session::finish_connected_session(
              client_port_,
              target_addr_,
              target_port_,
-             to_string(close_reason_),
+             to_string(session_reason),
              tx_bytes_,
              rx_bytes_,
              duration_ms);

@@ -250,7 +250,7 @@ def wait_for_idle_close_events(web_port, target_port, expected_count, minimum_du
             if event.get("inbound_type") == "socks"
             and event.get("route_type") == "reality-out"
             and event.get("target_port") == target_port
-            and event.get("extra", {}).get("close_reason") == "stopped"
+            and event.get("extra", {}).get("close_reason") == "idle_timeout"
             and int(event.get("extra", {}).get("duration_ms", "0")) >= minimum_duration_ms
         ]
         if len(matches) >= expected_count:

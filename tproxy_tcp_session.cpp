@@ -558,7 +558,7 @@ boost::asio::awaitable<void> tproxy_tcp_session::finish_connected_session(
         .latency_ms = 0,
         .error_code = 0,
         .error_message = "",
-        .extra = {{"close_reason", to_string(close_reason_)}},
+        .extra = {{"close_reason", to_string(to_session_close_reason(close_reason_))}},
     });
     log_close_summary();
     co_return;
@@ -613,7 +613,7 @@ void tproxy_tcp_session::log_close_summary() const
              client_port_,
              target_addr_.empty() ? "unknown" : target_addr_,
              target_port_,
-             to_string(close_reason_),
+             to_string(to_session_close_reason(close_reason_)),
              tx_bytes_,
              rx_bytes_,
              duration_ms);

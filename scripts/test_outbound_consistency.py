@@ -612,8 +612,10 @@ def main():
             "reality-out": reality_port,
         }
 
+        half_close_ports = {}
         for label, socks_listen_port in socks_ports.items():
             server = EofReplyTcpServer(f"{label}-half-close-ok".encode("utf-8"))
+            half_close_ports[label] = server.port
             run_tcp_half_close_case(
                 "127.0.0.1",
                 socks_listen_port,
@@ -646,16 +648,39 @@ def main():
         while time.time() < deadline:
             payload = fetch_json(f"http://127.0.0.1:{web_port}/api/traces/events?stage=session_close&limit=200")
             close_events = payload.get("items") or payload.get("events") or []
-            matched = {
+            idle_matched = {
                 event.get("target_port"): event
                 for event in close_events
-                if event.get("inbound_type") == "socks" and event.get("extra", {}).get("close_reason") == "stopped"
+                if event.get("inbound_type") == "socks" and event.get("extra", {}).get("close_reason") == "idle_timeout"
             }
-            if all(idle_ports[label] in matched for label in idle_ports):
+            completed_matched = {
+                event.get("target_port"): event
+                for event in close_events
+                if event.get("inbound_type") == "socks" and event.get("extra", {}).get("close_reason") == "completed"
+            }
+            if all(idle_ports[label] in idle_matched for label in idle_ports) and all(
+                half_close_ports[label] in completed_matched for label in half_close_ports
+            ):
                 break
             time.sleep(0.1)
         else:
-            raise RuntimeError(f"missing idle timeout close events: {close_events}")
+            raise RuntimeError(f"missing close events: {close_events}")
+
+        for label, target_port in half_close_ports.items():
+            matched_event = next(
+                (
+                    event
+                    for event in close_events
+                    if event.get("target_port") == target_port
+                    and event.get("inbound_type") == "socks"
+                    and event.get("extra", {}).get("close_reason") == "completed"
+                ),
+                None,
+            )
+            if matched_event is None:
+                raise RuntimeError(f"missing completed close event for {label} target {target_port}")
+            if matched_event.get("route_type") != label:
+                raise RuntimeError(f"unexpected completed route type for {label}: {matched_event}")
 
         for label, target_port in idle_ports.items():
             matched_event = next(
@@ -664,7 +689,7 @@ def main():
                     for event in close_events
                     if event.get("target_port") == target_port
                     and event.get("inbound_type") == "socks"
-                    and event.get("extra", {}).get("close_reason") == "stopped"
+                    and event.get("extra", {}).get("close_reason") == "idle_timeout"
                 ),
                 None,
             )
