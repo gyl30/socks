@@ -1,6 +1,7 @@
 #ifndef SESSION_RESULT_H
 #define SESSION_RESULT_H
 
+#include <map>
 #include <memory>
 #include <cstdint>
 
@@ -219,6 +220,12 @@ enum class udp_close_reason : uint8_t
             return session_close_reason::kTransportError;
     }
     return session_close_reason::kUnknown;
+}
+
+[[nodiscard]] inline std::map<std::string, std::string> make_session_close_extra(const uint64_t duration_ms,
+                                                                                  const session_close_reason close_reason)
+{
+    return {{"duration_ms", std::to_string(duration_ms)}, {"close_reason", to_string(close_reason)}};
 }
 
 enum class udp_flow_mode : uint8_t

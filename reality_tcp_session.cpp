@@ -107,6 +107,7 @@ boost::asio::awaitable<void> reality_tcp_session::finish_connected_session(const
 {
     co_await relay_backend(backend);
     co_await backend->close();
+    const auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time_).count();
     const auto session_reason = to_session_close_reason(close_reason_);
     trace_store::instance().record_event(trace_event{
         .trace_id = trace_id_,
@@ -124,11 +125,8 @@ boost::asio::awaitable<void> reality_tcp_session::finish_connected_session(const
         .route_type = route_name_,
         .bytes_tx = tx_bytes_,
         .bytes_rx = rx_bytes_,
-        .extra = {{"duration_ms", std::to_string(
-                                      std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
-                                                                                           start_time_)
-                                          .count())},
-                  {"close_reason", to_string(session_reason)}},
+        .latency_ms = static_cast<uint32_t>(duration_ms),
+        .extra = make_session_close_extra(duration_ms, session_reason),
     });
     log_close_summary();
     co_return;

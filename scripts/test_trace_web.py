@@ -513,6 +513,17 @@ def main():
             raise RuntimeError(f"unexpected connected event resolved_target_host: {events_only}")
         if connected_events[0].get("resolved_target_port") != http_port:
             raise RuntimeError(f"unexpected connected event resolved_target_port: {events_only}")
+        session_close_events = [item for item in event_items if item.get("stage") == "session_close"]
+        if len(session_close_events) != 1:
+            raise RuntimeError(f"unexpected session close events: {events_only}")
+        session_close_event = session_close_events[0]
+        if session_close_event.get("latency_ms", 0) <= 0:
+            raise RuntimeError(f"unexpected session close latency: {events_only}")
+        close_extra = session_close_event.get("extra", {})
+        if close_extra.get("close_reason") != "completed":
+            raise RuntimeError(f"unexpected session close reason: {events_only}")
+        if int(close_extra.get("duration_ms", "0")) <= 0:
+            raise RuntimeError(f"unexpected session close duration: {events_only}")
 
         trace_filtered_events = fetch_json(
             f"http://127.0.0.1:{web_port}/api/traces/{trace_id}/events?stage=route_decide_done&sort_order=asc&limit=1"

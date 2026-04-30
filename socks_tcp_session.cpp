@@ -142,7 +142,8 @@ boost::asio::awaitable<void> socks_tcp_session::finish_connected_session(
         .route_type = route_name_,
         .bytes_tx = tx_bytes_,
         .bytes_rx = rx_bytes_,
-        .extra = {{"duration_ms", std::to_string(duration_ms)}, {"close_reason", to_string(session_reason)}},
+        .latency_ms = static_cast<uint32_t>(duration_ms),
+        .extra = make_session_close_extra(duration_ms, session_reason),
     });
     LOG_INFO("{} trace {:016x} conn {} client {}:{} local {}:{} target {}:{} route {} close_reason {} tx_bytes {} rx_bytes {} duration_ms {}",
              log_event::kConnClose,

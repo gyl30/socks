@@ -466,6 +466,11 @@ if(BUILD_TESTING)
   set_tests_properties(protocol_guardrails PROPERTIES TIMEOUT 60)
 
   add_test(
+    NAME trace_web_integration
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_trace_web.py --binary $<TARGET_FILE:socks>)
+  set_tests_properties(trace_web_integration PROPERTIES TIMEOUT 180)
+
+  add_test(
     NAME outbound_consistency
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_outbound_consistency.py --binary $<TARGET_FILE:socks>)
   set_tests_properties(outbound_consistency PROPERTIES TIMEOUT 180)

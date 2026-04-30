@@ -35,7 +35,7 @@ boost::asio::awaitable<bool> finish_udp_session(RunFn run_session, udp_close_rea
 
 [[nodiscard]] inline std::map<std::string, std::string> make_udp_close_extra(const uint64_t duration_ms, const udp_close_reason close_reason)
 {
-    return {{"duration_ms", std::to_string(duration_ms)}, {"close_reason", to_string(to_session_close_reason(close_reason))}};
+    return make_session_close_extra(duration_ms, to_session_close_reason(close_reason));
 }
 
 inline void record_udp_session_close_trace(trace_event event,

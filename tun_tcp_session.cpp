@@ -328,7 +328,7 @@ boost::asio::awaitable<void> tun_tcp_session::finish_connected_session(
         .latency_ms = static_cast<uint32_t>(duration_ms),
         .error_code = 0,
         .error_message = "",
-        .extra = {{"close_reason", to_string(session_reason)}},
+        .extra = make_session_close_extra(duration_ms, session_reason),
     });
     LOG_INFO("{} trace {:016x} conn {} client {}:{} target {}:{} close_reason {} tx_bytes {} rx_bytes {} duration_ms {}",
              log_event::kConnClose,
