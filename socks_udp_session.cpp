@@ -1319,6 +1319,7 @@ boost::asio::awaitable<void> socks_udp_session::udp_socket_loop()
         last_target_addr_ = udp_header.addr;
         last_target_port_ = udp_header.port;
         has_last_target_ = true;
+        last_activity_time_ms_ = net::now_ms();
 
         const auto decision = co_await decide_udp_route(udp_header);
         proxy_outbound_tag_ = decision.outbound_tag;

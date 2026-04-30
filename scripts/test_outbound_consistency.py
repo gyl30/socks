@@ -742,7 +742,14 @@ def main():
             run_udp_echo_case("127.0.0.1", socks_listen_port, "127.0.0.1", udp_echo_port, large_payload)
 
         with open_socks_udp_associate("127.0.0.1", socks_retry_port, timeout=5.0) as retry_associate:
-            retry_associate.expect_timeout("127.0.0.1", udp_echo_port, b"retry-before", timeout=1.5)
+            for attempt in range(4):
+                retry_associate.expect_timeout(
+                    "127.0.0.1",
+                    udp_echo_port,
+                    f"retry-before-{attempt}".encode("utf-8"),
+                    timeout=0.35,
+                )
+                time.sleep(0.8)
             fake_retry_socks_server = FakeUpstreamSocksServer(
                 expected_sessions=1,
                 tcp_port=socks_retry_upstream_port,
