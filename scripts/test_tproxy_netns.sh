@@ -315,6 +315,7 @@ assert_trace_api_ns() {
     ns_exec "$ns" python3 - "$port" "$label" <<'PY'
 import json
 import sys
+import time
 import urllib.request
 
 port = int(sys.argv[1])
@@ -383,6 +384,38 @@ if selected is None:
     raise RuntimeError(f"{label} missing complete success trace")
 if selected_events is None:
     raise RuntimeError(f"{label} missing session_close events for selected trace")
+
+def has_close_reason(events, close_reason, route_type, minimum_duration_ms):
+    for event in events:
+        extra = event.get("extra", {})
+        if event.get("inbound_type") != "tproxy":
+            continue
+        if event.get("route_type") != route_type:
+            continue
+        if extra.get("close_reason") != close_reason:
+            continue
+        if int(extra.get("duration_ms", "0")) < minimum_duration_ms:
+            continue
+        return True
+    return False
+
+deadline = time.time() + 5.0
+close_events = []
+while time.time() < deadline:
+    payload = fetch("/api/traces/events?stage=session_close&limit=200")
+    close_events = payload.get("items") or payload.get("events") or []
+    if (
+        has_close_reason(close_events, "completed", "direct", 1)
+        and has_close_reason(close_events, "completed", "proxy", 1)
+        and has_close_reason(close_events, "idle_timeout", "direct", 4000)
+        and has_close_reason(close_events, "idle_timeout", "proxy", 4000)
+        and has_close_reason(close_events, "transport_error", "direct", 1500)
+        and has_close_reason(close_events, "transport_error", "proxy", 1500)
+    ):
+        break
+    time.sleep(0.1)
+else:
+    raise RuntimeError(f"{label} missing close reason matrix {close_events}")
 
 print(f"trace_assert_ok label={label} trace_id={selected['trace_id']} events={selected['events_count']}")
 PY
