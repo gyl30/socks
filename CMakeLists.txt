@@ -401,10 +401,12 @@ if(UNIX AND NOT APPLE AND NOT ENABLE_STATIC_LINK)
   target_link_options(proxy_protocol_regression PRIVATE "-Wl,--no-as-needed" "${BROTLICOMMON_LIBRARY}" "-Wl,--as-needed")
 endif()
 
-add_executable(test_reality_invalid_initial_request_client scripts/test_reality_invalid_initial_request_client.cpp)
-target_link_libraries(test_reality_invalid_initial_request_client PRIVATE core)
-if(UNIX AND NOT APPLE AND NOT ENABLE_STATIC_LINK)
-  target_link_options(test_reality_invalid_initial_request_client PRIVATE "-Wl,--no-as-needed" "${BROTLICOMMON_LIBRARY}" "-Wl,--as-needed")
+if(BUILD_TESTING)
+  add_executable(test_reality_invalid_initial_request_client scripts/test_reality_invalid_initial_request_client.cpp)
+  target_link_libraries(test_reality_invalid_initial_request_client PRIVATE core)
+  if(UNIX AND NOT APPLE AND NOT ENABLE_STATIC_LINK)
+    target_link_options(test_reality_invalid_initial_request_client PRIVATE "-Wl,--no-as-needed" "${BROTLICOMMON_LIBRARY}" "-Wl,--as-needed")
+  endif()
 endif()
 
 if(ENABLE_FUZZ)
@@ -446,10 +448,12 @@ if(SOCKS_RUNTIME_DIRS)
     proxy_protocol_regression
     PROPERTIES BUILD_RPATH "${SOCKS_RUNTIME_DIRS}"
                INSTALL_RPATH "${SOCKS_RUNTIME_DIRS}")
-  set_target_properties(
-    test_reality_invalid_initial_request_client
-    PROPERTIES BUILD_RPATH "${SOCKS_RUNTIME_DIRS}"
-               INSTALL_RPATH "${SOCKS_RUNTIME_DIRS}")
+  if(TARGET test_reality_invalid_initial_request_client)
+    set_target_properties(
+      test_reality_invalid_initial_request_client
+      PROPERTIES BUILD_RPATH "${SOCKS_RUNTIME_DIRS}"
+                 INSTALL_RPATH "${SOCKS_RUNTIME_DIRS}")
+  endif()
 endif()
 
 if(BUILD_TESTING)
