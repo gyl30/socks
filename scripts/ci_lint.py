@@ -10,9 +10,7 @@ import shutil
 import subprocess
 import sys
 
-EXCLUDED_FILES = {
-    "reflect.h",
-}
+EXCLUDED_FILES = set()
 
 
 def build_safe_git_env(repo_root):
