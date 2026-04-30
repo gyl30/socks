@@ -762,6 +762,49 @@ def main():
         if fake_retry_socks_server is not None:
             fake_retry_socks_server.join()
 
+        deadline = time.time() + 5.0
+        retry_connect_events = []
+        retry_close_events = []
+        while time.time() < deadline:
+            connect_payload = fetch_json(f"http://127.0.0.1:{web_port}/api/traces/events?stage=outbound_connect_done&limit=200")
+            retry_connect_events = connect_payload.get("items") or connect_payload.get("events") or []
+            close_payload = fetch_json(f"http://127.0.0.1:{web_port}/api/traces/events?stage=session_close&limit=200")
+            retry_close_events = close_payload.get("items") or close_payload.get("events") or []
+
+            retry_fail_count = sum(
+                1
+                for event in retry_connect_events
+                if event.get("inbound_tag") == "socks-retry-out-in"
+                and event.get("outbound_tag") == "socks-retry-out"
+                and event.get("result") == "fail"
+            )
+            retry_success = next(
+                (
+                    event
+                    for event in retry_connect_events
+                    if event.get("inbound_tag") == "socks-retry-out-in"
+                    and event.get("outbound_tag") == "socks-retry-out"
+                    and event.get("result") == "ok"
+                ),
+                None,
+            )
+            retry_close = next(
+                (
+                    event
+                    for event in retry_close_events
+                    if event.get("inbound_tag") == "socks-retry-out-in"
+                    and event.get("extra", {}).get("close_reason") == "completed"
+                ),
+                None,
+            )
+            if retry_fail_count >= 4 and retry_success is not None and retry_close is not None:
+                break
+            time.sleep(0.1)
+        else:
+            raise RuntimeError(
+                f"missing retry trace events connect={retry_connect_events} close={retry_close_events}"
+            )
+
         idle_ports = {}
         for label, socks_listen_port in socks_ports.items():
             idle_server = IdleTcpServer()
