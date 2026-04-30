@@ -569,6 +569,135 @@ def run_socks_udp_fragmented_client_guard_case(binary, runtime_env, temp_root):
         raise RuntimeError(f"unexpected udp echo requests {echo_state['requests']!r}")
 
 
+def run_socks_udp_tcp_control_flood_guard_case(binary, runtime_env, temp_root):
+    listen_host = "127.0.0.1"
+    listen_port = allocate_tcp_port()
+    target_port = allocate_udp_port()
+    log_path = temp_root / "socks-udp-tcp-control-flood-guard.log"
+    run_log = temp_root / "socks-udp-tcp-control-flood-guard.stdout.log"
+
+    cfg = {
+        "workers": 1,
+        "log": {
+            "level": "debug",
+            "file": str(log_path),
+        },
+        "timeout": {
+            "read": 5,
+            "write": 5,
+            "connect": 5,
+            "idle": 5,
+        },
+        "inbounds": [
+            {
+                "type": "socks",
+                "tag": "socks-in",
+                "settings": {
+                    "host": listen_host,
+                    "port": listen_port,
+                    "auth": False,
+                },
+            }
+        ],
+        "outbounds": [
+            {
+                "type": "direct",
+                "tag": "direct",
+            }
+        ],
+        "routing": [
+            {
+                "type": "inbound",
+                "values": ["socks-in"],
+                "out": "direct",
+            }
+        ],
+    }
+
+    config_path = temp_root / "socks-udp-tcp-control-flood-guard.json"
+    save_json(config_path, cfg)
+
+    echo_ready = threading.Event()
+    echo_error = []
+    echo_state = {"requests": []}
+
+    def udp_echo_server():
+        server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        server.bind((listen_host, target_port))
+        server.settimeout(5)
+        echo_ready.set()
+        try:
+            while len(echo_state["requests"]) < 1:
+                payload, peer = server.recvfrom(65535)
+                echo_state["requests"].append(payload)
+                server.sendto(payload, peer)
+        except Exception as exc:
+            echo_error.append(str(exc))
+        finally:
+            server.close()
+
+    echo_thread = threading.Thread(target=udp_echo_server, daemon=True)
+    echo_thread.start()
+    if not echo_ready.wait(timeout=5):
+        raise RuntimeError("udp echo flood guard server did not start")
+
+    process = start_process([str(binary), "-c", str(config_path)], str(run_log), extra_env=runtime_env)
+    try:
+        wait_for_log_text(log_path, f"listen {listen_host}:{listen_port} socks listening", 20, "socks udp tcp control flood guard log")
+
+        tcp_sock = socket.create_connection((listen_host, listen_port), timeout=5)
+        udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            tcp_sock.settimeout(5)
+            udp_sock.settimeout(0.5)
+            tcp_sock.sendall(b"\x05\x01\x00")
+            method_reply = recv_exact(tcp_sock, 2)
+            if method_reply != b"\x05\x00":
+                raise RuntimeError(f"unexpected inbound method reply {method_reply!r}")
+
+            tcp_sock.sendall(b"\x05\x03\x00\x01\x00\x00\x00\x00\x00\x00")
+            version, rep, _rsv = recv_exact(tcp_sock, 3)
+            if version != 0x05 or rep != 0x00:
+                raise RuntimeError(f"udp associate failed version={version} rep={rep}")
+            relay_host, relay_port = parse_socks_address(tcp_sock)
+
+            request = bytearray(b"\x00\x00\x00\x01")
+            request.extend(socket.inet_aton(listen_host))
+            request.extend(target_port.to_bytes(2, "big"))
+            request.extend(b"before-flood")
+            udp_sock.sendto(request, (relay_host, relay_port))
+            reply, _peer = udp_sock.recvfrom(65535)
+            if not reply.endswith(b"before-flood"):
+                raise RuntimeError(f"unexpected pre-flood udp reply {reply!r}")
+
+            tcp_sock.sendall(b"x" * 5000)
+            wait_for_log_text(log_path, "tcp control channel flooded", 5, "socks udp tcp control flood guard log")
+
+            request = bytearray(b"\x00\x00\x00\x01")
+            request.extend(socket.inet_aton(listen_host))
+            request.extend(target_port.to_bytes(2, "big"))
+            request.extend(b"after-flood")
+            udp_sock.sendto(request, (relay_host, relay_port))
+            try:
+                reply, _peer = udp_sock.recvfrom(65535)
+                raise RuntimeError(f"unexpected post-flood udp reply {reply!r}")
+            except (socket.timeout, ConnectionRefusedError):
+                pass
+        finally:
+            udp_sock.close()
+            tcp_sock.close()
+    finally:
+        process.terminate()
+
+    echo_thread.join(timeout=5)
+    if echo_thread.is_alive():
+        raise RuntimeError("udp echo flood guard server did not exit")
+    if echo_error:
+        raise RuntimeError(f"udp echo flood guard server failed: {echo_error[0]}")
+    if echo_state["requests"] != [b"before-flood"]:
+        raise RuntimeError(f"unexpected udp flood guard requests {echo_state['requests']!r}")
+
+
 def run_ipv4_mapped_tcp_route_guard_case(binary, runtime_env, temp_root):
     listen_host = "127.0.0.1"
     listen_port = allocate_tcp_port()
@@ -725,6 +854,8 @@ def main():
         print("socks_udp_outbound_reply_guard ok")
         run_socks_udp_fragmented_client_guard_case(binary, runtime_env, temp_root)
         print("socks_udp_fragmented_client_guard ok")
+        run_socks_udp_tcp_control_flood_guard_case(binary, runtime_env, temp_root)
+        print("socks_udp_tcp_control_flood_guard ok")
         return 0
     except Exception as exc:
         print(f"test failed {exc}", file=sys.stderr)
