@@ -71,13 +71,13 @@ tproxy_udp_port=15081
 host_ip_forward_before="$(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null || echo 0)"
 declare -a pids=()
 
-read -r server_port http_port site_port web_port udp_port < <(
+read -r server_port http_port site_port web_port server_web_port direct_fail_port proxy_fail_port udp_port < <(
     python3 - <<'PY'
 import socket
 
 ports = []
 sockets = []
-for _ in range(4):
+for _ in range(7):
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.bind(("127.0.0.1", 0))
     ports.append(sock.getsockname()[1])
@@ -87,7 +87,7 @@ udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 udp_sock.bind(("127.0.0.1", 0))
 udp_port = udp_sock.getsockname()[1]
 
-print(ports[0], ports[1], ports[2], ports[3], udp_port)
+print(ports[0], ports[1], ports[2], ports[3], ports[4], ports[5], ports[6], udp_port)
 
 for sock in sockets:
     sock.close()
@@ -275,6 +275,110 @@ print(f"trace_assert_ok label={label} trace_id={selected['trace_id']} events={se
 PY
 }
 
+assert_connect_fail_trace_api_in_ns() {
+    local ns="$1"
+    local port="$2"
+    local label="$3"
+    local inbound_type="$4"
+    local outbound_tag="$5"
+    local target_port="$6"
+    local expected_count="${7:-1}"
+
+    ns_exec "$ns" python3 - "$port" "$label" "$inbound_type" "$outbound_tag" "$target_port" "$expected_count" <<'PY'
+import json
+import sys
+import time
+import urllib.request
+
+port = int(sys.argv[1])
+label = sys.argv[2]
+inbound_type = sys.argv[3]
+outbound_tag = sys.argv[4]
+target_port = int(sys.argv[5])
+expected_count = int(sys.argv[6])
+base = f"http://127.0.0.1:{port}"
+
+
+def fetch(path):
+    with urllib.request.urlopen(base + path, timeout=10) as response:
+        return json.load(response)
+
+
+deadline = time.time() + 5.0
+matches = []
+while time.time() < deadline:
+    payload = fetch("/api/traces/events?stage=session_error&limit=200")
+    events = payload.get("items") or payload.get("events") or []
+    matches = [
+        event
+        for event in events
+        if event.get("inbound_type") == inbound_type
+        and event.get("outbound_tag") == outbound_tag
+        and event.get("target_port") == target_port
+        and event.get("extra", {}).get("close_reason") == "transport_error"
+        and event.get("error_message")
+        and event.get("result") == "fail"
+    ]
+    if len(matches) >= expected_count:
+        print(
+            f"trace_connect_fail_ok label={label} inbound_type={inbound_type} "
+            f"outbound_tag={outbound_tag} target_port={target_port} count={len(matches)}"
+        )
+        sys.exit(0)
+    time.sleep(0.1)
+
+raise RuntimeError(f"{label} missing session_error matches={matches}")
+PY
+}
+
+assert_reality_connect_fail_trace_api() {
+    local port="$1"
+    local label="$2"
+    local target_port="$3"
+    local expected_count="${4:-1}"
+
+    python3 - "$port" "$label" "$target_port" "$expected_count" <<'PY'
+import json
+import sys
+import time
+import urllib.request
+
+port = int(sys.argv[1])
+label = sys.argv[2]
+target_port = int(sys.argv[3])
+expected_count = int(sys.argv[4])
+base = f"http://127.0.0.1:{port}"
+
+
+def fetch(path):
+    with urllib.request.urlopen(base + path, timeout=10) as response:
+        return json.load(response)
+
+
+deadline = time.time() + 5.0
+matches = []
+while time.time() < deadline:
+    payload = fetch("/api/traces/events?stage=session_error&limit=200")
+    events = payload.get("items") or payload.get("events") or []
+    matches = [
+        event
+        for event in events
+        if event.get("inbound_type") == "reality"
+        and event.get("outbound_tag") == "direct"
+        and event.get("target_port") == target_port
+        and event.get("extra", {}).get("close_reason") == "transport_error"
+        and event.get("error_message")
+        and event.get("result") == "fail"
+    ]
+    if len(matches) >= expected_count:
+        print(f"trace_reality_fail_ok label={label} target_port={target_port} count={len(matches)}")
+        sys.exit(0)
+    time.sleep(0.1)
+
+raise RuntimeError(f"{label} missing reality session_error matches={matches}")
+PY
+}
+
 configure_namespace_sysctls() {
     local ns="$1"
     shift
@@ -365,6 +469,7 @@ cat >"$tmp_dir/server.json" <<EOF
 {
   "workers": 1,
   "log": {"level": "info", "file": "$tmp_dir/server.log"},
+  "web": {"enabled": true, "host": "127.0.0.1", "port": $server_web_port},
   "inbounds": [
     {
       "type": "reality",
@@ -540,6 +645,7 @@ wait_for_log "$tmp_dir/client.log" "tun inbound started" 20
 wait_for_log "$tmp_dir/client.log" "tproxy tcp listening on 0.0.0.0:$tproxy_tcp_port" 20
 wait_for_log "$tmp_dir/client.log" "tproxy udp listening on 0.0.0.0:$tproxy_udp_port" 20
 wait_for_port_in_ns "$ns_client" "127.0.0.1" "$web_port" "trace_web"
+wait_for_port "127.0.0.1" "$server_web_port" "server_trace_web"
 
 /usr/bin/bash "$repo_root/scripts/tun_linux_route.sh" --netns "$ns_client" --from "$tun_app_cidr" --table 101 --priority 90 up "$tun_name" "${target_cidrs[@]}" >/dev/null
 ns_exec "$ns_client" ip rule show >"$tmp_dir/client-policy-rule.log" 2>&1 || true
@@ -553,6 +659,11 @@ for ip_addr in "$direct_ip" "$proxy_ip"; do
     ns_exec "$ns_client" iptables -t mangle -A PREROUTING -i "$client_tp_if" -p udp -d "$ip_addr" --dport "$udp_port" \
         -j TPROXY --on-ip "$client_tp_ip" --on-port "$tproxy_udp_port" --tproxy-mark 0x11/0x11
 done
+
+ns_exec "$ns_client" iptables -t mangle -A PREROUTING -i "$client_tp_if" -p tcp -d "$direct_ip" --dport "$direct_fail_port" \
+    -j TPROXY --on-ip "$client_tp_ip" --on-port "$tproxy_tcp_port" --tproxy-mark 0x11/0x11
+ns_exec "$ns_client" iptables -t mangle -A PREROUTING -i "$client_tp_if" -p tcp -d "$proxy_ip" --dport "$proxy_fail_port" \
+    -j TPROXY --on-ip "$client_tp_ip" --on-port "$tproxy_tcp_port" --tproxy-mark 0x11/0x11
 
 run_step "tun tcp direct" \
     ns_exec "$ns_tun_app" python3 "$repo_root/scripts/tproxy_tcp_client.py" \
@@ -610,8 +721,54 @@ run_step "tproxy udp proxy" \
         --payload "tproxy-proxy" \
         --expect-echo
 
+if ns_exec "$ns_tun_app" python3 "$repo_root/scripts/tproxy_tcp_client.py" \
+    --host "$direct_ip" \
+    --port "$direct_fail_port" \
+    --path "/healthz.txt" \
+    --read-timeout 5
+then
+    echo "unexpected tun direct connect success on fail port $direct_fail_port" >&2
+    exit 1
+fi
+
+if ns_exec "$ns_tun_app" python3 "$repo_root/scripts/tproxy_tcp_client.py" \
+    --host "$proxy_ip" \
+    --port "$proxy_fail_port" \
+    --path "/healthz.txt" \
+    --read-timeout 5
+then
+    echo "unexpected tun proxy connect success on fail port $proxy_fail_port" >&2
+    exit 1
+fi
+
+if ns_exec "$ns_tp_app" python3 "$repo_root/scripts/tproxy_tcp_client.py" \
+    --host "$direct_ip" \
+    --port "$direct_fail_port" \
+    --path "/healthz.txt" \
+    --read-timeout 5
+then
+    echo "unexpected tproxy direct connect success on fail port $direct_fail_port" >&2
+    exit 1
+fi
+
+if ns_exec "$ns_tp_app" python3 "$repo_root/scripts/tproxy_tcp_client.py" \
+    --host "$proxy_ip" \
+    --port "$proxy_fail_port" \
+    --path "/healthz.txt" \
+    --read-timeout 5
+then
+    echo "unexpected tproxy proxy connect success on fail port $proxy_fail_port" >&2
+    exit 1
+fi
+
 wait_for_log "$tmp_dir/client.log" "target ${direct_ip}:${http_port} route direct" 5
 wait_for_log "$tmp_dir/client.log" "target ${proxy_ip}:${http_port} route proxy" 5
 assert_trace_api_in_ns "$ns_client" "$web_port" "combined_client_trace"
+assert_connect_fail_trace_api_in_ns "$ns_client" "$web_port" "combined_tun_direct_fail" "tun" "direct" "$direct_fail_port"
+assert_connect_fail_trace_api_in_ns "$ns_client" "$web_port" "combined_tun_proxy_fail" "tun" "reality-out" "$proxy_fail_port"
+assert_connect_fail_trace_api_in_ns "$ns_client" "$web_port" "combined_tproxy_direct_fail" "tproxy" "direct" "$direct_fail_port"
+assert_connect_fail_trace_api_in_ns "$ns_client" "$web_port" "combined_tproxy_proxy_fail" "tproxy" "reality-out" "$proxy_fail_port"
+assert_reality_connect_fail_trace_api "$server_web_port" "combined_server_proxy_fail" "$proxy_fail_port" 2
 
 echo "combined tun tproxy smoke ok"
+echo "combined tun tproxy connect fail trace ok"
