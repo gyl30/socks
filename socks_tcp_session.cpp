@@ -209,6 +209,7 @@ boost::asio::awaitable<void> socks_tcp_session::run(const std::string& host, uin
             .match_type = decision.match_type,
             .match_value = decision.match_value,
             .error_message = "route blocked",
+            .extra = make_session_error_extra(session_close_reason::kRouteBlocked),
         });
         LOG_WARN("{} trace {:016x} conn {} client {}:{} local {}:{} target {}:{} route {} blocked",
                  log_event::kRoute,
@@ -248,6 +249,7 @@ boost::asio::awaitable<void> socks_tcp_session::run(const std::string& host, uin
             .match_value = decision.match_value,
             .error_code = static_cast<int32_t>(connect_result.ec.value()),
             .error_message = connect_result.ec.message(),
+            .extra = make_session_error_extra(session_close_reason::kTransportError),
         });
         co_return;
     }

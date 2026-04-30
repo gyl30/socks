@@ -197,6 +197,7 @@ boost::asio::awaitable<void> reality_tcp_session::run(const proxy::tcp_connect_r
             .match_type = decision.match_type,
             .match_value = decision.match_value,
             .error_message = "route blocked",
+            .extra = make_session_error_extra(session_close_reason::kRouteBlocked),
         });
         LOG_WARN("{} trace {:016x} conn {} target {}:{} route {} blocked",
                  log_event::kRoute,
@@ -212,6 +213,28 @@ boost::asio::awaitable<void> reality_tcp_session::run(const proxy::tcp_connect_r
     const auto connect_result = co_await connect_backend(backend, target_host_, target_port_, decision.route, decision.outbound_type);
     if (connect_result.ec)
     {
+        trace_store::instance().record_event(trace_event{
+            .trace_id = trace_id_,
+            .conn_id = conn_id_,
+            .stage = trace_stage::kSessionError,
+            .result = trace_result::kFail,
+            .inbound_tag = inbound_tag_,
+            .inbound_type = "reality",
+            .outbound_tag = decision.outbound_tag,
+            .outbound_type = decision.outbound_type,
+            .target_host = target_host_,
+            .target_port = target_port_,
+            .local_host = bind_host_,
+            .local_port = bind_port_,
+            .remote_host = std::string(connection_ != nullptr ? connection_->remote_host() : std::string_view("unknown")),
+            .remote_port = static_cast<uint16_t>(connection_ != nullptr ? connection_->remote_port() : 0U),
+            .route_type = relay::to_string(decision.route),
+            .match_type = decision.match_type,
+            .match_value = decision.match_value,
+            .error_code = static_cast<int32_t>(connect_result.ec.value()),
+            .error_message = connect_result.ec.message(),
+            .extra = make_session_error_extra(session_close_reason::kTransportError),
+        });
         co_await backend->close();
         co_return;
     }

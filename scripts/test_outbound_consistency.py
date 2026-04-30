@@ -137,6 +137,26 @@ def run_idle_timeout_case(socks_host, socks_port, target_host, target_port, read
         sock.close()
 
 
+def run_connect_fail_case(socks_host, socks_port, target_host, target_port, timeout=5.0):
+    sock = socket.create_connection((socks_host, socks_port), timeout=timeout)
+    sock.settimeout(timeout)
+    try:
+        sock.sendall(b"\x05\x01\x00")
+        method_reply = recv_exact(sock, 2)
+        if method_reply != b"\x05\x00":
+            raise RuntimeError(f"unexpected method reply {method_reply!r}")
+
+        sock.sendall(build_socks_connect_request(target_host, target_port))
+        version, rep, _rsv = recv_exact(sock, 3)
+        if version != 0x05:
+            raise RuntimeError(f"unexpected connect reply version={version}")
+        parse_socks_address(sock)
+        if rep == 0x00:
+            raise RuntimeError(f"unexpected connect success target={target_host}:{target_port}")
+    finally:
+        sock.close()
+
+
 def run_udp_echo_case(socks_host, socks_port, target_host, target_port, payload, timeout=5.0):
     tcp_sock = socket.create_connection((socks_host, socks_port), timeout=timeout)
     tcp_sock.settimeout(timeout)
@@ -423,7 +443,9 @@ def main():
         direct_port = allocate_tcp_port()
         socks_port = allocate_tcp_port()
         reality_port = allocate_tcp_port()
+        block_port = allocate_tcp_port()
         web_port = allocate_tcp_port()
+        server_web_port = allocate_tcp_port()
         reality_server_port = allocate_tcp_port()
         udp_echo_port = allocate_udp_port()
         short_id = "0102030405060708"
@@ -461,6 +483,11 @@ def main():
                 "write": 5,
                 "connect": 5,
                 "idle": 3,
+            },
+            "web": {
+                "enabled": True,
+                "host": "127.0.0.1",
+                "port": server_web_port,
             },
             "inbounds": [
                 {
@@ -541,6 +568,15 @@ def main():
                         "auth": False,
                     },
                 },
+                {
+                    "type": "socks",
+                    "tag": "block-in",
+                    "settings": {
+                        "host": "127.0.0.1",
+                        "port": block_port,
+                        "auth": False,
+                    },
+                },
             ],
             "outbounds": [
                 {
@@ -590,6 +626,11 @@ def main():
                     "values": ["reality-out-in"],
                     "out": "reality-out",
                 },
+                {
+                    "type": "inbound",
+                    "values": ["block-in"],
+                    "out": "block",
+                },
             ],
         }
 
@@ -601,10 +642,11 @@ def main():
         helper_processes.extend([server_process, client_process])
 
         wait_for_log_text(server_log, f"listen 127.0.0.1:{reality_server_port} reality inbound listening", 20, "reality server log")
-        for port in (direct_port, socks_port, reality_port):
+        for port in (direct_port, socks_port, reality_port, block_port):
             wait_for_log_text(client_log, f":{port} socks listening", 20, f"client socks port {port}")
             wait_for_port("127.0.0.1", port, 20, f"socks port {port}", [client_process])
         wait_for_port("127.0.0.1", web_port, 20, "client trace web", [client_process])
+        wait_for_port("127.0.0.1", server_web_port, 20, "server trace web", [server_process])
 
         socks_ports = {
             "direct": direct_port,
@@ -642,6 +684,12 @@ def main():
             idle_server.join()
             if not idle_server.saw_eof:
                 raise RuntimeError(f"{label} idle backend did not observe eof")
+
+        connect_fail_ports = {label: allocate_tcp_port() for label in socks_ports}
+        for label, socks_listen_port in socks_ports.items():
+            run_connect_fail_case("127.0.0.1", socks_listen_port, "127.0.0.1", connect_fail_ports[label], 5.0)
+        block_target_port = allocate_tcp_port()
+        run_connect_fail_case("127.0.0.1", block_port, "127.0.0.1", block_target_port, 5.0)
 
         deadline = time.time() + 5.0
         close_events = []
@@ -701,10 +749,86 @@ def main():
             if duration_ms < 3000:
                 raise RuntimeError(f"idle timeout duration too short for {label}: {matched_event}")
 
+        deadline = time.time() + 5.0
+        error_events = []
+        while time.time() < deadline:
+            payload = fetch_json(f"http://127.0.0.1:{web_port}/api/traces/events?stage=session_error&limit=200")
+            error_events = payload.get("items") or payload.get("events") or []
+            matched = {
+                label: next(
+                    (
+                        event
+                        for event in error_events
+                        if event.get("target_port") == connect_fail_ports[label]
+                        and event.get("inbound_type") == "socks"
+                        and event.get("outbound_tag") == label
+                        and event.get("extra", {}).get("close_reason") == "transport_error"
+                        and event.get("error_message")
+                    ),
+                    None,
+                )
+                for label in connect_fail_ports
+            }
+            if all(matched.values()):
+                break
+            time.sleep(0.1)
+        else:
+            raise RuntimeError(f"missing session_error events: {error_events}")
+
+        deadline = time.time() + 5.0
+        block_error_events = []
+        while time.time() < deadline:
+            payload = fetch_json(f"http://127.0.0.1:{web_port}/api/traces/events?stage=session_error&limit=200")
+            block_error_events = payload.get("items") or payload.get("events") or []
+            matched_event = next(
+                (
+                    event
+                    for event in block_error_events
+                    if event.get("inbound_type") == "socks"
+                    and event.get("inbound_tag") == "block-in"
+                    and event.get("outbound_tag") == "block"
+                    and event.get("target_port") == block_target_port
+                    and event.get("extra", {}).get("close_reason") == "route_blocked"
+                    and event.get("error_message") == "route blocked"
+                ),
+                None,
+            )
+            if matched_event is not None:
+                break
+            time.sleep(0.1)
+        else:
+            raise RuntimeError(f"missing route_blocked session_error events: {block_error_events}")
+
+        deadline = time.time() + 5.0
+        reality_server_errors = []
+        while time.time() < deadline:
+            payload = fetch_json(f"http://127.0.0.1:{server_web_port}/api/traces/events?stage=session_error&limit=100")
+            reality_server_errors = payload.get("items") or payload.get("events") or []
+            matched_event = next(
+                (
+                    event
+                    for event in reality_server_errors
+                    if event.get("inbound_type") == "reality"
+                    and event.get("outbound_tag") == "direct"
+                    and event.get("target_port") == connect_fail_ports["reality-out"]
+                    and event.get("extra", {}).get("close_reason") == "transport_error"
+                    and event.get("error_message")
+                ),
+                None,
+            )
+            if matched_event is not None:
+                break
+            time.sleep(0.1)
+        else:
+            raise RuntimeError(f"missing reality session_error events: {reality_server_errors}")
+
         fake_socks_server.join()
         print("tcp_half_close_matrix ok")
         print("udp_large_payload_matrix ok")
         print("idle_timeout_matrix ok")
+        print("connect_fail_matrix ok")
+        print("route_blocked_matrix ok")
+        print("reality_connect_fail_matrix ok")
         return 0
     except Exception as exc:
         print(f"test failed {exc}", file=sys.stderr)
