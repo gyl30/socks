@@ -95,6 +95,8 @@ int main()
         require(connect_request.target_host == domain_connect_request.target_host, "decoded tcp connect request host mismatch") &&
         require(connect_request.target_port == domain_connect_request.target_port, "decoded tcp connect request port mismatch") &&
         require(connect_request.trace_id == domain_connect_request.trace_id, "decoded tcp connect request trace id mismatch") &&
+        require(!decode_tcp_connect_request(packet.data(), packet.size() - 1U, connect_request),
+                "truncated tcp connect request should be rejected") &&
         require(encode_tcp_connect_request(mapped_connect_request, packet), "failed to encode mapped tcp connect request") &&
         require(decode_tcp_connect_request(packet.data(), packet.size(), connect_request), "failed to decode mapped tcp connect request") &&
         require(connect_request.target_host == "127.0.0.1", "mapped tcp connect request host should normalize to ipv4") &&
@@ -109,16 +111,22 @@ int main()
         require(encode_udp_associate_request(outbound_associate_request, packet), "failed to encode udp associate request") &&
         require(decode_udp_associate_request(packet.data(), packet.size(), associate_request), "failed to decode udp associate request") &&
         require(associate_request.trace_id == outbound_associate_request.trace_id, "decoded udp associate request trace id mismatch") &&
+        require(!decode_udp_associate_request(packet.data(), packet.size() - 1U, associate_request),
+                "truncated udp associate request should be rejected") &&
         require(encode_udp_associate_reply(success_associate_reply, packet), "failed to encode udp associate reply") &&
         require(decode_udp_associate_reply(packet.data(), packet.size(), associate_reply), "failed to decode udp associate reply") &&
         require(associate_reply.socks_rep == success_associate_reply.socks_rep, "decoded udp associate reply rep mismatch") &&
         require(associate_reply.bind_host == "0.0.0.0", "decoded udp associate reply default bind host mismatch") &&
         require(associate_reply.bind_port == 0, "decoded udp associate reply default bind port mismatch") &&
+        require(!decode_udp_associate_reply(packet.data(), packet.size() - 1U, associate_reply),
+                "truncated udp associate reply should be rejected") &&
         require(encode_udp_datagram(outbound_datagram, packet), "failed to encode udp datagram") &&
         require(decode_udp_datagram(packet.data(), packet.size(), datagram), "failed to decode udp datagram") &&
         require(datagram.target_host == outbound_datagram.target_host, "decoded udp datagram host mismatch") &&
         require(datagram.target_port == outbound_datagram.target_port, "decoded udp datagram port mismatch") &&
         require(datagram.payload == outbound_datagram.payload, "decoded udp datagram payload mismatch") &&
+        require(!decode_udp_datagram(reinterpret_cast<const uint8_t*>("\x05\x01\x7f\x00\x00\x01\x00"), 7U, datagram),
+                "truncated udp datagram endpoint should be rejected") &&
         require(!encode_udp_datagram(udp_datagram{.target_host = "example.com", .target_port = 0, .payload = {'b'}}, packet),
                 "udp datagram with zero port should be rejected") &&
         require(encode_tcp_stream_data(std::span<const uint8_t>(payload.data(), payload.size()), packet), "failed to encode tcp data frame") &&
