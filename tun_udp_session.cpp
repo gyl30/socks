@@ -286,6 +286,10 @@ boost::asio::awaitable<bool> tun_udp_session::run()
                  conn_id_,
                  target_endpoint_.address().to_string(),
                  target_endpoint_.port());
+        boost::system::error_code drain_ec;
+        std::vector<uint8_t> drained_payload = co_await net::wait_receive_with_timeout<std::vector<uint8_t>>(packet_channel_, 1, drain_ec);
+        (void)drained_payload;
+        (void)drain_ec;
         co_return false;
     }
 

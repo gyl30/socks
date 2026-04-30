@@ -726,6 +726,8 @@ ns_exec "$ns_client" iptables -t mangle -A PREROUTING -i "$client_tp_if" -p tcp 
     -j TPROXY --on-ip "$client_tp_ip" --on-port "$tproxy_tcp_port" --tproxy-mark 0x11/0x11
 ns_exec "$ns_client" iptables -t mangle -A PREROUTING -i "$client_tp_if" -p tcp -d "$block_ip" --dport "$http_port" \
     -j TPROXY --on-ip "$client_tp_ip" --on-port "$tproxy_tcp_port" --tproxy-mark 0x11/0x11
+ns_exec "$ns_client" iptables -t mangle -A PREROUTING -i "$client_tp_if" -p udp -d "$block_ip" --dport "$udp_port" \
+    -j TPROXY --on-ip "$client_tp_ip" --on-port "$tproxy_udp_port" --tproxy-mark 0x11/0x11
 
 run_step "tun tcp direct" \
     ns_exec "$ns_tun_app" python3 "$repo_root/scripts/tproxy_tcp_client.py" \
@@ -843,6 +845,22 @@ then
     exit 1
 fi
 
+run_step "tun udp blocked" \
+    ns_exec "$ns_tun_app" python3 "$repo_root/scripts/tproxy_udp_client.py" \
+        --host "$block_ip" \
+        --port "$udp_port" \
+        --payload "tun-blocked" \
+        --timeout 1.5 \
+        --expect-timeout
+
+run_step "tproxy udp blocked" \
+    ns_exec "$ns_tp_app" python3 "$repo_root/scripts/tproxy_udp_client.py" \
+        --host "$block_ip" \
+        --port "$udp_port" \
+        --payload "tproxy-blocked" \
+        --timeout 1.5 \
+        --expect-timeout
+
 wait_for_log "$tmp_dir/client.log" "target ${direct_ip}:${http_port} route direct" 5
 wait_for_log "$tmp_dir/client.log" "target ${proxy_ip}:${http_port} route proxy" 5
 assert_trace_api_in_ns "$ns_client" "$web_port" "combined_client_trace"
@@ -852,8 +870,11 @@ assert_connect_fail_trace_api_in_ns "$ns_client" "$web_port" "combined_tproxy_di
 assert_connect_fail_trace_api_in_ns "$ns_client" "$web_port" "combined_tproxy_proxy_fail" "tproxy" "reality-out" "$proxy_fail_port"
 assert_route_blocked_trace_api_in_ns "$ns_client" "$web_port" "combined_tun_route_blocked" "tun" "$block_ip" "$http_port"
 assert_route_blocked_trace_api_in_ns "$ns_client" "$web_port" "combined_tproxy_route_blocked" "tproxy" "$block_ip" "$http_port"
+assert_route_blocked_trace_api_in_ns "$ns_client" "$web_port" "combined_tun_udp_route_blocked" "tun" "$block_ip" "$udp_port"
+assert_route_blocked_trace_api_in_ns "$ns_client" "$web_port" "combined_tproxy_udp_route_blocked" "tproxy" "$block_ip" "$udp_port"
 assert_reality_connect_fail_trace_api "$server_web_port" "combined_server_proxy_fail" "$proxy_fail_port" 2
 
 echo "combined tun tproxy smoke ok"
 echo "combined tun tproxy connect fail trace ok"
 echo "combined tun tproxy route blocked trace ok"
+echo "combined tun tproxy udp route blocked trace ok"
