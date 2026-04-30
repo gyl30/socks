@@ -544,6 +544,27 @@ def run_socks_udp_fragmented_client_guard_case(binary, runtime_env, temp_root):
             except socket.timeout:
                 pass
 
+            empty_host_packet = bytearray(b"\x00\x00\x00\x03\x00")
+            empty_host_packet.extend(target_port.to_bytes(2, "big"))
+            empty_host_packet.extend(b"empty-host-drop")
+            udp_sock.sendto(empty_host_packet, (relay_host, relay_port))
+            try:
+                reply, _peer = udp_sock.recvfrom(65535)
+                raise RuntimeError(f"unexpected empty-host udp reply {reply!r}")
+            except socket.timeout:
+                pass
+
+            zero_port_packet = bytearray(b"\x00\x00\x00\x01")
+            zero_port_packet.extend(socket.inet_aton(listen_host))
+            zero_port_packet.extend(b"\x00\x00")
+            zero_port_packet.extend(b"zero-port-drop")
+            udp_sock.sendto(zero_port_packet, (relay_host, relay_port))
+            try:
+                reply, _peer = udp_sock.recvfrom(65535)
+                raise RuntimeError(f"unexpected zero-port udp reply {reply!r}")
+            except socket.timeout:
+                pass
+
             valid_packet = bytearray(b"\x00\x00\x00\x01")
             valid_packet.extend(socket.inet_aton(listen_host))
             valid_packet.extend(target_port.to_bytes(2, "big"))
@@ -557,6 +578,8 @@ def run_socks_udp_fragmented_client_guard_case(binary, runtime_env, temp_root):
             tcp_sock.close()
 
         wait_for_log_text(log_path, "received fragmented udp packet frag 1", 5, "socks udp fragmented client guard log")
+        wait_for_log_text(log_path, "received invalid udp packet", 5, "socks udp fragmented client guard log")
+        wait_for_log_text(log_path, "received udp packet with invalid target port 0", 5, "socks udp fragmented client guard log")
     finally:
         process.terminate()
 
