@@ -18,6 +18,8 @@ from testlib import (
     allocate_tcp_port,
     allocate_udp_port,
     build_runtime_env,
+    make_reality_client_config,
+    make_reality_server_config,
     parse_key_output,
     run_checked,
     save_json,
@@ -340,34 +342,16 @@ def main():
         )
         helper_processes.append(udp_process)
 
-        server_cfg = {
-            "workers": 2,
-            "log": {
-                "level": "debug",
-                "file": str(server_log),
-            },
-            "timeout": {
-                "read": 5,
-                "write": 5,
-                "connect": 5,
-                "idle": 3,
-            },
-            "inbounds": [
-                {
-                    "type": "reality",
-                    "tag": "reality-in",
-                    "settings": {
-                        "host": "127.0.0.1",
-                        "port": reality_server_port,
-                        "sni": sni,
-                        "private_key": private_key,
-                        "public_key": public_key,
-                        "short_id": short_id,
-                        "replay_cache_max_entries": 100000,
-                    },
-                }
-            ],
-            "outbounds": [
+        server_cfg = make_reality_server_config(
+            workers=2,
+            idle_timeout=3,
+            log_file=server_log,
+            port=reality_server_port,
+            sni=sni,
+            private_key=private_key,
+            public_key=public_key,
+            short_id=short_id,
+            outbounds=[
                 {
                     "type": "direct",
                     "tag": "direct",
@@ -377,74 +361,25 @@ def main():
                     "tag": "block",
                 },
             ],
-            "routing": [
-                {
-                    "type": "inbound",
-                    "values": ["reality-in"],
-                    "out": "direct",
-                }
-            ],
-        }
+        )
 
-        client_cfg = {
-            "workers": 2,
-            "log": {
-                "level": "debug",
-                "file": str(client_log),
-            },
-            "timeout": {
-                "read": 5,
-                "write": 5,
-                "connect": 5,
-                "idle": 3,
-            },
-            "web": {
-                "enabled": True,
-                "host": "127.0.0.1",
-                "port": web_port,
-            },
-            "inbounds": [
-                {
-                    "type": "socks",
-                    "tag": "socks-in",
-                    "settings": {
-                        "host": "127.0.0.1",
-                        "port": socks_port,
-                        "auth": False,
-                    },
-                }
-            ],
-            "outbounds": [
-                {
-                    "type": "reality",
-                    "tag": "reality-out",
-                    "settings": {
-                        "host": "127.0.0.1",
-                        "port": reality_server_port,
-                        "sni": sni,
-                        "fingerprint": "random",
-                        "public_key": public_key,
-                        "short_id": short_id,
-                        "max_handshake_records": 256,
-                    },
-                },
-                {
-                    "type": "direct",
-                    "tag": "direct",
-                },
+        client_cfg = make_reality_client_config(
+            workers=2,
+            idle_timeout=3,
+            log_file=client_log,
+            socks_port=socks_port,
+            server_port=reality_server_port,
+            sni=sni,
+            public_key=public_key,
+            short_id=short_id,
+            web_port=web_port,
+            extra_outbounds=[
                 {
                     "type": "block",
                     "tag": "block",
-                },
-            ],
-            "routing": [
-                {
-                    "type": "inbound",
-                    "values": ["socks-in"],
-                    "out": "reality-out",
                 }
             ],
-        }
+        )
 
         save_json(temp_root / "server.json", server_cfg)
         save_json(temp_root / "client.json", client_cfg)

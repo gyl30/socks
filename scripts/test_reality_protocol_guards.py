@@ -12,6 +12,8 @@ import urllib.request
 from testlib import (
     allocate_tcp_port,
     build_runtime_env,
+    make_reality_client_config,
+    make_reality_server_config,
     parse_key_output,
     run_checked,
     save_json,
@@ -86,102 +88,21 @@ def main():
         key_output = run_checked([str(binary), "x25519"], env=runtime_env, capture_output=True)
         private_key, public_key = parse_key_output(key_output.stdout)
 
-        server_cfg = {
-            "workers": 1,
-            "log": {
-                "level": "debug",
-                "file": str(server_log),
-            },
-            "web": {
-                "enabled": True,
-                "host": "127.0.0.1",
-                "port": web_port,
-            },
-            "inbounds": [
-                {
-                    "type": "reality",
-                    "tag": "reality-in",
-                    "settings": {
-                        "host": "127.0.0.1",
-                        "port": server_port,
-                        "sni": "www.example.com",
-                        "private_key": private_key,
-                        "public_key": public_key,
-                        "short_id": "0102030405060708",
-                        "replay_cache_max_entries": 100000,
-                    },
-                }
-            ],
-            "outbounds": [
-                {
-                    "type": "direct",
-                    "tag": "direct",
-                }
-            ],
-            "routing": [
-                {
-                    "type": "inbound",
-                    "values": ["reality-in"],
-                    "out": "direct",
-                }
-            ],
-            "timeout": {
-                "read": 5,
-                "write": 5,
-                "connect": 5,
-                "idle": 30,
-            },
-        }
-        client_cfg = {
-            "workers": 1,
-            "log": {
-                "level": "debug",
-                "file": str(helper_log),
-            },
-            "inbounds": [
-                {
-                    "type": "socks",
-                    "tag": "socks-in",
-                    "settings": {
-                        "host": "127.0.0.1",
-                        "port": dummy_socks_port,
-                        "auth": False,
-                    },
-                }
-            ],
-            "outbounds": [
-                {
-                    "type": "reality",
-                    "tag": "reality-out",
-                    "settings": {
-                        "host": "127.0.0.1",
-                        "port": server_port,
-                        "sni": "www.example.com",
-                        "fingerprint": "random",
-                        "public_key": public_key,
-                        "short_id": "0102030405060708",
-                        "max_handshake_records": 256,
-                    },
-                },
-                {
-                    "type": "direct",
-                    "tag": "direct",
-                },
-            ],
-            "routing": [
-                {
-                    "type": "inbound",
-                    "values": ["socks-in"],
-                    "out": "reality-out",
-                }
-            ],
-            "timeout": {
-                "read": 5,
-                "write": 5,
-                "connect": 5,
-                "idle": 30,
-            },
-        }
+        server_cfg = make_reality_server_config(
+            log_file=server_log,
+            port=server_port,
+            sni="www.example.com",
+            private_key=private_key,
+            public_key=public_key,
+            web_port=web_port,
+        )
+        client_cfg = make_reality_client_config(
+            log_file=helper_log,
+            socks_port=dummy_socks_port,
+            server_port=server_port,
+            sni="www.example.com",
+            public_key=public_key,
+        )
 
         server_config_path = temp_root / "server.json"
         client_config_path = temp_root / "client.json"

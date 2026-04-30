@@ -11,6 +11,8 @@ from testlib import (
     allocate_tcp_port,
     build_cert,
     build_runtime_env,
+    make_reality_client_config,
+    make_reality_server_config,
     parse_key_output,
     run_checked,
     save_json,
@@ -63,101 +65,24 @@ def run_guard_case(repo_root, binary, runtime_env, temp_root, case_name, client_
         )
         processes.append(https_process)
 
-        server_cfg = {
-            "workers": 1,
-            "log": {
-                "level": "debug",
-                "file": str(server_log),
-            },
-            "inbounds": [
-                {
-                    "type": "reality",
-                    "tag": "reality-in",
-                    "settings": {
-                        "host": "127.0.0.1",
-                        "port": server_port,
-                        "sni": reality_sni,
-                        "private_key": private_key,
-                        "public_key": public_key,
-                        "short_id": server_short_id,
-                        "replay_cache_max_entries": 100000,
-                    },
-                }
-            ],
-            "outbounds": [
-                {
-                    "type": "direct",
-                    "tag": "direct",
-                }
-            ],
-            "routing": [
-                {
-                    "type": "inbound",
-                    "values": ["reality-in"],
-                    "out": "direct",
-                }
-            ],
-            "timeout": {
-                "read": 5,
-                "write": 5,
-                "connect": 5,
-                "idle": 30,
-            },
-        }
-
-        client_settings = {
-            "host": "127.0.0.1",
-            "port": server_port,
-            "sni": reality_sni,
-            "fingerprint": "random",
-            "public_key": public_key,
-            "short_id": server_short_id,
-            "max_handshake_records": 256,
-        }
-        client_settings.update(client_outbound_overrides)
-
-        client_cfg = {
-            "workers": 1,
-            "log": {
-                "level": "debug",
-                "file": str(client_log),
-            },
-            "inbounds": [
-                {
-                    "type": "socks",
-                    "tag": "socks-in",
-                    "settings": {
-                        "host": socks_host,
-                        "port": socks_port,
-                        "auth": False,
-                    },
-                }
-            ],
-            "outbounds": [
-                {
-                    "type": "reality",
-                    "tag": "reality-out",
-                    "settings": client_settings,
-                },
-                {
-                    "type": "direct",
-                    "tag": "direct",
-                },
-            ],
-            "routing": [
-                {
-                    "type": "inbound",
-                    "values": ["socks-in"],
-                    "out": "reality-out",
-                }
-            ],
-            "timeout": {
-                "read": 5,
-                "write": 5,
-                "connect": 5,
-                "idle": 30,
-            },
-        }
+        server_cfg = make_reality_server_config(
+            log_file=server_log,
+            port=server_port,
+            sni=reality_sni,
+            private_key=private_key,
+            public_key=public_key,
+            short_id=server_short_id,
+        )
+        client_cfg = make_reality_client_config(
+            log_file=client_log,
+            socks_host=socks_host,
+            socks_port=socks_port,
+            server_port=server_port,
+            sni=reality_sni,
+            public_key=public_key,
+            short_id=server_short_id,
+            reality_settings_overrides=client_outbound_overrides,
+        )
 
         save_json(case_dir / "server.json", server_cfg)
         save_json(case_dir / "client.json", client_cfg)

@@ -116,6 +116,159 @@ def parse_key_output(output):
     return private_match.group(1), public_match.group(1)
 
 
+def make_reality_server_config(
+    *,
+    log_file,
+    port,
+    sni,
+    private_key,
+    public_key,
+    short_id="0102030405060708",
+    workers=1,
+    idle_timeout=30,
+    web_port=None,
+    outbounds=None,
+    routing=None,
+):
+    cfg = {
+        "workers": workers,
+        "log": {
+            "level": "debug",
+            "file": str(log_file),
+        },
+        "inbounds": [
+            {
+                "type": "reality",
+                "tag": "reality-in",
+                "settings": {
+                    "host": "127.0.0.1",
+                    "port": port,
+                    "sni": sni,
+                    "private_key": private_key,
+                    "public_key": public_key,
+                    "short_id": short_id,
+                    "replay_cache_max_entries": 100000,
+                },
+            }
+        ],
+        "outbounds": outbounds
+        if outbounds is not None
+        else [
+            {
+                "type": "direct",
+                "tag": "direct",
+            }
+        ],
+        "routing": routing
+        if routing is not None
+        else [
+            {
+                "type": "inbound",
+                "values": ["reality-in"],
+                "out": "direct",
+            }
+        ],
+        "timeout": {
+            "read": 5,
+            "write": 5,
+            "connect": 5,
+            "idle": idle_timeout,
+        },
+    }
+    if web_port is not None:
+        cfg["web"] = {
+            "enabled": True,
+            "host": "127.0.0.1",
+            "port": web_port,
+        }
+    return cfg
+
+
+def make_reality_client_config(
+    *,
+    log_file,
+    socks_port,
+    server_port,
+    sni,
+    public_key,
+    short_id="0102030405060708",
+    socks_host="127.0.0.1",
+    workers=1,
+    idle_timeout=30,
+    web_port=None,
+    reality_settings_overrides=None,
+    extra_outbounds=None,
+    routing=None,
+):
+    reality_settings = {
+        "host": "127.0.0.1",
+        "port": server_port,
+        "sni": sni,
+        "fingerprint": "random",
+        "public_key": public_key,
+        "short_id": short_id,
+        "max_handshake_records": 256,
+    }
+    if reality_settings_overrides is not None:
+        reality_settings.update(reality_settings_overrides)
+
+    outbounds = [
+        {
+            "type": "reality",
+            "tag": "reality-out",
+            "settings": reality_settings,
+        },
+        {
+            "type": "direct",
+            "tag": "direct",
+        },
+    ]
+    if extra_outbounds is not None:
+        outbounds.extend(extra_outbounds)
+
+    cfg = {
+        "workers": workers,
+        "log": {
+            "level": "debug",
+            "file": str(log_file),
+        },
+        "inbounds": [
+            {
+                "type": "socks",
+                "tag": "socks-in",
+                "settings": {
+                    "host": socks_host,
+                    "port": socks_port,
+                    "auth": False,
+                },
+            }
+        ],
+        "outbounds": outbounds,
+        "routing": routing
+        if routing is not None
+        else [
+            {
+                "type": "inbound",
+                "values": ["socks-in"],
+                "out": "reality-out",
+            }
+        ],
+        "timeout": {
+            "read": 5,
+            "write": 5,
+            "connect": 5,
+            "idle": idle_timeout,
+        },
+    }
+    if web_port is not None:
+        cfg["web"] = {
+            "enabled": True,
+            "host": "127.0.0.1",
+            "port": web_port,
+        }
+    return cfg
+
+
 def build_cert(tmp_dir, hostname):
     key_path = tmp_dir / "origin.key"
     cert_path = tmp_dir / "origin.crt"
