@@ -321,6 +321,7 @@ if not items:
     raise RuntimeError(f"{label} missing success trace items")
 
 selected = None
+selected_events = None
 for item in items:
     trace_id = item.get("trace_id")
     if not isinstance(trace_id, str) or not trace_id:
@@ -345,11 +346,26 @@ for item in items:
         continue
     if int(summary.get("events_count", 0)) < 4:
         continue
+    events = fetch(f"/api/traces/{trace_id}/events?sort_order=asc&limit=100").get("events", [])
+    session_close_events = [event for event in events if event.get("stage") == "session_close"]
+    if len(session_close_events) != 1:
+        continue
+    session_close_event = session_close_events[0]
+    if int(session_close_event.get("latency_ms", 0)) <= 0:
+        continue
+    close_extra = session_close_event.get("extra", {})
+    if close_extra.get("close_reason") != "completed":
+        continue
+    if int(close_extra.get("duration_ms", "0")) <= 0:
+        continue
     selected = summary
+    selected_events = events
     break
 
 if selected is None:
     raise RuntimeError(f"{label} missing complete success trace")
+if selected_events is None:
+    raise RuntimeError(f"{label} missing session_close events for selected trace")
 
 print(f"trace_assert_ok label={label} trace_id={selected['trace_id']} events={selected['events_count']}")
 PY
