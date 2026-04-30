@@ -11,7 +11,7 @@ import tempfile
 import threading
 import time
 
-from testlib import allocate_tcp_port, build_runtime_env, save_json, start_process, tail_file, wait_for_log_text
+from testlib import allocate_tcp_port, allocate_udp_port, build_runtime_env, save_json, start_process, tail_file, wait_for_log_text
 
 
 def recv_exact(sock, size):
@@ -37,6 +37,21 @@ def recv_socks_reply(sock):
     else:
         raise RuntimeError(f"unexpected socks atyp {atyp}")
     return header[1]
+
+
+def parse_socks_address(sock):
+    atyp = recv_exact(sock, 1)[0]
+    if atyp == 0x01:
+        host = socket.inet_ntoa(recv_exact(sock, 4))
+    elif atyp == 0x03:
+        host_len = recv_exact(sock, 1)[0]
+        host = recv_exact(sock, host_len).decode("utf-8")
+    elif atyp == 0x04:
+        host = socket.inet_ntop(socket.AF_INET6, recv_exact(sock, 16))
+    else:
+        raise RuntimeError(f"unexpected socks atyp {atyp}")
+    port = int.from_bytes(recv_exact(sock, 2), "big")
+    return host, port
 
 
 def run_socks_outbound_auth_guard_case(binary, runtime_env, temp_root):
@@ -426,6 +441,134 @@ def run_socks_udp_outbound_reply_guard_case(binary, runtime_env, temp_root):
         raise RuntimeError("missing udp request received by fake upstream socks server")
 
 
+def run_socks_udp_fragmented_client_guard_case(binary, runtime_env, temp_root):
+    listen_host = "127.0.0.1"
+    listen_port = allocate_tcp_port()
+    target_port = allocate_udp_port()
+    log_path = temp_root / "socks-udp-fragmented-client-guard.log"
+    run_log = temp_root / "socks-udp-fragmented-client-guard.stdout.log"
+
+    cfg = {
+        "workers": 1,
+        "log": {
+            "level": "debug",
+            "file": str(log_path),
+        },
+        "timeout": {
+            "read": 5,
+            "write": 5,
+            "connect": 5,
+            "idle": 5,
+        },
+        "inbounds": [
+            {
+                "type": "socks",
+                "tag": "socks-in",
+                "settings": {
+                    "host": listen_host,
+                    "port": listen_port,
+                    "auth": False,
+                },
+            }
+        ],
+        "outbounds": [
+            {
+                "type": "direct",
+                "tag": "direct",
+            }
+        ],
+        "routing": [
+            {
+                "type": "inbound",
+                "values": ["socks-in"],
+                "out": "direct",
+            }
+        ],
+    }
+
+    config_path = temp_root / "socks-udp-fragmented-client-guard.json"
+    save_json(config_path, cfg)
+
+    echo_ready = threading.Event()
+    echo_error = []
+    echo_state = {"requests": []}
+
+    def udp_echo_server():
+        server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        server.bind((listen_host, target_port))
+        server.settimeout(5)
+        echo_ready.set()
+        try:
+            while len(echo_state["requests"]) < 1:
+                payload, peer = server.recvfrom(65535)
+                echo_state["requests"].append(payload)
+                server.sendto(payload, peer)
+        except Exception as exc:
+            echo_error.append(str(exc))
+        finally:
+            server.close()
+
+    echo_thread = threading.Thread(target=udp_echo_server, daemon=True)
+    echo_thread.start()
+    if not echo_ready.wait(timeout=5):
+        raise RuntimeError("udp echo guard server did not start")
+
+    process = start_process([str(binary), "-c", str(config_path)], str(run_log), extra_env=runtime_env)
+    try:
+        wait_for_log_text(log_path, f"listen {listen_host}:{listen_port} socks listening", 20, "socks udp fragmented client guard log")
+
+        tcp_sock = socket.create_connection((listen_host, listen_port), timeout=5)
+        udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            tcp_sock.settimeout(5)
+            udp_sock.settimeout(0.5)
+            tcp_sock.sendall(b"\x05\x01\x00")
+            method_reply = recv_exact(tcp_sock, 2)
+            if method_reply != b"\x05\x00":
+                raise RuntimeError(f"unexpected inbound method reply {method_reply!r}")
+
+            tcp_sock.sendall(b"\x05\x03\x00\x01\x00\x00\x00\x00\x00\x00")
+            version, rep, _rsv = recv_exact(tcp_sock, 3)
+            if version != 0x05 or rep != 0x00:
+                raise RuntimeError(f"udp associate failed version={version} rep={rep}")
+            relay_host, relay_port = parse_socks_address(tcp_sock)
+
+            fragmented_packet = bytearray(b"\x00\x00\x01\x01")
+            fragmented_packet.extend(socket.inet_aton(listen_host))
+            fragmented_packet.extend(target_port.to_bytes(2, "big"))
+            fragmented_packet.extend(b"fragmented-drop")
+            udp_sock.sendto(fragmented_packet, (relay_host, relay_port))
+            try:
+                reply, _peer = udp_sock.recvfrom(65535)
+                raise RuntimeError(f"unexpected fragmented udp reply {reply!r}")
+            except socket.timeout:
+                pass
+
+            valid_packet = bytearray(b"\x00\x00\x00\x01")
+            valid_packet.extend(socket.inet_aton(listen_host))
+            valid_packet.extend(target_port.to_bytes(2, "big"))
+            valid_packet.extend(b"valid-after-frag")
+            udp_sock.sendto(valid_packet, (relay_host, relay_port))
+            reply, _peer = udp_sock.recvfrom(65535)
+            if not reply.endswith(b"valid-after-frag"):
+                raise RuntimeError(f"unexpected valid udp reply {reply!r}")
+        finally:
+            udp_sock.close()
+            tcp_sock.close()
+
+        wait_for_log_text(log_path, "received fragmented udp packet frag 1", 5, "socks udp fragmented client guard log")
+    finally:
+        process.terminate()
+
+    echo_thread.join(timeout=5)
+    if echo_thread.is_alive():
+        raise RuntimeError("udp echo guard server did not exit")
+    if echo_error:
+        raise RuntimeError(f"udp echo guard server failed: {echo_error[0]}")
+    if echo_state["requests"] != [b"valid-after-frag"]:
+        raise RuntimeError(f"unexpected udp echo requests {echo_state['requests']!r}")
+
+
 def run_ipv4_mapped_tcp_route_guard_case(binary, runtime_env, temp_root):
     listen_host = "127.0.0.1"
     listen_port = allocate_tcp_port()
@@ -580,6 +723,8 @@ def main():
         print("ipv4_mapped_tcp_route_guard ok")
         run_socks_udp_outbound_reply_guard_case(binary, runtime_env, temp_root)
         print("socks_udp_outbound_reply_guard ok")
+        run_socks_udp_fragmented_client_guard_case(binary, runtime_env, temp_root)
+        print("socks_udp_fragmented_client_guard ok")
         return 0
     except Exception as exc:
         print(f"test failed {exc}", file=sys.stderr)
