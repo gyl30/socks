@@ -63,7 +63,8 @@ tp_app_ip="10.211.${net_id}.2"
 target_host_ip="10.214.${net_id}.1"
 direct_ip="10.214.${net_id}.2"
 proxy_ip="10.214.${net_id}.3"
-target_cidrs=("${direct_ip}/32" "${proxy_ip}/32")
+block_ip="10.214.${net_id}.4"
+target_cidrs=("${direct_ip}/32" "${proxy_ip}/32" "${block_ip}/32")
 tun_name="tun${tag}"
 tproxy_tcp_port=15080
 tproxy_udp_port=15081
@@ -379,6 +380,64 @@ raise RuntimeError(f"{label} missing reality session_error matches={matches}")
 PY
 }
 
+assert_route_blocked_trace_api_in_ns() {
+    local ns="$1"
+    local port="$2"
+    local label="$3"
+    local inbound_type="$4"
+    local target_host="$5"
+    local target_port="$6"
+    local expected_count="${7:-1}"
+
+    ns_exec "$ns" python3 - "$port" "$label" "$inbound_type" "$target_host" "$target_port" "$expected_count" <<'PY'
+import json
+import sys
+import time
+import urllib.request
+
+port = int(sys.argv[1])
+label = sys.argv[2]
+inbound_type = sys.argv[3]
+target_host = sys.argv[4]
+target_port = int(sys.argv[5])
+expected_count = int(sys.argv[6])
+base = f"http://127.0.0.1:{port}"
+
+
+def fetch(path):
+    with urllib.request.urlopen(base + path, timeout=10) as response:
+        return json.load(response)
+
+
+deadline = time.time() + 5.0
+matches = []
+while time.time() < deadline:
+    payload = fetch("/api/traces/events?stage=session_error&limit=200")
+    events = payload.get("items") or payload.get("events") or []
+    matches = [
+        event
+        for event in events
+        if event.get("inbound_type") == inbound_type
+        and event.get("outbound_tag") == "block"
+        and event.get("target_host") == target_host
+        and event.get("target_port") == target_port
+        and event.get("route_type") == "block"
+        and event.get("extra", {}).get("close_reason") == "route_blocked"
+        and event.get("error_message") == "route blocked"
+        and event.get("result") == "fail"
+    ]
+    if len(matches) >= expected_count:
+        print(
+            f"trace_route_blocked_ok label={label} inbound_type={inbound_type} "
+            f"target={target_host}:{target_port} count={len(matches)}"
+        )
+        sys.exit(0)
+    time.sleep(0.1)
+
+raise RuntimeError(f"{label} missing route_blocked matches={matches}")
+PY
+}
+
 configure_namespace_sysctls() {
     local ns="$1"
     shift
@@ -454,7 +513,7 @@ trap cleanup EXIT
 mkdir -p "$tmp_dir/http" "$tmp_dir/rules"
 printf 'combo-ok\n' >"$tmp_dir/http/healthz.txt"
 printf '%s/32\n' "$direct_ip" >"$tmp_dir/rules/direct_ip.txt"
-: >"$tmp_dir/rules/block_ip.txt"
+printf '%s/32\n' "$block_ip" >"$tmp_dir/rules/block_ip.txt"
 : >"$tmp_dir/rules/direct_domain.txt"
 : >"$tmp_dir/rules/block_domain.txt"
 : >"$tmp_dir/rules/proxy_domain.txt"
@@ -544,6 +603,7 @@ cat >"$tmp_dir/client.json" <<EOF
     {"type": "block", "tag": "block"}
   ],
   "routing": [
+    {"type": "ip", "file": "$tmp_dir/rules/block_ip.txt", "out": "block"},
     {"type": "ip", "file": "$tmp_dir/rules/direct_ip.txt", "out": "direct"},
     {"type": "inbound", "values": ["tun-in", "tproxy-in"], "out": "reality-out"}
   ],
@@ -664,6 +724,8 @@ ns_exec "$ns_client" iptables -t mangle -A PREROUTING -i "$client_tp_if" -p tcp 
     -j TPROXY --on-ip "$client_tp_ip" --on-port "$tproxy_tcp_port" --tproxy-mark 0x11/0x11
 ns_exec "$ns_client" iptables -t mangle -A PREROUTING -i "$client_tp_if" -p tcp -d "$proxy_ip" --dport "$proxy_fail_port" \
     -j TPROXY --on-ip "$client_tp_ip" --on-port "$tproxy_tcp_port" --tproxy-mark 0x11/0x11
+ns_exec "$ns_client" iptables -t mangle -A PREROUTING -i "$client_tp_if" -p tcp -d "$block_ip" --dport "$http_port" \
+    -j TPROXY --on-ip "$client_tp_ip" --on-port "$tproxy_tcp_port" --tproxy-mark 0x11/0x11
 
 run_step "tun tcp direct" \
     ns_exec "$ns_tun_app" python3 "$repo_root/scripts/tproxy_tcp_client.py" \
@@ -761,6 +823,26 @@ then
     exit 1
 fi
 
+if ns_exec "$ns_tun_app" python3 "$repo_root/scripts/tproxy_tcp_client.py" \
+    --host "$block_ip" \
+    --port "$http_port" \
+    --path "/healthz.txt" \
+    --read-timeout 5
+then
+    echo "unexpected tun blocked connect success on $block_ip:$http_port" >&2
+    exit 1
+fi
+
+if ns_exec "$ns_tp_app" python3 "$repo_root/scripts/tproxy_tcp_client.py" \
+    --host "$block_ip" \
+    --port "$http_port" \
+    --path "/healthz.txt" \
+    --read-timeout 5
+then
+    echo "unexpected tproxy blocked connect success on $block_ip:$http_port" >&2
+    exit 1
+fi
+
 wait_for_log "$tmp_dir/client.log" "target ${direct_ip}:${http_port} route direct" 5
 wait_for_log "$tmp_dir/client.log" "target ${proxy_ip}:${http_port} route proxy" 5
 assert_trace_api_in_ns "$ns_client" "$web_port" "combined_client_trace"
@@ -768,7 +850,10 @@ assert_connect_fail_trace_api_in_ns "$ns_client" "$web_port" "combined_tun_direc
 assert_connect_fail_trace_api_in_ns "$ns_client" "$web_port" "combined_tun_proxy_fail" "tun" "reality-out" "$proxy_fail_port"
 assert_connect_fail_trace_api_in_ns "$ns_client" "$web_port" "combined_tproxy_direct_fail" "tproxy" "direct" "$direct_fail_port"
 assert_connect_fail_trace_api_in_ns "$ns_client" "$web_port" "combined_tproxy_proxy_fail" "tproxy" "reality-out" "$proxy_fail_port"
+assert_route_blocked_trace_api_in_ns "$ns_client" "$web_port" "combined_tun_route_blocked" "tun" "$block_ip" "$http_port"
+assert_route_blocked_trace_api_in_ns "$ns_client" "$web_port" "combined_tproxy_route_blocked" "tproxy" "$block_ip" "$http_port"
 assert_reality_connect_fail_trace_api "$server_web_port" "combined_server_proxy_fail" "$proxy_fail_port" 2
 
 echo "combined tun tproxy smoke ok"
 echo "combined tun tproxy connect fail trace ok"
+echo "combined tun tproxy route blocked trace ok"

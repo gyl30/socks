@@ -468,6 +468,12 @@ boost::asio::awaitable<void> tun_tcp_session::run()
             .extra = make_session_error_extra((decision.route == route_type::kBlock) ? session_close_reason::kRouteBlocked
                                                                                     : session_close_reason::kTransportError),
         });
+        boost::asio::steady_timer close_timer(idle_timer_.get_executor());
+        close_timer.expires_after(std::chrono::milliseconds(50));
+        const auto [close_wait_ec] = co_await close_timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
+        (void)close_wait_ec;
+        close_client_connection(false);
+        co_await wait_for_close_completion();
         co_return;
     }
 
