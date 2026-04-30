@@ -177,7 +177,11 @@ boost::asio::awaitable<bool> tun_tcp_session::connect_backend(const route_decisi
             event.extra["bind_port"] = std::to_string(connect_result.bind_port);
         }
         event.extra["socks_rep"] = std::to_string(connect_result.socks_rep);
+        auto session_error = event;
+        session_error.stage = trace_stage::kSessionError;
+        session_error.extra["close_reason"] = to_string(session_close_reason::kTransportError);
         trace_store::instance().record_event(std::move(event));
+        trace_store::instance().record_event(std::move(session_error));
         LOG_WARN("{} trace {:016x} conn {} client {}:{} target {}:{} route {} connect failed {}",
                  log_event::kConnInit,
                  trace_id_,
@@ -461,7 +465,8 @@ boost::asio::awaitable<void> tun_tcp_session::run()
             .latency_ms = 0,
             .error_code = 0,
             .error_message = (decision.route == route_type::kBlock) ? "route blocked" : "outbound handler unavailable",
-            .extra = {},
+            .extra = make_session_error_extra((decision.route == route_type::kBlock) ? session_close_reason::kRouteBlocked
+                                                                                    : session_close_reason::kTransportError),
         });
         co_return;
     }

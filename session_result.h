@@ -228,6 +228,11 @@ enum class udp_close_reason : uint8_t
     return {{"duration_ms", std::to_string(duration_ms)}, {"close_reason", to_string(close_reason)}};
 }
 
+[[nodiscard]] inline std::map<std::string, std::string> make_session_error_extra(const session_close_reason close_reason)
+{
+    return {{"close_reason", to_string(close_reason)}};
+}
+
 enum class udp_flow_mode : uint8_t
 {
     kBlock,

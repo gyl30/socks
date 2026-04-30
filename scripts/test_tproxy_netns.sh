@@ -312,7 +312,9 @@ assert_trace_api_ns() {
     local ns="$1"
     local port="$2"
     local label="$3"
-    ns_exec "$ns" python3 - "$port" "$label" <<'PY'
+    local direct_drop_port="$4"
+    local proxy_drop_port="$5"
+    ns_exec "$ns" python3 - "$port" "$label" "$direct_drop_port" "$proxy_drop_port" <<'PY'
 import json
 import sys
 import time
@@ -320,6 +322,8 @@ import urllib.request
 
 port = int(sys.argv[1])
 label = sys.argv[2]
+direct_drop_port = int(sys.argv[3])
+proxy_drop_port = int(sys.argv[4])
 base = f"http://127.0.0.1:{port}"
 
 
@@ -399,6 +403,24 @@ def has_close_reason(events, close_reason, route_type, minimum_duration_ms):
         return True
     return False
 
+def has_session_error(events, target_port, route_type):
+    for event in events:
+        extra = event.get("extra", {})
+        if event.get("inbound_type") != "tproxy":
+            continue
+        if event.get("route_type") != route_type:
+            continue
+        if event.get("target_port") != target_port:
+            continue
+        if extra.get("close_reason") != "transport_error":
+            continue
+        if event.get("result") != "fail":
+            continue
+        if not event.get("error_message"):
+            continue
+        return True
+    return False
+
 deadline = time.time() + 5.0
 close_events = []
 while time.time() < deadline:
@@ -416,6 +438,19 @@ while time.time() < deadline:
     time.sleep(0.1)
 else:
     raise RuntimeError(f"{label} missing close reason matrix {close_events}")
+
+deadline = time.time() + 5.0
+error_events = []
+while time.time() < deadline:
+    payload = fetch("/api/traces/events?stage=session_error&limit=100")
+    error_events = payload.get("items") or payload.get("events") or []
+    if has_session_error(error_events, direct_drop_port, "direct") and has_session_error(
+        error_events, proxy_drop_port, "proxy"
+    ):
+        break
+    time.sleep(0.1)
+else:
+    raise RuntimeError(f"{label} missing session_error matrix {error_events}")
 
 print(f"trace_assert_ok label={label} trace_id={selected['trace_id']} events={selected['events_count']}")
 PY
@@ -929,7 +964,7 @@ if grep -Fq "original dst failed" "$client_log"; then
     echo "SO_ORIGINAL_DST failed; TPROXY not verified" >&2
     exit 1
 fi
-assert_trace_api_ns "$ns_mid" "$web_port" "tproxy_client_trace"
+assert_trace_api_ns "$ns_mid" "$web_port" "tproxy_client_trace" "$direct_tcp_drop_port" "$proxy_tcp_drop_port"
 print_log_count "client_route_direct" "$client_log" " route direct"
 print_log_count "client_route_proxy" "$client_log" " route proxy"
 print_log_count "client_udp_direct_open" "$client_log" "opened direct udp socket"

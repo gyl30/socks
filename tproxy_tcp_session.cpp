@@ -224,6 +224,8 @@ boost::asio::awaitable<void> tproxy_tcp_session::run()
     if (backend == nullptr)
     {
         const auto error_message = (decision.route == route_type::kBlock) ? std::string("route blocked") : std::string("outbound handler unavailable");
+        const auto close_reason = (decision.route == route_type::kBlock) ? session_close_reason::kRouteBlocked
+                                                                         : session_close_reason::kTransportError;
         trace_store::instance().record_event(trace_event{
             .trace_id = trace_id_,
             .conn_id = conn_id_,
@@ -247,7 +249,7 @@ boost::asio::awaitable<void> tproxy_tcp_session::run()
             .latency_ms = 0,
             .error_code = 0,
             .error_message = error_message,
-            .extra = {},
+            .extra = make_session_error_extra(close_reason),
         });
         co_return;
     }
@@ -260,31 +262,6 @@ boost::asio::awaitable<void> tproxy_tcp_session::run()
              decision.matched ? decision.outbound_tag : decision.outbound_type);
     if (!(co_await connect_backend(decision, backend)))
     {
-        trace_store::instance().record_event(trace_event{
-            .trace_id = trace_id_,
-            .conn_id = conn_id_,
-            .stage = trace_stage::kSessionError,
-            .result = trace_result::kFail,
-            .inbound_tag = inbound_tag_,
-            .inbound_type = "tproxy",
-            .outbound_tag = decision.outbound_tag,
-            .outbound_type = decision.outbound_type,
-            .target_host = target_addr_,
-            .target_port = target_port_,
-            .local_host = "",
-            .local_port = 0,
-            .remote_host = "",
-            .remote_port = 0,
-            .route_type = relay::to_string(decision.route),
-            .match_type = decision.match_type,
-            .match_value = decision.match_value,
-            .bytes_tx = 0,
-            .bytes_rx = 0,
-            .latency_ms = 0,
-            .error_code = 0,
-            .error_message = "",
-            .extra = {},
-        });
         co_return;
     }
 
@@ -444,7 +421,11 @@ boost::asio::awaitable<bool> tproxy_tcp_session::connect_backend(const route_dec
             event.extra["bind_port"] = std::to_string(connect_result.bind_port);
         }
         event.extra["socks_rep"] = std::to_string(connect_result.socks_rep);
+        auto session_error = event;
+        session_error.stage = trace_stage::kSessionError;
+        session_error.extra["close_reason"] = to_string(session_close_reason::kTransportError);
         trace_store::instance().record_event(std::move(event));
+        trace_store::instance().record_event(std::move(session_error));
         LOG_WARN("{} trace {:016x} conn {} target {}:{} route {} connect failed error {} rep {}",
                  log_event::kConnInit,
                  trace_id_,
