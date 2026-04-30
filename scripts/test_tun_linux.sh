@@ -109,13 +109,13 @@ tun_name="tun${tag}"
 host_ip_forward_before="$(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null || echo 0)"
 declare -a pids=()
 
-read -r server_port http_port site_port web_port udp_port < <(
+read -r server_port http_port site_port web_port server_web_port connect_fail_port udp_port < <(
     python3 - <<'PY'
 import socket
 
 socks = []
 ports = []
-for _ in range(4):
+for _ in range(6):
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.bind(("127.0.0.1", 0))
     ports.append(sock.getsockname()[1])
@@ -371,6 +371,103 @@ print(f"trace_assert_ok label={label} trace_id={selected['trace_id']} events={se
 PY
 }
 
+assert_connect_fail_trace_api_in_ns() {
+    local ns="$1"
+    local port="$2"
+    local label="$3"
+    local target_port="$4"
+    ip netns exec "$ns" python3 - "$port" "$label" "$target_port" <<'PY'
+import json
+import sys
+import time
+import urllib.request
+
+port = int(sys.argv[1])
+label = sys.argv[2]
+target_port = int(sys.argv[3])
+base = f"http://127.0.0.1:{port}"
+
+
+def fetch(path):
+    with urllib.request.urlopen(base + path, timeout=10) as response:
+        return json.load(response)
+
+
+deadline = time.time() + 5.0
+events = []
+while time.time() < deadline:
+    payload = fetch("/api/traces/events?stage=session_error&limit=100")
+    events = payload.get("items") or payload.get("events") or []
+    matched = next(
+        (
+            event
+            for event in events
+            if event.get("inbound_type") == "tun"
+            and event.get("outbound_tag") == "reality-out"
+            and event.get("target_port") == target_port
+            and event.get("extra", {}).get("close_reason") == "transport_error"
+            and event.get("error_message")
+            and event.get("result") == "fail"
+        ),
+        None,
+    )
+    if matched is not None:
+        print(f"trace_connect_fail_ok label={label} trace_id={matched['trace_id']} target_port={target_port}")
+        sys.exit(0)
+    time.sleep(0.1)
+
+raise RuntimeError(f"{label} missing tun session_error {events}")
+PY
+}
+
+assert_reality_connect_fail_trace_api() {
+    local port="$1"
+    local label="$2"
+    local target_port="$3"
+    python3 - "$port" "$label" "$target_port" <<'PY'
+import json
+import sys
+import time
+import urllib.request
+
+port = int(sys.argv[1])
+label = sys.argv[2]
+target_port = int(sys.argv[3])
+base = f"http://127.0.0.1:{port}"
+
+
+def fetch(path):
+    with urllib.request.urlopen(base + path, timeout=10) as response:
+        return json.load(response)
+
+
+deadline = time.time() + 5.0
+events = []
+while time.time() < deadline:
+    payload = fetch("/api/traces/events?stage=session_error&limit=100")
+    events = payload.get("items") or payload.get("events") or []
+    matched = next(
+        (
+            event
+            for event in events
+            if event.get("inbound_type") == "reality"
+            and event.get("outbound_tag") == "direct"
+            and event.get("target_port") == target_port
+            and event.get("extra", {}).get("close_reason") == "transport_error"
+            and event.get("error_message")
+            and event.get("result") == "fail"
+        ),
+        None,
+    )
+    if matched is not None:
+        print(f"trace_reality_fail_ok label={label} trace_id={matched['trace_id']} target_port={target_port}")
+        sys.exit(0)
+    time.sleep(0.1)
+
+raise RuntimeError(f"{label} missing reality session_error {events}")
+PY
+}
+
 assert_target_route() {
     local mode="$1"
     local route_text
@@ -432,6 +529,11 @@ cat >"$tmp_dir/server.json" <<EOF
   "log": {
     "level": "debug",
     "file": "$tmp_dir/server.log"
+  },
+  "web": {
+    "enabled": true,
+    "host": "127.0.0.1",
+    "port": $server_web_port
   },
   "inbounds": [
     {
@@ -655,6 +757,7 @@ pids+=("$client_pid")
 wait_for_port "$host_ip" "$server_port" "reality_server"
 wait_for_log "$tmp_dir/client.log" "tun inbound started" 20
 wait_for_port_in_ns "$ns_client" "127.0.0.1" "$web_port" "trace_web"
+wait_for_port "127.0.0.1" "$server_web_port" "server_trace_web"
 host_netns_id="$(readlink /proc/$$/ns/net)"
 server_netns_id="$(readlink /proc/$server_pid/ns/net)"
 if [[ "$host_netns_id" != "$server_netns_id" ]]; then
@@ -710,8 +813,21 @@ run_step "tun udp proxy smoke" \
         --payload "tun-udp-echo" \
         --expect-echo
 
+if ip netns exec "$ns_app" python3 "$repo_root/scripts/tproxy_tcp_client.py" \
+    --host "$target_ip" \
+    --port "$connect_fail_port" \
+    --path "/healthz.txt" \
+    --read-timeout 5
+then
+    echo "unexpected tun tcp connect success on fail port $connect_fail_port" >&2
+    exit 1
+fi
+
 wait_for_log "$tmp_dir/client.log" "tun inbound started" 5
 assert_trace_api_in_ns "$ns_client" "$web_port" "tun_client_trace"
+assert_connect_fail_trace_api_in_ns "$ns_client" "$web_port" "tun_client_connect_fail" "$connect_fail_port"
+assert_reality_connect_fail_trace_api "$server_web_port" "tun_server_connect_fail" "$connect_fail_port"
 
 echo "tun tcp proxy smoke ok"
 echo "tun udp proxy smoke ok"
+echo "tun tcp connect fail trace ok"
