@@ -401,6 +401,12 @@ if(UNIX AND NOT APPLE AND NOT ENABLE_STATIC_LINK)
   target_link_options(proxy_protocol_regression PRIVATE "-Wl,--no-as-needed" "${BROTLICOMMON_LIBRARY}" "-Wl,--as-needed")
 endif()
 
+add_executable(test_reality_invalid_initial_request_client scripts/test_reality_invalid_initial_request_client.cpp)
+target_link_libraries(test_reality_invalid_initial_request_client PRIVATE core)
+if(UNIX AND NOT APPLE AND NOT ENABLE_STATIC_LINK)
+  target_link_options(test_reality_invalid_initial_request_client PRIVATE "-Wl,--no-as-needed" "${BROTLICOMMON_LIBRARY}" "-Wl,--as-needed")
+endif()
+
 if(ENABLE_FUZZ)
   add_executable(ch_parser_fuzz fuzz/ch_parser_fuzz.cpp)
   target_link_libraries(ch_parser_fuzz PRIVATE fuzz_core)
@@ -440,6 +446,10 @@ if(SOCKS_RUNTIME_DIRS)
     proxy_protocol_regression
     PROPERTIES BUILD_RPATH "${SOCKS_RUNTIME_DIRS}"
                INSTALL_RPATH "${SOCKS_RUNTIME_DIRS}")
+  set_target_properties(
+    test_reality_invalid_initial_request_client
+    PROPERTIES BUILD_RPATH "${SOCKS_RUNTIME_DIRS}"
+               INSTALL_RPATH "${SOCKS_RUNTIME_DIRS}")
 endif()
 
 if(BUILD_TESTING)
@@ -454,6 +464,11 @@ if(BUILD_TESTING)
     NAME reality_handshake_guardrails
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_reality_handshake_guards.py --binary $<TARGET_FILE:socks>)
   set_tests_properties(reality_handshake_guardrails PROPERTIES TIMEOUT 180)
+
+  add_test(
+    NAME reality_protocol_guardrails
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_reality_protocol_guards.py --binary $<TARGET_FILE:socks> --helper $<TARGET_FILE:test_reality_invalid_initial_request_client>)
+  set_tests_properties(reality_protocol_guardrails PROPERTIES TIMEOUT 180)
 
   add_test(
     NAME config_roundtrip_smoke
