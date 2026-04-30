@@ -721,6 +721,85 @@ def run_socks_udp_tcp_control_flood_guard_case(binary, runtime_env, temp_root):
         raise RuntimeError(f"unexpected udp flood guard requests {echo_state['requests']!r}")
 
 
+def run_socks_connect_target_guard_case(binary, runtime_env, temp_root):
+    listen_host = "127.0.0.1"
+    listen_port = allocate_tcp_port()
+    log_path = temp_root / "socks-connect-target-guard.log"
+    run_log = temp_root / "socks-connect-target-guard.stdout.log"
+
+    cfg = {
+        "workers": 1,
+        "log": {
+            "level": "debug",
+            "file": str(log_path),
+        },
+        "timeout": {
+            "read": 5,
+            "write": 5,
+            "connect": 5,
+            "idle": 5,
+        },
+        "inbounds": [
+            {
+                "type": "socks",
+                "tag": "socks-in",
+                "settings": {
+                    "host": listen_host,
+                    "port": listen_port,
+                    "auth": False,
+                },
+            }
+        ],
+        "outbounds": [
+            {
+                "type": "direct",
+                "tag": "direct",
+            }
+        ],
+        "routing": [
+            {
+                "type": "inbound",
+                "values": ["socks-in"],
+                "out": "direct",
+            }
+        ],
+    }
+
+    config_path = temp_root / "socks-connect-target-guard.json"
+    save_json(config_path, cfg)
+
+    process = start_process([str(binary), "-c", str(config_path)], str(run_log), extra_env=runtime_env)
+    try:
+        wait_for_log_text(log_path, f"listen {listen_host}:{listen_port} socks listening", 20, "socks connect target guard log")
+
+        client = socket.create_connection((listen_host, listen_port), timeout=5)
+        with client:
+            client.settimeout(5)
+            client.sendall(b"\x05\x01\x00")
+            method_reply = recv_exact(client, 2)
+            if method_reply != b"\x05\x00":
+                raise RuntimeError(f"unexpected inbound method reply {method_reply!r}")
+            client.sendall(b"\x05\x01\x00\x03\x00\x00\x50")
+            if recv_socks_reply(client) == 0x00:
+                raise RuntimeError("unexpected connect success for zero-length domain")
+
+        client = socket.create_connection((listen_host, listen_port), timeout=5)
+        with client:
+            client.settimeout(5)
+            client.sendall(b"\x05\x01\x00")
+            method_reply = recv_exact(client, 2)
+            if method_reply != b"\x05\x00":
+                raise RuntimeError(f"unexpected inbound method reply {method_reply!r}")
+            client.sendall(b"\x05\x01\x00\x03\x0bexample.com\x00\x00")
+            if recv_socks_reply(client) == 0x00:
+                raise RuntimeError("unexpected connect success for zero port")
+
+        wait_for_log_text(log_path, "request domain len invalid 0", 5, "socks connect target guard log")
+        wait_for_log_text(log_path, "request invalid port 0", 5, "socks connect target guard log")
+    finally:
+        process.terminate()
+
+
 def run_ipv4_mapped_tcp_route_guard_case(binary, runtime_env, temp_root):
     listen_host = "127.0.0.1"
     listen_port = allocate_tcp_port()
@@ -879,6 +958,8 @@ def main():
         print("socks_udp_fragmented_client_guard ok")
         run_socks_udp_tcp_control_flood_guard_case(binary, runtime_env, temp_root)
         print("socks_udp_tcp_control_flood_guard ok")
+        run_socks_connect_target_guard_case(binary, runtime_env, temp_root)
+        print("socks_connect_target_guard ok")
         return 0
     except Exception as exc:
         print(f"test failed {exc}", file=sys.stderr)
