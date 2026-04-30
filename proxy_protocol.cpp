@@ -286,6 +286,10 @@ bool tcp_stream_recv_state::accept(const tcp_stream_frame& frame)
 
 bool encode_tcp_connect_request(const tcp_connect_request& request, std::vector<uint8_t>& out)
 {
+    if (request.target_port == 0)
+    {
+        return false;
+    }
     out.clear();
     out.reserve(64 + request.target_host.size());
     out.push_back(static_cast<uint8_t>(message_type::kTcpConnectRequest));
@@ -392,6 +396,10 @@ bool decode_udp_associate_reply(const uint8_t* data, const std::size_t len, udp_
 
 bool encode_udp_datagram(const udp_datagram& datagram, std::vector<uint8_t>& out)
 {
+    if (datagram.target_port == 0)
+    {
+        return false;
+    }
     out.clear();
     out.reserve(64 + datagram.target_host.size() + datagram.payload.size());
     out.push_back(static_cast<uint8_t>(message_type::kUdpDatagram));
