@@ -219,6 +219,20 @@ def run_invalid_route_config_case(binary, runtime_env, temp_root):
     assert_no_usage("invalid_route", combined)
 
 
+def run_invalid_route_inbound_ref_case(binary, runtime_env, temp_root):
+    cfg = dump_default_config(binary, runtime_env)
+    cfg["routing"][0]["values"] = ["missing-inbound"]
+
+    run_invalid_config_value_case(
+        binary,
+        runtime_env,
+        temp_root,
+        "invalid_route_inbound_ref",
+        cfg,
+        "routing[0] inbound_not_found",
+    )
+
+
 def run_invalid_general_config_cases(binary, runtime_env, temp_root):
     base_cfg = dump_default_config(binary, runtime_env)
 
@@ -281,6 +295,98 @@ def run_invalid_general_config_cases(binary, runtime_env, temp_root):
         "inbounds[0].settings.ipv4_prefix out_of_range",
     )
 
+    invalid_duplicate_inbound_tag = copy.deepcopy(base_cfg)
+    invalid_duplicate_inbound_tag["inbounds"].append(copy.deepcopy(invalid_duplicate_inbound_tag["inbounds"][0]))
+    run_invalid_config_value_case(
+        binary,
+        runtime_env,
+        temp_root,
+        "invalid_duplicate_inbound_tag",
+        invalid_duplicate_inbound_tag,
+        "inbounds[1] duplicate_tag",
+    )
+
+    invalid_duplicate_outbound_tag = copy.deepcopy(base_cfg)
+    invalid_duplicate_outbound_tag["outbounds"].append(copy.deepcopy(invalid_duplicate_outbound_tag["outbounds"][0]))
+    run_invalid_config_value_case(
+        binary,
+        runtime_env,
+        temp_root,
+        "invalid_duplicate_outbound_tag",
+        invalid_duplicate_outbound_tag,
+        "outbounds[3] duplicate_tag",
+    )
+
+    invalid_reality_outbound_missing_settings = copy.deepcopy(base_cfg)
+    invalid_reality_outbound_missing_settings["outbounds"][0].pop("settings")
+    run_invalid_config_value_case(
+        binary,
+        runtime_env,
+        temp_root,
+        "invalid_reality_outbound_missing_settings",
+        invalid_reality_outbound_missing_settings,
+        "outbounds[0].settings missing",
+    )
+
+    invalid_reality_outbound_missing_public_key = copy.deepcopy(base_cfg)
+    invalid_reality_outbound_missing_public_key["outbounds"][0]["settings"].pop("public_key")
+    run_invalid_config_value_case(
+        binary,
+        runtime_env,
+        temp_root,
+        "invalid_reality_outbound_missing_public_key",
+        invalid_reality_outbound_missing_public_key,
+        "outbounds[0].settings.public_key missing",
+    )
+
+    invalid_reality_outbound_handshake_limit = copy.deepcopy(base_cfg)
+    invalid_reality_outbound_handshake_limit["outbounds"][0]["settings"]["max_handshake_records"] = 0
+    run_invalid_config_value_case(
+        binary,
+        runtime_env,
+        temp_root,
+        "invalid_reality_outbound_zero_max_handshake_records",
+        invalid_reality_outbound_handshake_limit,
+        "outbounds[0].settings.max_handshake_records out_of_range",
+    )
+
+    invalid_socks_outbound_auth_username = copy.deepcopy(base_cfg)
+    invalid_socks_outbound_auth_username["outbounds"] = [
+        {
+            "type": "socks",
+            "tag": "socks-out",
+            "settings": {
+                "host": "127.0.0.1",
+                "port": allocate_tcp_port(),
+                "auth": True,
+            },
+        },
+        {
+            "type": "block",
+            "tag": "block",
+        },
+    ]
+    invalid_socks_outbound_auth_username["routing"] = [{"type": "inbound", "values": ["socks-in"], "out": "socks-out"}]
+    run_invalid_config_value_case(
+        binary,
+        runtime_env,
+        temp_root,
+        "invalid_socks_outbound_auth_missing_username",
+        invalid_socks_outbound_auth_username,
+        "outbounds[0].settings.username required_when_auth_enabled",
+    )
+
+    invalid_socks_outbound_auth_password = copy.deepcopy(invalid_socks_outbound_auth_username)
+    invalid_socks_outbound_auth_password["outbounds"][0]["settings"]["username"] = "user"
+    run_invalid_config_value_case(
+        binary,
+        runtime_env,
+        temp_root,
+        "invalid_socks_outbound_auth_missing_password",
+        invalid_socks_outbound_auth_password,
+        "outbounds[0].settings.password required_when_auth_enabled",
+    )
+
 
 def main():
     parser = argparse.ArgumentParser(description="Config roundtrip and validation test")
@@ -308,6 +414,8 @@ def main():
         print("invalid_general_config ok")
         run_invalid_route_config_case(binary, runtime_env, temp_root)
         print("invalid_route ok")
+        run_invalid_route_inbound_ref_case(binary, runtime_env, temp_root)
+        print("invalid_route_inbound_ref ok")
         return 0
     except Exception as exc:
         print(f"test failed {exc}", file=sys.stderr)

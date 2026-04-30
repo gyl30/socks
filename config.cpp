@@ -677,6 +677,10 @@ template <typename T>
     {
         return false;
     }
+    if (out.max_handshake_records == 0)
+    {
+        return fail_config(filename, join_path(path, "max_handshake_records") + " out_of_range");
+    }
     return true;
 }
 
