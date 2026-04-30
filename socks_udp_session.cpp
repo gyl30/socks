@@ -675,7 +675,7 @@ boost::asio::awaitable<bool> socks_udp_session::process_udp_packet(const socks_u
         const auto outbound = co_await ensure_proxy_outbound(decision.outbound_tag, open_ec);
         if (outbound == nullptr)
         {
-            co_return false;
+            co_return true;
         }
 
         boost::system::error_code write_ec;

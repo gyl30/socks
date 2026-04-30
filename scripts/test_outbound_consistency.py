@@ -158,6 +158,51 @@ def run_connect_fail_case(socks_host, socks_port, target_host, target_port, time
 
 
 def run_udp_echo_case(socks_host, socks_port, target_host, target_port, payload, timeout=5.0):
+    with open_socks_udp_associate(socks_host, socks_port, timeout=timeout) as udp_associate:
+        response_payload = udp_associate.exchange(target_host, target_port, payload, timeout=timeout)
+        if response_payload != payload:
+            raise RuntimeError(f"udp payload mismatch len={len(response_payload)} expected={len(payload)}")
+
+
+class SocksUdpAssociate:
+    def __init__(self, tcp_sock, udp_sock, relay_host, relay_port):
+        self.tcp_sock = tcp_sock
+        self.udp_sock = udp_sock
+        self.relay_addr = (relay_host, relay_port)
+
+    def close(self):
+        self.udp_sock.close()
+        self.tcp_sock.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.close()
+        return False
+
+    def exchange(self, target_host, target_port, payload, timeout=5.0):
+        self.udp_sock.settimeout(timeout)
+        request = encode_socks_udp_header(target_host, target_port) + payload
+        self.udp_sock.sendto(request, self.relay_addr)
+        response, _peer = self.udp_sock.recvfrom(65535)
+        source_host, source_port, response_payload = decode_socks_udp_packet(response)
+        if source_host != target_host or source_port != target_port:
+            raise RuntimeError(f"unexpected udp source {source_host}:{source_port}")
+        return response_payload
+
+    def expect_timeout(self, target_host, target_port, payload, timeout=1.5):
+        self.udp_sock.settimeout(timeout)
+        request = encode_socks_udp_header(target_host, target_port) + payload
+        self.udp_sock.sendto(request, self.relay_addr)
+        try:
+            response, _peer = self.udp_sock.recvfrom(65535)
+        except socket.timeout:
+            return
+        raise RuntimeError(f"unexpected udp reply while expecting timeout {response!r}")
+
+
+def open_socks_udp_associate(socks_host, socks_port, timeout=5.0):
     tcp_sock = socket.create_connection((socks_host, socks_port), timeout=timeout)
     tcp_sock.settimeout(timeout)
     udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -173,18 +218,11 @@ def run_udp_echo_case(socks_host, socks_port, target_host, target_port, payload,
         if version != 0x05 or rep != 0x00:
             raise RuntimeError(f"udp associate failed version={version} rep={rep}")
         relay_host, relay_port = parse_socks_address(tcp_sock)
-
-        request = encode_socks_udp_header(target_host, target_port) + payload
-        udp_sock.sendto(request, (relay_host, relay_port))
-        response, _peer = udp_sock.recvfrom(65535)
-        source_host, source_port, response_payload = decode_socks_udp_packet(response)
-        if source_host != target_host or source_port != target_port:
-            raise RuntimeError(f"unexpected udp source {source_host}:{source_port}")
-        if response_payload != payload:
-            raise RuntimeError(f"udp payload mismatch len={len(response_payload)} expected={len(payload)}")
-    finally:
+    except Exception:
         udp_sock.close()
         tcp_sock.close()
+        raise
+    return SocksUdpAssociate(tcp_sock, udp_sock, relay_host, relay_port)
 
 
 def fetch_json(url):
@@ -283,16 +321,16 @@ class IdleTcpServer:
 
 
 class FakeUpstreamSocksServer:
-    def __init__(self, expected_sessions):
+    def __init__(self, expected_sessions, tcp_port=0, udp_port=0):
         self.expected_sessions = expected_sessions
         self.error = None
         self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.server.bind(("127.0.0.1", 0))
+        self.server.bind(("127.0.0.1", tcp_port))
         self.server.listen(expected_sessions)
         self.tcp_host, self.tcp_port = self.server.getsockname()
         self.udp_server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.udp_server.bind(("127.0.0.1", 0))
+        self.udp_server.bind(("127.0.0.1", udp_port))
         self.udp_host, self.udp_port = self.udp_server.getsockname()
         self.thread = threading.Thread(target=self._serve, daemon=True)
         self.thread.start()
@@ -438,15 +476,19 @@ def main():
     temp_root = pathlib.Path(tempfile.mkdtemp(prefix=".tmp-outbound-consistency.", dir=repo_root))
     helper_processes = []
     fake_socks_server = None
+    fake_retry_socks_server = None
     try:
         runtime_env = build_runtime_env(binary)
         direct_port = allocate_tcp_port()
         socks_port = allocate_tcp_port()
         reality_port = allocate_tcp_port()
+        socks_retry_port = allocate_tcp_port()
         block_port = allocate_tcp_port()
         web_port = allocate_tcp_port()
         server_web_port = allocate_tcp_port()
         reality_server_port = allocate_tcp_port()
+        socks_retry_upstream_port = allocate_tcp_port()
+        socks_retry_upstream_udp_port = allocate_udp_port()
         udp_echo_port = allocate_udp_port()
         short_id = "0102030405060708"
         sni = "www.example.com"
@@ -570,6 +612,15 @@ def main():
                 },
                 {
                     "type": "socks",
+                    "tag": "socks-retry-out-in",
+                    "settings": {
+                        "host": "127.0.0.1",
+                        "port": socks_retry_port,
+                        "auth": False,
+                    },
+                },
+                {
+                    "type": "socks",
                     "tag": "block-in",
                     "settings": {
                         "host": "127.0.0.1",
@@ -606,6 +657,15 @@ def main():
                     },
                 },
                 {
+                    "type": "socks",
+                    "tag": "socks-retry-out",
+                    "settings": {
+                        "host": "127.0.0.1",
+                        "port": socks_retry_upstream_port,
+                        "auth": False,
+                    },
+                },
+                {
                     "type": "block",
                     "tag": "block",
                 },
@@ -628,6 +688,11 @@ def main():
                 },
                 {
                     "type": "inbound",
+                    "values": ["socks-retry-out-in"],
+                    "out": "socks-retry-out",
+                },
+                {
+                    "type": "inbound",
                     "values": ["block-in"],
                     "out": "block",
                 },
@@ -642,7 +707,7 @@ def main():
         helper_processes.extend([server_process, client_process])
 
         wait_for_log_text(server_log, f"listen 127.0.0.1:{reality_server_port} reality inbound listening", 20, "reality server log")
-        for port in (direct_port, socks_port, reality_port, block_port):
+        for port in (direct_port, socks_port, reality_port, socks_retry_port, block_port):
             wait_for_log_text(client_log, f":{port} socks listening", 20, f"client socks port {port}")
             wait_for_port("127.0.0.1", port, 20, f"socks port {port}", [client_process])
         wait_for_port("127.0.0.1", web_port, 20, "client trace web", [client_process])
@@ -675,6 +740,20 @@ def main():
         large_payload = bytes((index % 251 for index in range(65497)))
         for label, socks_listen_port in socks_ports.items():
             run_udp_echo_case("127.0.0.1", socks_listen_port, "127.0.0.1", udp_echo_port, large_payload)
+
+        with open_socks_udp_associate("127.0.0.1", socks_retry_port, timeout=5.0) as retry_associate:
+            retry_associate.expect_timeout("127.0.0.1", udp_echo_port, b"retry-before", timeout=1.5)
+            fake_retry_socks_server = FakeUpstreamSocksServer(
+                expected_sessions=1,
+                tcp_port=socks_retry_upstream_port,
+                udp_port=socks_retry_upstream_udp_port,
+            )
+            retry_payload = b"retry-after"
+            retry_reply = retry_associate.exchange("127.0.0.1", udp_echo_port, retry_payload, timeout=5.0)
+            if retry_reply != retry_payload:
+                raise RuntimeError(f"udp retry payload mismatch {retry_reply!r}")
+        if fake_retry_socks_server is not None:
+            fake_retry_socks_server.join()
 
         idle_ports = {}
         for label, socks_listen_port in socks_ports.items():
@@ -825,6 +904,7 @@ def main():
         fake_socks_server.join()
         print("tcp_half_close_matrix ok")
         print("udp_large_payload_matrix ok")
+        print("udp_proxy_recovery_matrix ok")
         print("idle_timeout_matrix ok")
         print("connect_fail_matrix ok")
         print("route_blocked_matrix ok")
@@ -840,6 +920,8 @@ def main():
         print(tail_file(temp_root / "udp.log"), file=sys.stderr)
         raise
     finally:
+        if fake_retry_socks_server is not None:
+            fake_retry_socks_server.close()
         for process in reversed(helper_processes):
             process.terminate()
         if args.keep_artifacts:
