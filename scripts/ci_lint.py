@@ -10,9 +10,6 @@ import shutil
 import subprocess
 import sys
 
-EXCLUDED_FILES = set()
-
-
 def build_safe_git_env(repo_root):
     env = os.environ.copy()
     count_text = env.get("GIT_CONFIG_COUNT", "0")
@@ -104,8 +101,6 @@ def list_changed_files(repo_root, base_sha, head_sha):
         if not line:
             continue
         if line.startswith("third/") or line.startswith("build/") or line.startswith("fuzz/"):
-            continue
-        if line in EXCLUDED_FILES:
             continue
         files.append(line)
     return files
