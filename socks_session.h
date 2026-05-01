@@ -12,7 +12,6 @@
 #include "router.h"
 #include "constants.h"
 #include "trace_store.h"
-#include "run_loop_spawner.h"
 
 namespace relay
 {
@@ -38,9 +37,6 @@ class socks_session : public std::enable_shared_from_this<socks_session>
    private:
     boost::asio::awaitable<void> run_loop();
     void record_stage(trace_stage stage, trace_result result, const socks_protocol_request* request = nullptr) const;
-
-   private:
-    friend struct run_loop_spawner;
 
     uint32_t sid_;
     uint64_t trace_id_ = 0;

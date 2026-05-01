@@ -10,7 +10,6 @@
 #include "log.h"
 #include "net_utils.h"
 #include "protocol.h"
-#include "run_loop_spawner.h"
 #include "socks_protocol_session.h"
 #include "socks_session.h"
 #include "socks_tcp_session.h"
@@ -43,7 +42,11 @@ socks_session::socks_session(boost::asio::ip::tcp::socket socket,
 
 socks_session::~socks_session() = default;
 
-void socks_session::start() { run_loop_spawner::spawn(worker_, shared_from_this()); }
+void socks_session::start()
+{
+    auto self = shared_from_this();
+    worker_.group.spawn([self]() -> boost::asio::awaitable<void> { co_await self->run_loop(); });
+}
 
 void socks_session::record_stage(const trace_stage stage, const trace_result result, const socks_protocol_request* request) const
 {
