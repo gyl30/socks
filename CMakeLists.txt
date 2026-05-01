@@ -228,10 +228,7 @@ set(SOCKS_SOURCES
     app_runtime.cpp
     log.cpp
     outbound.cpp
-    direct_outbound.cpp
     datagram_relay.cpp
-    block_outbound.cpp
-    proxy_outbound.cpp
     config.cpp
     net_utils.cpp
     reality_inbound.cpp
