@@ -2,14 +2,13 @@
 #define SESSION_RESULT_H
 
 #include <map>
-#include <memory>
+#include <string>
 #include <cstdint>
 
 #include <boost/asio/error.hpp>
 #include <boost/system/error_code.hpp>
 
 #include "router.h"
-#include "tcp_outbound_stream.h"
 
 namespace relay
 {
@@ -91,13 +90,6 @@ struct stream_relay_result
     }
     return {};
 }
-
-struct tcp_flow_result
-{
-    route_decision decision;
-    std::shared_ptr<tcp_outbound_stream> stream;
-    tcp_outbound_connect_result connect_result;
-};
 
 enum class session_close_reason : uint8_t
 {
