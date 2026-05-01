@@ -18,24 +18,6 @@ class lru_cache
    public:
     explicit lru_cache(std::size_t capacity) : capacity_(capacity) {}
 
-    [[nodiscard]] std::size_t capacity() const { return capacity_; }
-    [[nodiscard]] std::size_t size() const { return index_.size(); }
-    [[nodiscard]] bool empty() const { return index_.empty(); }
-
-    void set_capacity(std::size_t capacity)
-    {
-        capacity_ = capacity;
-        evict_if_needed();
-    }
-
-    void clear()
-    {
-        index_.clear();
-        items_.clear();
-    }
-
-    [[nodiscard]] bool contains(const Key& key) const { return index_.contains(key); }
-
     // 读取并更新 LRU 顺序，返回值指针在后续 put/erase 后可能失效
     [[nodiscard]] Value* get(const Key& key)
     {
@@ -46,28 +28,6 @@ class lru_cache
         }
         touch(it->second);
         return &it->second->value;
-    }
-
-    // 只读不更新 LRU 顺序
-    [[nodiscard]] const Value* peek(const Key& key) const
-    {
-        const auto it = index_.find(key);
-        if (it == index_.end())
-        {
-            return nullptr;
-        }
-        return &it->second->value;
-    }
-
-    bool get(const Key& key, Value& out)
-    {
-        auto* ptr = get(key);
-        if (ptr == nullptr)
-        {
-            return false;
-        }
-        out = *ptr;
-        return true;
     }
 
     template <typename K, typename V>
@@ -168,21 +128,6 @@ class lru_cache
         if (it != items_.begin())
         {
             items_.splice(items_.begin(), items_, it);
-        }
-    }
-
-    void evict_if_needed()
-    {
-        if (capacity_ == 0)
-        {
-            clear();
-            return;
-        }
-        while (index_.size() > capacity_)
-        {
-            auto last = std::prev(items_.end());
-            index_.erase(last->key);
-            items_.pop_back();
         }
     }
 
