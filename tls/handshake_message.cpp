@@ -682,6 +682,9 @@ std::optional<uint16_t> extract_cipher_suite_from_server_hello(const std::span<c
     return info->cipher_suite;
 }
 
+namespace
+{
+
 std::optional<server_key_share_info> extract_server_key_share(const std::span<const uint8_t> server_hello)
 {
     const auto info = parse_server_hello(server_hello);
@@ -691,6 +694,8 @@ std::optional<server_key_share_info> extract_server_key_share(const std::span<co
     }
     return info->key_share;
 }
+
+}    // namespace
 
 std::vector<uint8_t> extract_server_public_key(const std::span<const uint8_t> server_hello)
 {

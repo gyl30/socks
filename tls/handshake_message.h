@@ -62,8 +62,6 @@ std::optional<server_hello_info> parse_server_hello(std::span<const uint8_t> ser
 
 std::optional<uint16_t> extract_cipher_suite_from_server_hello(std::span<const uint8_t> server_hello);
 
-std::optional<server_key_share_info> extract_server_key_share(std::span<const uint8_t> server_hello);
-
 std::vector<uint8_t> extract_server_public_key(std::span<const uint8_t> server_hello);
 
 std::optional<encrypted_extensions_info> parse_encrypted_extensions(std::span<const uint8_t> encrypted_extensions);
