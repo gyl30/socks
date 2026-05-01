@@ -40,12 +40,6 @@ namespace relay
 
 namespace
 {
-[[nodiscard]] reality::fallback_gate::dependencies make_fallback_gate_dependencies()
-{
-    reality::fallback_gate::dependencies deps;
-    return deps;
-}
-
 void close_tcp_socket(boost::asio::ip::tcp::socket& socket)
 {
     boost::system::error_code ec;
@@ -192,7 +186,6 @@ reality_inbound::reality_inbound(io_context_pool& pool, const config& cfg, std::
       owner_worker_(pool.get_io_worker()),
       replay_cache_(static_cast<std::size_t>(settings_.replay_cache_max_entries)),
       router_(std::make_shared<router>(cfg_, inbound_tag_)),
-      fallback_gate_(make_fallback_gate_dependencies()),
       fallback_executor_(owner_worker_.io_context, cfg)
 {
     private_key_ = tls::crypto_util::hex_to_bytes(settings_.private_key);
