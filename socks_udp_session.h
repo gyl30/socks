@@ -17,6 +17,7 @@
 #include "net_utils.h"
 #include "session_result.h"
 #include "request_context.h"
+#include "udp_session_cache.h"
 #include "run_loop_spawner.h"
 #include "udp_proxy_outbound.h"
 #include "udp_proxy_outbound_registry.h"
@@ -107,20 +108,6 @@ class socks_udp_session : public std::enable_shared_from_this<socks_udp_session>
     boost::asio::awaitable<void> idle_watchdog();
     void close_impl();
 
-   private:
-    struct endpoint_cache_entry
-    {
-        boost::asio::ip::udp::endpoint endpoint;
-        uint64_t expires_at = 0;
-        boost::system::error_code last_error;
-        bool negative = false;
-    };
-
-    struct peer_cache_entry
-    {
-        uint64_t expires_at = 0;
-    };
-
     uint64_t trace_id_ = 0;
     uint32_t conn_id_ = 0;
     std::string inbound_tag_;
@@ -153,8 +140,8 @@ class socks_udp_session : public std::enable_shared_from_this<socks_udp_session>
     boost::asio::ip::udp::endpoint client_addr_;
     std::string last_target_addr_;
     uint16_t last_target_port_ = 0;
-    lru_cache<std::string, endpoint_cache_entry> resolved_targets_;
-    lru_cache<boost::asio::ip::udp::endpoint, peer_cache_entry, net::udp_endpoint_hash, net::udp_endpoint_equal> direct_peers_;
+    lru_cache<std::string, udp_endpoint_cache_entry> resolved_targets_;
+    lru_cache<boost::asio::ip::udp::endpoint, udp_peer_cache_entry, net::udp_endpoint_hash, net::udp_endpoint_equal> direct_peers_;
     udp_proxy_outbound_registry proxy_outbounds_;
     udp_close_reason close_reason_ = udp_close_reason::kUnknown;
 };

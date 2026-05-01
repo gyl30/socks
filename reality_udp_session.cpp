@@ -434,7 +434,7 @@ boost::asio::awaitable<bool> reality_udp_session::forward_direct_datagram(const 
     const auto normalized_target = net::normalize_endpoint(target_ep);
     const auto now_ms = net::now_ms();
     allowed_reply_peers_.evict_if([&](const auto&, const auto& entry) { return entry.expires_at <= now_ms; });
-    allowed_reply_peers_.put(normalized_target, peer_cache_entry{now_ms + constants::udp::kCacheTtlMs});
+    allowed_reply_peers_.put(normalized_target, udp_peer_cache_entry{now_ms + constants::udp::kCacheTtlMs});
     co_return true;
 }
 
@@ -840,7 +840,7 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> reality_udp_session::reso
     {
         endpoint = {socks_codec::normalize_ip_address(address), port};
         resolved_targets_.put(
-            key, endpoint_cache_entry{.endpoint = endpoint, .expires_at = now_ms + constants::udp::kCacheTtlMs, .last_error = {}, .negative = false});
+            key, udp_endpoint_cache_entry{.endpoint = endpoint, .expires_at = now_ms + constants::udp::kCacheTtlMs, .last_error = {}, .negative = false});
         co_return endpoint;
     }
 
@@ -852,7 +852,7 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> reality_udp_session::reso
             ec = boost::asio::error::host_not_found;
         }
         resolved_targets_.put(key,
-                              endpoint_cache_entry{
+                              udp_endpoint_cache_entry{
                                   .endpoint = {},
                                   .expires_at = now_ms + constants::udp::kNegativeCacheTtlMs,
                                   .last_error = ec,
@@ -863,7 +863,7 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> reality_udp_session::reso
 
     endpoint = net::normalize_endpoint(*results.begin());
     resolved_targets_.put(
-        key, endpoint_cache_entry{.endpoint = endpoint, .expires_at = now_ms + constants::udp::kCacheTtlMs, .last_error = {}, .negative = false});
+        key, udp_endpoint_cache_entry{.endpoint = endpoint, .expires_at = now_ms + constants::udp::kCacheTtlMs, .last_error = {}, .negative = false});
     co_return endpoint;
 }
 

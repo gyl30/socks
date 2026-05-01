@@ -766,7 +766,7 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> socks_udp_session::resolv
                  port,
                  ec.message());
         resolved_targets_.put(key,
-                              endpoint_cache_entry{
+                              udp_endpoint_cache_entry{
                                   .endpoint = {},
                                   .expires_at = now_ms_value + constants::udp::kNegativeCacheTtlMs,
                                   .last_error = ec,
@@ -788,7 +788,7 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> socks_udp_session::resolv
                  host,
                  port);
         resolved_targets_.put(key,
-                              endpoint_cache_entry{
+                              udp_endpoint_cache_entry{
                                   .endpoint = {},
                                   .expires_at = now_ms_value + constants::udp::kNegativeCacheTtlMs,
                                   .last_error = ec,
@@ -824,7 +824,7 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> socks_udp_session::resolv
                  host,
                  port);
         resolved_targets_.put(key,
-                              endpoint_cache_entry{
+                              udp_endpoint_cache_entry{
                                   .endpoint = {},
                                   .expires_at = now_ms_value + constants::udp::kNegativeCacheTtlMs,
                                   .last_error = ec,
@@ -833,7 +833,7 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> socks_udp_session::resolv
         co_return boost::asio::ip::udp::endpoint{};
     }
     const auto expires_at = now_ms_value + constants::udp::kCacheTtlMs;
-    resolved_targets_.put(key, endpoint_cache_entry{.endpoint = target, .expires_at = expires_at, .last_error = {}, .negative = false});
+    resolved_targets_.put(key, udp_endpoint_cache_entry{.endpoint = target, .expires_at = expires_at, .last_error = {}, .negative = false});
     co_return target;
 }
 
@@ -903,7 +903,7 @@ boost::asio::awaitable<void> socks_udp_session::forward_direct_packet(const sock
     const auto now_ms_value = net::now_ms();
     const auto expires_at = now_ms_value + constants::udp::kCacheTtlMs;
     direct_peers_.evict_if([&](const auto&, const auto& entry) { return entry.expires_at <= now_ms_value; });
-    direct_peers_.put(normalized_target, peer_cache_entry{expires_at});
+    direct_peers_.put(normalized_target, udp_peer_cache_entry{expires_at});
     tx_bytes_ += payload_len;
     trace_store::instance().add_live_tx_bytes(payload_len);
     last_activity_time_ms_ = now_ms_value;

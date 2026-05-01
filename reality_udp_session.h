@@ -19,6 +19,7 @@
 #include "proxy_protocol.h"
 #include "session_result.h"
 #include "request_context.h"
+#include "udp_session_cache.h"
 #include "task_group.h"
 #include "udp_proxy_outbound.h"
 #include "udp_proxy_outbound_registry.h"
@@ -77,20 +78,6 @@ class reality_udp_session : public std::enable_shared_from_this<reality_udp_sess
                                                                                                  uint16_t port,
                                                                                                  boost::system::error_code& ec);
 
-   private:
-    struct endpoint_cache_entry
-    {
-        boost::asio::ip::udp::endpoint endpoint;
-        uint64_t expires_at = 0;
-        boost::system::error_code last_error;
-        bool negative = false;
-    };
-
-    struct peer_cache_entry
-    {
-        uint64_t expires_at = 0;
-    };
-
     using connection_write_channel_type =
         boost::asio::experimental::concurrent_channel<void(boost::system::error_code, std::vector<uint8_t>)>;
 
@@ -113,8 +100,8 @@ class reality_udp_session : public std::enable_shared_from_this<reality_udp_sess
     std::shared_ptr<router> router_;
     uint64_t last_activity_time_ms_{0};
     udp_proxy_outbound_registry proxy_outbounds_;
-    lru_cache<std::string, endpoint_cache_entry> resolved_targets_;
-    lru_cache<boost::asio::ip::udp::endpoint, peer_cache_entry, net::udp_endpoint_hash, net::udp_endpoint_equal> allowed_reply_peers_;
+    lru_cache<std::string, udp_endpoint_cache_entry> resolved_targets_;
+    lru_cache<boost::asio::ip::udp::endpoint, udp_peer_cache_entry, net::udp_endpoint_hash, net::udp_endpoint_equal> allowed_reply_peers_;
     std::atomic<bool> stopping_{false};
     udp_close_reason close_reason_ = udp_close_reason::kUnknown;
 };
