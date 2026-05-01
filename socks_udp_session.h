@@ -25,11 +25,6 @@
 namespace relay
 {
 
-namespace detail
-{
-std::vector<uint8_t> build_udp_associate_reply(const boost::asio::ip::address& local_addr, uint16_t udp_bind_port);
-}
-
 class socks_udp_session : public std::enable_shared_from_this<socks_udp_session>
 {
    public:
