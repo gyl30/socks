@@ -18,7 +18,6 @@
 #include "session_result.h"
 #include "request_context.h"
 #include "udp_session_cache.h"
-#include "run_loop_spawner.h"
 #include "udp_proxy_outbound.h"
 #include "udp_proxy_outbound_registry.h"
 
