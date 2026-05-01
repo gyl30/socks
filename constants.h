@@ -15,7 +15,6 @@ namespace constants
 namespace net
 {
 constexpr std::size_t kBufferSize = 4096;
-constexpr int kRetryIntervalSec = 1;
 constexpr int kMaxListenConnections = 1024;
 constexpr uint64_t kOriginalDstLogIntervalMs = 10'000;
 constexpr uint64_t kFnvOffsetBasis64 = 14695981039346656037ULL;
@@ -40,7 +39,6 @@ constexpr std::size_t kTagLen = 16;
 
 namespace fallback
 {
-constexpr int kMaxWaitMs = 2000;
 constexpr std::size_t kRelayBufferSize = 16L * 1024;
 }    // namespace fallback
 
