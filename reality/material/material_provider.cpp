@@ -35,23 +35,19 @@ site_material load_site_material(const relay::config::reality_inbound_t& setting
         return {};
     }
 
-    LOG_INFO(
-        "{} target {}:{} sni {} certs {} cert_msg {} alpn '{}' cipher 0x{:04x} sh_exts {} ee_exts {} ee_padding {} ccs {} hs_records {} groups "
-        "{}",
-        relay::log_event::kCert,
-        target_host,
-        target_port,
-        target_host,
-        material.certificate_chain.size(),
-        material.certificate_message.size(),
-        material.fingerprint.alpn,
-        material.fingerprint.cipher_suite,
-        material.server_hello_extension_types.size(),
-        material.encrypted_extension_types.size(),
-        material.encrypted_extensions_padding_len.value_or(0),
-        material.sends_change_cipher_spec,
-        material.encrypted_handshake_record_sizes.size(),
-        material.key_share_groups.size());
+    LOG_INFO("{} target {}:{} sni {} certs {} alpn '{}' cipher 0x{:04x} sh_exts {} ee_exts {} ee_padding {} ccs {} hs_records {}",
+             relay::log_event::kCert,
+             target_host,
+             target_port,
+             target_host,
+             material.certificate_chain.size(),
+             material.fingerprint.alpn,
+             material.fingerprint.cipher_suite,
+             material.server_hello_extension_types.size(),
+             material.encrypted_extension_types.size(),
+             material.encrypted_extensions_padding_len.value_or(0),
+             material.sends_change_cipher_spec,
+             material.encrypted_handshake_record_sizes.size());
     return material;
 }
 

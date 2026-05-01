@@ -1,6 +1,5 @@
 #include <span>
 #include <array>
-#include <ctime>
 #include <limits>
 #include <string>
 #include <vector>
@@ -445,11 +444,6 @@ boost::system::error_code process_server_hello(fetch_context& ctx, const std::ve
                  cert_log_sni(ctx),
                  fingerprint_name(ctx.fingerprint));
     }
-    if (auto key_share = tls::extract_server_key_share(server_hello); key_share)
-    {
-        ctx.material.key_share_groups = {key_share->group};
-    }
-
     ctx.transcript.update(server_hello);
 
     const auto suite = tls::select_tls13_suite(cipher_suite);
@@ -682,7 +676,6 @@ bool process_handshake_message(fetch_context& ctx, const std::vector<uint8_t>& m
                  cert_log_sni(ctx),
                  fingerprint_name(ctx.fingerprint),
                  message_len);
-        ctx.material.certificate_message = message;
         if (!tls::parse_certificate_chain(message, ctx.material.certificate_chain))
         {
             LOG_ERROR("{} target {}:{} sni {} fingerprint {} parse certificate chain failed",
@@ -718,8 +711,7 @@ bool process_handshake_message(fetch_context& ctx, const std::vector<uint8_t>& m
                  fingerprint_name(ctx.fingerprint),
                  message_len,
                  certificate_message.size());
-        ctx.material.certificate_message = std::move(certificate_message);
-        if (!tls::parse_certificate_chain(ctx.material.certificate_message, ctx.material.certificate_chain))
+        if (!tls::parse_certificate_chain(certificate_message, ctx.material.certificate_chain))
         {
             LOG_ERROR("{} target {}:{} sni {} fingerprint {} parse decompressed certificate chain failed",
                       relay::log_event::kCert,
@@ -900,7 +892,6 @@ site_material fetch_once(std::string host, uint16_t port, std::string sni, const
         return {};
     }
 
-    ctx.material.fetched_at_unix_seconds = static_cast<uint64_t>(std::time(nullptr));
     return std::move(ctx.material);
 }
 
