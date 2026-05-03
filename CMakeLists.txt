@@ -397,6 +397,12 @@ if(UNIX AND NOT APPLE AND NOT ENABLE_STATIC_LINK)
   target_link_options(proxy_protocol_regression PRIVATE "-Wl,--no-as-needed" "${BROTLICOMMON_LIBRARY}" "-Wl,--as-needed")
 endif()
 
+add_executable(router_regression scripts/test_router_regression.cpp)
+target_link_libraries(router_regression PRIVATE core)
+if(UNIX AND NOT APPLE AND NOT ENABLE_STATIC_LINK)
+  target_link_options(router_regression PRIVATE "-Wl,--no-as-needed" "${BROTLICOMMON_LIBRARY}" "-Wl,--as-needed")
+endif()
+
 if(BUILD_TESTING)
   add_executable(test_reality_invalid_initial_request_client scripts/test_reality_invalid_initial_request_client.cpp)
   target_link_libraries(test_reality_invalid_initial_request_client PRIVATE core)
@@ -442,6 +448,10 @@ if(SOCKS_RUNTIME_DIRS)
                INSTALL_RPATH "${SOCKS_RUNTIME_DIRS}")
   set_target_properties(
     proxy_protocol_regression
+    PROPERTIES BUILD_RPATH "${SOCKS_RUNTIME_DIRS}"
+               INSTALL_RPATH "${SOCKS_RUNTIME_DIRS}")
+  set_target_properties(
+    router_regression
     PROPERTIES BUILD_RPATH "${SOCKS_RUNTIME_DIRS}"
                INSTALL_RPATH "${SOCKS_RUNTIME_DIRS}")
   if(TARGET test_reality_invalid_initial_request_client)
@@ -500,6 +510,9 @@ if(BUILD_TESTING)
 
   add_test(NAME proxy_protocol_regression COMMAND $<TARGET_FILE:proxy_protocol_regression>)
   set_tests_properties(proxy_protocol_regression PROPERTIES TIMEOUT 30)
+
+  add_test(NAME router_regression COMMAND $<TARGET_FILE:router_regression>)
+  set_tests_properties(router_regression PROPERTIES TIMEOUT 30)
 
   foreach(UDP_TRANSPARENT_SCENARIO
           route_blocked
