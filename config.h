@@ -68,6 +68,7 @@ struct config
         uint16_t port = 443;
         std::string sni = "www.apple.com";
         uint16_t site_port = 443;
+        bool fetch_site_material = true;
         std::string private_key;
         std::string public_key;
         std::string short_id;

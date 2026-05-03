@@ -86,10 +86,9 @@ void reality_tcp_session::apply_route_decision(const route_decision& decision)
 boost::asio::awaitable<void> reality_tcp_session::relay_backend(const std::shared_ptr<tcp_outbound_stream>& backend)
 {
     proxy_connection_stream_relay_transport inbound_transport(connection_, cfg_.timeout);
-    outbound_stream_relay_transport outbound_transport(backend);
     stream_relay_context relay_context{
         .inbound = inbound_transport,
-        .outbound = outbound_transport,
+        .outbound = *backend,
         .idle_timer = idle_timer_,
         .timeout = cfg_.timeout,
         .trace_id = trace_id_,

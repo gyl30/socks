@@ -611,6 +611,10 @@ template <typename T>
     {
         return fail_config(filename, join_path(path, "site_port") + " out_of_range");
     }
+    if (!parse_bool_field(value, "fetch_site_material", path, out.fetch_site_material, filename, false))
+    {
+        return false;
+    }
     if (!parse_string_field(value, "private_key", path, out.private_key, filename, true))
     {
         return false;

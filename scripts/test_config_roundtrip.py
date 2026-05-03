@@ -240,9 +240,66 @@ def run_invalid_reality_config_cases(binary, runtime_env, temp_root):
         )
     )
 
+    invalid_inbound_fetch_site_material_type = copy.deepcopy(valid_inbound_reality)
+    invalid_inbound_fetch_site_material_type["inbounds"][0]["settings"]["fetch_site_material"] = "yes"
+    cases.append(
+        (
+            "invalid_inbound_fetch_site_material_type",
+            invalid_inbound_fetch_site_material_type,
+            "inbounds[0].settings.fetch_site_material type invalid",
+        )
+    )
+
     for case_name, config_value, expected_error in cases:
         run_invalid_reality_config_case(binary, runtime_env, temp_root, case_name, config_value, expected_error)
         print(f"{case_name} ok")
+
+
+def run_reality_material_fetch_startup_case(binary, runtime_env, temp_root):
+    key_output = subprocess.run([str(binary), "x25519"], env=runtime_env, text=True, capture_output=True, check=False)
+    if key_output.returncode != 0:
+        raise RuntimeError(f"dump x25519 failed rc={key_output.returncode} stderr={key_output.stderr}")
+    private_key, public_key = parse_key_output(key_output.stdout)
+
+    listen_port = allocate_tcp_port()
+    log_path = temp_root / "reality-material-fetch.log"
+    run_log = temp_root / "reality-material-fetch.stdout.log"
+    cfg = {
+        "workers": 1,
+        "log": {
+            "level": "debug",
+            "file": str(log_path),
+        },
+        "inbounds": [
+            {
+                "type": "reality",
+                "tag": "reality-in",
+                "settings": {
+                    "host": "127.0.0.1",
+                    "port": listen_port,
+                    "sni": "does-not-resolve.invalid",
+                    "site_port": 443,
+                    "fetch_site_material": True,
+                    "private_key": private_key,
+                    "public_key": public_key,
+                    "short_id": "0102030405060708",
+                    "replay_cache_max_entries": 1000,
+                },
+            }
+        ],
+        "outbounds": [{"type": "direct", "tag": "direct"}],
+        "routing": [{"type": "inbound", "values": ["reality-in"], "out": "direct"}],
+        "timeout": {"read": 5, "write": 5, "connect": 1, "idle": 30},
+    }
+
+    config_path = temp_root / "reality-material-fetch.json"
+    save_json(config_path, cfg)
+    process = start_process([str(binary), "-c", str(config_path)], str(run_log), extra_env=runtime_env)
+    try:
+        wait_for_log_text(log_path, "continue_without_site_material", 20, "reality material fetch fallback log")
+        wait_for_log_text(log_path, f"listen 127.0.0.1:{listen_port} reality inbound listening", 20, "reality inbound listen log")
+    finally:
+        process.terminate()
 
 
 def run_invalid_route_config_case(binary, runtime_env, temp_root):
@@ -479,6 +536,8 @@ def main():
         run_invalid_config_case(binary, runtime_env, temp_root)
         print("invalid_config ok")
         run_invalid_reality_config_cases(binary, runtime_env, temp_root)
+        run_reality_material_fetch_startup_case(binary, runtime_env, temp_root)
+        print("reality_material_fetch_startup ok")
         run_invalid_general_config_cases(binary, runtime_env, temp_root)
         print("invalid_general_config ok")
         run_invalid_route_config_case(binary, runtime_env, temp_root)

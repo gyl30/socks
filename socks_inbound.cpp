@@ -2,7 +2,6 @@
 #include <chrono>
 #include <memory>
 #include <string>
-#include <cstdlib>
 #include <utility>
 
 #include <boost/asio.hpp>
@@ -75,12 +74,13 @@ socks_inbound::socks_inbound(io_context_pool& pool, const config& cfg, std::stri
 {
 }
 
-void socks_inbound::start()
+bool socks_inbound::start(boost::system::error_code& ec)
 {
     if (!router_->load())
     {
         LOG_ERROR("{} stage start load router data failed", log_event::kConnInit);
-        std::exit(EXIT_FAILURE);
+        ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
+        return false;
     }
     LOG_INFO("{} inbound_tag {} listen {}:{} socks inbound starting listener",
              log_event::kConnInit,
@@ -88,12 +88,6 @@ void socks_inbound::start()
              settings_.host,
              settings_.port);
 
-    owner_worker_.group.spawn([self = shared_from_this()]() { return self->start_acceptor(); });
-}
-
-boost::asio::awaitable<void> socks_inbound::start_acceptor()
-{
-    boost::system::error_code ec;
     setup_acceptor(acceptor_, settings_.host, settings_.port, ec);
     if (ec)
     {
@@ -103,12 +97,12 @@ boost::asio::awaitable<void> socks_inbound::start_acceptor()
                   settings_.host,
                   settings_.port,
                   ec.message());
-        std::exit(EXIT_FAILURE);
+        return false;
     }
 
     LOG_INFO("{} inbound_tag {} listen {}:{} socks listening", log_event::kConnInit, inbound_tag_, settings_.host, settings_.port);
-    co_await accept_loop();
-    co_return;
+    owner_worker_.group.spawn([self = shared_from_this()]() { return self->accept_loop(); });
+    return true;
 }
 
 void socks_inbound::on_socket_accepted(boost::asio::ip::tcp::socket&& socket, io_worker& socket_worker, uint32_t sid)

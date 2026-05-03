@@ -18,7 +18,6 @@ site_material load_site_material(const relay::config::reality_inbound_t& setting
     const auto target_port = settings.site_port;
     if (target_host.empty())
     {
-        LOG_ERROR("{} target {}:{} stage load_site_material error empty_sni", relay::log_event::kCert, "unknown", target_port);
         ec = boost::asio::error::invalid_argument;
         return {};
     }
@@ -26,12 +25,6 @@ site_material load_site_material(const relay::config::reality_inbound_t& setting
     site_material material = fetch_site_material(target_host, target_port, target_host, ec);
     if (ec)
     {
-        LOG_ERROR("{} target {}:{} sni {} stage load_site_material error {}",
-                  relay::log_event::kCert,
-                  target_host,
-                  target_port,
-                  target_host,
-                  ec.message());
         return {};
     }
 

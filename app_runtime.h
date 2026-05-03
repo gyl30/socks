@@ -30,16 +30,16 @@ class app_runtime
     app_runtime(const app_runtime&) = delete;
     app_runtime& operator=(const app_runtime&) = delete;
 
-    void start();
+    [[nodiscard]] bool start();
     void stop();
 
     [[nodiscard]] io_context_pool& pool() { return pool_; }
     [[nodiscard]] boost::asio::awaitable<void> async_wait_stopped();
 
    private:
-    void start_outbounds();
-    void start_web_server();
-    void start_inbound(const config::inbound_entry_t& inbound);
+    [[nodiscard]] bool start_outbounds();
+    [[nodiscard]] bool start_web_server();
+    [[nodiscard]] bool start_inbound(const config::inbound_entry_t& inbound);
 
    private:
     config cfg_;

@@ -21,7 +21,7 @@ class trace_web_server : public std::enable_shared_from_this<trace_web_server>
     trace_web_server(const trace_web_server&) = delete;
     trace_web_server& operator=(const trace_web_server&) = delete;
 
-    void start();
+    [[nodiscard]] bool start(boost::system::error_code& ec);
     void stop();
 
    private:

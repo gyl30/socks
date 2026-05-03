@@ -38,7 +38,7 @@ class direct_tcp_outbound final : public tcp_outbound_stream
     boost::asio::awaitable<void> close() override;
     boost::asio::awaitable<void> shutdown_send(boost::system::error_code& ec) override;
     [[nodiscard]] boost::asio::awaitable<tcp_outbound_connect_result> connect(const std::string& host, uint16_t port) override;
-    boost::asio::awaitable<void> write(const std::vector<uint8_t>& data, boost::system::error_code& ec) override;
+    [[nodiscard]] boost::asio::awaitable<std::size_t> write(std::span<const uint8_t> data, boost::system::error_code& ec) override;
     [[nodiscard]] boost::asio::awaitable<std::size_t> read(std::vector<uint8_t>& buf, boost::system::error_code& ec) override;
 
    private:
@@ -67,7 +67,7 @@ class proxy_tcp_outbound final : public tcp_outbound_stream
     boost::asio::awaitable<void> close() override;
     boost::asio::awaitable<void> shutdown_send(boost::system::error_code& ec) override;
     [[nodiscard]] boost::asio::awaitable<tcp_outbound_connect_result> connect(const std::string& host, uint16_t port) override;
-    boost::asio::awaitable<void> write(const std::vector<uint8_t>& data, boost::system::error_code& ec) override;
+    [[nodiscard]] boost::asio::awaitable<std::size_t> write(std::span<const uint8_t> data, boost::system::error_code& ec) override;
     [[nodiscard]] boost::asio::awaitable<std::size_t> read(std::vector<uint8_t>& buf, boost::system::error_code& ec) override;
 
    private:
@@ -114,7 +114,7 @@ class socks_tcp_outbound final : public tcp_outbound_stream
     boost::asio::awaitable<void> close() override;
     boost::asio::awaitable<void> shutdown_send(boost::system::error_code& ec) override;
     [[nodiscard]] boost::asio::awaitable<tcp_outbound_connect_result> connect(const std::string& host, uint16_t port) override;
-    boost::asio::awaitable<void> write(const std::vector<uint8_t>& data, boost::system::error_code& ec) override;
+    [[nodiscard]] boost::asio::awaitable<std::size_t> write(std::span<const uint8_t> data, boost::system::error_code& ec) override;
     [[nodiscard]] boost::asio::awaitable<std::size_t> read(std::vector<uint8_t>& buf, boost::system::error_code& ec) override;
 
    private:
@@ -294,9 +294,13 @@ boost::asio::awaitable<std::size_t> direct_tcp_outbound::read(std::vector<uint8_
     co_return n;
 }
 
-boost::asio::awaitable<void> direct_tcp_outbound::write(const std::vector<uint8_t>& data, boost::system::error_code& ec)
+boost::asio::awaitable<std::size_t> direct_tcp_outbound::write(std::span<const uint8_t> data, boost::system::error_code& ec)
 {
-    co_await net::wait_write_with_timeout(socket_, boost::asio::buffer(data), cfg_.timeout.write, ec);
+    if (data.empty())
+    {
+        co_return 0;
+    }
+    co_return co_await net::wait_write_with_timeout(socket_, boost::asio::buffer(data.data(), data.size()), cfg_.timeout.write, ec);
 }
 
 boost::asio::awaitable<void> direct_tcp_outbound::close()
@@ -528,9 +532,13 @@ boost::asio::awaitable<std::size_t> socks_tcp_outbound::read(std::vector<uint8_t
     co_return bytes;
 }
 
-boost::asio::awaitable<void> socks_tcp_outbound::write(const std::vector<uint8_t>& data, boost::system::error_code& ec)
+boost::asio::awaitable<std::size_t> socks_tcp_outbound::write(std::span<const uint8_t> data, boost::system::error_code& ec)
 {
-    co_await net::wait_write_with_timeout(socket_, boost::asio::buffer(data), cfg_.timeout.write, ec);
+    if (data.empty())
+    {
+        co_return 0;
+    }
+    co_return co_await net::wait_write_with_timeout(socket_, boost::asio::buffer(data.data(), data.size()), cfg_.timeout.write, ec);
 }
 
 boost::asio::awaitable<void> socks_tcp_outbound::close()
@@ -892,26 +900,31 @@ boost::asio::awaitable<std::size_t> proxy_tcp_outbound::read(std::vector<uint8_t
     }
 }
 
-boost::asio::awaitable<void> proxy_tcp_outbound::write(const std::vector<uint8_t>& data, boost::system::error_code& ec)
+boost::asio::awaitable<std::size_t> proxy_tcp_outbound::write(std::span<const uint8_t> data, boost::system::error_code& ec)
 {
     if (connection_ == nullptr)
     {
         ec = boost::asio::error::not_connected;
-        co_return;
+        co_return 0;
     }
-    if (!send_state_.can_send_data(std::span<const uint8_t>(data.data(), data.size())))
+    if (!send_state_.can_send_data(data))
     {
         ec = send_state_.shutdown_sent() ? boost::asio::error::broken_pipe : boost::asio::error::message_size;
-        co_return;
+        co_return 0;
     }
 
     std::vector<uint8_t> packet;
-    if (!proxy::encode_tcp_stream_data(std::span<const uint8_t>(data.data(), data.size()), packet))
+    if (!proxy::encode_tcp_stream_data(data, packet))
     {
         ec = boost::asio::error::message_size;
-        co_return;
+        co_return 0;
     }
-    co_return co_await connection_->write_packet(packet, ec);
+    co_await connection_->write_packet(packet, ec);
+    if (ec)
+    {
+        co_return 0;
+    }
+    co_return data.size();
 }
 
 boost::asio::awaitable<void> proxy_tcp_outbound::shutdown_send(boost::system::error_code& ec)

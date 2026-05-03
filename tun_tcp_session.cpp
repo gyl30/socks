@@ -513,7 +513,7 @@ boost::asio::awaitable<void> tun_tcp_session::client_to_outbound(const std::shar
 
             if (!payload.empty())
             {
-                co_await backend->write(payload, ec);
+                co_await backend->write(std::span<const uint8_t>(payload.data(), payload.size()), ec);
                 if (ec)
                 {
                     const auto reason = classify_backend_io_error(ec);

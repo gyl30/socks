@@ -12,7 +12,6 @@
 #include "config.h"
 #include "proxy_protocol.h"
 #include "proxy_reality_connection.h"
-#include "tcp_outbound_stream.h"
 
 namespace relay
 {
@@ -59,20 +58,6 @@ class proxy_connection_stream_relay_transport final : public stream_relay_transp
     std::vector<uint8_t> pending_read_data_;
     relay::proxy::tcp_stream_recv_state recv_state_;
     relay::proxy::tcp_stream_send_state send_state_;
-};
-
-class outbound_stream_relay_transport final : public stream_relay_transport
-{
-   public:
-    explicit outbound_stream_relay_transport(std::shared_ptr<tcp_outbound_stream> outbound);
-
-    [[nodiscard]] boost::asio::awaitable<std::size_t> read(std::vector<uint8_t>& buffer, boost::system::error_code& ec) override;
-    [[nodiscard]] boost::asio::awaitable<std::size_t> write(std::span<const uint8_t> data, boost::system::error_code& ec) override;
-    boost::asio::awaitable<void> shutdown_send(boost::system::error_code& ec) override;
-    boost::asio::awaitable<void> close() override;
-
-   private:
-    std::shared_ptr<tcp_outbound_stream> outbound_;
 };
 
 }    // namespace relay

@@ -74,7 +74,10 @@ int run_with_config(const char* prog, const char* config_path)
     relay::app_runtime runtime(*cfg);
     try
     {
-        runtime.start();
+        if (!runtime.start())
+        {
+            return 1;
+        }
     }
     catch (const std::exception& ex)
     {

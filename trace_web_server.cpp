@@ -1,7 +1,6 @@
 #include "trace_web_server.h"
 
 #include <algorithm>
-#include <cstdlib>
 #include <string_view>
 #include <utility>
 
@@ -43,19 +42,18 @@ trace_web_server::trace_web_server(io_context_pool& pool, const config& cfg)
 {
 }
 
-void trace_web_server::start()
+bool trace_web_server::start(boost::system::error_code& ec)
 {
     if (!cfg_.web.enabled)
     {
-        return;
+        return true;
     }
 
-    boost::system::error_code ec;
     const auto listen_addr = boost::asio::ip::make_address(cfg_.web.host, ec);
     if (ec)
     {
         LOG_ERROR("{} stage start web listen host {} parse failed {}", log_event::kConnInit, cfg_.web.host, ec.message());
-        std::exit(EXIT_FAILURE);
+        return false;
     }
 
     const tcp::endpoint endpoint{listen_addr, cfg_.web.port};
@@ -63,13 +61,13 @@ void trace_web_server::start()
     if (ec)
     {
         LOG_ERROR("{} stage start web listen {}:{} open failed {}", log_event::kConnInit, cfg_.web.host, cfg_.web.port, ec.message());
-        std::exit(EXIT_FAILURE);
+        return false;
     }
     ec = acceptor_.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true), ec);
     if (ec)
     {
         LOG_ERROR("{} stage start web listen {}:{} reuse_address failed {}", log_event::kConnInit, cfg_.web.host, cfg_.web.port, ec.message());
-        std::exit(EXIT_FAILURE);
+        return false;
     }
     if (listen_addr.is_v6() && listen_addr.to_v6().is_unspecified())
     {
@@ -77,24 +75,25 @@ void trace_web_server::start()
         if (ec)
         {
             LOG_ERROR("{} stage start web listen {}:{} v6_only failed {}", log_event::kConnInit, cfg_.web.host, cfg_.web.port, ec.message());
-            std::exit(EXIT_FAILURE);
+            return false;
         }
     }
     ec = acceptor_.bind(endpoint, ec);
     if (ec)
     {
         LOG_ERROR("{} stage start web listen {}:{} bind failed {}", log_event::kConnInit, cfg_.web.host, cfg_.web.port, ec.message());
-        std::exit(EXIT_FAILURE);
+        return false;
     }
     ec = acceptor_.listen(boost::asio::socket_base::max_listen_connections, ec);
     if (ec)
     {
         LOG_ERROR("{} stage start web listen {}:{} listen failed {}", log_event::kConnInit, cfg_.web.host, cfg_.web.port, ec.message());
-        std::exit(EXIT_FAILURE);
+        return false;
     }
 
     LOG_INFO("{} stage start web listen {}:{} started", log_event::kConnInit, cfg_.web.host, cfg_.web.port);
     worker_.group.spawn([self = shared_from_this()]() -> boost::asio::awaitable<void> { co_await self->accept_loop(); });
+    return true;
 }
 
 void trace_web_server::stop()

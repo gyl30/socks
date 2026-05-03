@@ -29,7 +29,7 @@ class reality_inbound : public std::enable_shared_from_this<reality_inbound>
     ~reality_inbound();
 
    public:
-    void start();
+    [[nodiscard]] bool start(boost::system::error_code& ec);
     void stop();
 
    private:

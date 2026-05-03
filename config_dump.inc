@@ -91,6 +91,8 @@ void write_reality_inbound_settings(rapidjson::PrettyWriter<rapidjson::StringBuf
     writer.String(value.sni.c_str());
     writer.Key("site_port");
     writer.Uint(value.site_port);
+    writer.Key("fetch_site_material");
+    writer.Bool(value.fetch_site_material);
     writer.Key("private_key");
     writer.String(value.private_key.c_str());
     if (!value.public_key.empty())

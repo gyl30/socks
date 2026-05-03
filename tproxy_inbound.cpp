@@ -6,7 +6,6 @@
 #include <string>
 #include <vector>
 #include <cstddef>
-#include <cstdlib>
 #include <cstring>
 #include <utility>
 
@@ -132,12 +131,13 @@ tproxy_inbound::tproxy_inbound(io_context_pool& pool, const config& cfg, std::st
 {
 }
 
-void tproxy_inbound::start()
+bool tproxy_inbound::start(boost::system::error_code& ec)
 {
     if (!router_->load())
     {
         LOG_ERROR("{} stage start load router data failed", log_event::kConnInit);
-        std::exit(EXIT_FAILURE);
+        ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
+        return false;
     }
 
     if (settings_.tcp_port == 0 && settings_.udp_port == 0)
@@ -148,7 +148,8 @@ void tproxy_inbound::start()
                   settings_.listen_host,
                   settings_.tcp_port,
                   settings_.udp_port);
-        std::exit(EXIT_FAILURE);
+        ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
+        return false;
     }
 
     LOG_INFO("{} inbound_tag {} listen {} tcp_port {} udp_port {} tproxy starting listeners",
@@ -157,12 +158,6 @@ void tproxy_inbound::start()
              settings_.listen_host,
              settings_.tcp_port,
              settings_.udp_port);
-    owner_worker_.group.spawn([self = shared_from_this()]() { return self->start_listeners(); });
-}
-
-boost::asio::awaitable<void> tproxy_inbound::start_listeners()
-{
-    boost::system::error_code ec;
     if (settings_.tcp_port != 0)
     {
         open_tcp_listener(tcp_acceptor_, settings_.listen_host, settings_.tcp_port, ec);
@@ -174,7 +169,7 @@ boost::asio::awaitable<void> tproxy_inbound::start_listeners()
                       settings_.listen_host,
                       settings_.tcp_port,
                       ec.message());
-            std::exit(EXIT_FAILURE);
+            return false;
         }
         LOG_INFO("{} inbound_tag {} listen {}:{} tproxy tcp listening on {}:{}",
                  log_event::kConnInit,
@@ -195,7 +190,7 @@ boost::asio::awaitable<void> tproxy_inbound::start_listeners()
                       settings_.listen_host,
                       settings_.udp_port,
                       ec.message());
-            std::exit(EXIT_FAILURE);
+            return false;
         }
         LOG_INFO("{} inbound_tag {} listen {}:{} tproxy udp listening on {}:{}",
                  log_event::kConnInit,
@@ -215,7 +210,7 @@ boost::asio::awaitable<void> tproxy_inbound::start_listeners()
         owner_worker_.group.spawn([self = shared_from_this()]() { return self->accept_udp_loop(); });
     }
 
-    co_return;
+    return true;
 }
 
 boost::asio::awaitable<bool> tproxy_inbound::handle_tcp_accept_error(boost::system::error_code& ec)

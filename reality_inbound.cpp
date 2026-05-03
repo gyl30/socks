@@ -3,7 +3,6 @@
 #include <string>
 #include <vector>
 #include <cstddef>
-#include <cstdlib>
 #include <utility>
 #include <iterator>
 #include <optional>
@@ -122,11 +121,10 @@ boost::asio::awaitable<void> reality_inbound::fallback_to_target_site(reality::f
     co_await fallback_executor_.run(request, target->host, target->port, reason, ec);
 }
 
-boost::asio::awaitable<void> reality_inbound::start_authenticated_session(
-    io_worker& worker,
-    std::shared_ptr<boost::asio::ip::tcp::socket> s,
-    const reality::server_handshake_context& reality_ctx,
-    const reality::authenticated_session& authenticated)
+boost::asio::awaitable<void> reality_inbound::start_authenticated_session(io_worker& worker,
+                                                                          std::shared_ptr<boost::asio::ip::tcp::socket> s,
+                                                                          const reality::server_handshake_context& reality_ctx,
+                                                                          const reality::authenticated_session& authenticated)
 {
     boost::system::error_code ec;
     auto record_context = reality::build_reality_record_context(authenticated, ec);
@@ -139,10 +137,8 @@ boost::asio::awaitable<void> reality_inbound::start_authenticated_session(
                   ec.message());
         co_return;
     }
-    LOG_INFO("{} conn {} sni {} tunnel starting",
-             log_event::kConnEstablished,
-             reality_ctx.conn_id,
-             reality_ctx.sni.empty() ? "unknown" : reality_ctx.sni);
+    LOG_INFO(
+        "{} conn {} sni {} tunnel starting", log_event::kConnEstablished, reality_ctx.conn_id, reality_ctx.sni.empty() ? "unknown" : reality_ctx.sni);
     auto connection = std::make_shared<proxy_reality_connection>(std::move(*s), std::move(record_context), cfg_, reality_ctx.conn_id);
     auto protocol_session = std::make_shared<reality_protocol_session>(worker,
                                                                        std::move(connection),
@@ -228,7 +224,7 @@ reality_inbound::~reality_inbound()
     OPENSSL_cleanse(reality_cert_private_key_.data(), reality_cert_private_key_.size());
 }
 
-void reality_inbound::start()
+bool reality_inbound::start(boost::system::error_code& ec)
 {
     if (private_key_.size() != 32 || reality_cert_public_key_.size() != 32 || reality_cert_template_.empty())
     {
@@ -237,30 +233,44 @@ void reality_inbound::start()
                   private_key_.size(),
                   reality_cert_public_key_.size(),
                   reality_cert_template_.size());
-        std::exit(EXIT_FAILURE);
+        ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
+        return false;
     }
 
     if (router_ == nullptr || !router_->load())
     {
         LOG_ERROR("{} stage start load router data failed", log_event::kConnInit);
-        std::exit(EXIT_FAILURE);
+        ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
+        return false;
     }
 
     site_material_.reset();
-    boost::system::error_code ec;
-    auto loaded_material = reality::load_site_material(settings_, ec);
-    if (ec)
+    ec.clear();
+    if (settings_.fetch_site_material)
     {
-        LOG_ERROR("{} stage start load reality site material failed {}", log_event::kConnInit, ec.message());
-        std::exit(EXIT_FAILURE);
+        auto loaded_material = reality::load_site_material(settings_, ec);
+        if (ec)
+        {
+            LOG_WARN("{} stage start load reality site material failed {} continue_without_site_material",
+                     log_event::kConnInit,
+                     ec.message());
+            ec.clear();
+        }
+        else
+        {
+            site_material_ = std::move(loaded_material);
+        }
     }
-    site_material_ = std::move(loaded_material);
+    else
+    {
+        LOG_INFO("{} stage start reality site material fetch disabled", log_event::kConnInit);
+    }
 
     const auto addr = boost::asio::ip::make_address(settings_.host, ec);
     if (ec)
     {
         LOG_ERROR("{} stage start parse listen address {} failed {}", log_event::kConnInit, settings_.host, ec.message());
-        std::exit(EXIT_FAILURE);
+        return false;
     }
     const auto ep = boost::asio::ip::tcp::endpoint(addr, settings_.port);
     const bool enable_dual_stack = addr.is_v6() && addr.to_v6().is_unspecified();
@@ -268,41 +278,40 @@ void reality_inbound::start()
     if (ec)
     {
         LOG_ERROR("{} stage start listen {}:{} open socket failed {}", log_event::kConnInit, settings_.host, settings_.port, ec.message());
-        std::exit(EXIT_FAILURE);
+        return false;
     }
     ec = acceptor_.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true), ec);
     if (ec)
     {
-        LOG_ERROR(
-            "{} stage start listen {}:{} set reuse_address failed {}", log_event::kConnInit, settings_.host, settings_.port, ec.message());
-        std::exit(EXIT_FAILURE);
+        LOG_ERROR("{} stage start listen {}:{} set reuse_address failed {}", log_event::kConnInit, settings_.host, settings_.port, ec.message());
+        return false;
     }
     if (enable_dual_stack)
     {
         ec = acceptor_.set_option(boost::asio::ip::v6_only(false), ec);
         if (ec)
         {
-            LOG_ERROR(
-                "{} stage start listen {}:{} disable v6_only failed {}", log_event::kConnInit, settings_.host, settings_.port, ec.message());
-            std::exit(EXIT_FAILURE);
+            LOG_ERROR("{} stage start listen {}:{} disable v6_only failed {}", log_event::kConnInit, settings_.host, settings_.port, ec.message());
+            return false;
         }
     }
     ec = acceptor_.bind(ep, ec);
     if (ec)
     {
         LOG_ERROR("{} stage start listen {}:{} bind failed {}", log_event::kConnInit, settings_.host, settings_.port, ec.message());
-        std::exit(EXIT_FAILURE);
+        return false;
     }
     ec = acceptor_.listen(boost::asio::socket_base::max_listen_connections, ec);
     if (ec)
     {
         LOG_ERROR("{} stage start listen {}:{} listen failed {}", log_event::kConnInit, settings_.host, settings_.port, ec.message());
-        std::exit(EXIT_FAILURE);
+        return false;
     }
 
     LOG_INFO("{} listen {}:{} reality inbound listening", log_event::kConnInit, settings_.host, settings_.port);
 
     owner_worker_.group.spawn([self = shared_from_this()]() { return self->accept_loop(); });
+    return true;
 }
 
 void reality_inbound::stop()
@@ -312,20 +321,18 @@ void reality_inbound::stop()
         return;
     }
 
-    boost::asio::post(owner_worker_.io_context,
-                      [self = shared_from_this()]()
-                      {
-                          boost::system::error_code ec;
-                          ec = self->acceptor_.close(ec);
-                          if (ec && ec != boost::asio::error::bad_descriptor)
-                          {
-                              LOG_ERROR("{} listen {}:{} acceptor close failed {}",
-                                        log_event::kConnClose,
-                                        self->settings_.host,
-                                        self->settings_.port,
-                                        ec.message());
-                          }
-                      });
+    boost::asio::post(
+        owner_worker_.io_context,
+        [self = shared_from_this()]()
+        {
+            boost::system::error_code ec;
+            ec = self->acceptor_.close(ec);
+            if (ec && ec != boost::asio::error::bad_descriptor)
+            {
+                LOG_ERROR(
+                    "{} listen {}:{} acceptor close failed {}", log_event::kConnClose, self->settings_.host, self->settings_.port, ec.message());
+            }
+        });
 }
 
 boost::asio::awaitable<void> reality_inbound::accept_loop()

@@ -20,11 +20,10 @@ class socks_inbound : public std::enable_shared_from_this<socks_inbound>
    public:
     socks_inbound(io_context_pool& pool, const config& cfg, std::string inbound_tag, const config::socks_t& settings);
 
-    void start();
+    [[nodiscard]] bool start(boost::system::error_code& ec);
     void stop();
 
    private:
-    boost::asio::awaitable<void> start_acceptor();
     boost::asio::awaitable<void> accept_loop();
     void on_socket_accepted(boost::asio::ip::tcp::socket&& socket, io_worker& socket_worker, uint32_t sid);
 

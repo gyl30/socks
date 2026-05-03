@@ -53,15 +53,15 @@ tun_inbound::tun_inbound(io_context_pool& pool, const config& cfg, std::string i
 {
 }
 
-void tun_inbound::start()
+bool tun_inbound::start(boost::system::error_code& ec)
 {
     if (!router_->load())
     {
         LOG_ERROR("{} stage start load router data for tun inbound failed", log_event::kConnInit);
-        std::exit(EXIT_FAILURE);
+        ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
+        return false;
     }
 
-    boost::system::error_code ec;
     if (!device_.open(settings_, ec))
     {
         LOG_ERROR("{} stage start open tun device name {} mtu {} failed {}",
@@ -69,7 +69,7 @@ void tun_inbound::start()
                   settings_.name.empty() ? "auto" : settings_.name,
                   settings_.mtu,
                   ec.message());
-        std::exit(EXIT_FAILURE);
+        return false;
     }
 
 #ifdef _WIN32
@@ -77,7 +77,8 @@ void tun_inbound::start()
     if (read_handle == nullptr)
     {
         LOG_ERROR("{} device {} index {} get wintun read event failed", log_event::kConnInit, device_.name(), device_.index());
-        std::exit(EXIT_FAILURE);
+        ec = boost::system::errc::make_error_code(boost::system::errc::bad_file_descriptor);
+        return false;
     }
 
     HANDLE duplicated = nullptr;
@@ -85,39 +86,46 @@ void tun_inbound::start()
     {
         LOG_ERROR(
             "{} device {} index {} duplicate wintun read event failed {}", log_event::kConnInit, device_.name(), device_.index(), GetLastError());
-        std::exit(EXIT_FAILURE);
+        ec = boost::system::errc::make_error_code(boost::system::errc::io_error);
+        return false;
     }
     tun_wait_handle_.assign(duplicated, ec);
     if (ec)
     {
         LOG_ERROR("{} device {} index {} assign wintun wait handle failed {}", log_event::kConnInit, device_.name(), device_.index(), ec.message());
-        std::exit(EXIT_FAILURE);
+        return false;
     }
 #else
     const int wait_fd = ::dup(device_.native_handle());
     if (wait_fd < 0)
     {
         LOG_ERROR("{} device {} index {} dup tun fd failed errno {}", log_event::kConnInit, device_.name(), device_.index(), errno);
-        std::exit(EXIT_FAILURE);
+        ec = boost::system::error_code(errno, boost::system::system_category());
+        return false;
     }
     tun_stream_.assign(wait_fd, ec);
     if (ec)
     {
         LOG_ERROR("{} device {} index {} assign tun fd failed {}", log_event::kConnInit, device_.name(), device_.index(), ec.message());
-        std::exit(EXIT_FAILURE);
+        return false;
     }
 #endif
 
-    if (!init_stack())
+    if (!init_stack(ec))
     {
         LOG_ERROR("{} device {} index {} initialize tun lwip stack failed", log_event::kConnInit, device_.name(), device_.index());
-        std::exit(EXIT_FAILURE);
+        if (!ec)
+        {
+            ec = boost::system::errc::make_error_code(boost::system::errc::io_error);
+        }
+        return false;
     }
 
     LOG_INFO("{} device {} index {} tun stack ready", log_event::kConnInit, device_.name(), device_.index());
     owner_worker_.group.spawn([self = shared_from_this()]() { return self->read_loop(); });
     owner_worker_.group.spawn([self = shared_from_this()]() { return self->timer_loop(); });
     LOG_INFO("{} device {} index {} tun inbound started", log_event::kConnEstablished, device_.name(), device_.index());
+    return true;
 }
 
 void tun_inbound::stop()
@@ -142,12 +150,14 @@ void tun_inbound::stop()
                       });
 }
 
-bool tun_inbound::init_stack()
+bool tun_inbound::init_stack(boost::system::error_code& ec)
 {
     lwip_init();
+    ec.clear();
 
     if (netif_add_noaddr(&netif_, this, &tun_inbound::netif_init_handler, ip_input) == nullptr)
     {
+        ec = boost::system::errc::make_error_code(boost::system::errc::io_error);
         return false;
     }
 
@@ -175,18 +185,21 @@ bool tun_inbound::init_stack()
     if (tcp_listener_ == nullptr)
     {
         shutdown_stack();
+        ec = boost::system::errc::make_error_code(boost::system::errc::not_enough_memory);
         return false;
     }
     tcp_bind_netif(tcp_listener_, &netif_);
     if (tcp_bind(tcp_listener_, nullptr, 0) != ERR_OK)
     {
         shutdown_stack();
+        ec = boost::system::errc::make_error_code(boost::system::errc::address_in_use);
         return false;
     }
     tcp_listener_ = tcp_listen(tcp_listener_);
     if (tcp_listener_ == nullptr)
     {
         shutdown_stack();
+        ec = boost::system::errc::make_error_code(boost::system::errc::io_error);
         return false;
     }
     tcp_arg(tcp_listener_, this);
@@ -196,12 +209,14 @@ bool tun_inbound::init_stack()
     if (udp_listener_ == nullptr)
     {
         shutdown_stack();
+        ec = boost::system::errc::make_error_code(boost::system::errc::not_enough_memory);
         return false;
     }
     udp_bind_netif(udp_listener_, &netif_);
     if (udp_bind(udp_listener_, nullptr, 0) != ERR_OK)
     {
         shutdown_stack();
+        ec = boost::system::errc::make_error_code(boost::system::errc::address_in_use);
         return false;
     }
     udp_recv(udp_listener_, &tun_inbound::udp_recv_handler, this);

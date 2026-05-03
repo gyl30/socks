@@ -550,10 +550,9 @@ boost::asio::awaitable<void> tproxy_tcp_session::finish_connected_session(
 boost::asio::awaitable<void> tproxy_tcp_session::relay_backend(const std::shared_ptr<tcp_outbound_stream>& backend)
 {
     tcp_socket_stream_relay_transport inbound_transport(socket_, cfg_.timeout);
-    outbound_stream_relay_transport outbound_transport(backend);
     auto relay_context = stream_relay_context{
         .inbound = inbound_transport,
-        .outbound = outbound_transport,
+        .outbound = *backend,
         .idle_timer = idle_timer_,
         .timeout = cfg_.timeout,
         .trace_id = trace_id_,

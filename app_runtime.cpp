@@ -1,5 +1,4 @@
 #include <cstdint>
-#include <cstdlib>
 #include <memory>
 #include <thread>
 #include <utility>
@@ -36,19 +35,36 @@ namespace
 }
 
 template <typename TInbound, typename TSettings>
-void start_inbound_instance(io_context_pool& pool,
-                            const config& cfg,
-                            const std::string& inbound_tag,
-                            const std::string& inbound_type,
-                            const TSettings& settings,
-                            std::vector<std::shared_ptr<TInbound>>& inbounds)
+bool start_inbound_instance(io_context_pool& pool,
+                           const config& cfg,
+                           const std::string& inbound_tag,
+                           const std::string& inbound_type,
+                           const TSettings& settings,
+                           std::vector<std::shared_ptr<TInbound>>& inbounds)
 {
     try
     {
         auto inbound_instance = std::make_shared<TInbound>(pool, cfg, inbound_tag, settings);
+        boost::system::error_code ec;
+        if (!inbound_instance->start(ec))
+        {
+            if (ec)
+            {
+                LOG_ERROR("{} inbound_tag {} inbound_type {} stage start failed {}",
+                          log_event::kConnInit,
+                          inbound_tag,
+                          inbound_type,
+                          ec.message());
+            }
+            else
+            {
+                LOG_ERROR("{} inbound_tag {} inbound_type {} stage start failed", log_event::kConnInit, inbound_tag, inbound_type);
+            }
+            return false;
+        }
         inbounds.push_back(inbound_instance);
-        inbound_instance->start();
         LOG_INFO("{} inbound_tag {} inbound_type {} stage start started", log_event::kConnInit, inbound_tag, inbound_type);
+        return true;
     }
     catch (const std::exception& ex)
     {
@@ -57,12 +73,12 @@ void start_inbound_instance(io_context_pool& pool,
                   inbound_tag,
                   inbound_type,
                   ex.what());
-        std::exit(EXIT_FAILURE);
+        return false;
     }
     catch (...)
     {
         LOG_ERROR("{} inbound_tag {} inbound_type {} stage start exception unknown", log_event::kConnInit, inbound_tag, inbound_type);
-        std::exit(EXIT_FAILURE);
+        return false;
     }
 }
 
@@ -82,28 +98,56 @@ void stop_inbound_instances(const std::vector<std::shared_ptr<TInbound>>& inboun
 
 app_runtime::app_runtime(const config& cfg) : cfg_(cfg), pool_(resolve_worker_threads(cfg_)) {}
 
-void app_runtime::start()
+bool app_runtime::start()
 {
-    start_outbounds();
-    start_web_server();
+    if (!start_outbounds())
+    {
+        stop();
+        return false;
+    }
+    if (!start_web_server())
+    {
+        stop();
+        return false;
+    }
     for (const auto& inbound : cfg_.inbounds)
     {
-        start_inbound(inbound);
+        if (!start_inbound(inbound))
+        {
+            stop();
+            return false;
+        }
     }
+    return true;
 }
 
-void app_runtime::start_web_server()
+bool app_runtime::start_web_server()
 {
     if (!cfg_.web.enabled)
     {
-        return;
+        return true;
     }
 
-    web_server_ = std::make_shared<trace_web_server>(pool_, cfg_);
-    web_server_->start();
+    auto web_server = std::make_shared<trace_web_server>(pool_, cfg_);
+    boost::system::error_code ec;
+    if (!web_server->start(ec))
+    {
+        if (ec)
+        {
+            LOG_ERROR("{} stage start web failed {}", log_event::kConnInit, ec.message());
+        }
+        else
+        {
+            LOG_ERROR("{} stage start web failed", log_event::kConnInit);
+        }
+        return false;
+    }
+
+    web_server_ = std::move(web_server);
+    return true;
 }
 
-void app_runtime::start_outbounds()
+bool app_runtime::start_outbounds()
 {
     outbounds_.clear();
     outbounds_.reserve(cfg_.outbounds.size());
@@ -116,7 +160,7 @@ void app_runtime::start_outbounds()
                       log_event::kConnInit,
                       outbound.tag,
                       outbound.type);
-            std::exit(EXIT_FAILURE);
+            return false;
         }
         outbounds_.push_back(handler);
         LOG_INFO("{} outbound_tag {} outbound_type {} stage start loaded",
@@ -124,35 +168,32 @@ void app_runtime::start_outbounds()
                  outbound.tag,
                  outbound.type);
     }
+    return true;
 }
 
-void app_runtime::start_inbound(const config::inbound_entry_t& inbound)
+bool app_runtime::start_inbound(const config::inbound_entry_t& inbound)
 {
     if (inbound.type == config_type::kInboundReality && inbound.reality.has_value())
     {
-        start_inbound_instance(pool_, cfg_, inbound.tag, inbound.type, *inbound.reality, reality_inbounds_);
-        return;
+        return start_inbound_instance(pool_, cfg_, inbound.tag, inbound.type, *inbound.reality, reality_inbounds_);
     }
 
     if (inbound.type == config_type::kInboundSocks && inbound.socks.has_value())
     {
-        start_inbound_instance(pool_, cfg_, inbound.tag, inbound.type, *inbound.socks, socks_inbounds_);
-        return;
+        return start_inbound_instance(pool_, cfg_, inbound.tag, inbound.type, *inbound.socks, socks_inbounds_);
     }
 
 #if SOCKS_HAS_TPROXY
     if (inbound.type == config_type::kInboundTproxy && inbound.tproxy.has_value())
     {
-        start_inbound_instance(pool_, cfg_, inbound.tag, inbound.type, *inbound.tproxy, tproxy_inbounds_);
-        return;
+        return start_inbound_instance(pool_, cfg_, inbound.tag, inbound.type, *inbound.tproxy, tproxy_inbounds_);
     }
 #endif
 
 #if SOCKS_HAS_TUN
     if (inbound.type == config_type::kInboundTun && inbound.tun.has_value())
     {
-        start_inbound_instance(pool_, cfg_, inbound.tag, inbound.type, *inbound.tun, tun_inbounds_);
-        return;
+        return start_inbound_instance(pool_, cfg_, inbound.tag, inbound.type, *inbound.tun, tun_inbounds_);
     }
 #endif
 
@@ -160,7 +201,7 @@ void app_runtime::start_inbound(const config::inbound_entry_t& inbound)
               log_event::kConnInit,
               inbound.tag,
               inbound.type);
-    std::exit(EXIT_FAILURE);
+    return false;
 }
 
 void app_runtime::stop()

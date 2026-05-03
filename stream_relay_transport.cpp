@@ -1,7 +1,6 @@
 #include "stream_relay_transport.h"
 
 #include <algorithm>
-#include <vector>
 
 #include <boost/asio/buffer.hpp>
 #include <boost/asio/redirect_error.hpp>
@@ -208,60 +207,6 @@ boost::asio::awaitable<void> proxy_connection_stream_relay_transport::close()
     recv_state_.reset();
     send_state_.reset();
     co_return;
-}
-
-outbound_stream_relay_transport::outbound_stream_relay_transport(std::shared_ptr<tcp_outbound_stream> outbound) : outbound_(std::move(outbound)) {}
-
-boost::asio::awaitable<std::size_t> outbound_stream_relay_transport::read(std::vector<uint8_t>& buffer, boost::system::error_code& ec)
-{
-    ec.clear();
-    if (outbound_ == nullptr)
-    {
-        ec = boost::asio::error::operation_aborted;
-        co_return 0;
-    }
-
-    co_return co_await outbound_->read(buffer, ec);
-}
-
-boost::asio::awaitable<std::size_t> outbound_stream_relay_transport::write(std::span<const uint8_t> data, boost::system::error_code& ec)
-{
-    ec.clear();
-    if (outbound_ == nullptr)
-    {
-        ec = boost::asio::error::operation_aborted;
-        co_return 0;
-    }
-
-    const std::vector<uint8_t> payload(data.begin(), data.end());
-    co_await outbound_->write(payload, ec);
-    if (ec)
-    {
-        co_return 0;
-    }
-    co_return payload.size();
-}
-
-boost::asio::awaitable<void> outbound_stream_relay_transport::shutdown_send(boost::system::error_code& ec)
-{
-    ec.clear();
-    if (outbound_ == nullptr)
-    {
-        ec = boost::asio::error::operation_aborted;
-        co_return;
-    }
-
-    co_await outbound_->shutdown_send(ec);
-}
-
-boost::asio::awaitable<void> outbound_stream_relay_transport::close()
-{
-    if (outbound_ == nullptr)
-    {
-        co_return;
-    }
-
-    co_await outbound_->close();
 }
 
 }    // namespace relay
