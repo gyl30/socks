@@ -149,8 +149,6 @@ bool app_runtime::start_web_server()
 
 bool app_runtime::start_outbounds()
 {
-    outbounds_.clear();
-    outbounds_.reserve(cfg_.outbounds.size());
     for (const auto& outbound : cfg_.outbounds)
     {
         const auto handler = make_outbound_handler(cfg_, outbound.tag);
@@ -162,7 +160,6 @@ bool app_runtime::start_outbounds()
                       outbound.type);
             return false;
         }
-        outbounds_.push_back(handler);
         LOG_INFO("{} outbound_tag {} outbound_type {} stage start loaded",
                  log_event::kConnInit,
                  outbound.tag,
