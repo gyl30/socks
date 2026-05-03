@@ -21,7 +21,11 @@ namespace relay
 class tproxy_inbound : public std::enable_shared_from_this<tproxy_inbound>
 {
    public:
-    tproxy_inbound(io_context_pool& pool, const config& cfg, std::string inbound_tag, const config::tproxy_t& settings);
+    tproxy_inbound(io_context_pool& pool,
+                   const config& cfg,
+                   std::shared_ptr<const router::shared_state> routing_state,
+                   std::string inbound_tag,
+                   const config::tproxy_t& settings);
 
    public:
     [[nodiscard]] bool start(boost::system::error_code& ec);

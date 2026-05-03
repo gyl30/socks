@@ -39,14 +39,15 @@ class app_runtime
    private:
     [[nodiscard]] bool start_outbounds();
     [[nodiscard]] bool start_web_server();
-	    [[nodiscard]] bool start_inbound(const config::inbound_entry_t& inbound);
+    [[nodiscard]] bool start_inbound(const config::inbound_entry_t& inbound);
 
-	   private:
-	    const config& cfg_;
-	    io_context_pool pool_;
-	    std::shared_ptr<trace_web_server> web_server_;
-	    std::vector<std::shared_ptr<reality_inbound>> reality_inbounds_;
-	    std::vector<std::shared_ptr<socks_inbound>> socks_inbounds_;
+   private:
+    const config& cfg_;
+    io_context_pool pool_;
+    std::shared_ptr<const router::shared_state> routing_state_;
+    std::shared_ptr<trace_web_server> web_server_;
+    std::vector<std::shared_ptr<reality_inbound>> reality_inbounds_;
+    std::vector<std::shared_ptr<socks_inbound>> socks_inbounds_;
 #if SOCKS_HAS_TPROXY
     std::vector<std::shared_ptr<tproxy_inbound>> tproxy_inbounds_;
 #endif

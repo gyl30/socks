@@ -18,7 +18,11 @@ namespace relay
 class socks_inbound : public std::enable_shared_from_this<socks_inbound>
 {
    public:
-    socks_inbound(io_context_pool& pool, const config& cfg, std::string inbound_tag, const config::socks_t& settings);
+    socks_inbound(io_context_pool& pool,
+                  const config& cfg,
+                  std::shared_ptr<const router::shared_state> routing_state,
+                  std::string inbound_tag,
+                  const config::socks_t& settings);
 
     [[nodiscard]] bool start(boost::system::error_code& ec);
     void stop();

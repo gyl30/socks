@@ -121,12 +121,16 @@ void open_udp_listener(boost::asio::ip::udp::socket& socket, const std::string& 
 
 }    // namespace
 
-tproxy_inbound::tproxy_inbound(io_context_pool& pool, const config& cfg, std::string inbound_tag, const config::tproxy_t& settings)
+tproxy_inbound::tproxy_inbound(io_context_pool& pool,
+                               const config& cfg,
+                               std::shared_ptr<const router::shared_state> routing_state,
+                               std::string inbound_tag,
+                               const config::tproxy_t& settings)
     : cfg_(cfg),
       inbound_tag_(std::move(inbound_tag)),
       settings_(settings),
       owner_worker_(pool.get_io_worker()),
-      router_(std::make_shared<router>(cfg_, inbound_tag_)),
+      router_(std::make_shared<router>(std::move(routing_state), inbound_tag_)),
       tcp_acceptor_(owner_worker_.io_context)
 {
 }

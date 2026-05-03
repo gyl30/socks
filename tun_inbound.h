@@ -27,7 +27,11 @@ namespace relay
 class tun_inbound : public std::enable_shared_from_this<tun_inbound>
 {
    public:
-    tun_inbound(io_context_pool& pool, const config& cfg, std::string inbound_tag, const config::tun_t& settings);
+    tun_inbound(io_context_pool& pool,
+                const config& cfg,
+                std::shared_ptr<const router::shared_state> routing_state,
+                std::string inbound_tag,
+                const config::tun_t& settings);
 
     [[nodiscard]] bool start(boost::system::error_code& ec);
     void stop();

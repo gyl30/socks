@@ -174,14 +174,18 @@ boost::asio::awaitable<bool> reality_inbound::handle_accept_error(const boost::s
     co_return true;
 }
 
-	reality_inbound::reality_inbound(io_context_pool& pool, const config& cfg, std::string inbound_tag, const config::reality_inbound_t& settings)
+reality_inbound::reality_inbound(io_context_pool& pool,
+                                 const config& cfg,
+                                 std::shared_ptr<const router::shared_state> routing_state,
+                                 std::string inbound_tag,
+                                 const config::reality_inbound_t& settings)
     : cfg_(cfg),
       inbound_tag_(std::move(inbound_tag)),
       settings_(settings),
       pool_(pool),
       owner_worker_(pool.get_io_worker()),
       replay_cache_(static_cast<std::size_t>(settings_.replay_cache_max_entries)),
-      router_(std::make_shared<router>(cfg_, inbound_tag_)),
+      router_(std::make_shared<router>(std::move(routing_state), inbound_tag_)),
       fallback_executor_(owner_worker_.io_context, cfg)
 {
     private_key_ = tls::crypto_util::hex_to_bytes(settings_.private_key);

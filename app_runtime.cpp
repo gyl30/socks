@@ -37,6 +37,7 @@ namespace
 template <typename TInbound, typename TSettings>
 bool start_inbound_instance(io_context_pool& pool,
                            const config& cfg,
+                           const std::shared_ptr<const router::shared_state>& routing_state,
                            const std::string& inbound_tag,
                            const std::string& inbound_type,
                            const TSettings& settings,
@@ -44,7 +45,7 @@ bool start_inbound_instance(io_context_pool& pool,
 {
     try
     {
-        auto inbound_instance = std::make_shared<TInbound>(pool, cfg, inbound_tag, settings);
+        auto inbound_instance = std::make_shared<TInbound>(pool, cfg, routing_state, inbound_tag, settings);
         boost::system::error_code ec;
         if (!inbound_instance->start(ec))
         {
@@ -106,6 +107,12 @@ bool app_runtime::start()
         return false;
     }
     if (!start_web_server())
+    {
+        stop();
+        return false;
+    }
+    routing_state_ = router::build_shared_state(cfg_);
+    if (routing_state_ == nullptr)
     {
         stop();
         return false;
@@ -172,25 +179,25 @@ bool app_runtime::start_inbound(const config::inbound_entry_t& inbound)
 {
     if (inbound.type == config_type::kInboundReality && inbound.reality.has_value())
     {
-        return start_inbound_instance(pool_, cfg_, inbound.tag, inbound.type, *inbound.reality, reality_inbounds_);
+        return start_inbound_instance(pool_, cfg_, routing_state_, inbound.tag, inbound.type, *inbound.reality, reality_inbounds_);
     }
 
     if (inbound.type == config_type::kInboundSocks && inbound.socks.has_value())
     {
-        return start_inbound_instance(pool_, cfg_, inbound.tag, inbound.type, *inbound.socks, socks_inbounds_);
+        return start_inbound_instance(pool_, cfg_, routing_state_, inbound.tag, inbound.type, *inbound.socks, socks_inbounds_);
     }
 
 #if SOCKS_HAS_TPROXY
     if (inbound.type == config_type::kInboundTproxy && inbound.tproxy.has_value())
     {
-        return start_inbound_instance(pool_, cfg_, inbound.tag, inbound.type, *inbound.tproxy, tproxy_inbounds_);
+        return start_inbound_instance(pool_, cfg_, routing_state_, inbound.tag, inbound.type, *inbound.tproxy, tproxy_inbounds_);
     }
 #endif
 
 #if SOCKS_HAS_TUN
     if (inbound.type == config_type::kInboundTun && inbound.tun.has_value())
     {
-        return start_inbound_instance(pool_, cfg_, inbound.tag, inbound.type, *inbound.tun, tun_inbounds_);
+        return start_inbound_instance(pool_, cfg_, routing_state_, inbound.tag, inbound.type, *inbound.tun, tun_inbounds_);
     }
 #endif
 

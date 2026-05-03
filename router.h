@@ -39,13 +39,18 @@ class domain_matcher;
 class router
 {
    public:
+    struct shared_state;
+
     router(const config& cfg, std::string inbound_tag);
+    router(std::shared_ptr<const shared_state> shared_state, std::string inbound_tag);
     ~router() = default;
 
     router(const router&) = delete;
     router& operator=(const router&) = delete;
 
-    [[nodiscard]] bool load();
+    [[nodiscard]] static std::shared_ptr<const shared_state> build_shared_state(const config& cfg);
+
+    [[nodiscard]] bool load() const;
 
     [[nodiscard]] boost::asio::awaitable<route_type> decide_ip(const boost::asio::ip::address& addr) const;
     [[nodiscard]] boost::asio::awaitable<route_type> decide_domain(const std::string& host) const;
@@ -55,21 +60,20 @@ class router
    private:
     struct compiled_rule;
 
-    [[nodiscard]] std::shared_ptr<compiled_rule> make_compiled_rule(const config::route_rule_t& rule) const;
-    [[nodiscard]] bool populate_compiled_rule_values(const config::route_rule_t& rule, compiled_rule& compiled) const;
+    [[nodiscard]] static bool make_compiled_rule(const config& cfg, const config::route_rule_t& rule, compiled_rule& compiled);
+    [[nodiscard]] static bool populate_compiled_rule_values(const config::route_rule_t& rule, compiled_rule& compiled);
     [[nodiscard]] bool matches_inbound_rule(const compiled_rule& rule) const;
     [[nodiscard]] route_decision make_match_decision(
         const compiled_rule& rule, const std::string& match_type, const std::string& match_value) const;
     [[nodiscard]] route_decision make_no_route_decision(const std::string& match_type, const std::string& match_value) const;
-    void log_loaded_rule(const config::route_rule_t& rule, const compiled_rule& compiled) const;
+    static void log_loaded_rule(const config::route_rule_t& rule, const compiled_rule& compiled);
     void log_route_match(
         const char* target_field, const std::string& target_value, const route_decision& decision) const;
     void log_no_route(const char* target_field, const std::string& target_value, const route_decision& decision) const;
 
    private:
-    const config& cfg_;
     std::string inbound_tag_;
-    std::vector<std::shared_ptr<compiled_rule>> rules_;
+    std::shared_ptr<const shared_state> shared_state_;
 };
 
 }    // namespace relay

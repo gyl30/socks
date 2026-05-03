@@ -27,8 +27,15 @@ struct router::compiled_rule
     std::shared_ptr<domain_matcher> domain_rules;
 };
 
+struct router::shared_state
+{
+    std::vector<compiled_rule> rules;
+};
+
 namespace
 {
+
+constexpr const char* kSharedRouteScope = "shared";
 
 [[nodiscard]] route_type map_outbound_route(const std::string& outbound_type)
 {
@@ -68,51 +75,57 @@ std::string to_string(const route_type& type)
     return "unknown";
 }
 
-router::router(const config& cfg, std::string inbound_tag) : cfg_(cfg), inbound_tag_(std::move(inbound_tag)) {}
+router::router(const config& cfg, std::string inbound_tag) : router(build_shared_state(cfg), std::move(inbound_tag)) {}
 
-bool router::load()
+router::router(std::shared_ptr<const shared_state> shared_state, std::string inbound_tag)
+    : inbound_tag_(std::move(inbound_tag)), shared_state_(std::move(shared_state))
 {
-    rules_.clear();
-    rules_.reserve(cfg_.routing.size());
-
-    for (const auto& rule : cfg_.routing)
-    {
-        auto compiled = make_compiled_rule(rule);
-        if (compiled == nullptr)
-        {
-            return false;
-        }
-        log_loaded_rule(rule, *compiled);
-        rules_.push_back(std::move(compiled));
-    }
-    return true;
 }
 
-std::shared_ptr<router::compiled_rule> router::make_compiled_rule(const config::route_rule_t& rule) const
+std::shared_ptr<const router::shared_state> router::build_shared_state(const config& cfg)
 {
-    const auto* outbound = find_outbound_entry(cfg_, rule.out);
+    auto state = std::make_shared<shared_state>();
+    state->rules.reserve(cfg.routing.size());
+
+    for (const auto& rule : cfg.routing)
+    {
+        compiled_rule compiled;
+        if (!make_compiled_rule(cfg, rule, compiled))
+        {
+            return nullptr;
+        }
+        log_loaded_rule(rule, compiled);
+        state->rules.push_back(std::move(compiled));
+    }
+    return state;
+}
+
+bool router::load() const { return shared_state_ != nullptr; }
+
+bool router::make_compiled_rule(const config& cfg, const config::route_rule_t& rule, compiled_rule& compiled)
+{
+    const auto* outbound = find_outbound_entry(cfg, rule.out);
     if (outbound == nullptr)
     {
         LOG_ERROR("{} inbound_tag {} stage load_rule out {} error outbound_not_found",
                   log_event::kRoute,
-                  inbound_tag_,
+                  kSharedRouteScope,
                   rule.out);
-        return nullptr;
+        return false;
     }
 
-    auto compiled = std::make_shared<compiled_rule>();
-    compiled->type = rule.type;
-    compiled->outbound_tag = rule.out;
-    compiled->outbound_type = outbound->type;
-    compiled->route = map_outbound_route(outbound->type);
-    if (!populate_compiled_rule_values(rule, *compiled))
+    compiled.type = rule.type;
+    compiled.outbound_tag = rule.out;
+    compiled.outbound_type = outbound->type;
+    compiled.route = map_outbound_route(outbound->type);
+    if (!populate_compiled_rule_values(rule, compiled))
     {
-        return nullptr;
+        return false;
     }
-    return compiled;
+    return true;
 }
 
-bool router::populate_compiled_rule_values(const config::route_rule_t& rule, compiled_rule& compiled) const
+bool router::populate_compiled_rule_values(const config::route_rule_t& rule, compiled_rule& compiled)
 {
     const auto& source_values = get_route_source_values(rule);
     if (rule.type == "inbound")
@@ -142,7 +155,7 @@ bool router::populate_compiled_rule_values(const config::route_rule_t& rule, com
 
     LOG_ERROR("{} inbound_tag {} stage load_rule type {} error unsupported",
               log_event::kRoute,
-              inbound_tag_,
+              kSharedRouteScope,
               rule.type);
     return false;
 }
@@ -157,12 +170,12 @@ route_decision router::make_no_route_decision(const std::string& match_type, con
     return decision;
 }
 
-void router::log_loaded_rule(const config::route_rule_t& rule, const compiled_rule& compiled) const
+void router::log_loaded_rule(const config::route_rule_t& rule, const compiled_rule& compiled)
 {
     const auto& source_values = get_route_source_values(rule);
     LOG_INFO("{} inbound_tag {} stage load_rule type {} out_tag {} out_type {} value_count {} file {}",
              log_event::kRoute,
-             inbound_tag_,
+             kSharedRouteScope,
              compiled.type,
              compiled.outbound_tag,
              compiled.outbound_type,
@@ -217,25 +230,31 @@ void router::log_no_route(const char* target_field, const std::string& target_va
 boost::asio::awaitable<route_decision> router::decide_ip_detail(const boost::asio::ip::address& addr) const
 {
     const auto target = addr.to_string();
-    for (const auto& rule : rules_)
+    if (shared_state_ == nullptr)
     {
-        if (rule->type == "inbound")
+        auto decision = make_no_route_decision("ip", target);
+        log_no_route("target_ip", target, decision);
+        co_return decision;
+    }
+    for (const auto& rule : shared_state_->rules)
+    {
+        if (rule.type == "inbound")
         {
-            if (!matches_inbound_rule(*rule))
+            if (!matches_inbound_rule(rule))
             {
                 continue;
             }
-            const auto decision = make_match_decision(*rule, "inbound", inbound_tag_);
+            const auto decision = make_match_decision(rule, "inbound", inbound_tag_);
             log_route_match("target_ip", target, decision);
             co_return decision;
         }
 
-        if (rule->type != "ip" || rule->ip_rules == nullptr || !rule->ip_rules->match(addr))
+        if (rule.type != "ip" || rule.ip_rules == nullptr || !rule.ip_rules->match(addr))
         {
             continue;
         }
 
-        const auto decision = make_match_decision(*rule, "ip", target);
+        const auto decision = make_match_decision(rule, "ip", target);
         log_route_match("target_ip", target, decision);
         co_return decision;
     }
@@ -248,25 +267,31 @@ boost::asio::awaitable<route_decision> router::decide_ip_detail(const boost::asi
 boost::asio::awaitable<route_decision> router::decide_domain_detail(const std::string& host) const
 {
     const auto target = host.empty() ? std::string("unknown") : host;
-    for (const auto& rule : rules_)
+    if (shared_state_ == nullptr)
     {
-        if (rule->type == "inbound")
+        auto decision = make_no_route_decision("domain", target);
+        log_no_route("target_domain", target, decision);
+        co_return decision;
+    }
+    for (const auto& rule : shared_state_->rules)
+    {
+        if (rule.type == "inbound")
         {
-            if (!matches_inbound_rule(*rule))
+            if (!matches_inbound_rule(rule))
             {
                 continue;
             }
-            const auto decision = make_match_decision(*rule, "inbound", inbound_tag_);
+            const auto decision = make_match_decision(rule, "inbound", inbound_tag_);
             log_route_match("target_domain", target, decision);
             co_return decision;
         }
 
-        if (rule->type != "domain" || rule->domain_rules == nullptr || !rule->domain_rules->match(host))
+        if (rule.type != "domain" || rule.domain_rules == nullptr || !rule.domain_rules->match(host))
         {
             continue;
         }
 
-        const auto decision = make_match_decision(*rule, "domain", target);
+        const auto decision = make_match_decision(rule, "domain", target);
         log_route_match("target_domain", target, decision);
         co_return decision;
     }

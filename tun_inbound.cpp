@@ -44,12 +44,16 @@ void stop_all_sessions(SessionMap& sessions)
 
 }    // namespace
 
-tun_inbound::tun_inbound(io_context_pool& pool, const config& cfg, std::string inbound_tag, const config::tun_t& settings)
+tun_inbound::tun_inbound(io_context_pool& pool,
+                         const config& cfg,
+                         std::shared_ptr<const router::shared_state> routing_state,
+                         std::string inbound_tag,
+                         const config::tun_t& settings)
     : cfg_(cfg),
       inbound_tag_(std::move(inbound_tag)),
       settings_(settings),
       owner_worker_(pool.get_io_worker()),
-      router_(std::make_shared<router>(cfg_, inbound_tag_))
+      router_(std::make_shared<router>(std::move(routing_state), inbound_tag_))
 {
 }
 
