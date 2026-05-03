@@ -3,7 +3,6 @@
 #include <vector>
 #include <utility>
 
-#include <boost/asio/awaitable.hpp>
 #include <boost/asio/ip/address.hpp>
 
 #include "log.h"
@@ -227,14 +226,14 @@ void router::log_no_route(const char* target_field, const std::string& target_va
              to_string(decision.route));
 }
 
-boost::asio::awaitable<route_decision> router::decide_ip_detail(const boost::asio::ip::address& addr) const
+route_decision router::decide_ip_detail(const boost::asio::ip::address& addr) const
 {
     const auto target = addr.to_string();
     if (shared_state_ == nullptr)
     {
         auto decision = make_no_route_decision("ip", target);
         log_no_route("target_ip", target, decision);
-        co_return decision;
+        return decision;
     }
     for (const auto& rule : shared_state_->rules)
     {
@@ -246,7 +245,7 @@ boost::asio::awaitable<route_decision> router::decide_ip_detail(const boost::asi
             }
             const auto decision = make_match_decision(rule, "inbound", inbound_tag_);
             log_route_match("target_ip", target, decision);
-            co_return decision;
+            return decision;
         }
 
         if (rule.type != "ip" || rule.ip_rules == nullptr || !rule.ip_rules->match(addr))
@@ -256,22 +255,22 @@ boost::asio::awaitable<route_decision> router::decide_ip_detail(const boost::asi
 
         const auto decision = make_match_decision(rule, "ip", target);
         log_route_match("target_ip", target, decision);
-        co_return decision;
+        return decision;
     }
 
     auto decision = make_no_route_decision("ip", target);
     log_no_route("target_ip", target, decision);
-    co_return decision;
+    return decision;
 }
 
-boost::asio::awaitable<route_decision> router::decide_domain_detail(const std::string& host) const
+route_decision router::decide_domain_detail(const std::string& host) const
 {
     const auto target = host.empty() ? std::string("unknown") : host;
     if (shared_state_ == nullptr)
     {
         auto decision = make_no_route_decision("domain", target);
         log_no_route("target_domain", target, decision);
-        co_return decision;
+        return decision;
     }
     for (const auto& rule : shared_state_->rules)
     {
@@ -283,7 +282,7 @@ boost::asio::awaitable<route_decision> router::decide_domain_detail(const std::s
             }
             const auto decision = make_match_decision(rule, "inbound", inbound_tag_);
             log_route_match("target_domain", target, decision);
-            co_return decision;
+            return decision;
         }
 
         if (rule.type != "domain" || rule.domain_rules == nullptr || !rule.domain_rules->match(host))
@@ -293,24 +292,22 @@ boost::asio::awaitable<route_decision> router::decide_domain_detail(const std::s
 
         const auto decision = make_match_decision(rule, "domain", target);
         log_route_match("target_domain", target, decision);
-        co_return decision;
+        return decision;
     }
 
     auto decision = make_no_route_decision("domain", target);
     log_no_route("target_domain", target, decision);
-    co_return decision;
+    return decision;
 }
 
-boost::asio::awaitable<route_type> router::decide_ip(const boost::asio::ip::address& addr) const
+route_type router::decide_ip(const boost::asio::ip::address& addr) const
 {
-    const auto decision = co_await decide_ip_detail(addr);
-    co_return decision.route;
+    return decide_ip_detail(addr).route;
 }
 
-boost::asio::awaitable<route_type> router::decide_domain(const std::string& host) const
+route_type router::decide_domain(const std::string& host) const
 {
-    const auto decision = co_await decide_domain_detail(host);
-    co_return decision.route;
+    return decide_domain_detail(host).route;
 }
 
 }    // namespace relay

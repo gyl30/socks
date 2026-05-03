@@ -38,13 +38,13 @@ boost::asio::awaitable<route_decision> resolve_route_decision_for_request(
     auto target_addr = boost::asio::ip::make_address(request.target_host, target_ec);
     if (target_ec)
     {
-        co_return co_await router_instance->decide_domain_detail(request.target_host);
+        co_return router_instance->decide_domain_detail(request.target_host);
     }
     if (normalize_ip_literal)
     {
         target_addr = net::normalize_address(target_addr);
     }
-    co_return co_await router_instance->decide_ip_detail(target_addr);
+    co_return router_instance->decide_ip_detail(target_addr);
 }
 
 }    // namespace relay

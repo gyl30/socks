@@ -6,7 +6,6 @@
 #include <vector>
 #include <cstdint>
 
-#include <boost/asio/awaitable.hpp>
 #include <boost/asio/ip/address.hpp>
 
 #include "config.h"
@@ -52,10 +51,10 @@ class router
 
     [[nodiscard]] bool load() const;
 
-    [[nodiscard]] boost::asio::awaitable<route_type> decide_ip(const boost::asio::ip::address& addr) const;
-    [[nodiscard]] boost::asio::awaitable<route_type> decide_domain(const std::string& host) const;
-    [[nodiscard]] boost::asio::awaitable<route_decision> decide_ip_detail(const boost::asio::ip::address& addr) const;
-    [[nodiscard]] boost::asio::awaitable<route_decision> decide_domain_detail(const std::string& host) const;
+    [[nodiscard]] route_type decide_ip(const boost::asio::ip::address& addr) const;
+    [[nodiscard]] route_type decide_domain(const std::string& host) const;
+    [[nodiscard]] route_decision decide_ip_detail(const boost::asio::ip::address& addr) const;
+    [[nodiscard]] route_decision decide_domain_detail(const std::string& host) const;
 
    private:
     struct compiled_rule;
