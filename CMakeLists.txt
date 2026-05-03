@@ -273,7 +273,6 @@ set(SOCKS_SOURCES
     reality/handshake/server_handshaker.cpp
     reality/policy/fallback_gate.cpp
     reality/policy/fallback_executor.cpp
-    reality/material/material_provider.cpp
     reality/session/record_context.cpp
     tls/handshake_builder.cpp
     tls/handshake_message.cpp

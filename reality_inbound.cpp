@@ -32,8 +32,8 @@
 #include "reality_protocol_session.h"
 #include "reality/policy/fallback_gate.h"
 #include "reality/policy/fallback_executor.h"
-#include "reality/material/material_provider.h"
 #include "reality/handshake/server_handshaker.h"
+#include "cert_fetcher.h"
 namespace relay
 {
 
@@ -174,7 +174,7 @@ boost::asio::awaitable<bool> reality_inbound::handle_accept_error(const boost::s
     co_return true;
 }
 
-reality_inbound::reality_inbound(io_context_pool& pool, const config& cfg, std::string inbound_tag, const config::reality_inbound_t& settings)
+	reality_inbound::reality_inbound(io_context_pool& pool, const config& cfg, std::string inbound_tag, const config::reality_inbound_t& settings)
     : cfg_(cfg),
       inbound_tag_(std::move(inbound_tag)),
       settings_(settings),
@@ -191,9 +191,6 @@ reality_inbound::reality_inbound(io_context_pool& pool, const config& cfg, std::
         return;
     }
     boost::algorithm::unhex(settings_.short_id, std::back_inserter(short_id_bytes_));
-    boost::system::error_code ec;
-    auto pub = tls::crypto_util::extract_public_key(private_key_, ec);
-    LOG_INFO("{} stage init reality inbound public key size {}", log_event::kConnInit, ec ? 0 : pub.size());
 
     uint8_t cert_public_key[32] = {};
     if (!tls::crypto_util::generate_ed25519_keypair(cert_public_key, reality_cert_private_key_.data()))
@@ -203,6 +200,7 @@ reality_inbound::reality_inbound(io_context_pool& pool, const config& cfg, std::
         return;
     }
     reality_cert_public_key_.assign(cert_public_key, cert_public_key + 32);
+    boost::system::error_code ec;
     auto cert_template = tls::crypto_util::create_self_signed_ed25519_certificate(
         std::vector<uint8_t>(reality_cert_private_key_.begin(), reality_cert_private_key_.end()), ec);
     if (ec)
@@ -248,7 +246,7 @@ bool reality_inbound::start(boost::system::error_code& ec)
     ec.clear();
     if (settings_.fetch_site_material)
     {
-        auto loaded_material = reality::load_site_material(settings_, ec);
+        auto loaded_material = reality::fetch_site_material(settings_.sni, settings_.site_port, settings_.sni, ec);
         if (ec)
         {
             LOG_WARN("{} stage start load reality site material failed {} continue_without_site_material",
@@ -258,6 +256,19 @@ bool reality_inbound::start(boost::system::error_code& ec)
         }
         else
         {
+            LOG_INFO("{} target {}:{} sni {} certs {} alpn '{}' cipher 0x{:04x} sh_exts {} ee_exts {} ee_padding {} ccs {} hs_records {}",
+                     log_event::kCert,
+                     settings_.sni,
+                     settings_.site_port,
+                     settings_.sni,
+                     loaded_material.certificate_chain.size(),
+                     loaded_material.fingerprint.alpn,
+                     loaded_material.fingerprint.cipher_suite,
+                     loaded_material.server_hello_extension_types.size(),
+                     loaded_material.encrypted_extension_types.size(),
+                     loaded_material.encrypted_extensions_padding_len.value_or(0),
+                     loaded_material.sends_change_cipher_spec,
+                     loaded_material.encrypted_handshake_record_sizes.size());
             site_material_ = std::move(loaded_material);
         }
     }

@@ -95,11 +95,6 @@ void write_reality_inbound_settings(rapidjson::PrettyWriter<rapidjson::StringBuf
     writer.Bool(value.fetch_site_material);
     writer.Key("private_key");
     writer.String(value.private_key.c_str());
-    if (!value.public_key.empty())
-    {
-        writer.Key("public_key");
-        writer.String(value.public_key.c_str());
-    }
     writer.Key("short_id");
     writer.String(value.short_id.c_str());
     writer.Key("replay_cache_max_entries");

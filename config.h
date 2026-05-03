@@ -70,7 +70,6 @@ struct config
         uint16_t site_port = 443;
         bool fetch_site_material = true;
         std::string private_key;
-        std::string public_key;
         std::string short_id;
         uint32_t replay_cache_max_entries = 100000;
     };

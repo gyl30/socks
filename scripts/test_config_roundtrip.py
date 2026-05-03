@@ -259,7 +259,7 @@ def run_reality_material_fetch_startup_case(binary, runtime_env, temp_root):
     key_output = subprocess.run([str(binary), "x25519"], env=runtime_env, text=True, capture_output=True, check=False)
     if key_output.returncode != 0:
         raise RuntimeError(f"dump x25519 failed rc={key_output.returncode} stderr={key_output.stderr}")
-    private_key, public_key = parse_key_output(key_output.stdout)
+    private_key, _ = parse_key_output(key_output.stdout)
 
     listen_port = allocate_tcp_port()
     log_path = temp_root / "reality-material-fetch.log"
@@ -281,7 +281,6 @@ def run_reality_material_fetch_startup_case(binary, runtime_env, temp_root):
                     "site_port": 443,
                     "fetch_site_material": True,
                     "private_key": private_key,
-                    "public_key": public_key,
                     "short_id": "0102030405060708",
                     "replay_cache_max_entries": 1000,
                 },

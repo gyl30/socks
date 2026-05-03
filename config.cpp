@@ -623,15 +623,6 @@ template <typename T>
     {
         return false;
     }
-    if (!parse_string_field(value, "public_key", path, out.public_key, filename, false))
-    {
-        return false;
-    }
-    if (!out.public_key.empty() &&
-        !validate_reality_hex_field(out.public_key, filename, join_path(path, "public_key"), kRealityKeyBytes, kRealityKeyBytes))
-    {
-        return false;
-    }
     if (!parse_string_field(value, "short_id", path, out.short_id, filename, true))
     {
         return false;
