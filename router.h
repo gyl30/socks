@@ -40,7 +40,6 @@ class router
    public:
     struct shared_state;
 
-    router(const config& cfg, std::string inbound_tag);
     router(std::shared_ptr<const shared_state> shared_state, std::string inbound_tag);
     ~router() = default;
 

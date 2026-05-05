@@ -74,8 +74,6 @@ std::string to_string(const route_type& type)
     return "unknown";
 }
 
-router::router(const config& cfg, std::string inbound_tag) : router(build_shared_state(cfg), std::move(inbound_tag)) {}
-
 router::router(std::shared_ptr<const shared_state> shared_state, std::string inbound_tag)
     : inbound_tag_(std::move(inbound_tag)), shared_state_(std::move(shared_state))
 {

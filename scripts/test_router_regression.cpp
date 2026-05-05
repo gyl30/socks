@@ -76,7 +76,7 @@ int main()
 
     relay::router shared_socks_router(shared_state, "socks-in");
     relay::router shared_tun_router(shared_state, "tun-in");
-    relay::router legacy_router(cfg, "socks-in");
+    relay::router shared_socks_ip_router(shared_state, "socks-in");
 
     const bool ok =
         require_decision(shared_socks_router.decide_domain_detail("example.com"),
@@ -89,7 +89,7 @@ int main()
                          "block",
                          "inbound",
                          "tun-in") &&
-        require_decision(legacy_router.decide_ip_detail(boost::asio::ip::make_address("203.0.113.7")),
+        require_decision(shared_socks_ip_router.decide_ip_detail(boost::asio::ip::make_address("203.0.113.7")),
                          relay::route_type::kDirect,
                          "direct",
                          "inbound",

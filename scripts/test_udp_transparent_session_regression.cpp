@@ -96,6 +96,16 @@ template <typename T, typename Awaitable>
     return std::nullopt;
 }
 
+[[nodiscard]] test_result build_router(const relay::config& cfg,
+                                       std::string_view inbound_tag,
+                                       std::shared_ptr<relay::router>& route)
+{
+    auto shared_state = relay::router::build_shared_state(cfg);
+    TEST_CHECK(shared_state != nullptr, "failed to build router state for " + std::string(inbound_tag));
+    route = std::make_shared<relay::router>(std::move(shared_state), std::string(inbound_tag));
+    return std::nullopt;
+}
+
 class io_worker_runtime
 {
    public:
@@ -776,7 +786,8 @@ void report_case_result(std::string_view scenario,
 {
     io_worker_runtime runtime;
     auto cfg = make_route_blocked_config();
-    auto route = std::make_shared<relay::router>(cfg, "tproxy-in");
+    std::shared_ptr<relay::router> route;
+    TEST_RETURN_IF_ERROR(build_router(cfg, "tproxy-in", route));
 
     std::promise<void> closed_promise;
     auto closed_future = closed_promise.get_future();
@@ -803,7 +814,8 @@ void report_case_result(std::string_view scenario,
 {
     io_worker_runtime runtime;
     auto cfg = make_route_blocked_config();
-    auto route = std::make_shared<relay::router>(cfg, "tun-in");
+    std::shared_ptr<relay::router> route;
+    TEST_RETURN_IF_ERROR(build_router(cfg, "tun-in", route));
 
     lwip_udp_pcb_holder pcb_holder;
     TEST_CHECK(pcb_holder.valid(), "udp_new_ip_type failed");
@@ -833,7 +845,8 @@ void report_case_result(std::string_view scenario,
 {
     io_worker_runtime runtime;
     const auto cfg = make_direct_config(1);
-    auto route = std::make_shared<relay::router>(cfg, "tproxy-in");
+    std::shared_ptr<relay::router> route;
+    TEST_RETURN_IF_ERROR(build_router(cfg, "tproxy-in", route));
 
     udp_blackhole_server blackhole;
     const auto client_endpoint = boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 41001);
@@ -885,7 +898,8 @@ void report_case_result(std::string_view scenario,
 {
     io_worker_runtime runtime;
     const auto cfg = make_direct_config(1);
-    auto route = std::make_shared<relay::router>(cfg, "tun-in");
+    std::shared_ptr<relay::router> route;
+    TEST_RETURN_IF_ERROR(build_router(cfg, "tun-in", route));
 
     udp_blackhole_server blackhole;
     const auto client_endpoint = boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 41002);
@@ -935,7 +949,8 @@ void report_case_result(std::string_view scenario,
 {
     io_worker_runtime runtime;
     const auto cfg = make_direct_config(1);
-    auto route = std::make_shared<relay::router>(cfg, "tproxy-in");
+    std::shared_ptr<relay::router> route;
+    TEST_RETURN_IF_ERROR(build_router(cfg, "tproxy-in", route));
 
     udp_blackhole_server blackhole;
     const auto target_endpoint = blackhole.endpoint();
@@ -994,7 +1009,8 @@ void report_case_result(std::string_view scenario,
 {
     io_worker_runtime runtime;
     const auto cfg = make_direct_config(1);
-    auto route = std::make_shared<relay::router>(cfg, "tun-in");
+    std::shared_ptr<relay::router> route;
+    TEST_RETURN_IF_ERROR(build_router(cfg, "tun-in", route));
 
     udp_blackhole_server blackhole;
     const auto target_endpoint = blackhole.endpoint();
@@ -1068,7 +1084,8 @@ void report_case_result(std::string_view scenario,
 {
     io_worker_runtime runtime;
     const auto cfg = make_direct_config(30);
-    auto route = std::make_shared<relay::router>(cfg, "tproxy-in");
+    std::shared_ptr<relay::router> route;
+    TEST_RETURN_IF_ERROR(build_router(cfg, "tproxy-in", route));
 
     udp_blackhole_server blackhole;
     const auto client_endpoint = boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 43301);
@@ -1118,7 +1135,8 @@ void report_case_result(std::string_view scenario,
 {
     io_worker_runtime runtime;
     const auto cfg = make_direct_config(30);
-    auto route = std::make_shared<relay::router>(cfg, "tun-in");
+    std::shared_ptr<relay::router> route;
+    TEST_RETURN_IF_ERROR(build_router(cfg, "tun-in", route));
 
     udp_blackhole_server blackhole;
     const auto client_endpoint = boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 43302);
@@ -1178,7 +1196,8 @@ void report_case_result(std::string_view scenario,
 {
     io_worker_runtime runtime;
     const auto cfg = make_direct_config(5);
-    auto route = std::make_shared<relay::router>(cfg, "tproxy-in");
+    std::shared_ptr<relay::router> route;
+    TEST_RETURN_IF_ERROR(build_router(cfg, "tproxy-in", route));
 
     std::promise<void> closed_promise;
     auto closed_future = closed_promise.get_future();
@@ -1205,7 +1224,8 @@ void report_case_result(std::string_view scenario,
 {
     io_worker_runtime runtime;
     const auto cfg = make_direct_config(5);
-    auto route = std::make_shared<relay::router>(cfg, "tun-in");
+    std::shared_ptr<relay::router> route;
+    TEST_RETURN_IF_ERROR(build_router(cfg, "tun-in", route));
 
     lwip_udp_pcb_holder pcb_holder;
     TEST_CHECK(pcb_holder.valid(), "udp_new_ip_type failed");
@@ -1245,7 +1265,8 @@ void report_case_result(std::string_view scenario,
 {
     io_worker_runtime runtime;
     const auto cfg = make_direct_config(30);
-    auto route = std::make_shared<relay::router>(cfg, "tproxy-in");
+    std::shared_ptr<relay::router> route;
+    TEST_RETURN_IF_ERROR(build_router(cfg, "tproxy-in", route));
 
     udp_blackhole_server blackhole;
     const auto client_endpoint = boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 42001);
@@ -1285,7 +1306,8 @@ void report_case_result(std::string_view scenario,
 {
     io_worker_runtime runtime;
     const auto cfg = make_direct_config(30);
-    auto route = std::make_shared<relay::router>(cfg, "tun-in");
+    std::shared_ptr<relay::router> route;
+    TEST_RETURN_IF_ERROR(build_router(cfg, "tun-in", route));
 
     udp_blackhole_server blackhole;
     const auto client_endpoint = boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 42002);
@@ -1343,7 +1365,8 @@ uint16_t pick_unused_tcp_port()
 {
     io_worker_runtime runtime;
     const auto cfg = make_proxy_fail_config(pick_unused_tcp_port());
-    auto route = std::make_shared<relay::router>(cfg, "tproxy-in");
+    std::shared_ptr<relay::router> route;
+    TEST_RETURN_IF_ERROR(build_router(cfg, "tproxy-in", route));
 
     std::promise<void> closed_promise;
     auto closed_future = closed_promise.get_future();
@@ -1370,7 +1393,8 @@ uint16_t pick_unused_tcp_port()
 {
     io_worker_runtime runtime;
     const auto cfg = make_proxy_fail_config(pick_unused_tcp_port());
-    auto route = std::make_shared<relay::router>(cfg, "tun-in");
+    std::shared_ptr<relay::router> route;
+    TEST_RETURN_IF_ERROR(build_router(cfg, "tun-in", route));
 
     lwip_udp_pcb_holder pcb_holder;
     TEST_CHECK(pcb_holder.valid(), "udp_new_ip_type failed");
@@ -1411,7 +1435,8 @@ uint16_t pick_unused_tcp_port()
     io_worker_runtime runtime;
     fake_socks_udp_server server;
     const auto cfg = make_proxy_config(server.tcp_port());
-    auto route = std::make_shared<relay::router>(cfg, "tproxy-in");
+    std::shared_ptr<relay::router> route;
+    TEST_RETURN_IF_ERROR(build_router(cfg, "tproxy-in", route));
 
     std::promise<void> closed_promise;
     auto closed_future = closed_promise.get_future();
@@ -1445,7 +1470,8 @@ uint16_t pick_unused_tcp_port()
     io_worker_runtime runtime;
     fake_socks_udp_server server;
     const auto cfg = make_proxy_config(server.tcp_port());
-    auto route = std::make_shared<relay::router>(cfg, "tun-in");
+    std::shared_ptr<relay::router> route;
+    TEST_RETURN_IF_ERROR(build_router(cfg, "tun-in", route));
 
     lwip_udp_pcb_holder pcb_holder;
     TEST_CHECK(pcb_holder.valid(), "udp_new_ip_type failed");
@@ -1490,7 +1516,8 @@ uint16_t pick_unused_tcp_port()
     io_worker_runtime runtime;
     fake_socks_udp_server server(2);
     const auto cfg = make_multi_proxy_config(server.tcp_port(), server.tcp_port());
-    auto route = std::make_shared<relay::router>(cfg, "tproxy-in");
+    std::shared_ptr<relay::router> route;
+    TEST_RETURN_IF_ERROR(build_router(cfg, "tproxy-in", route));
 
     std::promise<void> first_closed_promise;
     std::promise<void> second_closed_promise;
@@ -1544,7 +1571,8 @@ uint16_t pick_unused_tcp_port()
     io_worker_runtime runtime;
     fake_socks_udp_server server(2);
     const auto cfg = make_multi_proxy_config(server.tcp_port(), server.tcp_port());
-    auto route = std::make_shared<relay::router>(cfg, "tun-in");
+    std::shared_ptr<relay::router> route;
+    TEST_RETURN_IF_ERROR(build_router(cfg, "tun-in", route));
 
     lwip_udp_pcb_holder first_pcb;
     lwip_udp_pcb_holder second_pcb;
