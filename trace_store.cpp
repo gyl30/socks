@@ -32,6 +32,26 @@ bool is_trace_session_finished(const trace_status status)
     return status != trace_status::kRunning;
 }
 
+void accumulate_stats(trace_stats& stats, const trace_session_summary& summary)
+{
+    stats.total_events += summary.events_count;
+    switch (summary.status)
+    {
+        case trace_status::kRunning:
+            stats.running_sessions++;
+            break;
+        case trace_status::kSuccess:
+            stats.success_sessions++;
+            break;
+        case trace_status::kFailed:
+            stats.failed_sessions++;
+            break;
+        case trace_status::kTimeout:
+            stats.timeout_sessions++;
+            break;
+    }
+}
+
 }    // namespace
 
 std::string_view to_string(const trace_status status)
@@ -756,42 +776,16 @@ trace_event_page trace_store::list_events(const trace_event_query& query) const
 
 trace_stats trace_store::get_stats() const
 {
-    std::vector<trace_session_summary> summaries;
-    uint64_t total_tx_bytes = 0;
-    uint64_t total_rx_bytes = 0;
+    trace_stats stats;
     {
         std::shared_lock lock(mutex_);
-        summaries.reserve(sessions_.size());
         for (const auto& [_, session] : sessions_)
         {
-            summaries.push_back(session.summary);
+            accumulate_stats(stats, session.summary);
         }
-        total_tx_bytes = live_total_tx_bytes_.load(std::memory_order_relaxed);
-        total_rx_bytes = live_total_rx_bytes_.load(std::memory_order_relaxed);
-    }
-
-    trace_stats stats;
-    stats.total_sessions = static_cast<uint64_t>(summaries.size());
-    stats.total_tx_bytes = total_tx_bytes;
-    stats.total_rx_bytes = total_rx_bytes;
-    for (const auto& summary : summaries)
-    {
-        stats.total_events += summary.events_count;
-        switch (summary.status)
-        {
-            case trace_status::kRunning:
-                stats.running_sessions++;
-                break;
-            case trace_status::kSuccess:
-                stats.success_sessions++;
-                break;
-            case trace_status::kFailed:
-                stats.failed_sessions++;
-                break;
-            case trace_status::kTimeout:
-                stats.timeout_sessions++;
-                break;
-        }
+        stats.total_sessions = static_cast<uint64_t>(sessions_.size());
+        stats.total_tx_bytes = live_total_tx_bytes_.load(std::memory_order_relaxed);
+        stats.total_rx_bytes = live_total_rx_bytes_.load(std::memory_order_relaxed);
     }
     return stats;
 }
@@ -885,58 +879,30 @@ void trace_store::prune_sessions_locked()
 
 trace_dashboard_snapshot trace_store::get_dashboard() const
 {
-    std::vector<trace_session_summary> summaries;
-    uint64_t total_tx_bytes = 0;
-    uint64_t total_rx_bytes = 0;
-    std::vector<trace_traffic_sample> traffic_history;
+    trace_dashboard_snapshot snapshot;
     {
         std::shared_lock lock(mutex_);
-        summaries.reserve(sessions_.size());
         for (const auto& [_, session] : sessions_)
         {
-            summaries.push_back(session.summary);
+            const auto& summary = session.summary;
+            accumulate_stats(snapshot.stats, summary);
+            snapshot.latest_event_unix_ms = std::max(snapshot.latest_event_unix_ms, summary.last_event_unix_ms);
+            snapshot.status_counts[std::string(to_string(summary.status))]++;
+            increment_counter(snapshot.inbound_tag_counts, summary.inbound_tag);
+            increment_counter(snapshot.inbound_type_counts, summary.inbound_type);
+            increment_counter(snapshot.outbound_tag_counts, summary.outbound_tag);
+            increment_counter(snapshot.outbound_type_counts, summary.outbound_type);
+            increment_counter(snapshot.route_type_counts, summary.route_type);
+            increment_counter(snapshot.match_type_counts, summary.match_type);
+            for (const auto& [stage, count] : summary.stage_counts)
+            {
+                snapshot.stage_event_counts[stage] += count;
+            }
         }
-        total_tx_bytes = live_total_tx_bytes_.load(std::memory_order_relaxed);
-        total_rx_bytes = live_total_rx_bytes_.load(std::memory_order_relaxed);
-        traffic_history.assign(traffic_history_.begin(), traffic_history_.end());
-    }
-
-    trace_dashboard_snapshot snapshot;
-    snapshot.stats.total_sessions = static_cast<uint64_t>(summaries.size());
-    snapshot.stats.total_tx_bytes = total_tx_bytes;
-    snapshot.stats.total_rx_bytes = total_rx_bytes;
-    snapshot.traffic_history = std::move(traffic_history);
-    for (const auto& summary : summaries)
-    {
-        snapshot.stats.total_events += summary.events_count;
-        snapshot.latest_event_unix_ms = std::max(snapshot.latest_event_unix_ms, summary.last_event_unix_ms);
-        snapshot.status_counts[std::string(to_string(summary.status))]++;
-        increment_counter(snapshot.inbound_tag_counts, summary.inbound_tag);
-        increment_counter(snapshot.inbound_type_counts, summary.inbound_type);
-        increment_counter(snapshot.outbound_tag_counts, summary.outbound_tag);
-        increment_counter(snapshot.outbound_type_counts, summary.outbound_type);
-        increment_counter(snapshot.route_type_counts, summary.route_type);
-        increment_counter(snapshot.match_type_counts, summary.match_type);
-        for (const auto& [stage, count] : summary.stage_counts)
-        {
-            snapshot.stage_event_counts[stage] += count;
-        }
-
-        switch (summary.status)
-        {
-            case trace_status::kRunning:
-                snapshot.stats.running_sessions++;
-                break;
-            case trace_status::kSuccess:
-                snapshot.stats.success_sessions++;
-                break;
-            case trace_status::kFailed:
-                snapshot.stats.failed_sessions++;
-                break;
-            case trace_status::kTimeout:
-                snapshot.stats.timeout_sessions++;
-                break;
-        }
+        snapshot.stats.total_sessions = static_cast<uint64_t>(sessions_.size());
+        snapshot.stats.total_tx_bytes = live_total_tx_bytes_.load(std::memory_order_relaxed);
+        snapshot.stats.total_rx_bytes = live_total_rx_bytes_.load(std::memory_order_relaxed);
+        snapshot.traffic_history.assign(traffic_history_.begin(), traffic_history_.end());
     }
     return snapshot;
 }
