@@ -13,7 +13,6 @@
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/this_coro.hpp>
 #include <boost/asio/use_awaitable.hpp>
-#include <boost/asio/use_future.hpp>
 
 #include "config.h"
 #include "log.h"
@@ -106,15 +105,21 @@ int main(int argc, char** argv)
     DEFER(shutdown_log());
 
     boost::asio::io_context io_context;
-    auto future = boost::asio::co_spawn(io_context, run_case(*parsed, argv[2], *payload), boost::asio::use_future);
+    std::optional<int> exit_code;
+    bool coroutine_failed = false;
+    boost::asio::co_spawn(
+        io_context,
+        run_case(*parsed, argv[2], *payload),
+        [&](std::exception_ptr ex, int result)
+        {
+            coroutine_failed = (ex != nullptr);
+            exit_code = result;
+        });
     io_context.run();
-    try
+    if (coroutine_failed || !exit_code.has_value())
     {
-        return future.get();
-    }
-    catch (const std::exception& ex)
-    {
-        std::cerr << "exception: " << ex.what() << '\n';
+        std::cerr << "coroutine failed\n";
         return 1;
     }
+    return *exit_code;
 }
