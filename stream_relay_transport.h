@@ -56,6 +56,7 @@ class proxy_connection_stream_relay_transport final : public stream_relay_transp
     std::shared_ptr<proxy_reality_connection> connection_;
     const config::timeout_t& timeout_;
     std::vector<uint8_t> pending_read_data_;
+    std::size_t pending_read_offset_ = 0;
     relay::proxy::tcp_stream_recv_state recv_state_;
     relay::proxy::tcp_stream_send_state send_state_;
 };

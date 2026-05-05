@@ -15,11 +15,17 @@ namespace relay
 namespace
 {
 
-std::size_t consume_pending_read_data(std::vector<uint8_t>& pending_read_data, std::vector<uint8_t>& buffer)
+std::size_t consume_pending_read_data(std::vector<uint8_t>& pending_read_data, std::size_t& pending_read_offset, std::vector<uint8_t>& buffer)
 {
-    const auto size = std::min(buffer.size(), pending_read_data.size());
-    std::copy_n(pending_read_data.begin(), static_cast<std::ptrdiff_t>(size), buffer.begin());
-    pending_read_data.erase(pending_read_data.begin(), pending_read_data.begin() + static_cast<std::ptrdiff_t>(size));
+    const auto remaining = pending_read_data.size() - pending_read_offset;
+    const auto size = std::min(buffer.size(), remaining);
+    std::copy_n(pending_read_data.data() + static_cast<std::ptrdiff_t>(pending_read_offset), static_cast<std::ptrdiff_t>(size), buffer.data());
+    pending_read_offset += size;
+    if (pending_read_offset == pending_read_data.size())
+    {
+        pending_read_data.clear();
+        pending_read_offset = 0;
+    }
     return size;
 }
 
@@ -97,7 +103,7 @@ boost::asio::awaitable<std::size_t> proxy_connection_stream_relay_transport::rea
     }
     if (!pending_read_data_.empty())
     {
-        co_return consume_pending_read_data(pending_read_data_, buffer);
+        co_return consume_pending_read_data(pending_read_data_, pending_read_offset_, buffer);
     }
     if (recv_state_.shutdown_seen())
     {
@@ -132,9 +138,10 @@ boost::asio::awaitable<std::size_t> proxy_connection_stream_relay_transport::rea
         }
 
         pending_read_data_ = std::move(frame.payload);
+        pending_read_offset_ = 0;
         if (!pending_read_data_.empty())
         {
-            co_return consume_pending_read_data(pending_read_data_, buffer);
+            co_return consume_pending_read_data(pending_read_data_, pending_read_offset_, buffer);
         }
     }
 }
@@ -204,6 +211,7 @@ boost::asio::awaitable<void> proxy_connection_stream_relay_transport::close()
     boost::system::error_code ec;
     connection_->close(ec);
     pending_read_data_.clear();
+    pending_read_offset_ = 0;
     recv_state_.reset();
     send_state_.reset();
     co_return;
