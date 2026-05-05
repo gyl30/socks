@@ -86,10 +86,7 @@ class proxy_tcp_outbound final : public tcp_outbound_stream
     uint16_t target_port_ = 0;
     std::string bind_host_ = "unknown";
     uint16_t bind_port_ = 0;
-    std::shared_ptr<proxy_reality_connection> connection_;
-    std::vector<uint8_t> pending_read_data_;
-    proxy::tcp_stream_recv_state recv_state_;
-    proxy::tcp_stream_send_state send_state_;
+    proxy_connection_tcp_stream stream_;
 };
 
 class socks_tcp_outbound final : public tcp_outbound_stream
@@ -141,14 +138,6 @@ void set_connect_failure(tcp_outbound_connect_result& result, const boost::syste
 {
     result.ec = ec;
     result.socks_rep = socks::map_connect_error_to_socks_rep(ec);
-}
-
-std::size_t consume_pending_read_data(std::vector<uint8_t>& pending_read_data, std::vector<uint8_t>& buffer)
-{
-    const auto size = std::min(buffer.size(), pending_read_data.size());
-    std::copy_n(pending_read_data.begin(), static_cast<std::ptrdiff_t>(size), buffer.begin());
-    pending_read_data.erase(pending_read_data.begin(), pending_read_data.begin() + static_cast<std::ptrdiff_t>(size));
-    return size;
 }
 
 bool append_socks_target_address(std::vector<uint8_t>& packet, const std::string& host)
@@ -619,7 +608,8 @@ uint32_t proxy_tcp_outbound::connect_ack_timeout() const
 
 boost::asio::awaitable<void> proxy_tcp_outbound::send_connect_request(const std::string& host, const uint16_t port, boost::system::error_code& ec) const
 {
-    if (connection_ == nullptr)
+    const auto connection = stream_.connection();
+    if (connection == nullptr)
     {
         ec = boost::asio::error::not_connected;
         co_return;
@@ -650,7 +640,7 @@ boost::asio::awaitable<void> proxy_tcp_outbound::send_connect_request(const std:
              host,
              port,
              packet.size());
-    co_await connection_->write_packet(packet, ec);
+    co_await connection->write_packet(packet, ec);
     if (ec)
     {
         LOG_ERROR("{} trace {:016x} conn {} stage send_connect_request target {}:{} error {}",
@@ -666,14 +656,15 @@ boost::asio::awaitable<void> proxy_tcp_outbound::send_connect_request(const std:
 
 boost::asio::awaitable<void> proxy_tcp_outbound::wait_connect_reply(const std::string& host, const uint16_t port, tcp_outbound_connect_result& result) const
 {
-    if (connection_ == nullptr)
+    const auto connection = stream_.connection();
+    if (connection == nullptr)
     {
         set_connect_failure(result, boost::asio::error::not_connected);
         co_return;
     }
 
     boost::system::error_code reply_ec;
-    const auto packet = co_await connection_->read_packet(connect_ack_timeout(), reply_ec);
+    const auto packet = co_await connection->read_packet(connect_ack_timeout(), reply_ec);
     if (reply_ec)
     {
         LOG_ERROR("{} trace {:016x} conn {} stage wait_connect_reply target {}:{} error {}",
@@ -751,13 +742,10 @@ boost::asio::awaitable<tcp_outbound_connect_result> proxy_tcp_outbound::connect(
     target_port_ = port;
     bind_host_ = "unknown";
     bind_port_ = 0;
-    pending_read_data_.clear();
-    recv_state_.reset();
-    send_state_.reset();
+    stream_.reset();
     boost::system::error_code ec;
-    connection_.reset();
-    connection_ = co_await proxy_reality_connection::connect(executor_, cfg_, outbound_tag_, connect_mark_, conn_id_, ec);
-    if (connection_ == nullptr)
+    auto connection = co_await proxy_reality_connection::connect(executor_, cfg_, outbound_tag_, connect_mark_, conn_id_, ec);
+    if (connection == nullptr)
     {
         if (!ec)
         {
@@ -774,6 +762,7 @@ boost::asio::awaitable<tcp_outbound_connect_result> proxy_tcp_outbound::connect(
         set_connect_failure(result, ec);
         co_return result;
     }
+    stream_.reset(connection);
 
     LOG_INFO("{} trace {:016x} conn {} target {}:{} route proxy out_tag {} connected reality local {}:{} remote {}:{}",
              log_event::kRoute,
@@ -782,26 +771,22 @@ boost::asio::awaitable<tcp_outbound_connect_result> proxy_tcp_outbound::connect(
              host,
              port,
              outbound_tag_,
-             connection_->local_host(),
-             connection_->local_port(),
-             connection_->remote_host(),
-             connection_->remote_port());
+             connection->local_host(),
+             connection->local_port(),
+             connection->remote_host(),
+             connection->remote_port());
     co_await send_connect_request(host, port, ec);
     if (ec)
     {
         set_connect_failure(result, ec);
-        boost::system::error_code close_ec;
-        connection_->close(close_ec);
-        connection_.reset();
+        co_await stream_.close();
         co_return result;
     }
 
     co_await wait_connect_reply(host, port, result);
     if (result.ec)
     {
-        boost::system::error_code close_ec;
-        connection_->close(close_ec);
-        connection_.reset();
+        co_await stream_.close();
         co_return result;
     }
 
@@ -816,154 +801,45 @@ boost::asio::awaitable<tcp_outbound_connect_result> proxy_tcp_outbound::connect(
 
 boost::asio::awaitable<std::size_t> proxy_tcp_outbound::read(std::vector<uint8_t>& buf, boost::system::error_code& ec)
 {
-    ec.clear();
-    if (buf.empty())
-    {
-        co_return 0;
-    }
-    if (connection_ == nullptr)
+    const auto bytes_read = co_await stream_.read(buf, 0, ec);
+    if (ec == boost::asio::error::not_connected)
     {
         ec = boost::asio::error::not_connected;
         co_return 0;
     }
-    if (!pending_read_data_.empty())
+    if (ec && !net::is_socket_close_error(ec))
     {
-        co_return consume_pending_read_data(pending_read_data_, buf);
+        LOG_WARN("{} trace {:016x} conn {} target {}:{} bind {}:{} stage read_proxy_data error {}",
+                 log_event::kRoute,
+                 trace_id_,
+                 conn_id_,
+                 target_host_,
+                 target_port_,
+                 bind_host_,
+                 bind_port_,
+                 ec.message());
     }
-    if (recv_state_.shutdown_seen())
-    {
-        ec = boost::asio::error::eof;
-        co_return 0;
-    }
-
-    for (;;)
-    {
-        const auto packet = co_await connection_->read_packet(0, ec);
-        if (ec)
-        {
-            if (!net::is_socket_close_error(ec))
-            {
-                LOG_WARN("{} trace {:016x} conn {} target {}:{} bind {}:{} stage read_proxy_data error {}",
-                         log_event::kRoute,
-                         trace_id_,
-                         conn_id_,
-                         target_host_,
-                         target_port_,
-                         bind_host_,
-                         bind_port_,
-                         ec.message());
-            }
-            co_return 0;
-        }
-
-        proxy::tcp_stream_frame frame;
-        if (!proxy::decode_tcp_stream_frame(packet.data(), packet.size(), frame))
-        {
-            ec = boost::asio::error::invalid_argument;
-            LOG_WARN("{} trace {:016x} conn {} target {}:{} bind {}:{} stage read_proxy_data invalid_frame payload_size {}",
-                     log_event::kRoute,
-                     trace_id_,
-                     conn_id_,
-                     target_host_,
-                     target_port_,
-                     bind_host_,
-                     bind_port_,
-                     packet.size());
-            co_return 0;
-        }
-        if (!recv_state_.accept(frame))
-        {
-            ec = boost::asio::error::invalid_argument;
-            LOG_WARN("{} trace {:016x} conn {} target {}:{} bind {}:{} stage read_proxy_data invalid_frame_sequence frame_kind {} payload_size {}",
-                     log_event::kRoute,
-                     trace_id_,
-                     conn_id_,
-                     target_host_,
-                     target_port_,
-                     bind_host_,
-                     bind_port_,
-                     static_cast<unsigned>(frame.kind),
-                     frame.payload.size());
-            co_return 0;
-        }
-        if (recv_state_.shutdown_seen())
-        {
-            ec = boost::asio::error::eof;
-            co_return 0;
-        }
-
-        pending_read_data_ = std::move(frame.payload);
-        if (!pending_read_data_.empty())
-        {
-            co_return consume_pending_read_data(pending_read_data_, buf);
-        }
-    }
+    co_return bytes_read;
 }
 
 boost::asio::awaitable<std::size_t> proxy_tcp_outbound::write(std::span<const uint8_t> data, boost::system::error_code& ec)
 {
-    if (connection_ == nullptr)
-    {
-        ec = boost::asio::error::not_connected;
-        co_return 0;
-    }
-    if (!send_state_.can_send_data(data))
-    {
-        ec = send_state_.shutdown_sent() ? boost::asio::error::broken_pipe : boost::asio::error::message_size;
-        co_return 0;
-    }
-
-    std::vector<uint8_t> packet;
-    if (!proxy::encode_tcp_stream_data(data, packet))
-    {
-        ec = boost::asio::error::message_size;
-        co_return 0;
-    }
-    co_await connection_->write_packet(packet, ec);
-    if (ec)
-    {
-        co_return 0;
-    }
-    co_return data.size();
+    co_return co_await stream_.write(data, ec);
 }
 
 boost::asio::awaitable<void> proxy_tcp_outbound::shutdown_send(boost::system::error_code& ec)
 {
-    if (connection_ == nullptr)
+    if (!stream_.has_connection())
     {
+        ec.clear();
         co_return;
     }
-    if (!send_state_.can_send_shutdown())
-    {
-        co_return;
-    }
-
-    std::vector<uint8_t> packet;
-    if (!proxy::encode_tcp_stream_shutdown(packet))
-    {
-        ec = boost::asio::error::invalid_argument;
-        co_return;
-    }
-    co_await connection_->write_packet(packet, ec);
-    if (ec)
-    {
-        co_return;
-    }
-    send_state_.mark_shutdown_sent();
-    co_return;
+    co_await stream_.shutdown_send(ec);
 }
 
 boost::asio::awaitable<void> proxy_tcp_outbound::close()
 {
-    if (connection_ != nullptr)
-    {
-        boost::system::error_code ec;
-        connection_->close(ec);
-    }
-    connection_.reset();
-    pending_read_data_.clear();
-    recv_state_.reset();
-    send_state_.reset();
+    co_await stream_.close();
     co_return;
 }
 
