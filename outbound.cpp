@@ -1,7 +1,6 @@
 #include <memory>
 #include <string>
 #include <cstdint>
-#include <utility>
 
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/error.hpp>
@@ -15,100 +14,31 @@
 namespace relay
 {
 
-outbound_handler::outbound_handler(std::string tag, std::string type) : tag_(std::move(tag)), type_(std::move(type)) {}
-
-namespace
-{
-
-class direct_outbound final : public outbound_handler
-{
-   public:
-    explicit direct_outbound(std::string tag) : outbound_handler(std::move(tag), "direct") {}
-
-    [[nodiscard]] std::shared_ptr<tcp_outbound_stream> create_tcp_outbound(
-        const boost::asio::any_io_executor& executor, uint32_t conn_id, uint64_t trace_id, const config& cfg, uint32_t connect_mark) const override
-    {
-        return make_direct_tcp_outbound_stream(executor, conn_id, trace_id, cfg, connect_mark);
-    }
-
-    [[nodiscard]] boost::asio::awaitable<udp_proxy_outbound_connect_result> connect_udp_outbound(
-        const boost::asio::any_io_executor&, uint32_t, uint64_t, const config&, uint32_t) const override
-    {
-        udp_proxy_outbound_connect_result result;
-        result.ec = boost::asio::error::operation_not_supported;
-        result.socks_rep = socks::map_connect_error_to_socks_rep(result.ec);
-        co_return result;
-    }
-};
-
-class block_outbound final : public outbound_handler
-{
-   public:
-    explicit block_outbound(std::string tag) : outbound_handler(std::move(tag), "block") {}
-
-    [[nodiscard]] std::shared_ptr<tcp_outbound_stream> create_tcp_outbound(
-        const boost::asio::any_io_executor&, uint32_t, uint64_t, const config&, uint32_t) const override
-    {
-        return nullptr;
-    }
-
-    [[nodiscard]] boost::asio::awaitable<udp_proxy_outbound_connect_result> connect_udp_outbound(
-        const boost::asio::any_io_executor&, uint32_t, uint64_t, const config&, uint32_t) const override
-    {
-        udp_proxy_outbound_connect_result result;
-        result.ec = boost::system::errc::make_error_code(boost::system::errc::permission_denied);
-        result.socks_rep = socks::map_connect_error_to_socks_rep(result.ec);
-        co_return result;
-    }
-};
-
-class proxy_outbound final : public outbound_handler
-{
-   public:
-    proxy_outbound(std::string tag, std::string type) : outbound_handler(std::move(tag), std::move(type)) {}
-
-    [[nodiscard]] std::shared_ptr<tcp_outbound_stream> create_tcp_outbound(
-        const boost::asio::any_io_executor& executor,
-        uint32_t conn_id,
-        uint64_t trace_id,
-        const config& cfg,
-        uint32_t connect_mark) const override
-    {
-        return make_proxy_tcp_outbound_stream(executor, conn_id, trace_id, cfg, tag(), connect_mark);
-    }
-
-    [[nodiscard]] boost::asio::awaitable<udp_proxy_outbound_connect_result> connect_udp_outbound(
-        const boost::asio::any_io_executor& executor,
-        uint32_t conn_id,
-        uint64_t trace_id,
-        const config& cfg,
-        uint32_t connect_mark) const override
-    {
-        co_return co_await udp_proxy_outbound::connect(executor, conn_id, trace_id, cfg, tag(), connect_mark);
-    }
-};
-
-}    // namespace
-
-std::shared_ptr<outbound_handler> make_outbound_handler(const config& cfg, const std::string& outbound_tag)
+config_type::outbound_class resolve_outbound_class(const config& cfg, const std::string_view outbound_tag)
 {
     const auto* outbound = find_outbound_entry(cfg, outbound_tag);
     if (outbound == nullptr)
     {
-        return nullptr;
+        return config_type::outbound_class::kUnsupported;
     }
-    const auto outbound_class = config_type::classify_outbound_type(outbound->type);
+    return config_type::classify_outbound_type(outbound->type);
+}
+
+std::shared_ptr<tcp_outbound_stream> create_tcp_outbound_for_tag(const boost::asio::any_io_executor& executor,
+                                                                 const uint32_t conn_id,
+                                                                 const uint64_t trace_id,
+                                                                 const config& cfg,
+                                                                 const std::string& outbound_tag,
+                                                                 const uint32_t connect_mark)
+{
+    const auto outbound_class = resolve_outbound_class(cfg, outbound_tag);
     if (outbound_class == config_type::outbound_class::kDirect)
     {
-        return std::make_shared<direct_outbound>(outbound_tag);
-    }
-    if (outbound_class == config_type::outbound_class::kBlock)
-    {
-        return std::make_shared<block_outbound>(outbound_tag);
+        return make_direct_tcp_outbound_stream(executor, conn_id, trace_id, cfg, connect_mark);
     }
     if (outbound_class == config_type::outbound_class::kProxy)
     {
-        return std::make_shared<proxy_outbound>(outbound_tag, outbound->type);
+        return make_proxy_tcp_outbound_stream(executor, conn_id, trace_id, cfg, outbound_tag, connect_mark);
     }
     return nullptr;
 }
@@ -120,15 +50,22 @@ boost::asio::awaitable<udp_proxy_outbound_connect_result> connect_udp_proxy_outb
                                                                                       const std::string& outbound_tag,
                                                                                       const uint32_t connect_mark)
 {
-    const auto handler = make_outbound_handler(cfg, outbound_tag);
-    if (handler == nullptr)
+    const auto outbound_class = resolve_outbound_class(cfg, outbound_tag);
+    if (outbound_class == config_type::outbound_class::kBlock)
+    {
+        udp_proxy_outbound_connect_result result;
+        result.ec = boost::system::errc::make_error_code(boost::system::errc::permission_denied);
+        result.socks_rep = socks::map_connect_error_to_socks_rep(result.ec);
+        co_return result;
+    }
+    if (outbound_class != config_type::outbound_class::kProxy)
     {
         udp_proxy_outbound_connect_result result;
         result.ec = boost::asio::error::operation_not_supported;
         result.socks_rep = socks::map_connect_error_to_socks_rep(result.ec);
         co_return result;
     }
-    co_return co_await handler->connect_udp_outbound(executor, conn_id, trace_id, cfg, connect_mark);
+    co_return co_await udp_proxy_outbound::connect(executor, conn_id, trace_id, cfg, outbound_tag, connect_mark);
 }
 
 }    // namespace relay

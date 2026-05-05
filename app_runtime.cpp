@@ -158,8 +158,7 @@ bool app_runtime::start_outbounds()
 {
     for (const auto& outbound : cfg_.outbounds)
     {
-        const auto handler = make_outbound_handler(cfg_, outbound.tag);
-        if (handler == nullptr)
+        if (config_type::classify_outbound_type(outbound.type) == config_type::outbound_class::kUnsupported)
         {
             LOG_ERROR("{} outbound_tag {} outbound_type {} stage start unsupported outbound",
                       log_event::kConnInit,

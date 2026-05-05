@@ -7,7 +7,6 @@
 #include <boost/asio/awaitable.hpp>
 
 #include "config.h"
-#include "outbound.h"
 #include "context_pool.h"
 #include "socks_inbound.h"
 #include "reality_inbound.h"
