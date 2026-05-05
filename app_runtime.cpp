@@ -3,7 +3,6 @@
 #include <thread>
 #include <utility>
 #include <vector>
-#include <exception>
 
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/cancellation_type.hpp>
@@ -43,44 +42,27 @@ bool start_inbound_instance(io_context_pool& pool,
                            const TSettings& settings,
                            std::vector<std::shared_ptr<TInbound>>& inbounds)
 {
-    try
+    auto inbound_instance = std::make_shared<TInbound>(pool, cfg, routing_state, inbound_tag, settings);
+    boost::system::error_code ec;
+    if (!inbound_instance->start(ec))
     {
-        auto inbound_instance = std::make_shared<TInbound>(pool, cfg, routing_state, inbound_tag, settings);
-        boost::system::error_code ec;
-        if (!inbound_instance->start(ec))
+        if (ec)
         {
-            if (ec)
-            {
-                LOG_ERROR("{} inbound_tag {} inbound_type {} stage start failed {}",
-                          log_event::kConnInit,
-                          inbound_tag,
-                          inbound_type,
-                          ec.message());
-            }
-            else
-            {
-                LOG_ERROR("{} inbound_tag {} inbound_type {} stage start failed", log_event::kConnInit, inbound_tag, inbound_type);
-            }
-            return false;
+            LOG_ERROR("{} inbound_tag {} inbound_type {} stage start failed {}",
+                      log_event::kConnInit,
+                      inbound_tag,
+                      inbound_type,
+                      ec.message());
         }
-        inbounds.push_back(inbound_instance);
-        LOG_INFO("{} inbound_tag {} inbound_type {} stage start started", log_event::kConnInit, inbound_tag, inbound_type);
-        return true;
-    }
-    catch (const std::exception& ex)
-    {
-        LOG_ERROR("{} inbound_tag {} inbound_type {} stage start exception {}",
-                  log_event::kConnInit,
-                  inbound_tag,
-                  inbound_type,
-                  ex.what());
+        else
+        {
+            LOG_ERROR("{} inbound_tag {} inbound_type {} stage start failed", log_event::kConnInit, inbound_tag, inbound_type);
+        }
         return false;
     }
-    catch (...)
-    {
-        LOG_ERROR("{} inbound_tag {} inbound_type {} stage start exception unknown", log_event::kConnInit, inbound_tag, inbound_type);
-        return false;
-    }
+    inbounds.push_back(inbound_instance);
+    LOG_INFO("{} inbound_tag {} inbound_type {} stage start started", log_event::kConnInit, inbound_tag, inbound_type);
+    return true;
 }
 
 template <typename TInbound>

@@ -72,21 +72,8 @@ int run_with_config(const char* prog, const char* config_path)
     DEFER(shutdown_log());
 
     relay::app_runtime runtime(*cfg);
-    try
+    if (!runtime.start())
     {
-        if (!runtime.start())
-        {
-            return 1;
-        }
-    }
-    catch (const std::exception& ex)
-    {
-        LOG_ERROR("{} stage runtime_start config {} exception {}", relay::log_event::kConnInit, config_path, ex.what());
-        return 1;
-    }
-    catch (...)
-    {
-        LOG_ERROR("{} stage runtime_start config {} exception unknown", relay::log_event::kConnInit, config_path);
         return 1;
     }
 
@@ -112,22 +99,7 @@ int run_with_config(const char* prog, const char* config_path)
             boost::asio::co_spawn(signal_worker.io_context, runtime.async_wait_stopped(), boost::asio::detached);
         });
 
-    try
-    {
-        runtime.pool().run();
-    }
-    catch (const std::exception& ex)
-    {
-        LOG_ERROR("{} stage runtime_run config {} exception {}", relay::log_event::kConnClose, config_path, ex.what());
-        runtime.stop();
-        return 1;
-    }
-    catch (...)
-    {
-        LOG_ERROR("{} stage runtime_run config {} exception unknown", relay::log_event::kConnClose, config_path);
-        runtime.stop();
-        return 1;
-    }
+    runtime.pool().run();
     LOG_INFO("{} stage shutdown complete", relay::log_event::kConnClose);
     return 0;
 }
