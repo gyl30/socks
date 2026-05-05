@@ -2,8 +2,6 @@
 #define TCP_CONNECT_FLOW_H
 
 #include <memory>
-
-#include <boost/asio/awaitable.hpp>
 #include <boost/asio/any_io_executor.hpp>
 
 #include "config.h"
@@ -20,10 +18,10 @@ struct tcp_connect_flow_result
     std::shared_ptr<tcp_outbound_stream> outbound;
 };
 
-[[nodiscard]] boost::asio::awaitable<tcp_connect_flow_result> prepare_tcp_connect_flow(const request_context& request,
-                                                                                       const std::shared_ptr<router>& router_instance,
-                                                                                       const boost::asio::any_io_executor& executor,
-                                                                                       const config& cfg);
+[[nodiscard]] tcp_connect_flow_result prepare_tcp_connect_flow(const request_context& request,
+                                                               const std::shared_ptr<router>& router_instance,
+                                                               const boost::asio::any_io_executor& executor,
+                                                               const config& cfg);
 
 }    // namespace relay
 

@@ -33,12 +33,12 @@ namespace
 
 }    // namespace
 
-boost::asio::awaitable<udp_flow_result> prepare_udp_route_flow(const request_context& request, const std::shared_ptr<router>& router)
+udp_flow_result prepare_udp_route_flow(const request_context& request, const std::shared_ptr<router>& router)
 {
     udp_flow_result result;
-    result.decision = co_await resolve_route_decision_for_request(request, router, true);
+    result.decision = resolve_route_decision_for_request(request, router, true);
     result.mode = to_udp_flow_mode(result.decision.route);
-    co_return result;
+    return result;
 }
 
 boost::asio::awaitable<udp_proxy_outbound_connect_result> connect_udp_proxy_flow(const boost::asio::any_io_executor& executor,

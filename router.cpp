@@ -99,8 +99,6 @@ std::shared_ptr<const router::shared_state> router::build_shared_state(const con
     return state;
 }
 
-bool router::load() const { return shared_state_ != nullptr; }
-
 bool router::make_compiled_rule(const config& cfg, const config::route_rule_t& rule, compiled_rule& compiled)
 {
     const auto* outbound = find_outbound_entry(cfg, rule.out);

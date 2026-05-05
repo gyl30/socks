@@ -17,7 +17,7 @@
 namespace relay
 {
 
-boost::asio::awaitable<udp_flow_result> prepare_udp_route_flow(const request_context& request, const std::shared_ptr<router>& router);
+udp_flow_result prepare_udp_route_flow(const request_context& request, const std::shared_ptr<router>& router);
 
 boost::asio::awaitable<udp_proxy_outbound_connect_result> connect_udp_proxy_flow(const boost::asio::any_io_executor& executor,
                                                                                 const request_context& request,

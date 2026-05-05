@@ -167,7 +167,7 @@ boost::asio::awaitable<void> socks_tcp_session::run(const std::string& host, uin
     DEFER(close_client_socket());
 
     const auto request = make_request_context(host, port);
-    auto flow_result = co_await prepare_tcp_connect_flow(request, router_, socket_.get_executor(), cfg_);
+    auto flow_result = prepare_tcp_connect_flow(request, router_, socket_.get_executor(), cfg_);
     auto decision = std::move(flow_result.decision);
     apply_route_decision(host, port, decision);
     trace_store::instance().record_event(trace_event{

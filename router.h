@@ -49,8 +49,6 @@ class router
 
     [[nodiscard]] static std::shared_ptr<const shared_state> build_shared_state(const config& cfg);
 
-    [[nodiscard]] bool load() const;
-
     [[nodiscard]] route_type decide_ip(const boost::asio::ip::address& addr) const;
     [[nodiscard]] route_type decide_domain(const std::string& host) const;
     [[nodiscard]] route_decision decide_ip_detail(const boost::asio::ip::address& addr) const;

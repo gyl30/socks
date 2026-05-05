@@ -249,7 +249,7 @@ boost::asio::awaitable<bool> tun_udp_session::run()
                                                             ""),
                            trace_stage::kRouteDecideStart,
                            trace_result::kOk);
-    const auto flow_result = co_await prepare_udp_route_flow(request, router_);
+    const auto flow_result = prepare_udp_route_flow(request, router_);
     apply_route_decision(flow_result.decision);
     record_udp_trace_stage(make_transparent_udp_trace_event(trace_id_,
                                                             conn_id_,

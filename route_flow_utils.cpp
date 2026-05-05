@@ -26,25 +26,25 @@ void mark_no_route_flow_decision(route_decision& decision, const bool clear_outb
     }
 }
 
-boost::asio::awaitable<route_decision> resolve_route_decision_for_request(
+route_decision resolve_route_decision_for_request(
     const request_context& request, const std::shared_ptr<router>& router_instance, const bool normalize_ip_literal)
 {
     if (router_instance == nullptr)
     {
-        co_return make_no_route_flow_decision();
+        return make_no_route_flow_decision();
     }
 
     boost::system::error_code target_ec;
     auto target_addr = boost::asio::ip::make_address(request.target_host, target_ec);
     if (target_ec)
     {
-        co_return router_instance->decide_domain_detail(request.target_host);
+        return router_instance->decide_domain_detail(request.target_host);
     }
     if (normalize_ip_literal)
     {
         target_addr = net::normalize_address(target_addr);
     }
-    co_return router_instance->decide_ip_detail(target_addr);
+    return router_instance->decide_ip_detail(target_addr);
 }
 
 }    // namespace relay

@@ -282,7 +282,7 @@ boost::asio::awaitable<void> reality_udp_session::start_impl(const proxy::udp_as
 boost::asio::awaitable<route_decision> reality_udp_session::decide_route(const proxy::udp_datagram& datagram) const
 {
     const auto request = make_route_request(datagram);
-    const auto flow_result = co_await prepare_udp_route_flow(request, router_);
+    const auto flow_result = prepare_udp_route_flow(request, router_);
     co_return flow_result.decision;
 }
 

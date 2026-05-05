@@ -193,7 +193,7 @@ boost::asio::awaitable<void> tproxy_tcp_session::run()
     });
 
     const auto request = make_request_context();
-    auto flow_result = co_await prepare_tcp_connect_flow(request, router_, socket_.get_executor(), cfg_);
+    auto flow_result = prepare_tcp_connect_flow(request, router_, socket_.get_executor(), cfg_);
     auto decision = std::move(flow_result.decision);
     const auto backend = flow_result.outbound;
     trace_store::instance().record_event(trace_event{

@@ -80,12 +80,6 @@ socks_inbound::socks_inbound(io_context_pool& pool,
 
 bool socks_inbound::start(boost::system::error_code& ec)
 {
-    if (!router_->load())
-    {
-        LOG_ERROR("{} stage start load router data failed", log_event::kConnInit);
-        ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
-        return false;
-    }
     LOG_INFO("{} inbound_tag {} listen {}:{} socks inbound starting listener",
              log_event::kConnInit,
              inbound_tag_,

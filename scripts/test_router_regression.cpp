@@ -79,9 +79,6 @@ int main()
     relay::router legacy_router(cfg, "socks-in");
 
     const bool ok =
-        require(shared_socks_router.load(), "shared socks router failed to load") &&
-        require(shared_tun_router.load(), "shared tun router failed to load") &&
-        require(legacy_router.load(), "legacy router failed to load") &&
         require_decision(shared_socks_router.decide_domain_detail("example.com"),
                          relay::route_type::kDirect,
                          "direct",

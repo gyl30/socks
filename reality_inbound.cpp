@@ -239,13 +239,6 @@ bool reality_inbound::start(boost::system::error_code& ec)
         return false;
     }
 
-    if (router_ == nullptr || !router_->load())
-    {
-        LOG_ERROR("{} stage start load router data failed", log_event::kConnInit);
-        ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
-        return false;
-    }
-
     site_material_.reset();
     ec.clear();
     if (settings_.fetch_site_material)

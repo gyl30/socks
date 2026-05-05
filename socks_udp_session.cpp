@@ -645,7 +645,7 @@ boost::asio::awaitable<route_decision> socks_udp_session::decide_udp_route(const
         .local_host = udp_bind_host_,
         .local_port = udp_bind_port_,
     };
-    const auto flow_result = co_await prepare_udp_route_flow(request, router_);
+    const auto flow_result = prepare_udp_route_flow(request, router_);
     co_return flow_result.decision;
 }
 

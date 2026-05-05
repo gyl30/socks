@@ -59,13 +59,6 @@ tun_inbound::tun_inbound(io_context_pool& pool,
 
 bool tun_inbound::start(boost::system::error_code& ec)
 {
-    if (!router_->load())
-    {
-        LOG_ERROR("{} stage start load router data for tun inbound failed", log_event::kConnInit);
-        ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
-        return false;
-    }
-
     if (!device_.open(settings_, ec))
     {
         LOG_ERROR("{} stage start open tun device name {} mtu {} failed {}",

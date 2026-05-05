@@ -155,7 +155,7 @@ boost::asio::awaitable<void> reality_tcp_session::run(const proxy::tcp_connect_r
              connection_ != nullptr ? connection_->remote_port() : 0);
 
     const auto request_ctx = make_request_context();
-    auto flow_result = co_await prepare_tcp_connect_flow(request_ctx, router_, executor_, cfg_);
+    auto flow_result = prepare_tcp_connect_flow(request_ctx, router_, executor_, cfg_);
     auto decision = std::move(flow_result.decision);
     apply_route_decision(decision);
     trace_store::instance().record_event(trace_event{

@@ -137,13 +137,6 @@ tproxy_inbound::tproxy_inbound(io_context_pool& pool,
 
 bool tproxy_inbound::start(boost::system::error_code& ec)
 {
-    if (!router_->load())
-    {
-        LOG_ERROR("{} stage start load router data failed", log_event::kConnInit);
-        ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
-        return false;
-    }
-
     if (settings_.tcp_port == 0 && settings_.udp_port == 0)
     {
         LOG_ERROR("{} inbound_tag {} stage start listen {} tcp_port {} udp_port {} both zero",
