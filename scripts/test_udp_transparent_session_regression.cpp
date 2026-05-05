@@ -1,21 +1,19 @@
 #include <chrono>
 #include <array>
 #include <cstdint>
-#include <exception>
 #include <future>
 #include <iostream>
 #include <memory>
 #include <optional>
-#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/executor_work_guard.hpp>
 #include <boost/asio/ip/address.hpp>
 #include <boost/asio/ip/udp.hpp>
-#include <boost/asio/use_future.hpp>
 
 #include "config.h"
 #include "context_pool.h"
@@ -30,6 +28,73 @@ namespace
 {
 
 using namespace std::chrono_literals;
+
+using test_result = std::optional<std::string>;
+
+[[nodiscard]] test_result fail_test(std::string message)
+{
+    return test_result(std::move(message));
+}
+
+#define TEST_RETURN_IF_ERROR(expr)         \
+    do                                     \
+    {                                      \
+        if (auto _error = (expr); _error)  \
+        {                                  \
+            return _error;                 \
+        }                                  \
+    } while (false)
+
+#define TEST_CHECK(condition, message) \
+    do                                 \
+    {                                  \
+        if (!(condition))              \
+        {                              \
+            return fail_test(message); \
+        }                              \
+    } while (false)
+
+template <typename T, typename Awaitable>
+[[nodiscard]] test_result wait_awaitable_result(boost::asio::io_context& io_context, Awaitable awaitable, T& value, std::string_view label)
+{
+    struct completion_state
+    {
+        bool failed = false;
+        T value{};
+    };
+
+    std::promise<completion_state> promise;
+    auto future = promise.get_future();
+    boost::asio::co_spawn(
+        io_context,
+        std::move(awaitable),
+        [&promise](std::exception_ptr ex, T result)
+        {
+            completion_state state;
+            state.failed = (ex != nullptr);
+            state.value = std::move(result);
+            promise.set_value(std::move(state));
+        });
+
+    const auto state = future.get();
+    if (state.failed)
+    {
+        return fail_test(std::string(label) + " awaitable failed");
+    }
+    value = state.value;
+    return std::nullopt;
+}
+
+[[nodiscard]] test_result expect_enqueue_result(boost::asio::io_context& io_context,
+                                                boost::asio::awaitable<relay::udp_enqueue_result> awaitable,
+                                                const relay::udp_enqueue_result expected,
+                                                const std::string& failure_message)
+{
+    relay::udp_enqueue_result result = relay::udp_enqueue_result::kClosed;
+    TEST_RETURN_IF_ERROR(wait_awaitable_result(io_context, std::move(awaitable), result, failure_message));
+    TEST_CHECK(result == expected, failure_message);
+    return std::nullopt;
+}
 
 class io_worker_runtime
 {
@@ -52,14 +117,12 @@ class io_worker_runtime
 
     relay::io_worker& worker() { return worker_; }
 
-    void wait_until_idle()
+    [[nodiscard]] test_result wait_until_idle()
     {
-        auto future = boost::asio::co_spawn(worker_.io_context, worker_.group.async_wait(), boost::asio::use_future);
-        const auto ec = future.get();
-        if (ec)
-        {
-            throw std::runtime_error("wait task group failed: " + ec.message());
-        }
+        boost::system::error_code ec;
+        TEST_RETURN_IF_ERROR(wait_awaitable_result(worker_.io_context, worker_.group.async_wait(), ec, "wait task group"));
+        TEST_CHECK(!ec, "wait task group failed: " + ec.message());
+        return std::nullopt;
     }
 
    private:
@@ -71,13 +134,7 @@ class io_worker_runtime
 class lwip_udp_pcb_holder
 {
    public:
-    lwip_udp_pcb_holder() : pcb_(udp_new_ip_type(IPADDR_TYPE_ANY))
-    {
-        if (pcb_ == nullptr)
-        {
-            throw std::runtime_error("udp_new_ip_type failed");
-        }
-    }
+    lwip_udp_pcb_holder() : pcb_(udp_new_ip_type(IPADDR_TYPE_ANY)) {}
 
     lwip_udp_pcb_holder(const lwip_udp_pcb_holder&) = delete;
     lwip_udp_pcb_holder& operator=(const lwip_udp_pcb_holder&) = delete;
@@ -90,6 +147,8 @@ class lwip_udp_pcb_holder
             udp_remove(pcb_);
         }
     }
+
+    [[nodiscard]] bool valid() const { return pcb_ != nullptr; }
 
     udp_pcb* release()
     {
@@ -139,16 +198,17 @@ class fake_socks_udp_server
 
     [[nodiscard]] uint16_t tcp_port() const { return acceptor_.local_endpoint().port(); }
 
-    void join()
+    [[nodiscard]] test_result join()
     {
         if (thread_.joinable())
         {
             thread_.join();
         }
-        if (server_exception_ != nullptr)
+        if (server_error_.has_value())
         {
-            std::rethrow_exception(server_exception_);
+            return fail_test(*server_error_);
         }
+        return std::nullopt;
     }
 
    private:
@@ -161,35 +221,66 @@ class fake_socks_udp_server
 
     void serve()
     {
-        try
+        for (int i = 0; i < expected_sessions_; ++i)
         {
-            for (int i = 0; i < expected_sessions_; ++i)
+            boost::system::error_code ec;
+            boost::asio::ip::tcp::socket tcp_socket(io_context_);
+            acceptor_.accept(tcp_socket, ec);
+            if (ec)
             {
-                boost::asio::ip::tcp::socket tcp_socket(io_context_);
-                acceptor_.accept(tcp_socket);
-
-                std::array<uint8_t, 3> method_request{};
-                boost::asio::read(tcp_socket, boost::asio::buffer(method_request));
-                const std::array<uint8_t, 2> method_reply{{socks::kVer, socks::kMethodNoAuth}};
-                boost::asio::write(tcp_socket, boost::asio::buffer(method_reply));
-
-                std::array<uint8_t, 10> udp_associate_request{};
-                boost::asio::read(tcp_socket, boost::asio::buffer(udp_associate_request));
-                const auto udp_endpoint = udp_socket_.local_endpoint();
-                const auto udp_associate_reply = socks::make_reply(socks::kRepSuccess, udp_endpoint.address(), udp_endpoint.port());
-                boost::asio::write(tcp_socket, boost::asio::buffer(udp_associate_reply));
-
-                std::array<uint8_t, 4096> packet{};
-                boost::asio::ip::udp::endpoint sender;
-                udp_socket_.receive_from(boost::asio::buffer(packet), sender);
-
-                const std::array<uint8_t, 3> malformed_reply{{0x00, 0x00, 0x00}};
-                udp_socket_.send_to(boost::asio::buffer(malformed_reply), sender);
+                server_error_ = "accept failed: " + ec.message();
+                return;
             }
-        }
-        catch (...)
-        {
-            server_exception_ = std::current_exception();
+
+            std::array<uint8_t, 3> method_request{};
+            boost::asio::read(tcp_socket, boost::asio::buffer(method_request), ec);
+            if (ec)
+            {
+                server_error_ = "read method_request failed: " + ec.message();
+                return;
+            }
+
+            const std::array<uint8_t, 2> method_reply{{socks::kVer, socks::kMethodNoAuth}};
+            boost::asio::write(tcp_socket, boost::asio::buffer(method_reply), ec);
+            if (ec)
+            {
+                server_error_ = "write method_reply failed: " + ec.message();
+                return;
+            }
+
+            std::array<uint8_t, 10> udp_associate_request{};
+            boost::asio::read(tcp_socket, boost::asio::buffer(udp_associate_request), ec);
+            if (ec)
+            {
+                server_error_ = "read udp_associate_request failed: " + ec.message();
+                return;
+            }
+
+            const auto udp_endpoint = udp_socket_.local_endpoint();
+            const auto udp_associate_reply = socks::make_reply(socks::kRepSuccess, udp_endpoint.address(), udp_endpoint.port());
+            boost::asio::write(tcp_socket, boost::asio::buffer(udp_associate_reply), ec);
+            if (ec)
+            {
+                server_error_ = "write udp_associate_reply failed: " + ec.message();
+                return;
+            }
+
+            std::array<uint8_t, 4096> packet{};
+            boost::asio::ip::udp::endpoint sender;
+            udp_socket_.receive_from(boost::asio::buffer(packet), sender, 0, ec);
+            if (ec)
+            {
+                server_error_ = "receive udp packet failed: " + ec.message();
+                return;
+            }
+
+            const std::array<uint8_t, 3> malformed_reply{{0x00, 0x00, 0x00}};
+            udp_socket_.send_to(boost::asio::buffer(malformed_reply), sender, 0, ec);
+            if (ec)
+            {
+                server_error_ = "send malformed_reply failed: " + ec.message();
+                return;
+            }
         }
     }
 
@@ -199,7 +290,7 @@ class fake_socks_udp_server
     boost::asio::ip::udp::socket udp_socket_;
     int expected_sessions_ = 1;
     std::thread thread_;
-    std::exception_ptr server_exception_;
+    std::optional<std::string> server_error_;
 };
 
 relay::config make_route_blocked_config()
@@ -373,27 +464,24 @@ relay::config make_multi_proxy_config(const uint16_t socks_a_port, const uint16_
     return cfg;
 }
 
-relay::trace_session_snapshot require_single_trace(const std::string& inbound_tag)
+[[nodiscard]] test_result require_single_trace(const std::string& inbound_tag, relay::trace_session_snapshot& snapshot)
 {
     relay::trace_query query;
     query.inbound_tag = inbound_tag;
     query.limit = 10;
 
     const auto items = relay::trace_store::instance().list_traces(query);
-    if (items.size() != 1)
-    {
-        throw std::runtime_error("unexpected trace count for " + inbound_tag + ": " + std::to_string(items.size()));
-    }
+    TEST_CHECK(items.size() == 1, "unexpected trace count for " + inbound_tag + ": " + std::to_string(items.size()));
 
-    const auto snapshot = relay::trace_store::instance().get_trace(items.front().trace_id);
-    if (!snapshot.has_value())
-    {
-        throw std::runtime_error("trace snapshot missing for " + inbound_tag);
-    }
-    return *snapshot;
+    const auto trace = relay::trace_store::instance().get_trace(items.front().trace_id);
+    TEST_CHECK(trace.has_value(), "trace snapshot missing for " + inbound_tag);
+    snapshot = *trace;
+    return std::nullopt;
 }
 
-relay::trace_session_snapshot require_trace_by_conn_id(const std::string& inbound_tag, const uint32_t conn_id)
+[[nodiscard]] test_result require_trace_by_conn_id(const std::string& inbound_tag,
+                                                   const uint32_t conn_id,
+                                                   relay::trace_session_snapshot& snapshot)
 {
     relay::trace_query query;
     query.inbound_tag = inbound_tag;
@@ -406,15 +494,13 @@ relay::trace_session_snapshot require_trace_by_conn_id(const std::string& inboun
         {
             continue;
         }
-        const auto snapshot = relay::trace_store::instance().get_trace(item.trace_id);
-        if (!snapshot.has_value())
-        {
-            throw std::runtime_error("trace snapshot missing for " + inbound_tag + " conn " + std::to_string(conn_id));
-        }
-        return *snapshot;
+        const auto trace = relay::trace_store::instance().get_trace(item.trace_id);
+        TEST_CHECK(trace.has_value(), "trace snapshot missing for " + inbound_tag + " conn " + std::to_string(conn_id));
+        snapshot = *trace;
+        return std::nullopt;
     }
 
-    throw std::runtime_error("trace not found for " + inbound_tag + " conn " + std::to_string(conn_id));
+    return fail_test("trace not found for " + inbound_tag + " conn " + std::to_string(conn_id));
 }
 
 const relay::trace_event* find_event(const relay::trace_session_snapshot& snapshot, const relay::trace_stage stage)
@@ -429,416 +515,264 @@ const relay::trace_event* find_event(const relay::trace_session_snapshot& snapsh
     return nullptr;
 }
 
-void wait_for_trace_stage(const std::string& inbound_tag,
-                          const uint32_t conn_id,
-                          const relay::trace_stage stage,
-                          std::string_view label)
+[[nodiscard]] test_result wait_for_trace_stage(const std::string& inbound_tag,
+                                               const uint32_t conn_id,
+                                               const relay::trace_stage stage,
+                                               std::string_view label)
 {
     const auto deadline = std::chrono::steady_clock::now() + 5s;
     while (std::chrono::steady_clock::now() < deadline)
     {
-        try
+        relay::trace_session_snapshot snapshot;
+        if (!require_trace_by_conn_id(inbound_tag, conn_id, snapshot).has_value() && find_event(snapshot, stage) != nullptr)
         {
-            const auto snapshot = require_trace_by_conn_id(inbound_tag, conn_id);
-            if (find_event(snapshot, stage) != nullptr)
-            {
-                return;
-            }
-        }
-        catch (const std::exception&)
-        {
+            return std::nullopt;
         }
         std::this_thread::sleep_for(20ms);
     }
 
-    throw std::runtime_error("timeout waiting trace stage for " + std::string(label));
+    return fail_test("timeout waiting trace stage for " + std::string(label));
 }
 
-void expect_route_blocked_trace(const relay::trace_session_snapshot& snapshot, std::string_view inbound_type)
+[[nodiscard]] test_result expect_route_blocked_trace(const relay::trace_session_snapshot& snapshot, std::string_view inbound_type)
 {
     const auto& summary = snapshot.summary;
-    if (summary.status != relay::trace_status::kFailed)
-    {
-        throw std::runtime_error("unexpected trace status for " + std::string(inbound_type));
-    }
-    if (summary.inbound_type != inbound_type)
-    {
-        throw std::runtime_error("unexpected inbound_type for " + std::string(inbound_type) + ": " + summary.inbound_type);
-    }
-    if (summary.route_type != "block")
-    {
-        throw std::runtime_error("unexpected route_type for " + std::string(inbound_type) + ": " + summary.route_type);
-    }
-    if (!summary.lifecycle.route_decide_done)
-    {
-        throw std::runtime_error("route_decide_done missing for " + std::string(inbound_type));
-    }
-    if (!summary.lifecycle.session_error)
-    {
-        throw std::runtime_error("session_error missing for " + std::string(inbound_type));
-    }
-    if (summary.lifecycle.session_close)
-    {
-        throw std::runtime_error("unexpected session_close for " + std::string(inbound_type));
-    }
+    TEST_CHECK(summary.status == relay::trace_status::kFailed, "unexpected trace status for " + std::string(inbound_type));
+    TEST_CHECK(summary.inbound_type == inbound_type, "unexpected inbound_type for " + std::string(inbound_type) + ": " + summary.inbound_type);
+    TEST_CHECK(summary.route_type == "block", "unexpected route_type for " + std::string(inbound_type) + ": " + summary.route_type);
+    TEST_CHECK(summary.lifecycle.route_decide_done, "route_decide_done missing for " + std::string(inbound_type));
+    TEST_CHECK(summary.lifecycle.session_error, "session_error missing for " + std::string(inbound_type));
+    TEST_CHECK(!summary.lifecycle.session_close, "unexpected session_close for " + std::string(inbound_type));
 
     const auto* route_done = find_event(snapshot, relay::trace_stage::kRouteDecideDone);
-    if (route_done == nullptr || route_done->result != relay::trace_result::kFail)
-    {
-        throw std::runtime_error("route_decide_done trace mismatch for " + std::string(inbound_type));
-    }
+    TEST_CHECK(route_done != nullptr && route_done->result == relay::trace_result::kFail,
+               "route_decide_done trace mismatch for " + std::string(inbound_type));
 
     const auto* session_error = find_event(snapshot, relay::trace_stage::kSessionError);
-    if (session_error == nullptr)
-    {
-        throw std::runtime_error("session_error event missing for " + std::string(inbound_type));
-    }
+    TEST_CHECK(session_error != nullptr, "session_error event missing for " + std::string(inbound_type));
     const auto close_reason_it = session_error->extra.find("close_reason");
-    if (close_reason_it == session_error->extra.end() || close_reason_it->second != "route_blocked")
-    {
-        throw std::runtime_error("unexpected close_reason for " + std::string(inbound_type));
-    }
-    if (session_error->error_message != "route blocked")
-    {
-        throw std::runtime_error("unexpected error_message for " + std::string(inbound_type) + ": " + session_error->error_message);
-    }
+    TEST_CHECK(close_reason_it != session_error->extra.end() && close_reason_it->second == "route_blocked",
+               "unexpected close_reason for " + std::string(inbound_type));
+    TEST_CHECK(session_error->error_message == "route blocked",
+               "unexpected error_message for " + std::string(inbound_type) + ": " + session_error->error_message);
 
-    if (find_event(snapshot, relay::trace_stage::kSessionClose) != nullptr)
-    {
-        throw std::runtime_error("unexpected session_close event for " + std::string(inbound_type));
-    }
+    TEST_CHECK(find_event(snapshot, relay::trace_stage::kSessionClose) == nullptr,
+               "unexpected session_close event for " + std::string(inbound_type));
+    return std::nullopt;
 }
 
-void expect_idle_timeout_trace(const relay::trace_session_snapshot& snapshot, std::string_view inbound_type)
+[[nodiscard]] test_result expect_idle_timeout_trace(const relay::trace_session_snapshot& snapshot, std::string_view inbound_type)
 {
     const auto& summary = snapshot.summary;
-    if (summary.status != relay::trace_status::kSuccess)
-    {
-        throw std::runtime_error("unexpected trace status for " + std::string(inbound_type));
-    }
-    if (summary.inbound_type != inbound_type)
-    {
-        throw std::runtime_error("unexpected inbound_type for " + std::string(inbound_type) + ": " + summary.inbound_type);
-    }
-    if (summary.route_type != "direct")
-    {
-        throw std::runtime_error("unexpected route_type for " + std::string(inbound_type) + ": " + summary.route_type);
-    }
-    if (!summary.lifecycle.route_decide_done)
-    {
-        throw std::runtime_error("route_decide_done missing for " + std::string(inbound_type));
-    }
-    if (!summary.lifecycle.outbound_connect_done)
-    {
-        throw std::runtime_error("outbound_connect_done missing for " + std::string(inbound_type));
-    }
-    if (!summary.lifecycle.session_close)
-    {
-        throw std::runtime_error("session_close missing for " + std::string(inbound_type));
-    }
-    if (summary.lifecycle.session_error)
-    {
-        throw std::runtime_error("unexpected session_error for " + std::string(inbound_type));
-    }
+    TEST_CHECK(summary.status == relay::trace_status::kSuccess, "unexpected trace status for " + std::string(inbound_type));
+    TEST_CHECK(summary.inbound_type == inbound_type, "unexpected inbound_type for " + std::string(inbound_type) + ": " + summary.inbound_type);
+    TEST_CHECK(summary.route_type == "direct", "unexpected route_type for " + std::string(inbound_type) + ": " + summary.route_type);
+    TEST_CHECK(summary.lifecycle.route_decide_done, "route_decide_done missing for " + std::string(inbound_type));
+    TEST_CHECK(summary.lifecycle.outbound_connect_done, "outbound_connect_done missing for " + std::string(inbound_type));
+    TEST_CHECK(summary.lifecycle.session_close, "session_close missing for " + std::string(inbound_type));
+    TEST_CHECK(!summary.lifecycle.session_error, "unexpected session_error for " + std::string(inbound_type));
 
     const auto* session_close = find_event(snapshot, relay::trace_stage::kSessionClose);
-    if (session_close == nullptr || session_close->result != relay::trace_result::kOk)
-    {
-        throw std::runtime_error("session_close trace mismatch for " + std::string(inbound_type));
-    }
+    TEST_CHECK(session_close != nullptr && session_close->result == relay::trace_result::kOk,
+               "session_close trace mismatch for " + std::string(inbound_type));
     const auto close_reason_it = session_close->extra.find("close_reason");
-    if (close_reason_it == session_close->extra.end() || close_reason_it->second != "idle_timeout")
-    {
-        throw std::runtime_error("unexpected close_reason for " + std::string(inbound_type));
-    }
+    TEST_CHECK(close_reason_it != session_close->extra.end() && close_reason_it->second == "idle_timeout",
+               "unexpected close_reason for " + std::string(inbound_type));
 
-    if (find_event(snapshot, relay::trace_stage::kSessionError) != nullptr)
-    {
-        throw std::runtime_error("unexpected session_error event for " + std::string(inbound_type));
-    }
+    TEST_CHECK(find_event(snapshot, relay::trace_stage::kSessionError) == nullptr,
+               "unexpected session_error event for " + std::string(inbound_type));
+    return std::nullopt;
 }
 
-void expect_stopped_trace(const relay::trace_session_snapshot& snapshot, std::string_view inbound_type)
+[[nodiscard]] test_result expect_stopped_trace(const relay::trace_session_snapshot& snapshot, std::string_view inbound_type)
 {
     const auto& summary = snapshot.summary;
-    if (summary.inbound_type != inbound_type)
-    {
-        throw std::runtime_error("unexpected inbound_type for " + std::string(inbound_type) + ": " + summary.inbound_type);
-    }
-    if (summary.route_type != "direct")
-    {
-        throw std::runtime_error("unexpected route_type for " + std::string(inbound_type) + ": " + summary.route_type);
-    }
-    if (!summary.lifecycle.route_decide_done)
-    {
-        throw std::runtime_error("route_decide_done missing for " + std::string(inbound_type));
-    }
-    if (!summary.lifecycle.outbound_connect_done)
-    {
-        throw std::runtime_error("outbound_connect_done missing for " + std::string(inbound_type));
-    }
+    TEST_CHECK(summary.inbound_type == inbound_type, "unexpected inbound_type for " + std::string(inbound_type) + ": " + summary.inbound_type);
+    TEST_CHECK(summary.route_type == "direct", "unexpected route_type for " + std::string(inbound_type) + ": " + summary.route_type);
+    TEST_CHECK(summary.lifecycle.route_decide_done, "route_decide_done missing for " + std::string(inbound_type));
+    TEST_CHECK(summary.lifecycle.outbound_connect_done, "outbound_connect_done missing for " + std::string(inbound_type));
 
     const auto* session_error = find_event(snapshot, relay::trace_stage::kSessionError);
     const auto* session_close = find_event(snapshot, relay::trace_stage::kSessionClose);
-    if ((session_error == nullptr) == (session_close == nullptr))
-    {
-        throw std::runtime_error("unexpected terminal trace count for " + std::string(inbound_type));
-    }
+    TEST_CHECK((session_error == nullptr) != (session_close == nullptr),
+               "unexpected terminal trace count for " + std::string(inbound_type));
 
     const auto* terminal = session_error != nullptr ? session_error : session_close;
     const auto close_reason_it = terminal->extra.find("close_reason");
-    if (close_reason_it == terminal->extra.end() || close_reason_it->second != "stopped")
-    {
-        throw std::runtime_error("unexpected close_reason for " + std::string(inbound_type));
-    }
+    TEST_CHECK(close_reason_it != terminal->extra.end() && close_reason_it->second == "stopped",
+               "unexpected close_reason for " + std::string(inbound_type));
 
     for (const auto& event : snapshot.events)
     {
         const auto it = event.extra.find("close_reason");
         if (it != event.extra.end() && it->second == "transport_error")
         {
-            throw std::runtime_error("transport_error leaked into stopped trace for " + std::string(inbound_type));
+            return fail_test("transport_error leaked into stopped trace for " + std::string(inbound_type));
         }
     }
 
     if (session_close != nullptr)
     {
-        if (summary.status != relay::trace_status::kSuccess)
-        {
-            throw std::runtime_error("unexpected success status for " + std::string(inbound_type));
-        }
-        if (!summary.lifecycle.session_close || summary.lifecycle.session_error)
-        {
-            throw std::runtime_error("unexpected lifecycle for stopped session_close " + std::string(inbound_type));
-        }
+        TEST_CHECK(summary.status == relay::trace_status::kSuccess, "unexpected success status for " + std::string(inbound_type));
+        TEST_CHECK(summary.lifecycle.session_close && !summary.lifecycle.session_error,
+                   "unexpected lifecycle for stopped session_close " + std::string(inbound_type));
+        return std::nullopt;
+    }
+
+    TEST_CHECK(summary.status == relay::trace_status::kFailed, "unexpected failed status for " + std::string(inbound_type));
+    TEST_CHECK(summary.lifecycle.session_error && !summary.lifecycle.session_close,
+               "unexpected lifecycle for stopped session_error " + std::string(inbound_type));
+    return std::nullopt;
+}
+
+[[nodiscard]] test_result expect_proxy_connect_fail_trace(const relay::trace_session_snapshot& snapshot, std::string_view inbound_type)
+{
+    const auto& summary = snapshot.summary;
+    TEST_CHECK(summary.status == relay::trace_status::kFailed, "unexpected trace status for " + std::string(inbound_type));
+    TEST_CHECK(summary.inbound_type == inbound_type, "unexpected inbound_type for " + std::string(inbound_type) + ": " + summary.inbound_type);
+    TEST_CHECK(summary.outbound_tag == "socks-out", "unexpected outbound_tag for " + std::string(inbound_type) + ": " + summary.outbound_tag);
+    TEST_CHECK(summary.route_type == "proxy", "unexpected route_type for " + std::string(inbound_type) + ": " + summary.route_type);
+    TEST_CHECK(summary.lifecycle.route_decide_done, "route_decide_done missing for " + std::string(inbound_type));
+    TEST_CHECK(summary.lifecycle.outbound_connect_start && summary.lifecycle.outbound_connect_done,
+               "outbound_connect lifecycle missing for " + std::string(inbound_type));
+    TEST_CHECK(summary.lifecycle.session_error && !summary.lifecycle.session_close,
+               "unexpected session terminal lifecycle for " + std::string(inbound_type));
+
+    const auto* connect_done = find_event(snapshot, relay::trace_stage::kOutboundConnectDone);
+    TEST_CHECK(connect_done != nullptr && connect_done->result == relay::trace_result::kFail && !connect_done->error_message.empty(),
+               "unexpected outbound_connect_done for " + std::string(inbound_type));
+
+    const auto* session_error = find_event(snapshot, relay::trace_stage::kSessionError);
+    TEST_CHECK(session_error != nullptr && session_error->result == relay::trace_result::kFail,
+               "unexpected session_error for " + std::string(inbound_type));
+    const auto close_reason_it = session_error->extra.find("close_reason");
+    TEST_CHECK(close_reason_it != session_error->extra.end() && close_reason_it->second == "transport_error",
+               "unexpected close_reason for " + std::string(inbound_type));
+
+    TEST_CHECK(find_event(snapshot, relay::trace_stage::kSessionClose) == nullptr,
+               "unexpected session_close for " + std::string(inbound_type));
+    return std::nullopt;
+}
+
+[[nodiscard]] test_result expect_transport_error_trace(const relay::trace_session_snapshot& snapshot, std::string_view inbound_type)
+{
+    const auto& summary = snapshot.summary;
+    TEST_CHECK(summary.status == relay::trace_status::kFailed, "unexpected trace status for " + std::string(inbound_type));
+    TEST_CHECK(summary.inbound_type == inbound_type, "unexpected inbound_type for " + std::string(inbound_type) + ": " + summary.inbound_type);
+    TEST_CHECK(summary.outbound_tag == "socks-out", "unexpected outbound_tag for " + std::string(inbound_type) + ": " + summary.outbound_tag);
+    TEST_CHECK(summary.route_type == "proxy", "unexpected route_type for " + std::string(inbound_type) + ": " + summary.route_type);
+    TEST_CHECK(summary.lifecycle.outbound_connect_done, "outbound_connect_done missing for " + std::string(inbound_type));
+    TEST_CHECK(summary.lifecycle.session_error && !summary.lifecycle.session_close,
+               "unexpected session lifecycle for " + std::string(inbound_type));
+
+    const auto* connect_done = find_event(snapshot, relay::trace_stage::kOutboundConnectDone);
+    TEST_CHECK(connect_done != nullptr && connect_done->result == relay::trace_result::kOk,
+               "unexpected outbound_connect_done result for " + std::string(inbound_type));
+
+    const auto* session_error = find_event(snapshot, relay::trace_stage::kSessionError);
+    TEST_CHECK(session_error != nullptr && session_error->result == relay::trace_result::kFail,
+               "unexpected session_error for " + std::string(inbound_type));
+    const auto close_reason_it = session_error->extra.find("close_reason");
+    TEST_CHECK(close_reason_it != session_error->extra.end() && close_reason_it->second == "transport_error",
+               "unexpected close_reason for " + std::string(inbound_type));
+
+    TEST_CHECK(find_event(snapshot, relay::trace_stage::kSessionClose) == nullptr,
+               "unexpected session_close for " + std::string(inbound_type));
+    return std::nullopt;
+}
+
+[[nodiscard]] test_result expect_proxy_transport_error_trace(const relay::trace_session_snapshot& snapshot,
+                                                             std::string_view inbound_type,
+                                                             const std::string& expected_outbound_tag)
+{
+    const auto& summary = snapshot.summary;
+    TEST_CHECK(summary.status == relay::trace_status::kFailed, "unexpected trace status for " + std::string(inbound_type));
+    TEST_CHECK(summary.inbound_type == inbound_type, "unexpected inbound_type for " + std::string(inbound_type) + ": " + summary.inbound_type);
+    TEST_CHECK(summary.outbound_tag == expected_outbound_tag,
+               "unexpected outbound_tag for " + std::string(inbound_type) + ": " + summary.outbound_tag);
+    TEST_CHECK(summary.route_type == "proxy", "unexpected route_type for " + std::string(inbound_type) + ": " + summary.route_type);
+    TEST_CHECK(summary.lifecycle.route_decide_done && summary.lifecycle.outbound_connect_done,
+               "proxy lifecycle missing for " + std::string(inbound_type));
+    TEST_CHECK(summary.lifecycle.session_error && !summary.lifecycle.session_close,
+               "unexpected terminal lifecycle for " + std::string(inbound_type));
+
+    const auto* connect_done = find_event(snapshot, relay::trace_stage::kOutboundConnectDone);
+    TEST_CHECK(connect_done != nullptr && connect_done->result == relay::trace_result::kOk &&
+                   connect_done->outbound_tag == expected_outbound_tag,
+               "unexpected outbound_connect_done for " + std::string(inbound_type));
+
+    const auto* session_error = find_event(snapshot, relay::trace_stage::kSessionError);
+    TEST_CHECK(session_error != nullptr, "session_error missing for " + std::string(inbound_type));
+    const auto close_reason_it = session_error->extra.find("close_reason");
+    TEST_CHECK(close_reason_it != session_error->extra.end() && close_reason_it->second == "transport_error",
+               "unexpected close_reason for " + std::string(inbound_type));
+    return std::nullopt;
+}
+
+[[nodiscard]] test_result expect_direct_connect_fail_trace(const relay::trace_session_snapshot& snapshot, std::string_view inbound_type)
+{
+    const auto& summary = snapshot.summary;
+    TEST_CHECK(summary.status == relay::trace_status::kFailed, "unexpected trace status for " + std::string(inbound_type));
+    TEST_CHECK(summary.inbound_type == inbound_type, "unexpected inbound_type for " + std::string(inbound_type) + ": " + summary.inbound_type);
+    TEST_CHECK(summary.outbound_tag == "direct", "unexpected outbound_tag for " + std::string(inbound_type) + ": " + summary.outbound_tag);
+    TEST_CHECK(summary.route_type == "direct", "unexpected route_type for " + std::string(inbound_type) + ": " + summary.route_type);
+    TEST_CHECK(summary.lifecycle.outbound_connect_start && summary.lifecycle.outbound_connect_done,
+               "outbound_connect lifecycle missing for " + std::string(inbound_type));
+    TEST_CHECK(summary.lifecycle.session_error && !summary.lifecycle.session_close,
+               "unexpected session lifecycle for " + std::string(inbound_type));
+
+    const auto* connect_done = find_event(snapshot, relay::trace_stage::kOutboundConnectDone);
+    TEST_CHECK(connect_done != nullptr && connect_done->result == relay::trace_result::kFail && !connect_done->error_message.empty(),
+               "unexpected outbound_connect_done for " + std::string(inbound_type));
+
+    const auto* session_error = find_event(snapshot, relay::trace_stage::kSessionError);
+    TEST_CHECK(session_error != nullptr && session_error->result == relay::trace_result::kFail,
+               "unexpected session_error for " + std::string(inbound_type));
+    const auto close_reason_it = session_error->extra.find("close_reason");
+    TEST_CHECK(close_reason_it != session_error->extra.end() && close_reason_it->second == "transport_error",
+               "unexpected close_reason for " + std::string(inbound_type));
+
+    TEST_CHECK(find_event(snapshot, relay::trace_stage::kSessionClose) == nullptr,
+               "unexpected session_close for " + std::string(inbound_type));
+    return std::nullopt;
+}
+
+[[nodiscard]] test_result wait_close(std::future<void>& closed_future, std::string_view label)
+{
+    TEST_CHECK(closed_future.wait_for(5s) == std::future_status::ready,
+               "timeout waiting session close for " + std::string(label));
+    closed_future.get();
+    return std::nullopt;
+}
+
+void report_case_result(std::string_view scenario,
+                        std::string_view inbound_type,
+                        const test_result& result,
+                        int& passed,
+                        int& failed)
+{
+    if (!result.has_value())
+    {
+        ++passed;
+        std::cout << "PASS " << scenario << ' ' << inbound_type << '\n';
         return;
     }
 
-    if (summary.status != relay::trace_status::kFailed)
-    {
-        throw std::runtime_error("unexpected failed status for " + std::string(inbound_type));
-    }
-    if (!summary.lifecycle.session_error || summary.lifecycle.session_close)
-    {
-        throw std::runtime_error("unexpected lifecycle for stopped session_error " + std::string(inbound_type));
-    }
+    ++failed;
+    std::cerr << "FAIL " << scenario << ' ' << inbound_type << ": " << *result << '\n';
 }
 
-void expect_proxy_connect_fail_trace(const relay::trace_session_snapshot& snapshot, std::string_view inbound_type)
+[[nodiscard]] test_result summarize_case_group(std::string_view scenario, const int passed, const int failed)
 {
-    const auto& summary = snapshot.summary;
-    if (summary.status != relay::trace_status::kFailed)
+    std::cout << "summary: passed=" << passed << " failed=" << failed << " total=" << (passed + failed) << '\n';
+    if (failed != 0)
     {
-        throw std::runtime_error("unexpected trace status for " + std::string(inbound_type));
+        return fail_test(std::string(scenario) + " regression failed");
     }
-    if (summary.inbound_type != inbound_type)
-    {
-        throw std::runtime_error("unexpected inbound_type for " + std::string(inbound_type) + ": " + summary.inbound_type);
-    }
-    if (summary.outbound_tag != "socks-out")
-    {
-        throw std::runtime_error("unexpected outbound_tag for " + std::string(inbound_type) + ": " + summary.outbound_tag);
-    }
-    if (summary.route_type != "proxy")
-    {
-        throw std::runtime_error("unexpected route_type for " + std::string(inbound_type) + ": " + summary.route_type);
-    }
-    if (!summary.lifecycle.route_decide_done)
-    {
-        throw std::runtime_error("route_decide_done missing for " + std::string(inbound_type));
-    }
-    if (!summary.lifecycle.outbound_connect_start || !summary.lifecycle.outbound_connect_done)
-    {
-        throw std::runtime_error("outbound_connect lifecycle missing for " + std::string(inbound_type));
-    }
-    if (!summary.lifecycle.session_error || summary.lifecycle.session_close)
-    {
-        throw std::runtime_error("unexpected session terminal lifecycle for " + std::string(inbound_type));
-    }
-
-    const auto* connect_done = find_event(snapshot, relay::trace_stage::kOutboundConnectDone);
-    if (connect_done == nullptr || connect_done->result != relay::trace_result::kFail || connect_done->error_message.empty())
-    {
-        throw std::runtime_error("unexpected outbound_connect_done for " + std::string(inbound_type));
-    }
-
-    const auto* session_error = find_event(snapshot, relay::trace_stage::kSessionError);
-    if (session_error == nullptr || session_error->result != relay::trace_result::kFail)
-    {
-        throw std::runtime_error("unexpected session_error for " + std::string(inbound_type));
-    }
-    const auto close_reason_it = session_error->extra.find("close_reason");
-    if (close_reason_it == session_error->extra.end() || close_reason_it->second != "transport_error")
-    {
-        throw std::runtime_error("unexpected close_reason for " + std::string(inbound_type));
-    }
-
-    if (find_event(snapshot, relay::trace_stage::kSessionClose) != nullptr)
-    {
-        throw std::runtime_error("unexpected session_close for " + std::string(inbound_type));
-    }
+    return std::nullopt;
 }
 
-void expect_transport_error_trace(const relay::trace_session_snapshot& snapshot, std::string_view inbound_type)
-{
-    const auto& summary = snapshot.summary;
-    if (summary.status != relay::trace_status::kFailed)
-    {
-        throw std::runtime_error("unexpected trace status for " + std::string(inbound_type));
-    }
-    if (summary.inbound_type != inbound_type)
-    {
-        throw std::runtime_error("unexpected inbound_type for " + std::string(inbound_type) + ": " + summary.inbound_type);
-    }
-    if (summary.outbound_tag != "socks-out")
-    {
-        throw std::runtime_error("unexpected outbound_tag for " + std::string(inbound_type) + ": " + summary.outbound_tag);
-    }
-    if (summary.route_type != "proxy")
-    {
-        throw std::runtime_error("unexpected route_type for " + std::string(inbound_type) + ": " + summary.route_type);
-    }
-    if (!summary.lifecycle.outbound_connect_done)
-    {
-        throw std::runtime_error("outbound_connect_done missing for " + std::string(inbound_type));
-    }
-    if (!summary.lifecycle.session_error || summary.lifecycle.session_close)
-    {
-        throw std::runtime_error("unexpected session lifecycle for " + std::string(inbound_type));
-    }
-
-    const auto* connect_done = find_event(snapshot, relay::trace_stage::kOutboundConnectDone);
-    if (connect_done == nullptr || connect_done->result != relay::trace_result::kOk)
-    {
-        throw std::runtime_error("unexpected outbound_connect_done result for " + std::string(inbound_type));
-    }
-
-    const auto* session_error = find_event(snapshot, relay::trace_stage::kSessionError);
-    if (session_error == nullptr || session_error->result != relay::trace_result::kFail)
-    {
-        throw std::runtime_error("unexpected session_error for " + std::string(inbound_type));
-    }
-    const auto close_reason_it = session_error->extra.find("close_reason");
-    if (close_reason_it == session_error->extra.end() || close_reason_it->second != "transport_error")
-    {
-        throw std::runtime_error("unexpected close_reason for " + std::string(inbound_type));
-    }
-
-    if (find_event(snapshot, relay::trace_stage::kSessionClose) != nullptr)
-    {
-        throw std::runtime_error("unexpected session_close for " + std::string(inbound_type));
-    }
-}
-
-void expect_proxy_transport_error_trace(const relay::trace_session_snapshot& snapshot,
-                                        std::string_view inbound_type,
-                                        const std::string& expected_outbound_tag)
-{
-    const auto& summary = snapshot.summary;
-    if (summary.status != relay::trace_status::kFailed)
-    {
-        throw std::runtime_error("unexpected trace status for " + std::string(inbound_type));
-    }
-    if (summary.inbound_type != inbound_type)
-    {
-        throw std::runtime_error("unexpected inbound_type for " + std::string(inbound_type) + ": " + summary.inbound_type);
-    }
-    if (summary.outbound_tag != expected_outbound_tag)
-    {
-        throw std::runtime_error("unexpected outbound_tag for " + std::string(inbound_type) + ": " + summary.outbound_tag);
-    }
-    if (summary.route_type != "proxy")
-    {
-        throw std::runtime_error("unexpected route_type for " + std::string(inbound_type) + ": " + summary.route_type);
-    }
-    if (!summary.lifecycle.route_decide_done || !summary.lifecycle.outbound_connect_done)
-    {
-        throw std::runtime_error("proxy lifecycle missing for " + std::string(inbound_type));
-    }
-    if (!summary.lifecycle.session_error || summary.lifecycle.session_close)
-    {
-        throw std::runtime_error("unexpected terminal lifecycle for " + std::string(inbound_type));
-    }
-
-    const auto* connect_done = find_event(snapshot, relay::trace_stage::kOutboundConnectDone);
-    if (connect_done == nullptr || connect_done->result != relay::trace_result::kOk || connect_done->outbound_tag != expected_outbound_tag)
-    {
-        throw std::runtime_error("unexpected outbound_connect_done for " + std::string(inbound_type));
-    }
-
-    const auto* session_error = find_event(snapshot, relay::trace_stage::kSessionError);
-    if (session_error == nullptr)
-    {
-        throw std::runtime_error("session_error missing for " + std::string(inbound_type));
-    }
-    const auto close_reason_it = session_error->extra.find("close_reason");
-    if (close_reason_it == session_error->extra.end() || close_reason_it->second != "transport_error")
-    {
-        throw std::runtime_error("unexpected close_reason for " + std::string(inbound_type));
-    }
-}
-
-void expect_direct_connect_fail_trace(const relay::trace_session_snapshot& snapshot, std::string_view inbound_type)
-{
-    const auto& summary = snapshot.summary;
-    if (summary.status != relay::trace_status::kFailed)
-    {
-        throw std::runtime_error("unexpected trace status for " + std::string(inbound_type));
-    }
-    if (summary.inbound_type != inbound_type)
-    {
-        throw std::runtime_error("unexpected inbound_type for " + std::string(inbound_type) + ": " + summary.inbound_type);
-    }
-    if (summary.outbound_tag != "direct")
-    {
-        throw std::runtime_error("unexpected outbound_tag for " + std::string(inbound_type) + ": " + summary.outbound_tag);
-    }
-    if (summary.route_type != "direct")
-    {
-        throw std::runtime_error("unexpected route_type for " + std::string(inbound_type) + ": " + summary.route_type);
-    }
-    if (!summary.lifecycle.outbound_connect_start || !summary.lifecycle.outbound_connect_done)
-    {
-        throw std::runtime_error("outbound_connect lifecycle missing for " + std::string(inbound_type));
-    }
-    if (!summary.lifecycle.session_error || summary.lifecycle.session_close)
-    {
-        throw std::runtime_error("unexpected session lifecycle for " + std::string(inbound_type));
-    }
-
-    const auto* connect_done = find_event(snapshot, relay::trace_stage::kOutboundConnectDone);
-    if (connect_done == nullptr || connect_done->result != relay::trace_result::kFail || connect_done->error_message.empty())
-    {
-        throw std::runtime_error("unexpected outbound_connect_done for " + std::string(inbound_type));
-    }
-
-    const auto* session_error = find_event(snapshot, relay::trace_stage::kSessionError);
-    if (session_error == nullptr || session_error->result != relay::trace_result::kFail)
-    {
-        throw std::runtime_error("unexpected session_error for " + std::string(inbound_type));
-    }
-    const auto close_reason_it = session_error->extra.find("close_reason");
-    if (close_reason_it == session_error->extra.end() || close_reason_it->second != "transport_error")
-    {
-        throw std::runtime_error("unexpected close_reason for " + std::string(inbound_type));
-    }
-
-    if (find_event(snapshot, relay::trace_stage::kSessionClose) != nullptr)
-    {
-        throw std::runtime_error("unexpected session_close for " + std::string(inbound_type));
-    }
-}
-
-void wait_close(std::future<void>& closed_future, std::string_view label)
-{
-    if (closed_future.wait_for(5s) != std::future_status::ready)
-    {
-        throw std::runtime_error("timeout waiting session close for " + std::string(label));
-    }
-    closed_future.get();
-}
-
-void run_tproxy_route_blocked_case()
+[[nodiscard]] test_result run_tproxy_route_blocked_case()
 {
     io_worker_runtime runtime;
     auto cfg = make_route_blocked_config();
@@ -856,20 +790,23 @@ void run_tproxy_route_blocked_case()
                                                                [&closed_promise]() { closed_promise.set_value(); });
     session->start();
 
-    wait_close(closed_future, "tproxy route_blocked");
-    runtime.wait_until_idle();
+    TEST_RETURN_IF_ERROR(wait_close(closed_future, "tproxy route_blocked"));
+    TEST_RETURN_IF_ERROR(runtime.wait_until_idle());
 
-    const auto snapshot = require_single_trace("tproxy-in");
-    expect_route_blocked_trace(snapshot, "tproxy");
+    relay::trace_session_snapshot snapshot;
+    TEST_RETURN_IF_ERROR(require_single_trace("tproxy-in", snapshot));
+    TEST_RETURN_IF_ERROR(expect_route_blocked_trace(snapshot, "tproxy"));
+    return std::nullopt;
 }
 
-void run_tun_route_blocked_case()
+[[nodiscard]] test_result run_tun_route_blocked_case()
 {
     io_worker_runtime runtime;
     auto cfg = make_route_blocked_config();
     auto route = std::make_shared<relay::router>(cfg, "tun-in");
 
     lwip_udp_pcb_holder pcb_holder;
+    TEST_CHECK(pcb_holder.valid(), "udp_new_ip_type failed");
     std::promise<void> closed_promise;
     auto closed_future = closed_promise.get_future();
     auto session = std::make_shared<relay::tun_udp_session>(runtime.worker(),
@@ -883,14 +820,16 @@ void run_tun_route_blocked_case()
                                                             [&closed_promise]() { closed_promise.set_value(); });
     runtime.worker().group.spawn([session]() { return session->start(); });
 
-    wait_close(closed_future, "tun route_blocked");
-    runtime.wait_until_idle();
+    TEST_RETURN_IF_ERROR(wait_close(closed_future, "tun route_blocked"));
+    TEST_RETURN_IF_ERROR(runtime.wait_until_idle());
 
-    const auto snapshot = require_single_trace("tun-in");
-    expect_route_blocked_trace(snapshot, "tun");
+    relay::trace_session_snapshot snapshot;
+    TEST_RETURN_IF_ERROR(require_single_trace("tun-in", snapshot));
+    TEST_RETURN_IF_ERROR(expect_route_blocked_trace(snapshot, "tun"));
+    return std::nullopt;
 }
 
-void run_tproxy_idle_timeout_case()
+[[nodiscard]] test_result run_tproxy_idle_timeout_case()
 {
     io_worker_runtime runtime;
     const auto cfg = make_direct_config(1);
@@ -914,38 +853,35 @@ void run_tproxy_idle_timeout_case()
                                                                    [&closed_promise]() { closed_promise.set_value(); });
         session->start();
 
-        auto enqueue_future = boost::asio::co_spawn(
-            runtime.worker().io_context, session->enqueue_packet(std::vector<uint8_t>{'i', 'd', 'l', 'e'}), boost::asio::use_future);
-        const auto enqueue_result = enqueue_future.get();
-        if (enqueue_result != relay::udp_enqueue_result::kEnqueued)
-        {
-            throw std::runtime_error("enqueue tproxy idle packet failed");
-        }
+        TEST_RETURN_IF_ERROR(expect_enqueue_result(runtime.worker().io_context,
+                                                   session->enqueue_packet(std::vector<uint8_t>{'i', 'd', 'l', 'e'}),
+                                                   relay::udp_enqueue_result::kEnqueued,
+                                                   "enqueue tproxy idle packet failed"));
 
-        wait_close(closed_future, "tproxy idle_timeout");
-        runtime.wait_until_idle();
+        TEST_RETURN_IF_ERROR(wait_close(closed_future, "tproxy idle_timeout"));
+        TEST_RETURN_IF_ERROR(runtime.wait_until_idle());
 
-        const auto snapshot = require_trace_by_conn_id("tproxy-in", conn_id);
-        expect_idle_timeout_trace(snapshot, "tproxy");
+        relay::trace_session_snapshot snapshot;
+        TEST_RETURN_IF_ERROR(require_trace_by_conn_id("tproxy-in", conn_id, snapshot));
+        TEST_RETURN_IF_ERROR(expect_idle_timeout_trace(snapshot, "tproxy"));
     }
+    return std::nullopt;
 }
 
-[[nodiscard]] pbuf* make_udp_pbuf(const std::string_view payload)
+[[nodiscard]] test_result make_udp_pbuf(const std::string_view payload, pbuf*& packet)
 {
-    auto* packet = pbuf_alloc(PBUF_TRANSPORT, static_cast<u16_t>(payload.size()), PBUF_RAM);
-    if (packet == nullptr)
-    {
-        throw std::runtime_error("pbuf_alloc failed");
-    }
+    packet = pbuf_alloc(PBUF_TRANSPORT, static_cast<u16_t>(payload.size()), PBUF_RAM);
+    TEST_CHECK(packet != nullptr, "pbuf_alloc failed");
     if (pbuf_take(packet, payload.data(), static_cast<u16_t>(payload.size())) != ERR_OK)
     {
         pbuf_free(packet);
-        throw std::runtime_error("pbuf_take failed");
+        packet = nullptr;
+        return fail_test("pbuf_take failed");
     }
-    return packet;
+    return std::nullopt;
 }
 
-void run_tun_idle_timeout_case()
+[[nodiscard]] test_result run_tun_idle_timeout_case()
 {
     io_worker_runtime runtime;
     const auto cfg = make_direct_config(1);
@@ -958,6 +894,7 @@ void run_tun_idle_timeout_case()
     for (uint32_t conn_id = 201; conn_id <= 202; ++conn_id)
     {
         lwip_udp_pcb_holder pcb_holder;
+        TEST_CHECK(pcb_holder.valid(), "udp_new_ip_type failed");
         std::promise<void> closed_promise;
         auto closed_future = closed_promise.get_future();
         auto session = std::make_shared<relay::tun_udp_session>(runtime.worker(),
@@ -970,53 +907,31 @@ void run_tun_idle_timeout_case()
                                                                 cfg,
                                                                 [&closed_promise]() { closed_promise.set_value(); });
         runtime.worker().group.spawn([session]() { return session->start(); });
-        session->enqueue_packet(make_udp_pbuf("idle"));
+        pbuf* packet = nullptr;
+        TEST_RETURN_IF_ERROR(make_udp_pbuf("idle", packet));
+        session->enqueue_packet(packet);
 
-        wait_close(closed_future, "tun idle_timeout");
-        runtime.wait_until_idle();
+        TEST_RETURN_IF_ERROR(wait_close(closed_future, "tun idle_timeout"));
+        TEST_RETURN_IF_ERROR(runtime.wait_until_idle());
 
-        const auto snapshot = require_trace_by_conn_id("tun-in", conn_id);
-        expect_idle_timeout_trace(snapshot, "tun");
+        relay::trace_session_snapshot snapshot;
+        TEST_RETURN_IF_ERROR(require_trace_by_conn_id("tun-in", conn_id, snapshot));
+        TEST_RETURN_IF_ERROR(expect_idle_timeout_trace(snapshot, "tun"));
     }
+    return std::nullopt;
 }
 
-void run_idle_timeout()
+[[nodiscard]] test_result run_idle_timeout()
 {
     int passed = 0;
     int failed = 0;
 
-    try
-    {
-        run_tproxy_idle_timeout_case();
-        ++passed;
-        std::cout << "PASS idle_timeout tproxy\n";
-    }
-    catch (const std::exception& ex)
-    {
-        ++failed;
-        std::cerr << "FAIL idle_timeout tproxy: " << ex.what() << '\n';
-    }
-
-    try
-    {
-        run_tun_idle_timeout_case();
-        ++passed;
-        std::cout << "PASS idle_timeout tun\n";
-    }
-    catch (const std::exception& ex)
-    {
-        ++failed;
-        std::cerr << "FAIL idle_timeout tun: " << ex.what() << '\n';
-    }
-
-    std::cout << "summary: passed=" << passed << " failed=" << failed << " total=" << (passed + failed) << '\n';
-    if (failed != 0)
-    {
-        throw std::runtime_error("idle_timeout regression failed");
-    }
+    report_case_result("idle_timeout", "tproxy", run_tproxy_idle_timeout_case(), passed, failed);
+    report_case_result("idle_timeout", "tun", run_tun_idle_timeout_case(), passed, failed);
+    return summarize_case_group("idle_timeout", passed, failed);
 }
 
-void run_tproxy_concurrent_sessions_case()
+[[nodiscard]] test_result run_tproxy_concurrent_sessions_case()
 {
     io_worker_runtime runtime;
     const auto cfg = make_direct_config(1);
@@ -1054,28 +969,28 @@ void run_tproxy_concurrent_sessions_case()
 
     for (auto& session : sessions)
     {
-        auto enqueue_future = boost::asio::co_spawn(
-            runtime.worker().io_context, session->enqueue_packet(std::vector<uint8_t>{'c', 'o', 'n', 'c'}), boost::asio::use_future);
-        if (enqueue_future.get() != relay::udp_enqueue_result::kEnqueued)
-        {
-            throw std::runtime_error("enqueue tproxy concurrent packet failed");
-        }
+        TEST_RETURN_IF_ERROR(expect_enqueue_result(runtime.worker().io_context,
+                                                   session->enqueue_packet(std::vector<uint8_t>{'c', 'o', 'n', 'c'}),
+                                                   relay::udp_enqueue_result::kEnqueued,
+                                                   "enqueue tproxy concurrent packet failed"));
     }
 
     for (std::size_t i = 0; i < closed_futures.size(); ++i)
     {
-        wait_close(closed_futures[i], "tproxy concurrent conn " + std::to_string(conn_ids[i]));
+        TEST_RETURN_IF_ERROR(wait_close(closed_futures[i], "tproxy concurrent conn " + std::to_string(conn_ids[i])));
     }
-    runtime.wait_until_idle();
+    TEST_RETURN_IF_ERROR(runtime.wait_until_idle());
 
     for (const auto conn_id : conn_ids)
     {
-        const auto snapshot = require_trace_by_conn_id("tproxy-in", conn_id);
-        expect_idle_timeout_trace(snapshot, "tproxy");
+        relay::trace_session_snapshot snapshot;
+        TEST_RETURN_IF_ERROR(require_trace_by_conn_id("tproxy-in", conn_id, snapshot));
+        TEST_RETURN_IF_ERROR(expect_idle_timeout_trace(snapshot, "tproxy"));
     }
+    return std::nullopt;
 }
 
-void run_tun_concurrent_sessions_case()
+[[nodiscard]] test_result run_tun_concurrent_sessions_case()
 {
     io_worker_runtime runtime;
     const auto cfg = make_direct_config(1);
@@ -1101,6 +1016,7 @@ void run_tun_concurrent_sessions_case()
         close_promises.push_back(close_promise);
 
         auto pcb_holder = std::make_unique<lwip_udp_pcb_holder>();
+        TEST_CHECK(pcb_holder->valid(), "udp_new_ip_type failed");
         auto session = std::make_shared<relay::tun_udp_session>(runtime.worker(),
                                                                 route,
                                                                 pcb_holder->release(),
@@ -1118,59 +1034,37 @@ void run_tun_concurrent_sessions_case()
 
     for (auto& session : sessions)
     {
-        session->enqueue_packet(make_udp_pbuf("conc"));
+        pbuf* packet = nullptr;
+        TEST_RETURN_IF_ERROR(make_udp_pbuf("conc", packet));
+        session->enqueue_packet(packet);
     }
 
     for (std::size_t i = 0; i < closed_futures.size(); ++i)
     {
-        wait_close(closed_futures[i], "tun concurrent conn " + std::to_string(conn_ids[i]));
+        TEST_RETURN_IF_ERROR(wait_close(closed_futures[i], "tun concurrent conn " + std::to_string(conn_ids[i])));
     }
-    runtime.wait_until_idle();
+    TEST_RETURN_IF_ERROR(runtime.wait_until_idle());
 
     for (const auto conn_id : conn_ids)
     {
-        const auto snapshot = require_trace_by_conn_id("tun-in", conn_id);
-        expect_idle_timeout_trace(snapshot, "tun");
+        relay::trace_session_snapshot snapshot;
+        TEST_RETURN_IF_ERROR(require_trace_by_conn_id("tun-in", conn_id, snapshot));
+        TEST_RETURN_IF_ERROR(expect_idle_timeout_trace(snapshot, "tun"));
     }
+    return std::nullopt;
 }
 
-void run_concurrent_sessions()
+[[nodiscard]] test_result run_concurrent_sessions()
 {
     int passed = 0;
     int failed = 0;
 
-    try
-    {
-        run_tproxy_concurrent_sessions_case();
-        ++passed;
-        std::cout << "PASS concurrent_sessions tproxy\n";
-    }
-    catch (const std::exception& ex)
-    {
-        ++failed;
-        std::cerr << "FAIL concurrent_sessions tproxy: " << ex.what() << '\n';
-    }
-
-    try
-    {
-        run_tun_concurrent_sessions_case();
-        ++passed;
-        std::cout << "PASS concurrent_sessions tun\n";
-    }
-    catch (const std::exception& ex)
-    {
-        ++failed;
-        std::cerr << "FAIL concurrent_sessions tun: " << ex.what() << '\n';
-    }
-
-    std::cout << "summary: passed=" << passed << " failed=" << failed << " total=" << (passed + failed) << '\n';
-    if (failed != 0)
-    {
-        throw std::runtime_error("concurrent_sessions regression failed");
-    }
+    report_case_result("concurrent_sessions", "tproxy", run_tproxy_concurrent_sessions_case(), passed, failed);
+    report_case_result("concurrent_sessions", "tun", run_tun_concurrent_sessions_case(), passed, failed);
+    return summarize_case_group("concurrent_sessions", passed, failed);
 }
 
-void run_tproxy_closed_no_io_case()
+[[nodiscard]] test_result run_tproxy_closed_no_io_case()
 {
     io_worker_runtime runtime;
     const auto cfg = make_direct_config(30);
@@ -1193,38 +1087,34 @@ void run_tproxy_closed_no_io_case()
                                                                [&closed_promise]() { closed_promise.set_value(); });
     session->start();
 
-    auto enqueue_future = boost::asio::co_spawn(
-        runtime.worker().io_context, session->enqueue_packet(std::vector<uint8_t>{'c', 'l', 'o', 's'}), boost::asio::use_future);
-    if (enqueue_future.get() != relay::udp_enqueue_result::kEnqueued)
-    {
-        throw std::runtime_error("enqueue tproxy close packet failed");
-    }
+    TEST_RETURN_IF_ERROR(expect_enqueue_result(runtime.worker().io_context,
+                                               session->enqueue_packet(std::vector<uint8_t>{'c', 'l', 'o', 's'}),
+                                               relay::udp_enqueue_result::kEnqueued,
+                                               "enqueue tproxy close packet failed"));
 
-    wait_for_trace_stage("tproxy-in", conn_id, relay::trace_stage::kOutboundConnectDone, "tproxy closed_no_io");
+    TEST_RETURN_IF_ERROR(wait_for_trace_stage("tproxy-in", conn_id, relay::trace_stage::kOutboundConnectDone, "tproxy closed_no_io"));
     session->stop();
-    wait_close(closed_future, "tproxy closed_no_io");
-    runtime.wait_until_idle();
+    TEST_RETURN_IF_ERROR(wait_close(closed_future, "tproxy closed_no_io"));
+    TEST_RETURN_IF_ERROR(runtime.wait_until_idle());
 
-    const auto before = require_trace_by_conn_id("tproxy-in", conn_id);
-    expect_stopped_trace(before, "tproxy");
+    relay::trace_session_snapshot before;
+    TEST_RETURN_IF_ERROR(require_trace_by_conn_id("tproxy-in", conn_id, before));
+    TEST_RETURN_IF_ERROR(expect_stopped_trace(before, "tproxy"));
 
-    auto late_enqueue_future = boost::asio::co_spawn(
-        runtime.worker().io_context, session->enqueue_packet(std::vector<uint8_t>{'l', 'a', 't', 'e'}), boost::asio::use_future);
-    if (late_enqueue_future.get() != relay::udp_enqueue_result::kClosed)
-    {
-        throw std::runtime_error("late tproxy enqueue should be closed");
-    }
-    runtime.wait_until_idle();
+    TEST_RETURN_IF_ERROR(expect_enqueue_result(runtime.worker().io_context,
+                                               session->enqueue_packet(std::vector<uint8_t>{'l', 'a', 't', 'e'}),
+                                               relay::udp_enqueue_result::kClosed,
+                                               "late tproxy enqueue should be closed"));
+    TEST_RETURN_IF_ERROR(runtime.wait_until_idle());
 
-    const auto after = require_trace_by_conn_id("tproxy-in", conn_id);
-    if (after.events.size() != before.events.size())
-    {
-        throw std::runtime_error("tproxy trace changed after close");
-    }
-    expect_stopped_trace(after, "tproxy");
+    relay::trace_session_snapshot after;
+    TEST_RETURN_IF_ERROR(require_trace_by_conn_id("tproxy-in", conn_id, after));
+    TEST_CHECK(after.events.size() == before.events.size(), "tproxy trace changed after close");
+    TEST_RETURN_IF_ERROR(expect_stopped_trace(after, "tproxy"));
+    return std::nullopt;
 }
 
-void run_tun_closed_no_io_case()
+[[nodiscard]] test_result run_tun_closed_no_io_case()
 {
     io_worker_runtime runtime;
     const auto cfg = make_direct_config(30);
@@ -1236,6 +1126,7 @@ void run_tun_closed_no_io_case()
     constexpr uint32_t conn_id = 902;
 
     lwip_udp_pcb_holder pcb_holder;
+    TEST_CHECK(pcb_holder.valid(), "udp_new_ip_type failed");
     std::promise<void> closed_promise;
     auto closed_future = closed_promise.get_future();
     auto session = std::make_shared<relay::tun_udp_session>(runtime.worker(),
@@ -1248,64 +1139,42 @@ void run_tun_closed_no_io_case()
                                                             cfg,
                                                             [&closed_promise]() { closed_promise.set_value(); });
     runtime.worker().group.spawn([session]() { return session->start(); });
-    session->enqueue_packet(make_udp_pbuf("clos"));
+    pbuf* first_packet = nullptr;
+    TEST_RETURN_IF_ERROR(make_udp_pbuf("clos", first_packet));
+    session->enqueue_packet(first_packet);
 
-    wait_for_trace_stage("tun-in", conn_id, relay::trace_stage::kOutboundConnectDone, "tun closed_no_io");
+    TEST_RETURN_IF_ERROR(wait_for_trace_stage("tun-in", conn_id, relay::trace_stage::kOutboundConnectDone, "tun closed_no_io"));
     session->stop();
-    wait_close(closed_future, "tun closed_no_io");
-    runtime.wait_until_idle();
+    TEST_RETURN_IF_ERROR(wait_close(closed_future, "tun closed_no_io"));
+    TEST_RETURN_IF_ERROR(runtime.wait_until_idle());
 
-    const auto before = require_trace_by_conn_id("tun-in", conn_id);
-    expect_stopped_trace(before, "tun");
+    relay::trace_session_snapshot before;
+    TEST_RETURN_IF_ERROR(require_trace_by_conn_id("tun-in", conn_id, before));
+    TEST_RETURN_IF_ERROR(expect_stopped_trace(before, "tun"));
 
-    session->enqueue_packet(make_udp_pbuf("late"));
-    runtime.wait_until_idle();
+    pbuf* late_packet = nullptr;
+    TEST_RETURN_IF_ERROR(make_udp_pbuf("late", late_packet));
+    session->enqueue_packet(late_packet);
+    TEST_RETURN_IF_ERROR(runtime.wait_until_idle());
 
-    const auto after = require_trace_by_conn_id("tun-in", conn_id);
-    if (after.events.size() != before.events.size())
-    {
-        throw std::runtime_error("tun trace changed after close");
-    }
-    expect_stopped_trace(after, "tun");
+    relay::trace_session_snapshot after;
+    TEST_RETURN_IF_ERROR(require_trace_by_conn_id("tun-in", conn_id, after));
+    TEST_CHECK(after.events.size() == before.events.size(), "tun trace changed after close");
+    TEST_RETURN_IF_ERROR(expect_stopped_trace(after, "tun"));
+    return std::nullopt;
 }
 
-void run_closed_no_io()
+[[nodiscard]] test_result run_closed_no_io()
 {
     int passed = 0;
     int failed = 0;
 
-    try
-    {
-        run_tproxy_closed_no_io_case();
-        ++passed;
-        std::cout << "PASS closed_no_io tproxy\n";
-    }
-    catch (const std::exception& ex)
-    {
-        ++failed;
-        std::cerr << "FAIL closed_no_io tproxy: " << ex.what() << '\n';
-    }
-
-    try
-    {
-        run_tun_closed_no_io_case();
-        ++passed;
-        std::cout << "PASS closed_no_io tun\n";
-    }
-    catch (const std::exception& ex)
-    {
-        ++failed;
-        std::cerr << "FAIL closed_no_io tun: " << ex.what() << '\n';
-    }
-
-    std::cout << "summary: passed=" << passed << " failed=" << failed << " total=" << (passed + failed) << '\n';
-    if (failed != 0)
-    {
-        throw std::runtime_error("closed_no_io regression failed");
-    }
+    report_case_result("closed_no_io", "tproxy", run_tproxy_closed_no_io_case(), passed, failed);
+    report_case_result("closed_no_io", "tun", run_tun_closed_no_io_case(), passed, failed);
+    return summarize_case_group("closed_no_io", passed, failed);
 }
 
-void run_tproxy_direct_connect_fail_case()
+[[nodiscard]] test_result run_tproxy_direct_connect_fail_case()
 {
     io_worker_runtime runtime;
     const auto cfg = make_direct_config(5);
@@ -1323,20 +1192,23 @@ void run_tproxy_direct_connect_fail_case()
                                                                [&closed_promise]() { closed_promise.set_value(); });
     session->start();
 
-    wait_close(closed_future, "tproxy direct_connect_fail");
-    runtime.wait_until_idle();
+    TEST_RETURN_IF_ERROR(wait_close(closed_future, "tproxy direct_connect_fail"));
+    TEST_RETURN_IF_ERROR(runtime.wait_until_idle());
 
-    const auto snapshot = require_trace_by_conn_id("tproxy-in", 951);
-    expect_direct_connect_fail_trace(snapshot, "tproxy");
+    relay::trace_session_snapshot snapshot;
+    TEST_RETURN_IF_ERROR(require_trace_by_conn_id("tproxy-in", 951, snapshot));
+    TEST_RETURN_IF_ERROR(expect_direct_connect_fail_trace(snapshot, "tproxy"));
+    return std::nullopt;
 }
 
-void run_tun_direct_connect_fail_case()
+[[nodiscard]] test_result run_tun_direct_connect_fail_case()
 {
     io_worker_runtime runtime;
     const auto cfg = make_direct_config(5);
     auto route = std::make_shared<relay::router>(cfg, "tun-in");
 
     lwip_udp_pcb_holder pcb_holder;
+    TEST_CHECK(pcb_holder.valid(), "udp_new_ip_type failed");
     std::promise<void> closed_promise;
     auto closed_future = closed_promise.get_future();
     auto session = std::make_shared<relay::tun_udp_session>(runtime.worker(),
@@ -1350,50 +1222,26 @@ void run_tun_direct_connect_fail_case()
                                                             [&closed_promise]() { closed_promise.set_value(); });
     runtime.worker().group.spawn([session]() { return session->start(); });
 
-    wait_close(closed_future, "tun direct_connect_fail");
-    runtime.wait_until_idle();
+    TEST_RETURN_IF_ERROR(wait_close(closed_future, "tun direct_connect_fail"));
+    TEST_RETURN_IF_ERROR(runtime.wait_until_idle());
 
-    const auto snapshot = require_trace_by_conn_id("tun-in", 952);
-    expect_direct_connect_fail_trace(snapshot, "tun");
+    relay::trace_session_snapshot snapshot;
+    TEST_RETURN_IF_ERROR(require_trace_by_conn_id("tun-in", 952, snapshot));
+    TEST_RETURN_IF_ERROR(expect_direct_connect_fail_trace(snapshot, "tun"));
+    return std::nullopt;
 }
 
-void run_direct_connect_fail()
+[[nodiscard]] test_result run_direct_connect_fail()
 {
     int passed = 0;
     int failed = 0;
 
-    try
-    {
-        run_tproxy_direct_connect_fail_case();
-        ++passed;
-        std::cout << "PASS direct_connect_fail tproxy\n";
-    }
-    catch (const std::exception& ex)
-    {
-        ++failed;
-        std::cerr << "FAIL direct_connect_fail tproxy: " << ex.what() << '\n';
-    }
-
-    try
-    {
-        run_tun_direct_connect_fail_case();
-        ++passed;
-        std::cout << "PASS direct_connect_fail tun\n";
-    }
-    catch (const std::exception& ex)
-    {
-        ++failed;
-        std::cerr << "FAIL direct_connect_fail tun: " << ex.what() << '\n';
-    }
-
-    std::cout << "summary: passed=" << passed << " failed=" << failed << " total=" << (passed + failed) << '\n';
-    if (failed != 0)
-    {
-        throw std::runtime_error("direct_connect_fail regression failed");
-    }
+    report_case_result("direct_connect_fail", "tproxy", run_tproxy_direct_connect_fail_case(), passed, failed);
+    report_case_result("direct_connect_fail", "tun", run_tun_direct_connect_fail_case(), passed, failed);
+    return summarize_case_group("direct_connect_fail", passed, failed);
 }
 
-void run_tproxy_stopped_case()
+[[nodiscard]] test_result run_tproxy_stopped_case()
 {
     io_worker_runtime runtime;
     const auto cfg = make_direct_config(30);
@@ -1416,25 +1264,24 @@ void run_tproxy_stopped_case()
                                                                [&closed_promise]() { closed_promise.set_value(); });
     session->start();
 
-    auto enqueue_future = boost::asio::co_spawn(
-        runtime.worker().io_context, session->enqueue_packet(std::vector<uint8_t>{'s', 't', 'o', 'p'}), boost::asio::use_future);
-    const auto enqueue_result = enqueue_future.get();
-    if (enqueue_result != relay::udp_enqueue_result::kEnqueued)
-    {
-        throw std::runtime_error("enqueue tproxy stopped packet failed");
-    }
+    TEST_RETURN_IF_ERROR(expect_enqueue_result(runtime.worker().io_context,
+                                               session->enqueue_packet(std::vector<uint8_t>{'s', 't', 'o', 'p'}),
+                                               relay::udp_enqueue_result::kEnqueued,
+                                               "enqueue tproxy stopped packet failed"));
 
-    wait_for_trace_stage("tproxy-in", conn_id, relay::trace_stage::kOutboundConnectDone, "tproxy stopped");
+    TEST_RETURN_IF_ERROR(wait_for_trace_stage("tproxy-in", conn_id, relay::trace_stage::kOutboundConnectDone, "tproxy stopped"));
     session->stop();
 
-    wait_close(closed_future, "tproxy stopped");
-    runtime.wait_until_idle();
+    TEST_RETURN_IF_ERROR(wait_close(closed_future, "tproxy stopped"));
+    TEST_RETURN_IF_ERROR(runtime.wait_until_idle());
 
-    const auto snapshot = require_trace_by_conn_id("tproxy-in", conn_id);
-    expect_stopped_trace(snapshot, "tproxy");
+    relay::trace_session_snapshot snapshot;
+    TEST_RETURN_IF_ERROR(require_trace_by_conn_id("tproxy-in", conn_id, snapshot));
+    TEST_RETURN_IF_ERROR(expect_stopped_trace(snapshot, "tproxy"));
+    return std::nullopt;
 }
 
-void run_tun_stopped_case()
+[[nodiscard]] test_result run_tun_stopped_case()
 {
     io_worker_runtime runtime;
     const auto cfg = make_direct_config(30);
@@ -1446,6 +1293,7 @@ void run_tun_stopped_case()
     constexpr uint32_t conn_id = 401;
 
     lwip_udp_pcb_holder pcb_holder;
+    TEST_CHECK(pcb_holder.valid(), "udp_new_ip_type failed");
     std::promise<void> closed_promise;
     auto closed_future = closed_promise.get_future();
     auto session = std::make_shared<relay::tun_udp_session>(runtime.worker(),
@@ -1458,52 +1306,30 @@ void run_tun_stopped_case()
                                                             cfg,
                                                             [&closed_promise]() { closed_promise.set_value(); });
     runtime.worker().group.spawn([session]() { return session->start(); });
-    session->enqueue_packet(make_udp_pbuf("stop"));
+    pbuf* packet = nullptr;
+    TEST_RETURN_IF_ERROR(make_udp_pbuf("stop", packet));
+    session->enqueue_packet(packet);
 
-    wait_for_trace_stage("tun-in", conn_id, relay::trace_stage::kOutboundConnectDone, "tun stopped");
+    TEST_RETURN_IF_ERROR(wait_for_trace_stage("tun-in", conn_id, relay::trace_stage::kOutboundConnectDone, "tun stopped"));
     session->stop();
 
-    wait_close(closed_future, "tun stopped");
-    runtime.wait_until_idle();
+    TEST_RETURN_IF_ERROR(wait_close(closed_future, "tun stopped"));
+    TEST_RETURN_IF_ERROR(runtime.wait_until_idle());
 
-    const auto snapshot = require_trace_by_conn_id("tun-in", conn_id);
-    expect_stopped_trace(snapshot, "tun");
+    relay::trace_session_snapshot snapshot;
+    TEST_RETURN_IF_ERROR(require_trace_by_conn_id("tun-in", conn_id, snapshot));
+    TEST_RETURN_IF_ERROR(expect_stopped_trace(snapshot, "tun"));
+    return std::nullopt;
 }
 
-void run_stopped()
+[[nodiscard]] test_result run_stopped()
 {
     int passed = 0;
     int failed = 0;
 
-    try
-    {
-        run_tproxy_stopped_case();
-        ++passed;
-        std::cout << "PASS stopped tproxy\n";
-    }
-    catch (const std::exception& ex)
-    {
-        ++failed;
-        std::cerr << "FAIL stopped tproxy: " << ex.what() << '\n';
-    }
-
-    try
-    {
-        run_tun_stopped_case();
-        ++passed;
-        std::cout << "PASS stopped tun\n";
-    }
-    catch (const std::exception& ex)
-    {
-        ++failed;
-        std::cerr << "FAIL stopped tun: " << ex.what() << '\n';
-    }
-
-    std::cout << "summary: passed=" << passed << " failed=" << failed << " total=" << (passed + failed) << '\n';
-    if (failed != 0)
-    {
-        throw std::runtime_error("stopped regression failed");
-    }
+    report_case_result("stopped", "tproxy", run_tproxy_stopped_case(), passed, failed);
+    report_case_result("stopped", "tun", run_tun_stopped_case(), passed, failed);
+    return summarize_case_group("stopped", passed, failed);
 }
 
 uint16_t pick_unused_tcp_port()
@@ -1513,7 +1339,7 @@ uint16_t pick_unused_tcp_port()
     return acceptor.local_endpoint().port();
 }
 
-void run_tproxy_proxy_connect_fail_case()
+[[nodiscard]] test_result run_tproxy_proxy_connect_fail_case()
 {
     io_worker_runtime runtime;
     const auto cfg = make_proxy_fail_config(pick_unused_tcp_port());
@@ -1531,20 +1357,23 @@ void run_tproxy_proxy_connect_fail_case()
                                                                [&closed_promise]() { closed_promise.set_value(); });
     session->start();
 
-    wait_close(closed_future, "tproxy proxy_connect_fail");
-    runtime.wait_until_idle();
+    TEST_RETURN_IF_ERROR(wait_close(closed_future, "tproxy proxy_connect_fail"));
+    TEST_RETURN_IF_ERROR(runtime.wait_until_idle());
 
-    const auto snapshot = require_trace_by_conn_id("tproxy-in", 501);
-    expect_proxy_connect_fail_trace(snapshot, "tproxy");
+    relay::trace_session_snapshot snapshot;
+    TEST_RETURN_IF_ERROR(require_trace_by_conn_id("tproxy-in", 501, snapshot));
+    TEST_RETURN_IF_ERROR(expect_proxy_connect_fail_trace(snapshot, "tproxy"));
+    return std::nullopt;
 }
 
-void run_tun_proxy_connect_fail_case()
+[[nodiscard]] test_result run_tun_proxy_connect_fail_case()
 {
     io_worker_runtime runtime;
     const auto cfg = make_proxy_fail_config(pick_unused_tcp_port());
     auto route = std::make_shared<relay::router>(cfg, "tun-in");
 
     lwip_udp_pcb_holder pcb_holder;
+    TEST_CHECK(pcb_holder.valid(), "udp_new_ip_type failed");
     std::promise<void> closed_promise;
     auto closed_future = closed_promise.get_future();
     auto session = std::make_shared<relay::tun_udp_session>(runtime.worker(),
@@ -1558,50 +1387,26 @@ void run_tun_proxy_connect_fail_case()
                                                             [&closed_promise]() { closed_promise.set_value(); });
     runtime.worker().group.spawn([session]() { return session->start(); });
 
-    wait_close(closed_future, "tun proxy_connect_fail");
-    runtime.wait_until_idle();
+    TEST_RETURN_IF_ERROR(wait_close(closed_future, "tun proxy_connect_fail"));
+    TEST_RETURN_IF_ERROR(runtime.wait_until_idle());
 
-    const auto snapshot = require_trace_by_conn_id("tun-in", 502);
-    expect_proxy_connect_fail_trace(snapshot, "tun");
+    relay::trace_session_snapshot snapshot;
+    TEST_RETURN_IF_ERROR(require_trace_by_conn_id("tun-in", 502, snapshot));
+    TEST_RETURN_IF_ERROR(expect_proxy_connect_fail_trace(snapshot, "tun"));
+    return std::nullopt;
 }
 
-void run_proxy_connect_fail()
+[[nodiscard]] test_result run_proxy_connect_fail()
 {
     int passed = 0;
     int failed = 0;
 
-    try
-    {
-        run_tproxy_proxy_connect_fail_case();
-        ++passed;
-        std::cout << "PASS proxy_connect_fail tproxy\n";
-    }
-    catch (const std::exception& ex)
-    {
-        ++failed;
-        std::cerr << "FAIL proxy_connect_fail tproxy: " << ex.what() << '\n';
-    }
-
-    try
-    {
-        run_tun_proxy_connect_fail_case();
-        ++passed;
-        std::cout << "PASS proxy_connect_fail tun\n";
-    }
-    catch (const std::exception& ex)
-    {
-        ++failed;
-        std::cerr << "FAIL proxy_connect_fail tun: " << ex.what() << '\n';
-    }
-
-    std::cout << "summary: passed=" << passed << " failed=" << failed << " total=" << (passed + failed) << '\n';
-    if (failed != 0)
-    {
-        throw std::runtime_error("proxy_connect_fail regression failed");
-    }
+    report_case_result("proxy_connect_fail", "tproxy", run_tproxy_proxy_connect_fail_case(), passed, failed);
+    report_case_result("proxy_connect_fail", "tun", run_tun_proxy_connect_fail_case(), passed, failed);
+    return summarize_case_group("proxy_connect_fail", passed, failed);
 }
 
-void run_tproxy_transport_error_case()
+[[nodiscard]] test_result run_tproxy_transport_error_case()
 {
     io_worker_runtime runtime;
     fake_socks_udp_server server;
@@ -1620,22 +1425,22 @@ void run_tproxy_transport_error_case()
                                                                [&closed_promise]() { closed_promise.set_value(); });
     session->start();
 
-    auto enqueue_future = boost::asio::co_spawn(
-        runtime.worker().io_context, session->enqueue_packet(std::vector<uint8_t>{'b', 'a', 'd'}), boost::asio::use_future);
-    if (enqueue_future.get() != relay::udp_enqueue_result::kEnqueued)
-    {
-        throw std::runtime_error("enqueue tproxy transport packet failed");
-    }
+    TEST_RETURN_IF_ERROR(expect_enqueue_result(runtime.worker().io_context,
+                                               session->enqueue_packet(std::vector<uint8_t>{'b', 'a', 'd'}),
+                                               relay::udp_enqueue_result::kEnqueued,
+                                               "enqueue tproxy transport packet failed"));
 
-    wait_close(closed_future, "tproxy transport_error");
-    runtime.wait_until_idle();
-    server.join();
+    TEST_RETURN_IF_ERROR(wait_close(closed_future, "tproxy transport_error"));
+    TEST_RETURN_IF_ERROR(runtime.wait_until_idle());
+    TEST_RETURN_IF_ERROR(server.join());
 
-    const auto snapshot = require_trace_by_conn_id("tproxy-in", 601);
-    expect_transport_error_trace(snapshot, "tproxy");
+    relay::trace_session_snapshot snapshot;
+    TEST_RETURN_IF_ERROR(require_trace_by_conn_id("tproxy-in", 601, snapshot));
+    TEST_RETURN_IF_ERROR(expect_transport_error_trace(snapshot, "tproxy"));
+    return std::nullopt;
 }
 
-void run_tun_transport_error_case()
+[[nodiscard]] test_result run_tun_transport_error_case()
 {
     io_worker_runtime runtime;
     fake_socks_udp_server server;
@@ -1643,6 +1448,7 @@ void run_tun_transport_error_case()
     auto route = std::make_shared<relay::router>(cfg, "tun-in");
 
     lwip_udp_pcb_holder pcb_holder;
+    TEST_CHECK(pcb_holder.valid(), "udp_new_ip_type failed");
     std::promise<void> closed_promise;
     auto closed_future = closed_promise.get_future();
     auto session = std::make_shared<relay::tun_udp_session>(runtime.worker(),
@@ -1655,53 +1461,31 @@ void run_tun_transport_error_case()
                                                             cfg,
                                                             [&closed_promise]() { closed_promise.set_value(); });
     runtime.worker().group.spawn([session]() { return session->start(); });
-    session->enqueue_packet(make_udp_pbuf("bad"));
+    pbuf* packet = nullptr;
+    TEST_RETURN_IF_ERROR(make_udp_pbuf("bad", packet));
+    session->enqueue_packet(packet);
 
-    wait_close(closed_future, "tun transport_error");
-    runtime.wait_until_idle();
-    server.join();
+    TEST_RETURN_IF_ERROR(wait_close(closed_future, "tun transport_error"));
+    TEST_RETURN_IF_ERROR(runtime.wait_until_idle());
+    TEST_RETURN_IF_ERROR(server.join());
 
-    const auto snapshot = require_trace_by_conn_id("tun-in", 602);
-    expect_transport_error_trace(snapshot, "tun");
+    relay::trace_session_snapshot snapshot;
+    TEST_RETURN_IF_ERROR(require_trace_by_conn_id("tun-in", 602, snapshot));
+    TEST_RETURN_IF_ERROR(expect_transport_error_trace(snapshot, "tun"));
+    return std::nullopt;
 }
 
-void run_transport_error()
+[[nodiscard]] test_result run_transport_error()
 {
     int passed = 0;
     int failed = 0;
 
-    try
-    {
-        run_tproxy_transport_error_case();
-        ++passed;
-        std::cout << "PASS transport_error tproxy\n";
-    }
-    catch (const std::exception& ex)
-    {
-        ++failed;
-        std::cerr << "FAIL transport_error tproxy: " << ex.what() << '\n';
-    }
-
-    try
-    {
-        run_tun_transport_error_case();
-        ++passed;
-        std::cout << "PASS transport_error tun\n";
-    }
-    catch (const std::exception& ex)
-    {
-        ++failed;
-        std::cerr << "FAIL transport_error tun: " << ex.what() << '\n';
-    }
-
-    std::cout << "summary: passed=" << passed << " failed=" << failed << " total=" << (passed + failed) << '\n';
-    if (failed != 0)
-    {
-        throw std::runtime_error("transport_error regression failed");
-    }
+    report_case_result("transport_error", "tproxy", run_tproxy_transport_error_case(), passed, failed);
+    report_case_result("transport_error", "tun", run_tun_transport_error_case(), passed, failed);
+    return summarize_case_group("transport_error", passed, failed);
 }
 
-void run_tproxy_multi_outbound_case()
+[[nodiscard]] test_result run_tproxy_multi_outbound_case()
 {
     io_worker_runtime runtime;
     fake_socks_udp_server server(2);
@@ -1727,30 +1511,35 @@ void run_tproxy_multi_outbound_case()
                                                               boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.3"), 53102),
                                                               1002,
                                                               "tproxy-in",
-                                                              cfg,
-                                                              [&second_closed_promise]() { second_closed_promise.set_value(); });
+                                                             cfg,
+                                                             [&second_closed_promise]() { second_closed_promise.set_value(); });
     first->start();
     second->start();
 
-    auto first_enqueue = boost::asio::co_spawn(
-        runtime.worker().io_context, first->enqueue_packet(std::vector<uint8_t>{'o', 'n', 'e'}), boost::asio::use_future);
-    auto second_enqueue = boost::asio::co_spawn(
-        runtime.worker().io_context, second->enqueue_packet(std::vector<uint8_t>{'t', 'w', 'o'}), boost::asio::use_future);
-    if (first_enqueue.get() != relay::udp_enqueue_result::kEnqueued || second_enqueue.get() != relay::udp_enqueue_result::kEnqueued)
-    {
-        throw std::runtime_error("enqueue tproxy multi_outbound packet failed");
-    }
+    TEST_RETURN_IF_ERROR(expect_enqueue_result(runtime.worker().io_context,
+                                               first->enqueue_packet(std::vector<uint8_t>{'o', 'n', 'e'}),
+                                               relay::udp_enqueue_result::kEnqueued,
+                                               "enqueue tproxy multi_outbound packet failed"));
+    TEST_RETURN_IF_ERROR(expect_enqueue_result(runtime.worker().io_context,
+                                               second->enqueue_packet(std::vector<uint8_t>{'t', 'w', 'o'}),
+                                               relay::udp_enqueue_result::kEnqueued,
+                                               "enqueue tproxy multi_outbound packet failed"));
 
-    wait_close(first_closed, "tproxy multi_outbound first");
-    wait_close(second_closed, "tproxy multi_outbound second");
-    runtime.wait_until_idle();
-    server.join();
+    TEST_RETURN_IF_ERROR(wait_close(first_closed, "tproxy multi_outbound first"));
+    TEST_RETURN_IF_ERROR(wait_close(second_closed, "tproxy multi_outbound second"));
+    TEST_RETURN_IF_ERROR(runtime.wait_until_idle());
+    TEST_RETURN_IF_ERROR(server.join());
 
-    expect_proxy_transport_error_trace(require_trace_by_conn_id("tproxy-in", 1001), "tproxy", "socks-out-a");
-    expect_proxy_transport_error_trace(require_trace_by_conn_id("tproxy-in", 1002), "tproxy", "socks-out-b");
+    relay::trace_session_snapshot first_snapshot;
+    relay::trace_session_snapshot second_snapshot;
+    TEST_RETURN_IF_ERROR(require_trace_by_conn_id("tproxy-in", 1001, first_snapshot));
+    TEST_RETURN_IF_ERROR(require_trace_by_conn_id("tproxy-in", 1002, second_snapshot));
+    TEST_RETURN_IF_ERROR(expect_proxy_transport_error_trace(first_snapshot, "tproxy", "socks-out-a"));
+    TEST_RETURN_IF_ERROR(expect_proxy_transport_error_trace(second_snapshot, "tproxy", "socks-out-b"));
+    return std::nullopt;
 }
 
-void run_tun_multi_outbound_case()
+[[nodiscard]] test_result run_tun_multi_outbound_case()
 {
     io_worker_runtime runtime;
     fake_socks_udp_server server(2);
@@ -1759,6 +1548,8 @@ void run_tun_multi_outbound_case()
 
     lwip_udp_pcb_holder first_pcb;
     lwip_udp_pcb_holder second_pcb;
+    TEST_CHECK(first_pcb.valid(), "udp_new_ip_type failed");
+    TEST_CHECK(second_pcb.valid(), "udp_new_ip_type failed");
     std::promise<void> first_closed_promise;
     std::promise<void> second_closed_promise;
     auto first_closed = first_closed_promise.get_future();
@@ -1784,158 +1575,110 @@ void run_tun_multi_outbound_case()
                                                            [&second_closed_promise]() { second_closed_promise.set_value(); });
     runtime.worker().group.spawn([first]() { return first->start(); });
     runtime.worker().group.spawn([second]() { return second->start(); });
-    first->enqueue_packet(make_udp_pbuf("one"));
-    second->enqueue_packet(make_udp_pbuf("two"));
+    pbuf* first_packet = nullptr;
+    pbuf* second_packet = nullptr;
+    TEST_RETURN_IF_ERROR(make_udp_pbuf("one", first_packet));
+    TEST_RETURN_IF_ERROR(make_udp_pbuf("two", second_packet));
+    first->enqueue_packet(first_packet);
+    second->enqueue_packet(second_packet);
 
-    wait_close(first_closed, "tun multi_outbound first");
-    wait_close(second_closed, "tun multi_outbound second");
-    runtime.wait_until_idle();
-    server.join();
+    TEST_RETURN_IF_ERROR(wait_close(first_closed, "tun multi_outbound first"));
+    TEST_RETURN_IF_ERROR(wait_close(second_closed, "tun multi_outbound second"));
+    TEST_RETURN_IF_ERROR(runtime.wait_until_idle());
+    TEST_RETURN_IF_ERROR(server.join());
 
-    expect_proxy_transport_error_trace(require_trace_by_conn_id("tun-in", 1101), "tun", "socks-out-a");
-    expect_proxy_transport_error_trace(require_trace_by_conn_id("tun-in", 1102), "tun", "socks-out-b");
+    relay::trace_session_snapshot first_snapshot;
+    relay::trace_session_snapshot second_snapshot;
+    TEST_RETURN_IF_ERROR(require_trace_by_conn_id("tun-in", 1101, first_snapshot));
+    TEST_RETURN_IF_ERROR(require_trace_by_conn_id("tun-in", 1102, second_snapshot));
+    TEST_RETURN_IF_ERROR(expect_proxy_transport_error_trace(first_snapshot, "tun", "socks-out-a"));
+    TEST_RETURN_IF_ERROR(expect_proxy_transport_error_trace(second_snapshot, "tun", "socks-out-b"));
+    return std::nullopt;
 }
 
-void run_multi_outbound()
+[[nodiscard]] test_result run_multi_outbound()
 {
     int passed = 0;
     int failed = 0;
 
-    try
-    {
-        run_tproxy_multi_outbound_case();
-        ++passed;
-        std::cout << "PASS multi_outbound tproxy\n";
-    }
-    catch (const std::exception& ex)
-    {
-        ++failed;
-        std::cerr << "FAIL multi_outbound tproxy: " << ex.what() << '\n';
-    }
-
-    try
-    {
-        run_tun_multi_outbound_case();
-        ++passed;
-        std::cout << "PASS multi_outbound tun\n";
-    }
-    catch (const std::exception& ex)
-    {
-        ++failed;
-        std::cerr << "FAIL multi_outbound tun: " << ex.what() << '\n';
-    }
-
-    std::cout << "summary: passed=" << passed << " failed=" << failed << " total=" << (passed + failed) << '\n';
-    if (failed != 0)
-    {
-        throw std::runtime_error("multi_outbound regression failed");
-    }
+    report_case_result("multi_outbound", "tproxy", run_tproxy_multi_outbound_case(), passed, failed);
+    report_case_result("multi_outbound", "tun", run_tun_multi_outbound_case(), passed, failed);
+    return summarize_case_group("multi_outbound", passed, failed);
 }
 
-void run_route_blocked()
+[[nodiscard]] test_result run_route_blocked()
 {
     int passed = 0;
     int failed = 0;
 
-    try
-    {
-        run_tproxy_route_blocked_case();
-        ++passed;
-        std::cout << "PASS route_blocked tproxy\n";
-    }
-    catch (const std::exception& ex)
-    {
-        ++failed;
-        std::cerr << "FAIL route_blocked tproxy: " << ex.what() << '\n';
-    }
-
-    try
-    {
-        run_tun_route_blocked_case();
-        ++passed;
-        std::cout << "PASS route_blocked tun\n";
-    }
-    catch (const std::exception& ex)
-    {
-        ++failed;
-        std::cerr << "FAIL route_blocked tun: " << ex.what() << '\n';
-    }
-
-    std::cout << "summary: passed=" << passed << " failed=" << failed << " total=" << (passed + failed) << '\n';
-    if (failed != 0)
-    {
-        throw std::runtime_error("route_blocked regression failed");
-    }
+    report_case_result("route_blocked", "tproxy", run_tproxy_route_blocked_case(), passed, failed);
+    report_case_result("route_blocked", "tun", run_tun_route_blocked_case(), passed, failed);
+    return summarize_case_group("route_blocked", passed, failed);
 }
 
 }    // namespace
 
 int main(int argc, char** argv)
 {
-    try
+    if (argc != 2)
     {
-        if (argc != 2)
-        {
-            throw std::runtime_error(
-                "usage: udp_transparent_session_regression "
-                "<route_blocked|idle_timeout|concurrent_sessions|closed_no_io|stopped|proxy_connect_fail|direct_connect_fail|transport_error|"
-                "multi_outbound>");
-        }
-
-        lwip_init();
-
-        const std::string scenario = argv[1];
-        if (scenario == "route_blocked")
-        {
-            run_route_blocked();
-            return 0;
-        }
-        if (scenario == "idle_timeout")
-        {
-            run_idle_timeout();
-            return 0;
-        }
-        if (scenario == "stopped")
-        {
-            run_stopped();
-            return 0;
-        }
-        if (scenario == "concurrent_sessions")
-        {
-            run_concurrent_sessions();
-            return 0;
-        }
-        if (scenario == "closed_no_io")
-        {
-            run_closed_no_io();
-            return 0;
-        }
-        if (scenario == "proxy_connect_fail")
-        {
-            run_proxy_connect_fail();
-            return 0;
-        }
-        if (scenario == "direct_connect_fail")
-        {
-            run_direct_connect_fail();
-            return 0;
-        }
-        if (scenario == "transport_error")
-        {
-            run_transport_error();
-            return 0;
-        }
-        if (scenario == "multi_outbound")
-        {
-            run_multi_outbound();
-            return 0;
-        }
-
-        throw std::runtime_error("unsupported scenario: " + scenario);
-    }
-    catch (const std::exception& ex)
-    {
-        std::cerr << ex.what() << '\n';
+        std::cerr
+            << "usage: udp_transparent_session_regression "
+            << "<route_blocked|idle_timeout|concurrent_sessions|closed_no_io|stopped|proxy_connect_fail|direct_connect_fail|transport_error|"
+            << "multi_outbound>\n";
         return 1;
     }
+
+    lwip_init();
+
+    const std::string scenario = argv[1];
+    test_result result;
+    if (scenario == "route_blocked")
+    {
+        result = run_route_blocked();
+    }
+    else if (scenario == "idle_timeout")
+    {
+        result = run_idle_timeout();
+    }
+    else if (scenario == "stopped")
+    {
+        result = run_stopped();
+    }
+    else if (scenario == "concurrent_sessions")
+    {
+        result = run_concurrent_sessions();
+    }
+    else if (scenario == "closed_no_io")
+    {
+        result = run_closed_no_io();
+    }
+    else if (scenario == "proxy_connect_fail")
+    {
+        result = run_proxy_connect_fail();
+    }
+    else if (scenario == "direct_connect_fail")
+    {
+        result = run_direct_connect_fail();
+    }
+    else if (scenario == "transport_error")
+    {
+        result = run_transport_error();
+    }
+    else if (scenario == "multi_outbound")
+    {
+        result = run_multi_outbound();
+    }
+    else
+    {
+        std::cerr << "unsupported scenario: " << scenario << '\n';
+        return 1;
+    }
+
+    if (result.has_value())
+    {
+        std::cerr << *result << '\n';
+        return 1;
+    }
+    return 0;
 }
