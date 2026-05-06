@@ -9,7 +9,6 @@ import subprocess
 import sys
 import tempfile
 import threading
-import time
 
 from testlib import (
     allocate_tcp_port,
@@ -27,18 +26,12 @@ from testlib import (
 )
 
 
-def wait_for_any_log_text(paths, needle, deadline_seconds, label, processes):
-    deadline = time.time() + deadline_seconds
-    while time.time() < deadline:
-        for process in processes:
-            if process.process.poll() is not None:
-                raise RuntimeError(f"process exited early while waiting for {label}")
-        for path in paths:
-            if path.exists() and needle in path.read_text(encoding="utf-8", errors="replace"):
-                return
-        time.sleep(0.2)
-    tails = "\n".join(f"===== {path.name} =====\n{tail_file(path)}" for path in paths)
-    raise RuntimeError(f"timeout waiting for {label} log text {needle!r}\n{tails}")
+def assert_log_text_absent(paths, needle, label):
+    for path in paths:
+        content = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
+        if needle in content:
+            tails = "\n".join(f"===== {item.name} =====\n{tail_file(item)}" for item in paths)
+            raise RuntimeError(f"unexpected {label} log text {needle!r}\n{tails}")
 
 
 def read_exact(sock, size):
@@ -88,16 +81,21 @@ def socks5_connect(socks_port, target_host, target_port):
     return sock
 
 
-def run_curl_through_socks(socks_port, cert_path, https_port, expect_success, expected_stdout="ok-vision\n"):
+def run_curl_through_socks(socks_port, cert_path, https_port, expect_success, expected_stdout="ok-vision\n", tls_version="1.3"):
+    if tls_version == "1.3":
+        tls_args = ["--tlsv1.3", "--tls-max", "1.3"]
+    elif tls_version == "1.2":
+        tls_args = ["--tlsv1.2", "--tls-max", "1.2"]
+    else:
+        raise RuntimeError(f"unsupported tls version {tls_version}")
+
     args = [
         "curl",
         "--silent",
         "--show-error",
         "--fail",
         "--ipv4",
-        "--tlsv1.3",
-        "--tls-max",
-        "1.3",
+        *tls_args,
         "--connect-timeout",
         "5",
         "--max-time",
@@ -333,24 +331,51 @@ def main():
             expect_success=True,
             expected_stdout=f"{large_response}\n",
         )
-        wait_for_any_log_text(
-            [success_stack["server_log"], success_stack["client_log"]],
-            "enter_raw_write_mode",
-            10,
-            "vision direct write",
-            success_stack["processes"],
-        )
-        wait_for_any_log_text(
-            [success_stack["server_log"], success_stack["client_log"]],
-            "enter_raw_read_mode",
-            10,
-            "vision direct read",
-            success_stack["processes"],
-        )
-        plain_http_port = start_plain_http_server(repo_root, temp_root / "success", success_stack["processes"])
-        run_plain_http_through_socks(success_stack["socks_port"], plain_http_port)
-        run_half_close_through_socks(success_stack["socks_port"])
+        for log_path, label in ((success_stack["server_log"], "server"), (success_stack["client_log"], "client")):
+            wait_for_log_text(log_path, "enter_raw_write_mode", 10, f"vision direct {label} write", success_stack["processes"])
+            wait_for_log_text(log_path, "enter_raw_read_mode", 10, f"vision direct {label} read", success_stack["processes"])
         stop_processes(success_stack["processes"])
+        active_processes = []
+
+        tls12_stack = start_stack(
+            repo_root,
+            binary,
+            runtime_env,
+            temp_root / "tls12",
+            server_vision=True,
+            client_vision=True,
+            response_text="ok-tls12",
+        )
+        active_processes = tls12_stack["processes"]
+        run_curl_through_socks(
+            tls12_stack["socks_port"],
+            tls12_stack["cert_path"],
+            tls12_stack["https_port"],
+            expect_success=True,
+            expected_stdout="ok-tls12\n",
+            tls_version="1.2",
+        )
+        assert_log_text_absent([tls12_stack["server_log"], tls12_stack["client_log"]], "enter_raw_write_mode", "tls12 fallback write")
+        assert_log_text_absent([tls12_stack["server_log"], tls12_stack["client_log"]], "enter_raw_read_mode", "tls12 fallback read")
+        stop_processes(tls12_stack["processes"])
+        active_processes = []
+
+        plain_stack = start_stack(
+            repo_root,
+            binary,
+            runtime_env,
+            temp_root / "plain",
+            server_vision=True,
+            client_vision=True,
+            response_text="unused",
+        )
+        active_processes = plain_stack["processes"]
+        plain_http_port = start_plain_http_server(repo_root, temp_root / "plain", plain_stack["processes"])
+        run_plain_http_through_socks(plain_stack["socks_port"], plain_http_port)
+        run_half_close_through_socks(plain_stack["socks_port"])
+        assert_log_text_absent([plain_stack["server_log"], plain_stack["client_log"]], "enter_raw_write_mode", "plain fallback write")
+        assert_log_text_absent([plain_stack["server_log"], plain_stack["client_log"]], "enter_raw_read_mode", "plain fallback read")
+        stop_processes(plain_stack["processes"])
         active_processes = []
 
         reject_stack_root = temp_root / "reject"
@@ -379,6 +404,7 @@ def main():
         )
 
         print("reality_vision_tcp ok")
+        print("reality_vision_tls12_fallback ok")
         print("reality_vision_plain_tcp ok")
         print("reality_vision_half_close ok")
         print("reality_vision_reject ok")
