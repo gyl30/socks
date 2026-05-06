@@ -288,35 +288,66 @@ boost::asio::awaitable<route_decision> reality_udp_session::decide_route(const p
 
 boost::asio::awaitable<std::shared_ptr<udp_proxy_outbound>> reality_udp_session::get_proxy_outbound(const std::string& outbound_tag)
 {
-    if (stopping_.load())
+    if (outbound_tag.empty())
     {
         co_return nullptr;
     }
-
-    if (const auto outbound = proxy_outbounds_.get(outbound_tag); outbound != nullptr)
-    {
-        co_return outbound;
-    }
-
-    trace_store::instance().record_event(trace_event{
-        .trace_id = trace_id_,
-        .conn_id = conn_id_,
-        .stage = trace_stage::kOutboundConnectStart,
-        .result = trace_result::kOk,
-        .inbound_tag = inbound_tag_,
-        .inbound_type = "reality",
-        .outbound_tag = outbound_tag,
-        .outbound_type = "proxy",
-        .target_host = "unknown",
-        .target_port = 0,
-        .local_host = bind_host_,
-        .local_port = bind_port_,
-        .remote_host = std::string(connection_ != nullptr ? connection_->remote_host() : std::string_view("unknown")),
-        .remote_port = static_cast<uint16_t>(connection_ != nullptr ? connection_->remote_port() : 0U),
-    });
-    const auto request = make_proxy_outbound_request();
-    const auto connect_result = co_await connect_udp_proxy_flow(udp_socket_.get_executor(), request, outbound_tag, cfg_);
-    co_return co_await apply_proxy_outbound_connect_result(outbound_tag, connect_result);
+    co_return co_await ensure_managed_proxy_outbound(
+        outbound_tag,
+        proxy_outbounds_,
+        [this]() { return stopping_.load(); },
+        [this](const std::string& tag)
+        {
+            trace_store::instance().record_event(trace_event{
+                .trace_id = trace_id_,
+                .conn_id = conn_id_,
+                .stage = trace_stage::kOutboundConnectStart,
+                .result = trace_result::kOk,
+                .inbound_tag = inbound_tag_,
+                .inbound_type = "reality",
+                .outbound_tag = tag,
+                .outbound_type = "proxy",
+                .target_host = "unknown",
+                .target_port = 0,
+                .local_host = bind_host_,
+                .local_port = bind_port_,
+                .remote_host = std::string(connection_ != nullptr ? connection_->remote_host() : std::string_view("unknown")),
+                .remote_port = static_cast<uint16_t>(connection_ != nullptr ? connection_->remote_port() : 0U),
+            });
+        },
+        [this](const std::string& tag) -> boost::asio::awaitable<udp_proxy_outbound_connect_result>
+        {
+            const auto request = make_proxy_outbound_request();
+            co_return co_await connect_udp_proxy_flow(udp_socket_.get_executor(), request, tag, cfg_);
+        },
+        [this](const std::string& tag, const udp_proxy_outbound_connect_result& connect_result)
+        {
+            record_proxy_outbound_connect_result(tag, true, {});
+            LOG_INFO("{} trace {:016x} conn {} out_tag {} proxy udp outbound ready bind {}:{}",
+                     log_event::kRoute,
+                     trace_id_,
+                     conn_id_,
+                     tag,
+                     connect_result.outbound->bind_host(),
+                     connect_result.outbound->bind_port());
+        },
+        [this](const std::string& tag, const udp_proxy_outbound_connect_result& connect_result, const boost::system::error_code& ec)
+        {
+            LOG_WARN("{} trace {:016x} conn {} out_tag {} open proxy udp outbound failed {} rep {}",
+                     log_event::kRoute,
+                     trace_id_,
+                     conn_id_,
+                     tag,
+                     ec.message(),
+                     connect_result.socks_rep);
+            record_proxy_outbound_connect_result(tag, false, ec);
+        },
+        [this](const std::string& tag, const std::shared_ptr<udp_proxy_outbound>& outbound)
+        {
+            proxy_reader_group_.spawn(
+                [self = shared_from_this(), tag, outbound]() -> boost::asio::awaitable<void>
+                { co_await self->proxy_to_connection(tag, outbound); });
+        });
 }
 
 void reality_udp_session::record_proxy_outbound_connect_result(const std::string& outbound_tag,
@@ -345,40 +376,6 @@ void reality_udp_session::record_proxy_outbound_connect_result(const std::string
         event.error_message = ec.message();
     }
     trace_store::instance().record_event(std::move(event));
-}
-
-boost::asio::awaitable<std::shared_ptr<udp_proxy_outbound>> reality_udp_session::apply_proxy_outbound_connect_result(
-    const std::string& outbound_tag, const udp_proxy_outbound_connect_result& connect_result)
-{
-    if (connect_result.ec || connect_result.outbound == nullptr)
-    {
-        LOG_WARN("{} trace {:016x} conn {} out_tag {} open proxy udp outbound failed {} rep {}",
-                 log_event::kRoute,
-                 trace_id_,
-                 conn_id_,
-                 outbound_tag,
-                 connect_result.ec ? connect_result.ec.message() : "not_connected",
-                 connect_result.socks_rep);
-        record_proxy_outbound_connect_result(
-            outbound_tag, false, connect_result.ec ? connect_result.ec : boost::asio::error::operation_aborted);
-        co_return nullptr;
-    }
-
-    proxy_outbounds_.put(outbound_tag, connect_result.outbound);
-    record_proxy_outbound_connect_result(outbound_tag, true, {});
-    LOG_INFO("{} trace {:016x} conn {} out_tag {} proxy udp outbound ready bind {}:{}",
-             log_event::kRoute,
-             trace_id_,
-             conn_id_,
-             outbound_tag,
-             connect_result.outbound->bind_host(),
-             connect_result.outbound->bind_port());
-
-    proxy_reader_group_.spawn(
-        [self = shared_from_this(), outbound_tag, outbound = connect_result.outbound]() -> boost::asio::awaitable<void>
-        { co_await self->proxy_to_connection(outbound_tag, outbound); });
-
-    co_return connect_result.outbound;
 }
 
 boost::asio::awaitable<void> reality_udp_session::close_proxy_outbounds()
@@ -749,8 +746,10 @@ boost::asio::awaitable<void> reality_udp_session::proxy_to_connection(const std:
         .last_activity_time_ms = last_activity_time_ms_,
         .rx_bytes = rx_bytes_,
     };
-    co_await relay_proxy_outbound_replies(
+    co_await relay_managed_proxy_outbound_replies(
+        outbound_tag,
         outbound,
+        proxy_outbounds_,
         relay_context,
         [this]() { return stopping_.load(); },
         [this, &outbound_tag](const proxy::udp_datagram& datagram, boost::system::error_code& ec) -> boost::asio::awaitable<std::size_t>
@@ -771,13 +770,14 @@ boost::asio::awaitable<void> reality_udp_session::proxy_to_connection(const std:
                      bind_port_,
                      outbound_tag,
                      ec.message());
+        },
+        [this](const std::shared_ptr<udp_proxy_outbound>& outbound_value) -> boost::asio::awaitable<void>
+        {
+            if (!stopping_.load())
+            {
+                co_await outbound_value->close();
+            }
         });
-
-    proxy_outbounds_.erase_if_current(outbound_tag, outbound);
-    if (!stopping_.load())
-    {
-        co_await outbound->close();
-    }
 }
 
 boost::asio::awaitable<void> reality_udp_session::idle_watchdog()

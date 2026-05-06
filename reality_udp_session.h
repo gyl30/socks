@@ -67,9 +67,6 @@ class reality_udp_session : public std::enable_shared_from_this<reality_udp_sess
     boost::asio::awaitable<void> idle_watchdog();
     [[nodiscard]] boost::asio::awaitable<route_decision> decide_route(const proxy::udp_datagram& datagram) const;
     [[nodiscard]] boost::asio::awaitable<std::shared_ptr<udp_proxy_outbound>> get_proxy_outbound(const std::string& outbound_tag);
-    [[nodiscard]] boost::asio::awaitable<std::shared_ptr<udp_proxy_outbound>> apply_proxy_outbound_connect_result(
-        const std::string& outbound_tag,
-        const udp_proxy_outbound_connect_result& connect_result);
     void record_proxy_outbound_connect_result(const std::string& outbound_tag,
                                               bool success,
                                               const boost::system::error_code& ec) const;

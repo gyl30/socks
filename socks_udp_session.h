@@ -61,14 +61,7 @@ class socks_udp_session : public std::enable_shared_from_this<socks_udp_session>
         boost::system::error_code& ec);
     [[nodiscard]] boost::asio::awaitable<std::shared_ptr<udp_proxy_outbound>> ensure_proxy_outbound(const std::string& outbound_tag,
                                                                                                     boost::system::error_code& ec);
-    [[nodiscard]] boost::asio::awaitable<std::shared_ptr<udp_proxy_outbound>> connect_proxy_outbound(const std::string& outbound_tag,
-                                                                                                     boost::system::error_code& ec);
-    [[nodiscard]] boost::asio::awaitable<std::shared_ptr<udp_proxy_outbound>> apply_proxy_outbound_connect_result(
-        const std::string& outbound_tag,
-        const udp_proxy_outbound_connect_result& connect_result,
-        boost::system::error_code& ec);
     void record_proxy_outbound_connect_result(const std::string& outbound_tag, bool success, const boost::system::error_code& ec) const;
-    void start_proxy_outbound_reader(const std::string& outbound_tag, const std::shared_ptr<udp_proxy_outbound>& outbound);
     [[nodiscard]] boost::asio::awaitable<boost::asio::ip::udp::endpoint> resolve_target_endpoint(const std::string& host,
                                                                                                  uint16_t port,
                                                                                                  boost::system::error_code& ec);
@@ -96,7 +89,6 @@ class socks_udp_session : public std::enable_shared_from_this<socks_udp_session>
                                                 const boost::asio::ip::udp::endpoint& target,
                                                 boost::system::error_code& ec) const;
     [[nodiscard]] boost::asio::ip::udp::socket* select_direct_udp_socket(const boost::asio::ip::udp::endpoint& target);
-    void clear_proxy_outbound_if_current(const std::string& outbound_tag, const std::shared_ptr<udp_proxy_outbound>& upstream);
     boost::asio::awaitable<void> proxy_to_udp_sock(std::string outbound_tag, std::shared_ptr<udp_proxy_outbound> upstream);
     boost::asio::awaitable<void> keep_tcp_alive();
     boost::asio::awaitable<void> idle_watchdog();

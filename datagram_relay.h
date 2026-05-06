@@ -218,6 +218,57 @@ boost::asio::awaitable<void> relay_proxy_outbound_replies(const std::shared_ptr<
     }
 }
 
+template <typename Registry, typename ShouldStopFn, typename OnConnectStartFn, typename ConnectFn, typename OnSuccessFn, typename OnFailureFn,
+          typename StartReaderFn>
+boost::asio::awaitable<std::shared_ptr<udp_proxy_outbound>> ensure_managed_proxy_outbound(const std::string& outbound_tag,
+                                                                                           Registry& registry,
+                                                                                           ShouldStopFn should_stop,
+                                                                                           OnConnectStartFn on_connect_start,
+                                                                                           ConnectFn connect_outbound,
+                                                                                           OnSuccessFn on_success,
+                                                                                           OnFailureFn on_failure,
+                                                                                           StartReaderFn start_reader)
+{
+    if (should_stop())
+    {
+        co_return nullptr;
+    }
+
+    if (const auto outbound = registry.get(outbound_tag); outbound != nullptr)
+    {
+        co_return outbound;
+    }
+
+    on_connect_start(outbound_tag);
+    const auto connect_result = co_await connect_outbound(outbound_tag);
+    if (connect_result.ec || connect_result.outbound == nullptr)
+    {
+        const auto ec = connect_result.ec ? connect_result.ec : boost::asio::error::not_connected;
+        on_failure(outbound_tag, connect_result, ec);
+        co_return nullptr;
+    }
+
+    registry.put(outbound_tag, connect_result.outbound);
+    on_success(outbound_tag, connect_result);
+    start_reader(outbound_tag, connect_result.outbound);
+    co_return connect_result.outbound;
+}
+
+template <typename Registry, typename ShouldStopFn, typename WriteReplyFn, typename ErrorFn, typename CloseFn>
+boost::asio::awaitable<void> relay_managed_proxy_outbound_replies(const std::string& outbound_tag,
+                                                                  const std::shared_ptr<udp_proxy_outbound>& outbound,
+                                                                  Registry& registry,
+                                                                  proxy_outbound_reply_relay_context context,
+                                                                  ShouldStopFn should_stop,
+                                                                  WriteReplyFn write_reply,
+                                                                  ErrorFn on_error,
+                                                                  CloseFn close_outbound)
+{
+    co_await relay_proxy_outbound_replies(outbound, context, should_stop, write_reply, on_error);
+    registry.erase_if_current(outbound_tag, outbound);
+    co_await close_outbound(outbound);
+}
+
 struct datagram_idle_watchdog_context
 {
     boost::asio::steady_timer& timer;
