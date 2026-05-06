@@ -848,6 +848,10 @@ boost::asio::awaitable<tcp_outbound_connect_result> proxy_tcp_outbound::connect(
         bind_port_ = result.bind_port;
     }
     use_vision_stream_ = result.vision_accepted;
+    if (!use_vision_stream_)
+    {
+        vision_stream_.reset();
+    }
 
     co_return result;
 }

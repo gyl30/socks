@@ -261,7 +261,7 @@ void append_ipv6_address(std::vector<uint8_t>& out, const boost::asio::ip::addre
     {
         return false;
     }
-    return (feature_flags & ~relay::proxy::kKnownTcpFeatureFlags) == 0;
+    return feature_flags != 0 && (feature_flags & ~relay::proxy::kKnownTcpFeatureFlags) == 0;
 }
 
 }    // namespace

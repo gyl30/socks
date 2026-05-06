@@ -551,6 +551,19 @@ boost::asio::awaitable<void> proxy_reality_connection::enter_raw_read_mode(boost
 {
     co_await boost::asio::dispatch(strand_, boost::asio::use_awaitable);
     ec.clear();
+    if (!pending_plaintext_.empty())
+    {
+        ec = boost::asio::error::invalid_argument;
+        LOG_WARN("{} conn {} local {}:{} remote {}:{} stage enter_raw_read_mode pending_plaintext {}",
+                 log_event::kDataRecv,
+                 conn_id_,
+                 local_host_,
+                 local_port_,
+                 remote_host_,
+                 remote_port_,
+                 pending_plaintext_.size());
+        co_return;
+    }
     if (!raw_read_mode_)
     {
         auto buffered = reality_engine_.take_buffered_ciphertext();
@@ -564,17 +577,6 @@ boost::asio::awaitable<void> proxy_reality_connection::enter_raw_read_mode(boost
                  remote_host_,
                  remote_port_,
                  pending_raw_read_.size());
-    }
-    if (!pending_plaintext_.empty())
-    {
-        LOG_WARN("{} conn {} local {}:{} remote {}:{} stage enter_raw_read_mode pending_plaintext {}",
-                 log_event::kDataRecv,
-                 conn_id_,
-                 local_host_,
-                 local_port_,
-                 remote_host_,
-                 remote_port_,
-                 pending_plaintext_.size());
     }
     co_return;
 }
@@ -598,6 +600,7 @@ boost::asio::awaitable<std::size_t> proxy_reality_connection::read_raw(const std
                                                                        const uint32_t timeout_sec,
                                                                        boost::system::error_code& ec)
 {
+    ec.clear();
     co_await boost::asio::dispatch(strand_, boost::asio::use_awaitable);
     if (!raw_read_mode_)
     {
@@ -656,6 +659,7 @@ boost::asio::awaitable<std::size_t> proxy_reality_connection::read_raw(const std
 
 boost::asio::awaitable<void> proxy_reality_connection::write_raw(const std::span<const uint8_t> data, boost::system::error_code& ec)
 {
+    ec.clear();
     if (data.empty())
     {
         co_return;
@@ -682,6 +686,7 @@ boost::asio::awaitable<void> proxy_reality_connection::write_raw(const std::span
 
 boost::asio::awaitable<void> proxy_reality_connection::shutdown_send(boost::system::error_code& ec)
 {
+    ec.clear();
     co_await boost::asio::dispatch(strand_, boost::asio::use_awaitable);
     ec = socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
     if (ec == boost::asio::error::not_connected)

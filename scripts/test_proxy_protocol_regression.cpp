@@ -1,8 +1,8 @@
-#include <cstdint>
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
+#include <cstdint>
+#include <iostream>
 
 #include "proxy_protocol.h"
 
@@ -111,6 +111,8 @@ int main()
         require(connect_request.trace_id == domain_connect_request.trace_id, "decoded tcp connect request trace id mismatch") &&
         require(!decode_tcp_connect_request(packet.data(), packet.size() - 1U, connect_request),
                 "truncated tcp connect request should be rejected") &&
+        require((packet.push_back(0), !decode_tcp_connect_request(packet.data(), packet.size(), connect_request)),
+                "tcp connect request with explicit zero feature flags should be rejected") &&
         require(encode_tcp_connect_request(mapped_connect_request, packet), "failed to encode mapped tcp connect request") &&
         require(decode_tcp_connect_request(packet.data(), packet.size(), connect_request), "failed to decode mapped tcp connect request") &&
         require(connect_request.target_host == "127.0.0.1", "mapped tcp connect request host should normalize to ipv4") &&
@@ -132,6 +134,8 @@ int main()
         require(connect_reply.bind_host == "0.0.0.0", "decoded tcp connect reply default bind host mismatch") &&
         require(connect_reply.bind_port == 0, "decoded tcp connect reply default bind port mismatch") &&
         require(connect_reply.feature_flags == 0, "decoded legacy tcp connect reply should not set feature flags") &&
+        require((packet.push_back(0), !decode_tcp_connect_reply(packet.data(), packet.size(), connect_reply)),
+                "tcp connect reply with explicit zero feature flags should be rejected") &&
         require(encode_tcp_connect_reply(vision_connect_reply, packet), "failed to encode vision tcp connect reply") &&
         require(decode_tcp_connect_reply(packet.data(), packet.size(), connect_reply), "failed to decode vision tcp connect reply") &&
         require((connect_reply.feature_flags & kTcpFeatureVision) != 0, "decoded tcp connect reply vision flag missing") &&

@@ -1,10 +1,10 @@
 #ifndef TCP_OUTBOUND_STREAM_H
 #define TCP_OUTBOUND_STREAM_H
 
+#include <span>
 #include <memory>
 #include <string>
 #include <vector>
-#include <span>
 #include <cstddef>
 
 #include <boost/asio.hpp>

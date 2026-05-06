@@ -1,11 +1,11 @@
 #ifndef PROXY_PROTOCOL_H
 #define PROXY_PROTOCOL_H
 
-#include <string>
+#include <span>
 #include <vector>
+#include <string>
 #include <cstddef>
 #include <cstdint>
-#include <span>
 #include <string_view>
 
 namespace relay::proxy
