@@ -1,12 +1,11 @@
-#include "stream_relay_transport.h"
-
 #include <algorithm>
 
 #include <boost/asio/buffer.hpp>
-#include <boost/asio/redirect_error.hpp>
 #include <boost/asio/use_awaitable.hpp>
+#include <boost/asio/redirect_error.hpp>
 
 #include "net_utils.h"
+#include "stream_relay_transport.h"
 #include "proxy_stream_relay_transport.h"
 
 namespace relay

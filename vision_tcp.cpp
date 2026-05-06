@@ -1,20 +1,19 @@
-#include "vision_tcp.h"
-
-#include <algorithm>
-#include <cstddef>
-#include <cstdint>
 #include <span>
 #include <vector>
+#include <cstddef>
+#include <cstdint>
+#include <algorithm>
 
-#include <boost/asio/error.hpp>
-#include <boost/system/errc.hpp>
 extern "C"
 {
 #include <openssl/rand.h>
 }
+#include <boost/asio/error.hpp>
+#include <boost/system/errc.hpp>
 
-#include "constants.h"
 #include "tls/core.h"
+#include "constants.h"
+#include "vision_tcp.h"
 
 namespace relay::vision
 {

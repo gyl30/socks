@@ -1,11 +1,11 @@
 #ifndef VISION_TCP_H
 #define VISION_TCP_H
 
+#include <span>
 #include <array>
+#include <vector>
 #include <cstddef>
 #include <cstdint>
-#include <span>
-#include <vector>
 
 #include <boost/system/error_code.hpp>
 

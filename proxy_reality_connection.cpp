@@ -12,15 +12,15 @@
 
 #include "log.h"
 #include "config.h"
+#include "tls/core.h"
 #include "constants.h"
 #include "net_utils.h"
-#include "proxy_protocol.h"
-#include "proxy_reality_connection.h"
 #include "reality/types.h"
+#include "proxy_protocol.h"
 #include "reality/config_validation.h"
+#include "proxy_reality_connection.h"
 #include "reality/handshake/fingerprint.h"
 #include "reality/handshake/client_handshaker.h"
-#include "tls/core.h"
 
 namespace relay
 {

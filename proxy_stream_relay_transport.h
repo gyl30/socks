@@ -1,17 +1,17 @@
 #ifndef PROXY_STREAM_RELAY_TRANSPORT_H
 #define PROXY_STREAM_RELAY_TRANSPORT_H
 
-#include <memory>
 #include <span>
+#include <memory>
 #include <vector>
 
 #include <boost/asio/awaitable.hpp>
 
 #include "config.h"
-#include "proxy_protocol.h"
-#include "proxy_reality_connection.h"
-#include "stream_relay_transport.h"
 #include "vision_tcp.h"
+#include "proxy_protocol.h"
+#include "stream_relay_transport.h"
+#include "proxy_reality_connection.h"
 
 namespace relay
 {
