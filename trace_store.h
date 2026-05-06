@@ -272,6 +272,7 @@ class trace_store
     static uint64_t now_unix_ms();
     static uint64_t now_mono_ns();
     static void update_summary(trace_session_summary& summary, const trace_event& event);
+    [[nodiscard]] static trace_session_summary materialize_summary(const trace_session_summary& summary);
     static bool match_query(const trace_session_summary& summary, const trace_query& query);
     static bool match_query(const trace_event& event, const trace_event_query& query);
     static bool compare_summary(const trace_session_summary& lhs, const trace_session_summary& rhs, trace_sort_field field);

@@ -32,6 +32,12 @@ bool is_trace_session_finished(const trace_status status)
     return status != trace_status::kRunning;
 }
 
+bool has_stage(const std::map<std::string, uint64_t>& stage_counts, const trace_stage stage)
+{
+    const auto it = stage_counts.find(std::string(to_string(stage)));
+    return it != stage_counts.end() && it->second != 0;
+}
+
 void accumulate_stats(trace_stats& stats, const trace_session_summary& summary)
 {
     stats.total_events += summary.events_count;
@@ -362,67 +368,6 @@ uint64_t trace_store::now_mono_ns()
                                      .count());
 }
 
-void update_lifecycle(trace_lifecycle_summary& lifecycle, const trace_stage stage)
-{
-    switch (stage)
-    {
-        case trace_stage::kConnAccepted:
-            lifecycle.conn_accepted = true;
-            break;
-        case trace_stage::kHandshakeStart:
-            lifecycle.handshake_start = true;
-            break;
-        case trace_stage::kHandshakeDone:
-            lifecycle.handshake_done = true;
-            break;
-        case trace_stage::kAuthStart:
-            lifecycle.auth_start = true;
-            break;
-        case trace_stage::kAuthDone:
-            lifecycle.auth_done = true;
-            break;
-        case trace_stage::kRequestStart:
-            lifecycle.request_start = true;
-            break;
-        case trace_stage::kRequestDone:
-            lifecycle.request_done = true;
-            break;
-        case trace_stage::kRouteDecideStart:
-            lifecycle.route_decide_start = true;
-            break;
-        case trace_stage::kRouteDecideDone:
-            lifecycle.route_decide_done = true;
-            break;
-        case trace_stage::kOutboundConnectStart:
-            lifecycle.outbound_connect_start = true;
-            break;
-        case trace_stage::kOutboundConnectDone:
-            lifecycle.outbound_connect_done = true;
-            break;
-        case trace_stage::kRelayStart:
-            lifecycle.relay_start = true;
-            break;
-        case trace_stage::kDataSend:
-            lifecycle.data_send = true;
-            break;
-        case trace_stage::kDataRecv:
-            lifecycle.data_recv = true;
-            break;
-        case trace_stage::kSessionClose:
-            lifecycle.session_close = true;
-            break;
-        case trace_stage::kSessionError:
-            lifecycle.session_error = true;
-            break;
-        case trace_stage::kFallbackStart:
-            lifecycle.fallback_start = true;
-            break;
-        case trace_stage::kFallbackDone:
-            lifecycle.fallback_done = true;
-            break;
-    }
-}
-
 void trace_store::update_summary(trace_session_summary& summary, const trace_event& event)
 {
     if (summary.trace_id == 0)
@@ -443,7 +388,6 @@ void trace_store::update_summary(trace_session_summary& summary, const trace_eve
     summary.last_stage = event.stage;
     summary.last_result = event.result;
     summary.events_count++;
-    update_lifecycle(summary.lifecycle, event.stage);
     summary.stage_counts[std::string(to_string(event.stage))]++;
 
     if (!event.inbound_tag.empty() && summary.inbound_tag.empty())
@@ -535,6 +479,32 @@ void trace_store::update_summary(trace_session_summary& summary, const trace_eve
     {
         summary.status = trace_status::kSuccess;
     }
+}
+
+trace_session_summary trace_store::materialize_summary(const trace_session_summary& summary)
+{
+    auto materialized = summary;
+    materialized.lifecycle = {
+        .conn_accepted = has_stage(summary.stage_counts, trace_stage::kConnAccepted),
+        .handshake_start = has_stage(summary.stage_counts, trace_stage::kHandshakeStart),
+        .handshake_done = has_stage(summary.stage_counts, trace_stage::kHandshakeDone),
+        .auth_start = has_stage(summary.stage_counts, trace_stage::kAuthStart),
+        .auth_done = has_stage(summary.stage_counts, trace_stage::kAuthDone),
+        .request_start = has_stage(summary.stage_counts, trace_stage::kRequestStart),
+        .request_done = has_stage(summary.stage_counts, trace_stage::kRequestDone),
+        .route_decide_start = has_stage(summary.stage_counts, trace_stage::kRouteDecideStart),
+        .route_decide_done = has_stage(summary.stage_counts, trace_stage::kRouteDecideDone),
+        .outbound_connect_start = has_stage(summary.stage_counts, trace_stage::kOutboundConnectStart),
+        .outbound_connect_done = has_stage(summary.stage_counts, trace_stage::kOutboundConnectDone),
+        .relay_start = has_stage(summary.stage_counts, trace_stage::kRelayStart),
+        .data_send = has_stage(summary.stage_counts, trace_stage::kDataSend),
+        .data_recv = has_stage(summary.stage_counts, trace_stage::kDataRecv),
+        .session_close = has_stage(summary.stage_counts, trace_stage::kSessionClose),
+        .session_error = has_stage(summary.stage_counts, trace_stage::kSessionError),
+        .fallback_start = has_stage(summary.stage_counts, trace_stage::kFallbackStart),
+        .fallback_done = has_stage(summary.stage_counts, trace_stage::kFallbackDone),
+    };
+    return materialized;
 }
 
 bool trace_store::match_query(const trace_session_summary& summary, const trace_query& query)
@@ -644,17 +614,17 @@ std::optional<trace_session_snapshot> trace_store::get_trace(const uint64_t trac
     }
 
     trace_session_snapshot snapshot;
-    snapshot.summary = it->second.summary;
+    snapshot.summary = materialize_summary(it->second.summary);
     snapshot.events.assign(it->second.events.begin(), it->second.events.end());
     return snapshot;
 }
 
 std::vector<trace_session_summary> trace_store::list_traces(const trace_query& query) const
 {
-    std::vector<trace_session_summary> summaries;
+    std::vector<trace_session_summary> items;
     {
         std::shared_lock lock(mutex_);
-        summaries.reserve(insertion_order_.size());
+        items.reserve(insertion_order_.size());
         for (const auto trace_id : insertion_order_)
         {
             const auto it = sessions_.find(trace_id);
@@ -662,19 +632,12 @@ std::vector<trace_session_summary> trace_store::list_traces(const trace_query& q
             {
                 continue;
             }
-            summaries.push_back(it->second.summary);
+            if (!match_query(it->second.summary, query))
+            {
+                continue;
+            }
+            items.push_back(materialize_summary(it->second.summary));
         }
-    }
-
-    std::vector<trace_session_summary> items;
-    items.reserve(summaries.size());
-    for (const auto& summary : summaries)
-    {
-        if (!match_query(summary, query))
-        {
-            continue;
-        }
-        items.push_back(summary);
     }
 
     std::sort(
@@ -718,7 +681,14 @@ trace_event_page trace_store::list_events(const trace_event_query& query) const
                 return page;
             }
 
-            items.assign(it->second.events.begin(), it->second.events.end());
+            items.reserve(it->second.events.size());
+            for (const auto& event : it->second.events)
+            {
+                if (match_query(event, query))
+                {
+                    items.push_back(event);
+                }
+            }
         }
         else
         {
@@ -729,20 +699,16 @@ trace_event_page trace_store::list_events(const trace_event_query& query) const
                 {
                     continue;
                 }
-                items.insert(items.end(), it->second.events.begin(), it->second.events.end());
+                for (const auto& event : it->second.events)
+                {
+                    if (match_query(event, query))
+                    {
+                        items.push_back(event);
+                    }
+                }
             }
         }
     }
-
-    items.erase(
-        std::remove_if(
-            items.begin(),
-            items.end(),
-            [&query](const trace_event& event)
-            {
-                return !match_query(event, query);
-            }),
-        items.end());
 
     std::sort(
         items.begin(),
