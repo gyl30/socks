@@ -12,6 +12,8 @@
 #include "net_utils.h"
 #include "scoped_exit.h"
 #include "reality/policy/fallback_executor.h"
+#include "stream_relay.h"
+#include "stream_relay_transport.h"
 
 namespace reality
 {
@@ -82,7 +84,27 @@ boost::asio::awaitable<void> fallback_executor::run(
         co_return;
     }
 
-    co_await relay_bidirectional(*request.client_socket, upstream_socket, request);
+    boost::asio::steady_timer idle_timer(io_context_);
+    uint64_t last_activity_time_ms = relay::net::now_ms();
+    uint64_t tx_bytes = 0;
+    uint64_t rx_bytes = 0;
+    relay::tcp_socket_stream_relay_transport inbound_transport(*request.client_socket, cfg_.timeout);
+    relay::tcp_socket_stream_relay_transport outbound_transport(upstream_socket, cfg_.timeout);
+    relay::stream_relay_context relay_context{
+        .inbound = inbound_transport,
+        .outbound = outbound_transport,
+        .idle_timer = idle_timer,
+        .timeout = cfg_.timeout,
+        .trace_id = 0,
+        .conn_id = request.conn_id,
+        .log_event_name = relay::log_event::kFallback,
+        .inbound_to_outbound_stage = "client_to_target",
+        .outbound_to_inbound_stage = "target_to_client",
+        .last_activity_time_ms = last_activity_time_ms,
+        .tx_bytes = tx_bytes,
+        .rx_bytes = rx_bytes,
+    };
+    const auto relay_result = co_await relay::relay_streams(relay_context);
     LOG_INFO("{} conn {} remote {}:{} finished target {}:{}",
              relay::log_event::kFallback,
              request.conn_id,
@@ -90,6 +112,7 @@ boost::asio::awaitable<void> fallback_executor::run(
              request.remote_port,
              host,
              port);
+    (void)relay_result;
 }
 
 boost::asio::awaitable<void> fallback_executor::connect_target(boost::asio::ip::tcp::socket& upstream_socket,
@@ -193,90 +216,6 @@ boost::asio::awaitable<void> fallback_executor::write_initial_client_hello(boost
                  ec.message());
         co_return;
     }
-}
-
-boost::asio::awaitable<void> fallback_executor::relay_data(boost::asio::ip::tcp::socket& src,
-                                                           boost::asio::ip::tcp::socket& dst,
-                                                           const fallback_request& request,
-                                                           const char* direction) const
-{
-    const auto fallback_timeout = cfg_.timeout.idle;
-    boost::system::error_code ec;
-    std::vector<uint8_t> buf(constants::fallback::kRelayBufferSize);
-    for (;;)
-    {
-        const auto n = co_await relay::net::wait_read_some_with_timeout(src, boost::asio::buffer(buf), fallback_timeout, ec);
-        if (ec)
-        {
-            if (ec == boost::asio::error::eof)
-            {
-                boost::system::error_code shutdown_ec;
-                shutdown_ec = dst.shutdown(boost::asio::ip::tcp::socket::shutdown_send, shutdown_ec);
-                if (shutdown_ec && shutdown_ec != boost::asio::error::not_connected)
-                {
-                    LOG_WARN("{} conn {} remote {}:{} stage {} shutdown send error {}",
-                             relay::log_event::kFallback,
-                             request.conn_id,
-                             request.remote_addr,
-                             request.remote_port,
-                             direction,
-                             shutdown_ec.message());
-                }
-                co_return;
-            }
-            if (ec != boost::asio::error::operation_aborted && ec != boost::asio::error::connection_reset)
-            {
-                LOG_WARN("{} conn {} remote {}:{} stage {} read error {}",
-                         relay::log_event::kFallback,
-                         request.conn_id,
-                         request.remote_addr,
-                         request.remote_port,
-                         direction,
-                         ec.message());
-            }
-            close_tcp_socket(dst);
-            co_return;
-        }
-        if (n == 0)
-        {
-            co_return;
-        }
-
-        const auto written = co_await relay::net::wait_write_with_timeout(dst, boost::asio::buffer(buf.data(), n), fallback_timeout, ec);
-        if (ec)
-        {
-            LOG_WARN("{} conn {} remote {}:{} stage {} write error {}",
-                     relay::log_event::kFallback,
-                     request.conn_id,
-                     request.remote_addr,
-                     request.remote_port,
-                     direction,
-                     ec.message());
-            co_return;
-        }
-        if (written != n)
-        {
-            ec = boost::asio::error::fault;
-            LOG_WARN("{} conn {} remote {}:{} stage {} short write {} of {}",
-                     relay::log_event::kFallback,
-                     request.conn_id,
-                     request.remote_addr,
-                     request.remote_port,
-                     direction,
-                     written,
-                     n);
-            co_return;
-        }
-    }
-}
-
-boost::asio::awaitable<void> fallback_executor::relay_bidirectional(boost::asio::ip::tcp::socket& client_socket,
-                                                                    boost::asio::ip::tcp::socket& upstream_socket,
-                                                                    const fallback_request& request) const
-{
-    using boost::asio::experimental::awaitable_operators::operator&&;
-    co_await (relay_data(client_socket, upstream_socket, request, "client_to_target") &&
-              relay_data(upstream_socket, client_socket, request, "target_to_client"));
 }
 
 }    // namespace reality

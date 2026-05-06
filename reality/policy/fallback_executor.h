@@ -37,15 +37,6 @@ class fallback_executor
                                                                           const std::vector<uint8_t>& client_hello_record,
                                                                           boost::system::error_code& ec) const;
 
-    [[nodiscard]] boost::asio::awaitable<void> relay_data(boost::asio::ip::tcp::socket& src,
-                                                          boost::asio::ip::tcp::socket& dst,
-                                                          const fallback_request& request,
-                                                          const char* direction) const;
-
-    [[nodiscard]] boost::asio::awaitable<void> relay_bidirectional(boost::asio::ip::tcp::socket& client_socket,
-                                                                   boost::asio::ip::tcp::socket& upstream_socket,
-                                                                   const fallback_request& request) const;
-
     boost::asio::io_context& io_context_;
     const relay::config& cfg_;
 };
