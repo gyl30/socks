@@ -394,7 +394,7 @@ boost::asio::awaitable<std::size_t> vision_connection_tcp_stream::read(std::span
         {
             if (!parsed.content.empty())
             {
-                (void)tracker_.process(read_direction_, parsed.content);
+                tracker_.observe(read_direction_, parsed.content);
                 pending_read_data_ = std::move(parsed.content);
                 pending_read_offset_ = 0;
                 pending_read_switch_raw_ = parsed.cmd == vision::command::kDirect;

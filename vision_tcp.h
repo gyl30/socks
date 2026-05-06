@@ -84,6 +84,7 @@ class tls_tracker
 {
    public:
     [[nodiscard]] std::vector<write_segment> process(direction dir, std::span<const uint8_t> data);
+    void observe(direction dir, std::span<const uint8_t> data);
 
     [[nodiscard]] bool tls13_confirmed() const { return tls13_confirmed_; }
     [[nodiscard]] bool direct_disabled() const { return direct_disabled_; }
@@ -92,10 +93,13 @@ class tls_tracker
 
    private:
     void analyze_buffer(direction dir);
+    void analyze_handshake_payload(direction dir, std::span<const uint8_t> payload);
+    void analyze_handshake_messages(direction dir);
     void disable_direct();
     [[nodiscard]] bool budget_exceeded() const;
 
     std::array<std::vector<uint8_t>, 2> buffers_;
+    std::array<std::vector<uint8_t>, 2> handshake_buffers_;
     std::array<bool, 2> direct_write_mode_{false, false};
     std::array<bool, 2> outer_plain_mode_{false, false};
     bool client_hello_seen_ = false;

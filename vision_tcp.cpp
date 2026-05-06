@@ -2,6 +2,7 @@
 #include <vector>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <algorithm>
 
 extern "C"
@@ -126,7 +127,7 @@ void append_u16(std::vector<uint8_t>& out, const std::size_t value)
     return record_len != 0 && record_len <= constants::tls_limits::kMaxCiphertextRecordLen;
 }
 
-[[nodiscard]] bool starts_with_complete_application_record(const std::span<const uint8_t> data)
+[[nodiscard]] bool is_application_record_header(const std::span<const uint8_t> data)
 {
     if (data.size() < tls::kTlsRecordHeaderSize || data[0] != tls::kContentTypeApplicationData)
     {
@@ -141,7 +142,52 @@ void append_u16(std::vector<uint8_t>& out, const std::size_t value)
     {
         return false;
     }
-    return data.size() >= tls::kTlsRecordHeaderSize + record_len;
+    return true;
+}
+
+[[nodiscard]] bool complete_record_at(const std::span<const uint8_t> data, const std::size_t pos, std::size_t& record_size)
+{
+    record_size = 0;
+    if (data.size() - pos < tls::kTlsRecordHeaderSize)
+    {
+        return false;
+    }
+    const auto header = data.subspan(pos, tls::kTlsRecordHeaderSize);
+    if (!looks_like_tls_record_header(header))
+    {
+        return false;
+    }
+    record_size = tls::kTlsRecordHeaderSize + static_cast<std::size_t>(read_u16(header, 3));
+    return data.size() - pos >= record_size;
+}
+
+[[nodiscard]] std::optional<std::size_t> find_direct_offset(const std::span<const uint8_t> data, const bool tls13_confirmed)
+{
+    if (!tls13_confirmed)
+    {
+        return std::nullopt;
+    }
+
+    for (std::size_t pos = 0; pos < data.size();)
+    {
+        if (data.size() - pos < tls::kTlsRecordHeaderSize)
+        {
+            return std::nullopt;
+        }
+        const auto tail = data.subspan(pos);
+        if (is_application_record_header(tail))
+        {
+            return pos;
+        }
+
+        std::size_t record_size = 0;
+        if (!complete_record_at(data, pos, record_size))
+        {
+            return std::nullopt;
+        }
+        pos += record_size;
+    }
+    return std::nullopt;
 }
 
 enum class server_hello_status : uint8_t
@@ -343,15 +389,7 @@ std::vector<write_segment> tls_tracker::process(const direction dir, const std::
         return segments;
     }
 
-    if (!tls13_confirmed_ && !direct_disabled_)
-    {
-        inspected_chunks_++;
-        inspected_bytes_ += data.size();
-    }
-
-    auto& buffer = buffers_[dir_index(dir)];
-    buffer.insert(buffer.end(), data.begin(), data.end());
-    analyze_buffer(dir);
+    observe(dir, data);
 
     const auto idx = dir_index(dir);
     if (!tls13_confirmed_ && !direct_disabled_ && budget_exceeded())
@@ -361,19 +399,46 @@ std::vector<write_segment> tls_tracker::process(const direction dir, const std::
     if (direct_disabled_)
     {
         outer_plain_mode_[idx] = true;
+        buffers_[idx].clear();
+        handshake_buffers_[idx].clear();
         segments.push_back(make_segment(command::kEnd, data, false, true));
         return segments;
     }
 
-    if (tls13_confirmed_ && starts_with_complete_application_record(data))
+    const auto direct_offset = find_direct_offset(data, tls13_confirmed_);
+    if (direct_offset.has_value())
     {
         direct_write_mode_[idx] = true;
-        segments.push_back(make_segment(command::kDirect, data, true, false));
+        buffers_[idx].clear();
+        handshake_buffers_[idx].clear();
+        if (*direct_offset != 0)
+        {
+            segments.push_back(make_segment(command::kContinue, data.subspan(0, *direct_offset), false, false));
+        }
+        segments.push_back(make_segment(command::kDirect, data.subspan(*direct_offset), true, false));
         return segments;
     }
 
     segments.push_back(make_segment(command::kContinue, data, false, false));
     return segments;
+}
+
+void tls_tracker::observe(const direction dir, const std::span<const uint8_t> data)
+{
+    if (data.empty() || direct_write_mode(dir) || outer_plain_mode(dir))
+    {
+        return;
+    }
+
+    if (!tls13_confirmed_ && !direct_disabled_)
+    {
+        inspected_chunks_++;
+        inspected_bytes_ += data.size();
+    }
+
+    auto& buffer = buffers_[dir_index(dir)];
+    buffer.insert(buffer.end(), data.begin(), data.end());
+    analyze_buffer(dir);
 }
 
 bool tls_tracker::direct_write_mode(const direction dir) const { return direct_write_mode_[dir_index(dir)]; }
@@ -409,13 +474,70 @@ void tls_tracker::analyze_buffer(const direction dir)
         const auto payload = record.subspan(tls::kTlsRecordHeaderSize);
         if (record[0] == tls::kContentTypeHandshake)
         {
-            if (dir == direction::kClientToServer && !payload.empty() && payload[0] == 0x01)
+            analyze_handshake_payload(dir, payload);
+        }
+
+        buffer.erase(buffer.begin(), buffer.begin() + static_cast<std::ptrdiff_t>(record_size));
+        if (direct_disabled_)
+        {
+            buffer.clear();
+            return;
+        }
+    }
+}
+
+void tls_tracker::analyze_handshake_payload(const direction dir, const std::span<const uint8_t> payload)
+{
+    auto& handshake_buffer = handshake_buffers_[dir_index(dir)];
+    if (payload.size() > constants::tls_limits::kMaxHandshakeReassembleBuffer - handshake_buffer.size())
+    {
+        disable_direct();
+        handshake_buffer.clear();
+        return;
+    }
+    handshake_buffer.insert(handshake_buffer.end(), payload.begin(), payload.end());
+    analyze_handshake_messages(dir);
+}
+
+void tls_tracker::analyze_handshake_messages(const direction dir)
+{
+    auto& handshake_buffer = handshake_buffers_[dir_index(dir)];
+    for (;;)
+    {
+        if (handshake_buffer.size() < 4U)
+        {
+            return;
+        }
+
+        const auto handshake_len = (static_cast<std::size_t>(handshake_buffer[1]) << 16U) |
+                                   (static_cast<std::size_t>(handshake_buffer[2]) << 8U) |
+                                   static_cast<std::size_t>(handshake_buffer[3]);
+        if (handshake_len > constants::tls_limits::kMaxHandshakeMessageSize)
+        {
+            disable_direct();
+            handshake_buffer.clear();
+            return;
+        }
+        const auto message_size = 4U + handshake_len;
+        if (handshake_buffer.size() < message_size)
+        {
+            return;
+        }
+
+        const std::span<const uint8_t> message(handshake_buffer.data(), message_size);
+        if (dir == direction::kClientToServer && message[0] == 0x01)
+        {
+            client_hello_seen_ = true;
+        }
+        else if (dir == direction::kServerToClient && message[0] == 0x02)
+        {
+            if (!client_hello_seen_)
             {
-                client_hello_seen_ = true;
+                disable_direct();
             }
-            else if (dir == direction::kServerToClient && !payload.empty() && payload[0] == 0x02)
+            else
             {
-                const auto status = parse_server_hello(payload);
+                const auto status = parse_server_hello(message);
                 if (status == server_hello_status::kTls13)
                 {
                     tls13_confirmed_ = true;
@@ -427,10 +549,10 @@ void tls_tracker::analyze_buffer(const direction dir)
             }
         }
 
-        buffer.erase(buffer.begin(), buffer.begin() + static_cast<std::ptrdiff_t>(record_size));
+        handshake_buffer.erase(handshake_buffer.begin(), handshake_buffer.begin() + static_cast<std::ptrdiff_t>(message_size));
         if (direct_disabled_)
         {
-            buffer.clear();
+            handshake_buffer.clear();
             return;
         }
     }
