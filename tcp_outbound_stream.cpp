@@ -90,6 +90,8 @@ class proxy_tcp_outbound final : public tcp_outbound_stream
     std::string bind_host_ = "unknown";
     uint16_t bind_port_ = 0;
     proxy_connection_tcp_stream stream_;
+    vision_connection_tcp_stream vision_stream_;
+    bool use_vision_stream_ = false;
 };
 
 class socks_tcp_outbound final : public tcp_outbound_stream
@@ -787,7 +789,9 @@ boost::asio::awaitable<tcp_outbound_connect_result> proxy_tcp_outbound::connect(
     target_port_ = port;
     bind_host_ = "unknown";
     bind_port_ = 0;
+    use_vision_stream_ = false;
     stream_.reset();
+    vision_stream_.reset();
     boost::system::error_code ec;
     auto connection = co_await proxy_reality_connection::connect(executor_, cfg_, outbound_tag_, connect_mark_, conn_id_, ec);
     if (connection == nullptr)
@@ -808,6 +812,7 @@ boost::asio::awaitable<tcp_outbound_connect_result> proxy_tcp_outbound::connect(
         co_return result;
     }
     stream_.reset(connection);
+    vision_stream_.reset(connection, vision::direction::kClientToServer, vision::direction::kServerToClient);
 
     LOG_INFO("{} trace {:016x} conn {} target {}:{} route proxy out_tag {} connected reality local {}:{} remote {}:{}",
              log_event::kRoute,
@@ -825,6 +830,7 @@ boost::asio::awaitable<tcp_outbound_connect_result> proxy_tcp_outbound::connect(
     {
         set_connect_failure(result, ec);
         co_await stream_.close();
+        vision_stream_.reset();
         co_return result;
     }
 
@@ -832,6 +838,7 @@ boost::asio::awaitable<tcp_outbound_connect_result> proxy_tcp_outbound::connect(
     if (result.ec)
     {
         co_await stream_.close();
+        vision_stream_.reset();
         co_return result;
     }
 
@@ -840,13 +847,22 @@ boost::asio::awaitable<tcp_outbound_connect_result> proxy_tcp_outbound::connect(
         bind_host_ = result.bind_addr.to_string();
         bind_port_ = result.bind_port;
     }
+    use_vision_stream_ = result.vision_accepted;
 
     co_return result;
 }
 
 boost::asio::awaitable<std::size_t> proxy_tcp_outbound::read(std::span<uint8_t> buf, boost::system::error_code& ec)
 {
-    const auto bytes_read = co_await stream_.read(buf, 0, ec);
+    std::size_t bytes_read = 0;
+    if (use_vision_stream_)
+    {
+        bytes_read = co_await vision_stream_.read(buf, 0, ec);
+    }
+    else
+    {
+        bytes_read = co_await stream_.read(buf, 0, ec);
+    }
     if (ec == boost::asio::error::not_connected)
     {
         ec = boost::asio::error::not_connected;
@@ -869,11 +885,25 @@ boost::asio::awaitable<std::size_t> proxy_tcp_outbound::read(std::span<uint8_t> 
 
 boost::asio::awaitable<std::size_t> proxy_tcp_outbound::write(std::span<const uint8_t> data, boost::system::error_code& ec)
 {
+    if (use_vision_stream_)
+    {
+        co_return co_await vision_stream_.write(data, ec);
+    }
     co_return co_await stream_.write(data, ec);
 }
 
 boost::asio::awaitable<void> proxy_tcp_outbound::shutdown_send(boost::system::error_code& ec)
 {
+    if (use_vision_stream_)
+    {
+        if (!vision_stream_.has_connection())
+        {
+            ec.clear();
+            co_return;
+        }
+        co_await vision_stream_.shutdown_send(ec);
+        co_return;
+    }
     if (!stream_.has_connection())
     {
         ec.clear();
@@ -884,7 +914,16 @@ boost::asio::awaitable<void> proxy_tcp_outbound::shutdown_send(boost::system::er
 
 boost::asio::awaitable<void> proxy_tcp_outbound::close()
 {
-    co_await stream_.close();
+    if (vision_stream_.has_connection())
+    {
+        co_await vision_stream_.close();
+    }
+    else
+    {
+        co_await stream_.close();
+    }
+    stream_.reset();
+    use_vision_stream_ = false;
     co_return;
 }
 
