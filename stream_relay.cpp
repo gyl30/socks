@@ -150,6 +150,7 @@ boost::asio::awaitable<void> relay_direction(stream_relay_context& context,
             co_await apply_close_policy(context, reason);
             break;
         }
+        source.on_read_delivered(bytes_written);
         bytes_counter += bytes_written;
         context.last_activity_time_ms = net::now_ms();
         if (is_tx_direction)

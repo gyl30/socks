@@ -19,7 +19,7 @@
 #include "constants.h"
 #include "net_utils.h"
 #include "request_context.h"
-#include "task_group.h"
+#include "stream_relay.h"
 #include "tcp_connect_flow.h"
 #include "tun_tcp_session.h"
 
@@ -40,6 +40,200 @@ void tcp_recved_all(tcp_pcb* pcb, std::size_t size)
 }
 
 }    // namespace
+
+class tun_stream_relay_transport final : public stream_relay_transport
+{
+   public:
+    explicit tun_stream_relay_transport(tun_tcp_session& session) : session_(session) {}
+
+    [[nodiscard]] boost::asio::awaitable<std::size_t> read(std::span<uint8_t> buffer, boost::system::error_code& ec) override;
+    [[nodiscard]] boost::asio::awaitable<std::size_t> write(std::span<const uint8_t> data, boost::system::error_code& ec) override;
+    boost::asio::awaitable<void> shutdown_send(boost::system::error_code& ec) override;
+    boost::asio::awaitable<void> close() override;
+    void on_read_delivered(const std::size_t bytes) override;
+
+   private:
+    [[nodiscard]] boost::system::error_code make_client_io_error() const;
+    [[nodiscard]] std::size_t consume_pending_read_data(std::span<uint8_t> buffer);
+    void load_pending_read_data();
+    void maybe_reset_pending_read_data();
+
+   private:
+    tun_tcp_session& session_;
+    std::vector<uint8_t> pending_read_data_;
+    std::size_t pending_read_offset_ = 0;
+    std::size_t pending_read_acked_ = 0;
+};
+
+boost::system::error_code tun_stream_relay_transport::make_client_io_error() const
+{
+    if (session_.close_reason_ == stream_relay_result::close_reason::kInboundError)
+    {
+        return boost::asio::error::connection_reset;
+    }
+    if (session_.close_reason_ == stream_relay_result::close_reason::kInboundEof)
+    {
+        return boost::asio::error::eof;
+    }
+    return boost::asio::error::operation_aborted;
+}
+
+std::size_t tun_stream_relay_transport::consume_pending_read_data(const std::span<uint8_t> buffer)
+{
+    const auto remaining = pending_read_data_.size() - pending_read_offset_;
+    const auto size = std::min(buffer.size(), remaining);
+    std::copy_n(
+        pending_read_data_.data() + static_cast<std::ptrdiff_t>(pending_read_offset_), static_cast<std::ptrdiff_t>(size), buffer.data());
+    pending_read_offset_ += size;
+    maybe_reset_pending_read_data();
+    return size;
+}
+
+void tun_stream_relay_transport::load_pending_read_data()
+{
+    if (session_.queue_ == nullptr)
+    {
+        return;
+    }
+
+    auto* packet = session_.queue_;
+    session_.queue_ = nullptr;
+    pending_read_data_ = tun::pbuf_to_vector(packet);
+    pbuf_free(packet);
+    pending_read_offset_ = 0;
+    pending_read_acked_ = 0;
+}
+
+void tun_stream_relay_transport::maybe_reset_pending_read_data()
+{
+    if (pending_read_offset_ == pending_read_data_.size() && pending_read_acked_ == pending_read_data_.size())
+    {
+        pending_read_data_.clear();
+        pending_read_offset_ = 0;
+        pending_read_acked_ = 0;
+    }
+}
+
+boost::asio::awaitable<std::size_t> tun_stream_relay_transport::read(std::span<uint8_t> buffer, boost::system::error_code& ec)
+{
+    ec.clear();
+    if (buffer.empty())
+    {
+        co_return 0;
+    }
+
+    for (;;)
+    {
+        if (pending_read_offset_ < pending_read_data_.size())
+        {
+            co_return consume_pending_read_data(buffer);
+        }
+
+        if (session_.queue_ != nullptr)
+        {
+            load_pending_read_data();
+            continue;
+        }
+
+        if (session_.peer_eof_)
+        {
+            ec = boost::asio::error::eof;
+            co_return 0;
+        }
+
+        if (session_.pcb_ == nullptr || session_.stopped_)
+        {
+            ec = make_client_io_error();
+            co_return 0;
+        }
+
+        co_await session_.wait_client_event();
+    }
+}
+
+boost::asio::awaitable<std::size_t> tun_stream_relay_transport::write(std::span<const uint8_t> data, boost::system::error_code& ec)
+{
+    ec.clear();
+    if (data.empty())
+    {
+        co_return 0;
+    }
+
+    std::size_t offset = 0;
+    while (offset < data.size())
+    {
+        if (session_.pcb_ == nullptr || session_.stopped_)
+        {
+            ec = make_client_io_error();
+            co_return 0;
+        }
+
+        const auto writable = static_cast<std::size_t>(tcp_sndbuf(session_.pcb_));
+        if (writable == 0)
+        {
+            co_await session_.wait_send_event();
+            continue;
+        }
+
+        const auto chunk =
+            std::min<std::size_t>({data.size() - offset, writable, static_cast<std::size_t>(std::numeric_limits<u16_t>::max())});
+        const auto write_err = tcp_write(session_.pcb_,
+                                         data.data() + static_cast<std::ptrdiff_t>(offset),
+                                         static_cast<u16_t>(chunk),
+                                         TCP_WRITE_FLAG_COPY);
+        if (write_err == ERR_MEM)
+        {
+            co_await session_.wait_send_event();
+            continue;
+        }
+        if (write_err != ERR_OK)
+        {
+            ec = boost::asio::error::connection_reset;
+            co_return 0;
+        }
+
+        const auto output_err = tcp_output(session_.pcb_);
+        if (output_err != ERR_OK && output_err != ERR_MEM)
+        {
+            ec = boost::asio::error::connection_reset;
+            co_return 0;
+        }
+
+        offset += chunk;
+    }
+
+    co_return data.size();
+}
+
+boost::asio::awaitable<void> tun_stream_relay_transport::shutdown_send(boost::system::error_code& ec)
+{
+    ec.clear();
+    if (session_.pcb_ == nullptr || session_.stopped_)
+    {
+        co_return;
+    }
+
+    session_.graceful_shutdown_to_client();
+    co_return;
+}
+
+boost::asio::awaitable<void> tun_stream_relay_transport::close()
+{
+    session_.close_client_connection(true);
+    co_return;
+}
+
+void tun_stream_relay_transport::on_read_delivered(const std::size_t bytes)
+{
+    if (bytes == 0)
+    {
+        return;
+    }
+
+    pending_read_acked_ += bytes;
+    tcp_recved_all(session_.pcb_, bytes);
+    maybe_reset_pending_read_data();
+}
 
 tun_tcp_session::tun_tcp_session(const boost::asio::any_io_executor& executor,
                                  std::shared_ptr<router> router,
@@ -244,35 +438,21 @@ boost::asio::awaitable<bool> tun_tcp_session::connect_backend(const route_decisi
 
 boost::asio::awaitable<void> tun_tcp_session::relay_backend(const std::shared_ptr<tcp_outbound_stream>& backend)
 {
-    using boost::asio::experimental::awaitable_operators::operator||;
-    auto executor = co_await boost::asio::this_coro::executor;
-    auto& io_context = static_cast<boost::asio::io_context&>(executor.context());
-    task_group tg(io_context);
-    auto self = shared_from_this();
-
-    tg.spawn([self, backend]() -> boost::asio::awaitable<void>
-    {
-        co_await self->client_to_outbound(backend);
-    });
-    tg.spawn([self, backend]() -> boost::asio::awaitable<void>
-    {
-        co_await self->outbound_to_client(backend);
-    });
-
-    if (cfg_.timeout.idle == 0)
-    {
-        const auto wait_ec = co_await tg.async_wait();
-        (void)wait_ec;
-        co_return;
-    }
-
-    auto wait_or_timeout = co_await (tg.async_wait() || idle_watchdog());
-    if (wait_or_timeout.index() == 1)
-    {
-        tg.emit(boost::asio::cancellation_type::all);
-        const auto wait_ec = co_await tg.async_wait();
-        (void)wait_ec;
-    }
+    tun_stream_relay_transport inbound_transport(*this);
+    stream_relay_context relay_context{
+        .inbound = inbound_transport,
+        .outbound = *backend,
+        .idle_timer = idle_timer_,
+        .timeout = cfg_.timeout,
+        .trace_id = trace_id_,
+        .conn_id = conn_id_,
+        .log_event_name = log_event::kRoute,
+        .last_activity_time_ms = last_activity_time_ms_,
+        .tx_bytes = tx_bytes_,
+        .rx_bytes = rx_bytes_,
+    };
+    const auto relay_result = co_await relay_streams(relay_context);
+    close_reason_ = relay_result.reason;
 }
 
 boost::asio::awaitable<void> tun_tcp_session::finish_connected_session(
@@ -495,200 +675,6 @@ boost::asio::awaitable<void> tun_tcp_session::run()
     co_await finish_connected_session(decision, backend);
 }
 
-boost::asio::awaitable<void> tun_tcp_session::client_to_outbound(const std::shared_ptr<tcp_outbound_stream>& backend)
-{
-    boost::system::error_code ec;
-    for (;;)
-    {
-        while (queue_ == nullptr && !peer_eof_ && pcb_ != nullptr && !stopped_)
-        {
-            co_await wait_client_event();
-        }
-
-        if (queue_ != nullptr)
-        {
-            pbuf* packet = queue_;
-            queue_ = nullptr;
-            auto payload = tun::pbuf_to_vector(packet);
-            pbuf_free(packet);
-
-            if (!payload.empty())
-            {
-                co_await backend->write(std::span<const uint8_t>(payload.data(), payload.size()), ec);
-                if (ec)
-                {
-                    const auto reason = classify_backend_io_error(ec);
-                    note_close_reason(reason);
-                    if (reason != stream_relay_result::close_reason::kStopped)
-                    {
-                        LOG_WARN("{} trace {:016x} conn {} client {}:{} target {}:{} stage client_to_outbound write backend failed {}",
-                                 log_event::kDataSend,
-                                 trace_id_,
-                                 conn_id_,
-                                 client_addr_,
-                                 client_port_,
-                                 target_addr_,
-                                 target_port_,
-                                 ec.message());
-                    }
-                    close_client_connection(true);
-                    co_return;
-                }
-                tx_bytes_ += payload.size();
-                trace_store::instance().add_live_tx_bytes(payload.size());
-                last_activity_time_ms_ = net::now_ms();
-                if (pcb_ != nullptr)
-                {
-                    tcp_recved_all(pcb_, payload.size());
-                }
-            }
-            continue;
-        }
-
-        if (peer_eof_)
-        {
-            const auto reason = stream_relay_result::close_reason::kInboundEof;
-            note_close_reason(reason);
-            co_await apply_backend_close_reason(backend, reason);
-            co_return;
-        }
-
-        co_return;
-    }
-}
-
-boost::asio::awaitable<void> tun_tcp_session::outbound_to_client(const std::shared_ptr<tcp_outbound_stream>& backend)
-{
-    std::vector<uint8_t> buffer(8192);
-    boost::system::error_code ec;
-
-    for (;;)
-    {
-        const auto bytes_recv = co_await backend->read(std::span<uint8_t>(buffer.data(), buffer.size()), ec);
-        if (ec)
-        {
-            const auto reason = classify_backend_io_error(ec);
-            note_close_reason(reason);
-            if (reason == stream_relay_result::close_reason::kOutboundEof)
-            {
-                apply_client_close_reason(reason);
-            }
-            else if (reason == stream_relay_result::close_reason::kStopped)
-            {
-                apply_client_close_reason(reason);
-            }
-            else
-            {
-                LOG_WARN("{} trace {:016x} conn {} client {}:{} target {}:{} stage outbound_to_client read backend failed {}",
-                         log_event::kDataRecv,
-                         trace_id_,
-                         conn_id_,
-                         client_addr_,
-                         client_port_,
-                         target_addr_,
-                         target_port_,
-                         ec.message());
-                apply_client_close_reason(reason);
-            }
-            co_return;
-        }
-
-        std::size_t offset = 0;
-        while (offset < bytes_recv)
-        {
-            if (pcb_ == nullptr || stopped_)
-            {
-                co_return;
-            }
-
-            const auto writable = static_cast<std::size_t>(tcp_sndbuf(pcb_));
-            if (writable == 0)
-            {
-                co_await wait_send_event();
-                continue;
-            }
-
-            const auto chunk = std::min<std::size_t>({bytes_recv - offset, writable, static_cast<std::size_t>(std::numeric_limits<u16_t>::max())});
-            const auto write_err =
-                tcp_write(pcb_, buffer.data() + static_cast<std::ptrdiff_t>(offset), static_cast<u16_t>(chunk), TCP_WRITE_FLAG_COPY);
-            if (write_err == ERR_MEM)
-            {
-                co_await wait_send_event();
-                continue;
-            }
-            if (write_err != ERR_OK)
-            {
-                const auto reason = stream_relay_result::close_reason::kInboundError;
-                note_close_reason(reason);
-                LOG_WARN("{} trace {:016x} conn {} client {}:{} target {}:{} stage outbound_to_client tcp_write failed {}",
-                         log_event::kDataRecv,
-                         trace_id_,
-                         conn_id_,
-                         client_addr_,
-                         client_port_,
-                         target_addr_,
-                         target_port_,
-                         tun::lwip_error_message(write_err));
-                apply_client_close_reason(reason);
-                co_return;
-            }
-
-            const auto output_err = tcp_output(pcb_);
-            if (output_err != ERR_OK && output_err != ERR_MEM)
-            {
-                const auto reason = stream_relay_result::close_reason::kInboundError;
-                note_close_reason(reason);
-                LOG_WARN("{} trace {:016x} conn {} client {}:{} target {}:{} stage outbound_to_client tcp_output failed {}",
-                         log_event::kDataRecv,
-                         trace_id_,
-                         conn_id_,
-                         client_addr_,
-                         client_port_,
-                         target_addr_,
-                         target_port_,
-                         tun::lwip_error_message(output_err));
-                apply_client_close_reason(reason);
-                co_return;
-            }
-
-            offset += chunk;
-            rx_bytes_ += chunk;
-            trace_store::instance().add_live_rx_bytes(chunk);
-            last_activity_time_ms_ = net::now_ms();
-        }
-    }
-}
-
-boost::asio::awaitable<void> tun_tcp_session::idle_watchdog()
-{
-    const auto idle_timeout_ms = net::timeout_seconds_to_milliseconds(cfg_.timeout.idle);
-    while (!stopped_)
-    {
-        idle_timer_.expires_after(std::chrono::seconds(1));
-        const auto [wait_ec] = co_await idle_timer_.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
-        if (wait_ec)
-        {
-            co_return;
-        }
-
-        if (net::now_ms() - last_activity_time_ms_ > idle_timeout_ms)
-        {
-            const auto reason = stream_relay_result::close_reason::kIdleTimeout;
-            note_close_reason(reason);
-            LOG_INFO("{} trace {:016x} conn {} tun tcp idle timeout client {}:{} target {}:{}",
-                     log_event::kTimeout,
-                     trace_id_,
-                     conn_id_,
-                     client_addr_,
-                     client_port_,
-                     target_addr_,
-                     target_port_);
-            apply_client_close_reason(reason);
-            co_return;
-        }
-    }
-}
-
 boost::asio::awaitable<void> tun_tcp_session::wait_for_close_completion()
 {
     while (close_pending_ && pcb_ != nullptr && !stopped_)
@@ -728,78 +714,6 @@ void tun_tcp_session::note_close_reason(const stream_relay_result::close_reason 
     {
         close_reason_ = reason;
     }
-}
-
-void tun_tcp_session::apply_client_close_action(const stream_relay_result::close_action action)
-{
-    switch (action)
-    {
-        case stream_relay_result::close_action::kNone:
-            return;
-        case stream_relay_result::close_action::kShutdownSend:
-            graceful_shutdown_to_client();
-            return;
-        case stream_relay_result::close_action::kClose:
-            close_client_connection(false);
-            return;
-        case stream_relay_result::close_action::kAbort:
-            close_client_connection(true);
-            return;
-    }
-}
-
-void tun_tcp_session::apply_client_close_reason(const stream_relay_result::close_reason reason)
-{
-    const auto policy = default_close_policy(reason);
-    auto action = policy.inbound_action;
-    if (action == stream_relay_result::close_action::kClose)
-    {
-        action = stream_relay_result::close_action::kAbort;
-    }
-    apply_client_close_action(action);
-}
-
-boost::asio::awaitable<void> tun_tcp_session::apply_backend_close_action(const std::shared_ptr<tcp_outbound_stream>& backend,
-                                                                         const stream_relay_result::close_action action)
-{
-    if (backend == nullptr)
-    {
-        co_return;
-    }
-
-    boost::system::error_code ec;
-    switch (action)
-    {
-        case stream_relay_result::close_action::kNone:
-            co_return;
-        case stream_relay_result::close_action::kShutdownSend:
-            co_await backend->shutdown_send(ec);
-            co_return;
-        case stream_relay_result::close_action::kClose:
-        case stream_relay_result::close_action::kAbort:
-            co_await backend->close();
-            co_return;
-    }
-}
-
-boost::asio::awaitable<void> tun_tcp_session::apply_backend_close_reason(const std::shared_ptr<tcp_outbound_stream>& backend,
-                                                                         const stream_relay_result::close_reason reason)
-{
-    const auto policy = default_close_policy(reason);
-    co_await apply_backend_close_action(backend, policy.outbound_action);
-}
-
-stream_relay_result::close_reason tun_tcp_session::classify_backend_io_error(const boost::system::error_code& ec) const
-{
-    if (ec == boost::asio::error::eof)
-    {
-        return stream_relay_result::close_reason::kOutboundEof;
-    }
-    if (net::is_basic_close_error(ec))
-    {
-        return stream_relay_result::close_reason::kStopped;
-    }
-    return stream_relay_result::close_reason::kOutboundError;
 }
 
 void tun_tcp_session::attach_lwip_callbacks()

@@ -1,6 +1,7 @@
 #ifndef STREAM_RELAY_TRANSPORT_H
 #define STREAM_RELAY_TRANSPORT_H
 
+#include <cstddef>
 #include <span>
 
 #include <boost/asio.hpp>
@@ -20,6 +21,7 @@ class stream_relay_transport
     [[nodiscard]] virtual boost::asio::awaitable<std::size_t> write(std::span<const uint8_t> data, boost::system::error_code& ec) = 0;
     virtual boost::asio::awaitable<void> shutdown_send(boost::system::error_code& ec) = 0;
     virtual boost::asio::awaitable<void> close() = 0;
+    virtual void on_read_delivered(std::size_t bytes) { (void)bytes; }
 };
 
 class tcp_socket_stream_relay_transport final : public stream_relay_transport
