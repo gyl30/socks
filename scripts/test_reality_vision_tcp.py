@@ -4,9 +4,11 @@ import argparse
 import os
 import pathlib
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 from testlib import (
@@ -39,7 +41,54 @@ def wait_for_any_log_text(paths, needle, deadline_seconds, label, processes):
     raise RuntimeError(f"timeout waiting for {label} log text {needle!r}\n{tails}")
 
 
-def run_curl_through_socks(socks_port, cert_path, https_port, expect_success):
+def read_exact(sock, size):
+    data = bytearray()
+    while len(data) < size:
+        chunk = sock.recv(size - len(data))
+        if not chunk:
+            raise RuntimeError("socket closed before expected bytes")
+        data.extend(chunk)
+    return bytes(data)
+
+
+def read_until_eof(sock):
+    data = bytearray()
+    while True:
+        chunk = sock.recv(4096)
+        if not chunk:
+            return bytes(data)
+        data.extend(chunk)
+
+
+def socks5_connect(socks_port, target_host, target_port):
+    sock = socket.create_connection(("127.0.0.1", socks_port), timeout=5)
+    sock.settimeout(10)
+    sock.sendall(b"\x05\x01\x00")
+    if read_exact(sock, 2) != b"\x05\x00":
+        sock.close()
+        raise RuntimeError("socks5 auth negotiation failed")
+
+    addr = socket.inet_aton(target_host)
+    request = b"\x05\x01\x00\x01" + addr + target_port.to_bytes(2, "big")
+    sock.sendall(request)
+    reply = read_exact(sock, 4)
+    if reply[1] != 0:
+        sock.close()
+        raise RuntimeError(f"socks5 connect failed rep={reply[1]}")
+    if reply[3] == 1:
+        read_exact(sock, 4)
+    elif reply[3] == 3:
+        read_exact(sock, read_exact(sock, 1)[0])
+    elif reply[3] == 4:
+        read_exact(sock, 16)
+    else:
+        sock.close()
+        raise RuntimeError(f"socks5 reply atyp invalid atyp={reply[3]}")
+    read_exact(sock, 2)
+    return sock
+
+
+def run_curl_through_socks(socks_port, cert_path, https_port, expect_success, expected_stdout="ok-vision\n"):
     args = [
         "curl",
         "--silent",
@@ -61,11 +110,104 @@ def run_curl_through_socks(socks_port, cert_path, https_port, expect_success):
     ]
     result = subprocess.run(args, text=True, capture_output=True, check=False)
     if expect_success:
-        if result.returncode != 0 or result.stdout != "ok-vision\n":
+        if result.returncode != 0 or result.stdout != expected_stdout:
             raise RuntimeError(f"curl through vision failed rc={result.returncode} stdout={result.stdout!r} stderr={result.stderr!r}")
         return
     if result.returncode == 0:
         raise RuntimeError(f"curl unexpectedly succeeded stdout={result.stdout!r}")
+
+
+def run_plain_http_through_socks(socks_port, http_port):
+    args = [
+        "curl",
+        "--silent",
+        "--show-error",
+        "--fail",
+        "--ipv4",
+        "--connect-timeout",
+        "5",
+        "--max-time",
+        "20",
+        "--proxy",
+        f"socks5://127.0.0.1:{socks_port}",
+        f"http://127.0.0.1:{http_port}/plain.txt",
+    ]
+    result = subprocess.run(args, text=True, capture_output=True, check=False)
+    if result.returncode != 0 or result.stdout != "ok-plain\n":
+        raise RuntimeError(f"plain http through vision failed rc={result.returncode} stdout={result.stdout!r} stderr={result.stderr!r}")
+
+
+def start_plain_http_server(repo_root, temp_root, processes):
+    http_port = allocate_tcp_port()
+    http_dir = temp_root / f"plain-http-{http_port}"
+    http_dir.mkdir(parents=True, exist_ok=True)
+    (http_dir / "plain.txt").write_text("ok-plain\n", encoding="utf-8")
+    http_log = temp_root / f"plain-http-{http_port}.log"
+    process = start_process(
+        [
+            sys.executable,
+            str(repo_root / "scripts/test_http_server.py"),
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(http_port),
+            "--directory",
+            str(http_dir),
+        ],
+        str(http_log),
+    )
+    processes.append(process)
+    wait_for_port("127.0.0.1", http_port, 20, "plain http origin", processes)
+    return http_port
+
+
+def start_half_close_server():
+    ready = threading.Event()
+    done = threading.Event()
+    errors = []
+    port_holder = []
+
+    def serve():
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+                listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                listener.bind(("127.0.0.1", 0))
+                listener.listen(1)
+                listener.settimeout(20)
+                port_holder.append(listener.getsockname()[1])
+                ready.set()
+                conn, _addr = listener.accept()
+                with conn:
+                    conn.settimeout(20)
+                    request = read_until_eof(conn)
+                    if request != b"ping-half-close":
+                        errors.append(f"half close request mismatch request={request!r}")
+                    conn.sendall(b"half-close-ok")
+                    conn.shutdown(socket.SHUT_WR)
+        except Exception as exc:
+            errors.append(str(exc))
+        finally:
+            done.set()
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    if not ready.wait(10):
+        raise RuntimeError("half close server did not start")
+    return port_holder[0], done, errors
+
+
+def run_half_close_through_socks(socks_port):
+    target_port, done, errors = start_half_close_server()
+    with socks5_connect(socks_port, "127.0.0.1", target_port) as sock:
+        sock.sendall(b"ping-half-close")
+        sock.shutdown(socket.SHUT_WR)
+        response = read_until_eof(sock)
+    if response != b"half-close-ok":
+        raise RuntimeError(f"half close response mismatch response={response!r}")
+    if not done.wait(10):
+        raise RuntimeError("half close server did not finish")
+    if errors:
+        raise RuntimeError("; ".join(errors))
 
 
 def start_stack(repo_root, binary, runtime_env, temp_root, *, server_vision, client_vision, response_text):
@@ -173,6 +315,7 @@ def main():
     try:
         runtime_env = build_runtime_env(binary)
 
+        large_response = "ok-vision-" + ("x" * 32768)
         success_stack = start_stack(
             repo_root,
             binary,
@@ -180,7 +323,7 @@ def main():
             temp_root / "success",
             server_vision=True,
             client_vision=True,
-            response_text="ok-vision",
+            response_text=large_response,
         )
         active_processes = success_stack["processes"]
         run_curl_through_socks(
@@ -188,6 +331,7 @@ def main():
             success_stack["cert_path"],
             success_stack["https_port"],
             expect_success=True,
+            expected_stdout=f"{large_response}\n",
         )
         wait_for_any_log_text(
             [success_stack["server_log"], success_stack["client_log"]],
@@ -196,6 +340,16 @@ def main():
             "vision direct write",
             success_stack["processes"],
         )
+        wait_for_any_log_text(
+            [success_stack["server_log"], success_stack["client_log"]],
+            "enter_raw_read_mode",
+            10,
+            "vision direct read",
+            success_stack["processes"],
+        )
+        plain_http_port = start_plain_http_server(repo_root, temp_root / "success", success_stack["processes"])
+        run_plain_http_through_socks(success_stack["socks_port"], plain_http_port)
+        run_half_close_through_socks(success_stack["socks_port"])
         stop_processes(success_stack["processes"])
         active_processes = []
 
@@ -225,6 +379,8 @@ def main():
         )
 
         print("reality_vision_tcp ok")
+        print("reality_vision_plain_tcp ok")
+        print("reality_vision_half_close ok")
         print("reality_vision_reject ok")
         return 0
     except Exception as exc:
