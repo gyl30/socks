@@ -302,6 +302,18 @@ boost::asio::awaitable<void> proxy_reality_connection::write(const std::span<con
         co_return;
     }
     co_await boost::asio::dispatch(strand_, boost::asio::use_awaitable);
+    if (raw_write_mode_)
+    {
+        ec = boost::asio::error::operation_not_supported;
+        LOG_WARN("{} conn {} local {}:{} remote {}:{} stage write_after_raw_mode",
+                 log_event::kDataSend,
+                 conn_id_,
+                 local_host_,
+                 local_port_,
+                 remote_host_,
+                 remote_port_);
+        co_return;
+    }
 
     const std::vector<uint8_t> plaintext(data.begin(), data.end());
     const auto ciphertext = reality_engine_.encrypt_record(plaintext, ec);
@@ -355,6 +367,14 @@ std::size_t proxy_reality_connection::consume_plaintext(const std::span<uint8_t>
     const auto size = std::min(output.size(), pending_plaintext_.size());
     std::copy_n(pending_plaintext_.begin(), static_cast<std::ptrdiff_t>(size), output.begin());
     pending_plaintext_.erase(pending_plaintext_.begin(), pending_plaintext_.begin() + static_cast<std::ptrdiff_t>(size));
+    return size;
+}
+
+std::size_t proxy_reality_connection::consume_raw_pending(const std::span<uint8_t> output)
+{
+    const auto size = std::min(output.size(), pending_raw_read_.size());
+    std::copy_n(pending_raw_read_.begin(), static_cast<std::ptrdiff_t>(size), output.begin());
+    pending_raw_read_.erase(pending_raw_read_.begin(), pending_raw_read_.begin() + static_cast<std::ptrdiff_t>(size));
     return size;
 }
 
@@ -436,6 +456,18 @@ boost::asio::awaitable<std::size_t> proxy_reality_connection::read_some(std::vec
                                                                         boost::system::error_code& ec)
 {
     co_await boost::asio::dispatch(strand_, boost::asio::use_awaitable);
+    if (raw_read_mode_)
+    {
+        ec = boost::asio::error::operation_not_supported;
+        LOG_WARN("{} conn {} local {}:{} remote {}:{} stage read_after_raw_mode",
+                 log_event::kDataRecv,
+                 conn_id_,
+                 local_host_,
+                 local_port_,
+                 remote_host_,
+                 remote_port_);
+        co_return 0;
+    }
     if (buffer.empty())
     {
         buffer.resize(constants::net::kBufferSize);
@@ -472,6 +504,18 @@ boost::asio::awaitable<bool> proxy_reality_connection::read_exact(std::vector<ui
 boost::asio::awaitable<std::vector<uint8_t>> proxy_reality_connection::read_packet(const uint32_t timeout_sec, boost::system::error_code& ec)
 {
     co_await boost::asio::dispatch(strand_, boost::asio::use_awaitable);
+    if (raw_read_mode_)
+    {
+        ec = boost::asio::error::operation_not_supported;
+        LOG_WARN("{} conn {} local {}:{} remote {}:{} stage read_packet_after_raw_mode",
+                 log_event::kDataRecv,
+                 conn_id_,
+                 local_host_,
+                 local_port_,
+                 remote_host_,
+                 remote_port_);
+        co_return std::vector<uint8_t>{};
+    }
     std::vector<uint8_t> header;
     if (!(co_await read_exact(header, 4, timeout_sec, ec)))
     {
@@ -501,6 +545,124 @@ boost::asio::awaitable<std::vector<uint8_t>> proxy_reality_connection::read_pack
         co_return std::vector<uint8_t>{};
     }
     co_return packet;
+}
+
+boost::asio::awaitable<void> proxy_reality_connection::enter_raw_read_mode(boost::system::error_code& ec)
+{
+    co_await boost::asio::dispatch(strand_, boost::asio::use_awaitable);
+    ec.clear();
+    if (!raw_read_mode_)
+    {
+        auto buffered = reality_engine_.take_buffered_ciphertext();
+        pending_raw_read_.insert(pending_raw_read_.end(), buffered.begin(), buffered.end());
+        raw_read_mode_ = true;
+    }
+    if (!pending_plaintext_.empty())
+    {
+        LOG_WARN("{} conn {} local {}:{} remote {}:{} stage enter_raw_read_mode pending_plaintext {}",
+                 log_event::kDataRecv,
+                 conn_id_,
+                 local_host_,
+                 local_port_,
+                 remote_host_,
+                 remote_port_,
+                 pending_plaintext_.size());
+    }
+    co_return;
+}
+
+boost::asio::awaitable<void> proxy_reality_connection::enter_raw_write_mode(boost::system::error_code& ec)
+{
+    co_await boost::asio::dispatch(strand_, boost::asio::use_awaitable);
+    ec.clear();
+    raw_write_mode_ = true;
+    co_return;
+}
+
+boost::asio::awaitable<std::size_t> proxy_reality_connection::read_raw(const std::span<uint8_t> buffer,
+                                                                       const uint32_t timeout_sec,
+                                                                       boost::system::error_code& ec)
+{
+    co_await boost::asio::dispatch(strand_, boost::asio::use_awaitable);
+    if (!raw_read_mode_)
+    {
+        ec = boost::asio::error::operation_not_supported;
+        co_return 0;
+    }
+    if (!pending_plaintext_.empty())
+    {
+        ec = boost::asio::error::invalid_argument;
+        LOG_WARN("{} conn {} local {}:{} remote {}:{} stage read_raw pending_plaintext {}",
+                 log_event::kDataRecv,
+                 conn_id_,
+                 local_host_,
+                 local_port_,
+                 remote_host_,
+                 remote_port_,
+                 pending_plaintext_.size());
+        co_return 0;
+    }
+    if (buffer.empty())
+    {
+        ec.clear();
+        co_return 0;
+    }
+
+    const auto pending_size = consume_raw_pending(buffer);
+    if (pending_size != 0)
+    {
+        ec.clear();
+        co_return pending_size;
+    }
+
+    const auto bytes_read = co_await net::wait_read_some_with_timeout(socket_, boost::asio::buffer(buffer.data(), buffer.size()), timeout_sec, ec);
+    if (ec)
+    {
+        if (!net::is_socket_close_error(ec))
+        {
+            LOG_WARN("{} conn {} local {}:{} remote {}:{} stage read_raw error {}",
+                     log_event::kDataRecv,
+                     conn_id_,
+                     local_host_,
+                     local_port_,
+                     remote_host_,
+                     remote_port_,
+                     ec.message());
+        }
+        co_return 0;
+    }
+    if (bytes_read == 0)
+    {
+        ec = boost::asio::error::eof;
+        co_return 0;
+    }
+    co_return bytes_read;
+}
+
+boost::asio::awaitable<void> proxy_reality_connection::write_raw(const std::span<const uint8_t> data, boost::system::error_code& ec)
+{
+    if (data.empty())
+    {
+        co_return;
+    }
+    co_await boost::asio::dispatch(strand_, boost::asio::use_awaitable);
+    if (!raw_write_mode_)
+    {
+        ec = boost::asio::error::operation_not_supported;
+        co_return;
+    }
+    co_await net::wait_write_with_timeout(socket_, boost::asio::buffer(data.data(), data.size()), cfg_.timeout.write, ec);
+    if (ec)
+    {
+        LOG_WARN("{} conn {} local {}:{} remote {}:{} stage write_raw error {}",
+                 log_event::kDataSend,
+                 conn_id_,
+                 local_host_,
+                 local_port_,
+                 remote_host_,
+                 remote_port_,
+                 ec.message());
+    }
 }
 
 boost::asio::awaitable<void> proxy_reality_connection::shutdown_send(boost::system::error_code& ec)

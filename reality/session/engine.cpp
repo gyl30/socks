@@ -43,6 +43,19 @@ boost::asio::mutable_buffer reality_engine::read_buffer(std::size_t size_hint, b
 
 void reality_engine::commit_read(std::size_t n) { rx_buf_size_ += n; }
 
+std::vector<uint8_t> reality_engine::take_buffered_ciphertext()
+{
+    std::vector<uint8_t> buffered;
+    if (rx_buf_size_ != 0)
+    {
+        const auto* begin = rx_buf_.data() + static_cast<std::ptrdiff_t>(rx_buf_offset_);
+        buffered.assign(begin, begin + static_cast<std::ptrdiff_t>(rx_buf_size_));
+    }
+    rx_buf_offset_ = 0;
+    rx_buf_size_ = 0;
+    return buffered;
+}
+
 std::span<const uint8_t> reality_engine::encrypt_record(const std::vector<uint8_t>& plaintext, boost::system::error_code& ec)
 {
     tx_buf_.clear();

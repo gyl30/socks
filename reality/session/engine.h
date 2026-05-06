@@ -37,6 +37,8 @@ class reality_engine
 
     void commit_read(std::size_t n);
 
+    [[nodiscard]] std::vector<uint8_t> take_buffered_ciphertext();
+
     [[nodiscard]] std::optional<tls_record> decrypt_record(boost::system::error_code& ec);
 
     [[nodiscard]] std::span<const uint8_t> encrypt_record(const std::vector<uint8_t>& plaintext, boost::system::error_code& ec);

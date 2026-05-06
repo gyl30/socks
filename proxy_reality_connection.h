@@ -42,6 +42,14 @@ class proxy_reality_connection : public std::enable_shared_from_this<proxy_reali
     boost::asio::awaitable<void> write_packet(const std::vector<uint8_t>& packet, boost::system::error_code& ec);
     [[nodiscard]] boost::asio::awaitable<std::size_t> read_some(std::vector<uint8_t>& buffer, uint32_t timeout_sec, boost::system::error_code& ec);
     [[nodiscard]] boost::asio::awaitable<std::vector<uint8_t>> read_packet(uint32_t timeout_sec, boost::system::error_code& ec);
+    boost::asio::awaitable<void> enter_raw_read_mode(boost::system::error_code& ec);
+    boost::asio::awaitable<void> enter_raw_write_mode(boost::system::error_code& ec);
+    [[nodiscard]] bool raw_read_mode() const { return raw_read_mode_; }
+    [[nodiscard]] bool raw_write_mode() const { return raw_write_mode_; }
+    [[nodiscard]] boost::asio::awaitable<std::size_t> read_raw(std::span<uint8_t> buffer,
+                                                               uint32_t timeout_sec,
+                                                               boost::system::error_code& ec);
+    boost::asio::awaitable<void> write_raw(std::span<const uint8_t> data, boost::system::error_code& ec);
     boost::asio::awaitable<void> shutdown_send(boost::system::error_code& ec);
     void close(boost::system::error_code& ec);
 
@@ -52,6 +60,7 @@ class proxy_reality_connection : public std::enable_shared_from_this<proxy_reali
                                                           uint32_t timeout_sec,
                                                           boost::system::error_code& ec);
     [[nodiscard]] std::size_t consume_plaintext(std::span<uint8_t> output);
+    [[nodiscard]] std::size_t consume_raw_pending(std::span<uint8_t> output);
     void close_on_strand(boost::system::error_code& ec);
 
    private:
@@ -65,6 +74,9 @@ class proxy_reality_connection : public std::enable_shared_from_this<proxy_reali
     boost::asio::ip::tcp::socket socket_;
     reality_engine reality_engine_;
     std::vector<uint8_t> pending_plaintext_;
+    std::vector<uint8_t> pending_raw_read_;
+    bool raw_read_mode_ = false;
+    bool raw_write_mode_ = false;
 };
 
 }    // namespace relay
