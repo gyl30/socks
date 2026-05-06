@@ -556,6 +556,14 @@ boost::asio::awaitable<void> proxy_reality_connection::enter_raw_read_mode(boost
         auto buffered = reality_engine_.take_buffered_ciphertext();
         pending_raw_read_.insert(pending_raw_read_.end(), buffered.begin(), buffered.end());
         raw_read_mode_ = true;
+        LOG_INFO("{} conn {} local {}:{} remote {}:{} stage enter_raw_read_mode buffered_ciphertext {}",
+                 log_event::kDataRecv,
+                 conn_id_,
+                 local_host_,
+                 local_port_,
+                 remote_host_,
+                 remote_port_,
+                 pending_raw_read_.size());
     }
     if (!pending_plaintext_.empty())
     {
@@ -576,6 +584,13 @@ boost::asio::awaitable<void> proxy_reality_connection::enter_raw_write_mode(boos
     co_await boost::asio::dispatch(strand_, boost::asio::use_awaitable);
     ec.clear();
     raw_write_mode_ = true;
+    LOG_INFO("{} conn {} local {}:{} remote {}:{} stage enter_raw_write_mode",
+             log_event::kDataSend,
+             conn_id_,
+             local_host_,
+             local_port_,
+             remote_host_,
+             remote_port_);
     co_return;
 }
 

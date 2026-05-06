@@ -502,6 +502,11 @@ if(BUILD_TESTING)
   set_tests_properties(reality_protocol_guardrails PROPERTIES TIMEOUT 180)
 
   add_test(
+    NAME reality_vision_tcp
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_reality_vision_tcp.py --binary $<TARGET_FILE:socks>)
+  set_tests_properties(reality_vision_tcp PROPERTIES TIMEOUT 180)
+
+  add_test(
     NAME config_roundtrip_smoke
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_config_roundtrip.py --binary $<TARGET_FILE:socks>)
   set_tests_properties(config_roundtrip_smoke PROPERTIES TIMEOUT 60)
