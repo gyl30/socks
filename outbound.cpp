@@ -50,7 +50,16 @@ boost::asio::awaitable<udp_proxy_outbound_connect_result> connect_udp_proxy_outb
                                                                                       const std::string& outbound_tag,
                                                                                       const uint32_t connect_mark)
 {
-    const auto outbound_class = resolve_outbound_class(cfg, outbound_tag);
+    const auto* outbound = find_outbound_entry(cfg, outbound_tag);
+    if (outbound == nullptr)
+    {
+        udp_proxy_outbound_connect_result result;
+        result.ec = boost::asio::error::operation_not_supported;
+        result.socks_rep = socks::map_connect_error_to_socks_rep(result.ec);
+        co_return result;
+    }
+
+    const auto outbound_class = config_type::classify_outbound_type(outbound->type);
     if (outbound_class == config_type::outbound_class::kBlock)
     {
         udp_proxy_outbound_connect_result result;
@@ -65,7 +74,7 @@ boost::asio::awaitable<udp_proxy_outbound_connect_result> connect_udp_proxy_outb
         result.socks_rep = socks::map_connect_error_to_socks_rep(result.ec);
         co_return result;
     }
-    co_return co_await udp_proxy_outbound::connect(executor, conn_id, trace_id, cfg, outbound_tag, connect_mark);
+    co_return co_await udp_proxy_outbound::connect(executor, conn_id, trace_id, cfg, *outbound, connect_mark);
 }
 
 }    // namespace relay
