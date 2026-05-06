@@ -1,6 +1,7 @@
 #include <span>
 #include <string>
 #include <vector>
+#include <cstddef>
 #include <cstdint>
 #include <iostream>
 
@@ -52,7 +53,13 @@ std::vector<uint8_t> make_client_hello_record()
     return make_tls_record(tls::kContentTypeHandshake, std::vector<uint8_t>{0x01, 0x00, 0x00, 0x00});
 }
 
-std::vector<uint8_t> make_server_hello_record(const bool tls13, const uint16_t cipher_suite)
+std::vector<uint8_t> append_all(std::vector<uint8_t> out, const std::vector<uint8_t>& tail)
+{
+    out.insert(out.end(), tail.begin(), tail.end());
+    return out;
+}
+
+std::vector<uint8_t> make_server_hello_message(const bool tls13, const uint16_t cipher_suite)
 {
     std::vector<uint8_t> body;
     append_u16(body, tls::consts::kVer12);
@@ -75,12 +82,18 @@ std::vector<uint8_t> make_server_hello_record(const bool tls13, const uint16_t c
     handshake.push_back(0x02);
     append_u24(handshake, body.size());
     handshake.insert(handshake.end(), body.begin(), body.end());
+    return handshake;
+}
+
+std::vector<uint8_t> make_server_hello_record(const bool tls13, const uint16_t cipher_suite)
+{
+    const auto handshake = make_server_hello_message(tls13, cipher_suite);
     return make_tls_record(tls::kContentTypeHandshake, handshake);
 }
 
-std::vector<uint8_t> make_application_record()
+std::vector<uint8_t> make_application_record(const std::size_t payload_size = 3U)
 {
-    return make_tls_record(tls::kContentTypeApplicationData, std::vector<uint8_t>{0x17, 0x00, 0x01});
+    return make_tls_record(tls::kContentTypeApplicationData, std::vector<uint8_t>(payload_size, 0x17));
 }
 
 bool test_block_codec()
@@ -152,6 +165,56 @@ bool test_tls_tracker_direct()
     return ok;
 }
 
+bool test_tls_tracker_direct_boundaries()
+{
+    using relay::vision::command;
+    using relay::vision::direction;
+    using relay::vision::tls_tracker;
+
+    const auto client_hello = make_client_hello_record();
+    const auto server_hello = make_server_hello_record(true, tls::consts::cipher::kTlsAes128GcmSha256);
+    const auto app = make_application_record();
+
+    tls_tracker same_chunk_tracker;
+    auto segments = same_chunk_tracker.process(direction::kClientToServer, client_hello);
+    bool ok = require(segments.size() == 1 && segments[0].cmd == command::kContinue, "same chunk client hello should continue");
+    const auto server_with_app = append_all(server_hello, app);
+    segments = same_chunk_tracker.process(direction::kServerToClient, server_with_app);
+    ok = ok && require(segments.size() == 2, "server hello with app data should split into two segments") &&
+         require(segments[0].cmd == command::kContinue && segments[0].content == server_hello, "server hello prefix should stay wrapped") &&
+         require(segments[1].cmd == command::kDirect && segments[1].content == app, "app data tail should switch to direct") &&
+         require(segments[1].switch_to_raw_after, "app data tail should switch writer to raw");
+
+    tls_tracker partial_app_tracker;
+    segments = partial_app_tracker.process(direction::kClientToServer, client_hello);
+    segments = partial_app_tracker.process(direction::kServerToClient, server_hello);
+    auto partial_app = make_application_record(32U);
+    partial_app.resize(tls::kTlsRecordHeaderSize + 2U);
+    segments = partial_app_tracker.process(direction::kClientToServer, partial_app);
+    ok = ok && require(segments.size() == 1 && segments[0].cmd == command::kDirect, "partial app data header should direct immediately") &&
+         require(segments[0].content == partial_app, "partial app direct content mismatch") &&
+         require(segments[0].switch_to_raw_after, "partial app data should switch writer to raw");
+
+    tls_tracker fragmented_tracker;
+    segments = fragmented_tracker.process(direction::kClientToServer, client_hello);
+    const auto handshake = make_server_hello_message(true, tls::consts::cipher::kTlsAes128GcmSha256);
+    const std::size_t split_pos = 8U;
+    const std::vector<uint8_t> first_payload(handshake.begin(), handshake.begin() + static_cast<std::ptrdiff_t>(split_pos));
+    const std::vector<uint8_t> second_payload(handshake.begin() + static_cast<std::ptrdiff_t>(split_pos), handshake.end());
+    const auto first_record = make_tls_record(tls::kContentTypeHandshake, first_payload);
+    const auto second_record = make_tls_record(tls::kContentTypeHandshake, second_payload);
+    segments = fragmented_tracker.process(direction::kServerToClient, first_record);
+    ok = ok && require(segments.size() == 1 && segments[0].cmd == command::kContinue, "fragmented server hello first record should continue") &&
+         require(!fragmented_tracker.tls13_confirmed(), "fragmented server hello should wait for full message");
+    segments = fragmented_tracker.process(direction::kServerToClient, append_all(second_record, app));
+    ok = ok && require(segments.size() == 2, "fragmented server hello tail should split app data") &&
+         require(segments[0].cmd == command::kContinue && segments[0].content == second_record, "fragmented server hello tail should stay wrapped") &&
+         require(segments[1].cmd == command::kDirect && segments[1].content == app, "fragmented server hello app tail should direct") &&
+         require(fragmented_tracker.tls13_confirmed(), "fragmented server hello should confirm tls13");
+
+    return ok;
+}
+
 bool test_tls_tracker_rejects()
 {
     using relay::vision::command;
@@ -176,6 +239,29 @@ bool test_tls_tracker_rejects()
     segments = ccm_tracker.process(direction::kServerToClient, make_server_hello_record(true, 0x1305));
     ok = ok && require(segments.size() == 1 && segments[0].cmd == command::kEnd, "ccm8 tls13 should end vision") &&
          require(!ccm_tracker.tls13_confirmed(), "ccm8 should not confirm directable tls13");
+
+    tls_tracker server_first_tracker;
+    segments = server_first_tracker.process(direction::kServerToClient, make_server_hello_record(true, tls::consts::cipher::kTlsAes128GcmSha256));
+    ok = ok && require(segments.size() == 1 && segments[0].cmd == command::kEnd, "server hello without client hello should end vision") &&
+         require(server_first_tracker.direct_disabled(), "server first handshake should disable direct");
+    return ok;
+}
+
+bool test_tls_tracker_observe()
+{
+    using relay::vision::command;
+    using relay::vision::direction;
+    using relay::vision::tls_tracker;
+
+    tls_tracker tracker;
+    tracker.observe(direction::kClientToServer, make_client_hello_record());
+    bool ok = require(!tracker.tls13_confirmed(), "observed client hello alone must not confirm tls13");
+    tracker.observe(direction::kServerToClient, make_server_hello_record(true, tls::consts::cipher::kTlsAes128GcmSha256));
+    ok = ok && require(tracker.tls13_confirmed(), "observed server hello should confirm tls13");
+
+    const auto app = make_application_record();
+    const auto segments = tracker.process(direction::kServerToClient, app);
+    ok = ok && require(segments.size() == 1 && segments[0].cmd == command::kDirect, "observed tls13 state should direct app data");
     return ok;
 }
 
@@ -183,6 +269,7 @@ bool test_tls_tracker_rejects()
 
 int main()
 {
-    const bool ok = test_block_codec() && test_tls_tracker_direct() && test_tls_tracker_rejects();
+    const bool ok = test_block_codec() && test_tls_tracker_direct() && test_tls_tracker_direct_boundaries() && test_tls_tracker_rejects() &&
+                    test_tls_tracker_observe();
     return ok ? 0 : 1;
 }
