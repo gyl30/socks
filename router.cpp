@@ -22,8 +22,8 @@ struct router::compiled_rule
     std::string outbound_tag;
     std::string outbound_type;
     std::vector<std::string> values;
-    std::shared_ptr<ip_matcher> ip_rules;
-    std::shared_ptr<domain_matcher> domain_rules;
+    std::unique_ptr<ip_matcher> ip_rules;
+    std::unique_ptr<domain_matcher> domain_rules;
 };
 
 struct router::shared_state
@@ -48,11 +48,6 @@ constexpr const char* kSharedRouteScope = "shared";
         return route_type::kProxy;
     }
     return route_type::kBlock;
-}
-
-[[nodiscard]] const std::vector<std::string>& get_route_source_values(const config::route_rule_t& rule)
-{
-    return rule.file.empty() ? rule.values : rule.file_values;
 }
 
 }    // namespace
@@ -122,16 +117,15 @@ bool router::make_compiled_rule(const config& cfg, const config::route_rule_t& r
 
 bool router::populate_compiled_rule_values(const config::route_rule_t& rule, compiled_rule& compiled)
 {
-    const auto& source_values = get_route_source_values(rule);
     if (rule.type == "inbound")
     {
-        compiled.values = source_values;
+        compiled.values = rule.values;
         return true;
     }
     if (rule.type == "ip")
     {
-        compiled.ip_rules = std::make_shared<ip_matcher>();
-        for (const auto& value : source_values)
+        compiled.ip_rules = std::make_unique<ip_matcher>();
+        for (const auto& value : rule.values)
         {
             compiled.ip_rules->add_rule(value);
         }
@@ -140,8 +134,8 @@ bool router::populate_compiled_rule_values(const config::route_rule_t& rule, com
     }
     if (rule.type == "domain")
     {
-        compiled.domain_rules = std::make_shared<domain_matcher>();
-        for (const auto& value : source_values)
+        compiled.domain_rules = std::make_unique<domain_matcher>();
+        for (const auto& value : rule.values)
         {
             compiled.domain_rules->add(value);
         }
@@ -167,14 +161,13 @@ route_decision router::make_no_route_decision(const std::string& match_type, con
 
 void router::log_loaded_rule(const config::route_rule_t& rule, const compiled_rule& compiled)
 {
-    const auto& source_values = get_route_source_values(rule);
     LOG_INFO("{} inbound_tag {} stage load_rule type {} out_tag {} out_type {} value_count {} file {}",
              log_event::kRoute,
              kSharedRouteScope,
              compiled.type,
              compiled.outbound_tag,
              compiled.outbound_type,
-             source_values.size(),
+             rule.values.size(),
              rule.file.empty() ? "-" : rule.file);
 }
 

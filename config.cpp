@@ -996,11 +996,11 @@ template <typename T>
     {
         return false;
     }
-    if (!load_rule_file_values(parsed.type, parsed.file, filename, entry_path + ".file", parsed.file_values))
+    if (!load_rule_file_values(parsed.type, parsed.file, filename, entry_path + ".file", parsed.values))
     {
         return false;
     }
-    if (parsed.file_values.empty())
+    if (parsed.values.empty())
     {
         return fail_config(filename, entry_path + ".file empty");
     }

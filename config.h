@@ -110,7 +110,6 @@ struct config
         std::string type;
         std::vector<std::string> values;
         std::string file;
-        std::vector<std::string> file_values;
         std::string out;
     };
 
