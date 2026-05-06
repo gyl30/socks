@@ -398,6 +398,12 @@ if(UNIX AND NOT APPLE AND NOT ENABLE_STATIC_LINK)
   target_link_options(proxy_protocol_regression PRIVATE "-Wl,--no-as-needed" "${BROTLICOMMON_LIBRARY}" "-Wl,--as-needed")
 endif()
 
+add_executable(proxy_reality_connection_regression scripts/test_proxy_reality_connection_regression.cpp)
+target_link_libraries(proxy_reality_connection_regression PRIVATE core)
+if(UNIX AND NOT APPLE AND NOT ENABLE_STATIC_LINK)
+  target_link_options(proxy_reality_connection_regression PRIVATE "-Wl,--no-as-needed" "${BROTLICOMMON_LIBRARY}" "-Wl,--as-needed")
+endif()
+
 add_executable(reality_engine_regression scripts/test_reality_engine_regression.cpp)
 target_link_libraries(reality_engine_regression PRIVATE core)
 if(UNIX AND NOT APPLE AND NOT ENABLE_STATIC_LINK)
@@ -461,6 +467,10 @@ if(SOCKS_RUNTIME_DIRS)
                INSTALL_RPATH "${SOCKS_RUNTIME_DIRS}")
   set_target_properties(
     proxy_protocol_regression
+    PROPERTIES BUILD_RPATH "${SOCKS_RUNTIME_DIRS}"
+               INSTALL_RPATH "${SOCKS_RUNTIME_DIRS}")
+  set_target_properties(
+    proxy_reality_connection_regression
     PROPERTIES BUILD_RPATH "${SOCKS_RUNTIME_DIRS}"
                INSTALL_RPATH "${SOCKS_RUNTIME_DIRS}")
   set_target_properties(
@@ -536,6 +546,9 @@ if(BUILD_TESTING)
 
   add_test(NAME proxy_protocol_regression COMMAND $<TARGET_FILE:proxy_protocol_regression>)
   set_tests_properties(proxy_protocol_regression PROPERTIES TIMEOUT 30)
+
+  add_test(NAME proxy_reality_connection_regression COMMAND $<TARGET_FILE:proxy_reality_connection_regression>)
+  set_tests_properties(proxy_reality_connection_regression PROPERTIES TIMEOUT 30)
 
   add_test(NAME reality_engine_regression COMMAND $<TARGET_FILE:reality_engine_regression>)
   set_tests_properties(reality_engine_regression PROPERTIES TIMEOUT 30)
