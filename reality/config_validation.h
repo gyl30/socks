@@ -5,10 +5,7 @@
 #include <vector>
 #include <cstddef>
 #include <cstdint>
-#include <optional>
 #include <string_view>
-
-#include "reality/handshake/fingerprint.h"
 
 namespace reality
 {
@@ -24,7 +21,7 @@ enum class hex_field_status
 
 [[nodiscard]] std::string normalize_fingerprint_name(std::string_view name);
 
-[[nodiscard]] bool try_parse_fingerprint_type(std::string_view name, std::optional<fingerprint_type>& fingerprint_type);
+[[nodiscard]] bool is_supported_fingerprint_name(std::string_view name);
 
 [[nodiscard]] hex_field_status validate_hex_field(std::string_view value, std::size_t min_bytes, std::size_t max_bytes);
 

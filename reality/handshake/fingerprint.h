@@ -1,7 +1,6 @@
 #ifndef REALITY_FINGERPRINT_H
 #define REALITY_FINGERPRINT_H
 
-#include <array>
 #include <memory>
 #include <vector>
 #include <cstdint>
@@ -14,11 +13,7 @@ namespace reality
 
 enum class fingerprint_type : uint8_t
 {
-    kChrome120,
-    kChrome120Mlkem768,
-    kFirefox120,
-    kIOS14,
-    kAndroid11OkHttp,
+    kRandom,
 };
 
 struct fingerprint_template_storage
@@ -64,11 +59,7 @@ class grease_context
     std::array<uint16_t, 8> seed_;
 };
 
-class fingerprint_factory
-{
-   public:
-    static fingerprint_template get(fingerprint_type type);
-};
+[[nodiscard]] fingerprint_template build_random_fingerprint_template();
 
 }    // namespace reality
 

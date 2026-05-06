@@ -3,7 +3,6 @@
 #include <string>
 #include <cstddef>
 #include <cstdint>
-#include <optional>
 #include <string_view>
 
 #include "tls/crypto_util.h"
@@ -38,45 +37,10 @@ std::string normalize_fingerprint_name(const std::string_view name)
     return normalized_name;
 }
 
-bool try_parse_fingerprint_type(const std::string_view name, std::optional<fingerprint_type>& out_fingerprint_type)
+bool is_supported_fingerprint_name(const std::string_view name)
 {
     const auto normalized_name = normalize_fingerprint_name(name);
-    if (normalized_name.empty() || normalized_name == "random")
-    {
-        out_fingerprint_type.reset();
-        return true;
-    }
-
-    struct entry
-    {
-        const char* name;
-        reality::fingerprint_type type;
-    };
-
-    static const entry kEntries[] = {
-        {.name = "chrome", .type = fingerprint_type::kChrome120},
-        {.name = "chrome_120", .type = fingerprint_type::kChrome120},
-        {.name = "chrome_mlkem", .type = fingerprint_type::kChrome120Mlkem768},
-        {.name = "chrome_mlkem768", .type = fingerprint_type::kChrome120Mlkem768},
-        {.name = "chrome_hybrid", .type = fingerprint_type::kChrome120Mlkem768},
-        {.name = "firefox", .type = fingerprint_type::kFirefox120},
-        {.name = "firefox_120", .type = fingerprint_type::kFirefox120},
-        {.name = "ios", .type = fingerprint_type::kIOS14},
-        {.name = "ios_14", .type = fingerprint_type::kIOS14},
-        {.name = "android", .type = fingerprint_type::kAndroid11OkHttp},
-        {.name = "android_11_okhttp", .type = fingerprint_type::kAndroid11OkHttp},
-    };
-
-    for (const auto& entry : kEntries)
-    {
-        if (normalized_name == entry.name)
-        {
-            out_fingerprint_type = entry.type;
-            return true;
-        }
-    }
-
-    return false;
+    return normalized_name.empty() || normalized_name == "random";
 }
 
 hex_field_status validate_hex_field(const std::string_view value, const std::size_t min_bytes, const std::size_t max_bytes)

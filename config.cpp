@@ -671,8 +671,7 @@ template <typename T>
     {
         return false;
     }
-    std::optional<reality::fingerprint_type> fingerprint_type;
-    if (!reality::try_parse_fingerprint_type(out.fingerprint, fingerprint_type))
+    if (!reality::is_supported_fingerprint_name(out.fingerprint))
     {
         return fail_config(filename, join_path(path, "fingerprint") + " invalid");
     }

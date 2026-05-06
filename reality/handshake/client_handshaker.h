@@ -4,7 +4,6 @@
 #include <string>
 #include <vector>
 #include <cstdint>
-#include <optional>
 #include <string_view>
 
 #include <boost/asio.hpp>
@@ -24,7 +23,6 @@ class client_handshaker
                       std::string_view sni,
                       const std::vector<uint8_t>& server_public_key,
                       const std::vector<uint8_t>& short_id_bytes,
-                      std::optional<fingerprint_type> fingerprint_type,
                       uint32_t max_handshake_records);
 
     [[nodiscard]] boost::asio::awaitable<client_handshake_result> run(boost::asio::ip::tcp::socket& socket,
@@ -36,7 +34,6 @@ class client_handshaker
     std::string sni_;
     std::vector<uint8_t> server_public_key_;
     std::vector<uint8_t> short_id_bytes_;
-    std::optional<fingerprint_type> fingerprint_type_;
     uint32_t max_handshake_records_ = 0;
 };
 

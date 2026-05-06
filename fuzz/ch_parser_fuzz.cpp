@@ -30,26 +30,6 @@ std::vector<uint8_t> take_bytes(const uint8_t* data, std::size_t size, std::size
     return out;
 }
 
-reality::fingerprint_type select_fingerprint_type(const uint8_t* data, std::size_t size)
-{
-    if (data == nullptr || size == 0)
-    {
-        return reality::fingerprint_type::kChrome120;
-    }
-
-    switch (data[0] & 0x03)
-    {
-        case 0:
-            return reality::fingerprint_type::kChrome120;
-        case 1:
-            return reality::fingerprint_type::kFirefox120;
-        case 2:
-            return reality::fingerprint_type::kIOS14;
-        default:
-            return reality::fingerprint_type::kAndroid11OkHttp;
-    }
-}
-
 std::string select_hostname(const uint8_t* data, std::size_t size, bool with_sni)
 {
     if (!with_sni)
@@ -67,7 +47,7 @@ std::string select_hostname(const uint8_t* data, std::size_t size, bool with_sni
 
 std::vector<uint8_t> build_client_hello(const uint8_t* data, std::size_t size, bool with_sni)
 {
-    auto spec = reality::fingerprint_factory::get(select_fingerprint_type(data, size));
+    auto spec = reality::build_random_fingerprint_template();
     const auto session_id_len = (data == nullptr || size == 0) ? std::size_t{0} : static_cast<std::size_t>(data[0] % 33);
     const auto session_id = take_bytes(data, size, 1, session_id_len);
     const auto random = take_bytes(data, size, 2, 32);

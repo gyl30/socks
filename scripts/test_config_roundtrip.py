@@ -145,6 +145,16 @@ def run_invalid_reality_config_cases(binary, runtime_env, temp_root):
         )
     )
 
+    legacy_outbound_fingerprint = copy.deepcopy(base_cfg)
+    legacy_outbound_fingerprint["outbounds"][0]["settings"]["fingerprint"] = "chrome_120"
+    cases.append(
+        (
+            "legacy_outbound_fingerprint",
+            legacy_outbound_fingerprint,
+            "outbounds[0].settings.fingerprint invalid",
+        )
+    )
+
     invalid_outbound_port_zero = copy.deepcopy(base_cfg)
     invalid_outbound_port_zero["outbounds"][0]["settings"]["port"] = 0
     cases.append(

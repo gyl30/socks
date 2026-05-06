@@ -7,7 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "reality/handshake/fingerprint.h"
+#include "tls/core.h"
 
 namespace constants
 {
@@ -95,12 +95,6 @@ constexpr uint32_t kMaxHandshakeRecords = 256;
 constexpr std::size_t kMaxHandshakeBufferSize = 1024L * 1024;
 constexpr uint32_t kMaxHandshakeMessageSize = static_cast<uint32_t>(kMaxHandshakeBufferSize - 4);
 constexpr std::size_t kHandshakeBufferCompactThreshold = 32L * 1024;
-constexpr std::array<reality::fingerprint_type, 4> kFetchFingerprints = {
-    reality::fingerprint_type::kChrome120,
-    reality::fingerprint_type::kIOS14,
-    reality::fingerprint_type::kFirefox120,
-    reality::fingerprint_type::kAndroid11OkHttp,
-};
 }    // namespace reality_limits
 
 }    // namespace constants

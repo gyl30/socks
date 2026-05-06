@@ -52,7 +52,7 @@ struct fetch_context
     std::string host;
     uint16_t port = 0;
     std::string sni;
-    fingerprint_type fingerprint = fingerprint_type::kChrome120;
+    fingerprint_type fingerprint = fingerprint_type::kRandom;
     site_material material;
     bool saw_certificate = false;
     bool saw_server_finished = false;
@@ -81,14 +81,8 @@ const char* fingerprint_name(const fingerprint_type fingerprint)
 {
     switch (fingerprint)
     {
-        case fingerprint_type::kChrome120:
-            return "chrome120";
-        case fingerprint_type::kFirefox120:
-            return "firefox120";
-        case fingerprint_type::kIOS14:
-            return "ios14";
-        case fingerprint_type::kAndroid11OkHttp:
-            return "android11_okhttp";
+        case fingerprint_type::kRandom:
+            return "random";
         default:
             return "unknown";
     }
@@ -479,7 +473,7 @@ boost::system::error_code perform_handshake_start(fetch_context& ctx)
         return boost::asio::error::operation_aborted;
     }
 
-    const auto spec = fingerprint_factory::get(ctx.fingerprint);
+    const auto spec = build_random_fingerprint_template();
     auto client_hello =
         client_hello_builder::build(spec, session_id, client_random, std::vector<uint8_t>(ctx.client_public, ctx.client_public + 32), {}, ctx.sni);
     if (client_hello.empty())
@@ -899,20 +893,7 @@ site_material fetch_once(std::string host, uint16_t port, std::string sni, const
 
 site_material fetch_site_material(const std::string& host, uint16_t port, const std::string& sni, boost::system::error_code& ec)
 {
-    boost::system::error_code last_ec = boost::asio::error::fault;
-
-    for (const auto fingerprint : constants::reality_limits::kFetchFingerprints)
-    {
-        auto material = fetch_once(std::string(host), port, std::string(sni), fingerprint, ec);
-        if (!ec)
-        {
-            return material;
-        }
-        last_ec = ec;
-    }
-
-    ec = last_ec ? last_ec : boost::asio::error::fault;
-    return {};
+    return fetch_once(std::string(host), port, std::string(sni), fingerprint_type::kRandom, ec);
 }
 
 }    // namespace reality

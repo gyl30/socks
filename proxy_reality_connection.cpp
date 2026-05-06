@@ -38,7 +38,6 @@ struct connect_options
     std::string remote_port;
     std::vector<uint8_t> server_pub_key;
     std::vector<uint8_t> short_id_bytes;
-    std::optional<reality::fingerprint_type> fingerprint_type;
     uint32_t max_handshake_records = constants::reality_limits::kMaxHandshakeRecords;
     uint32_t connect_mark = 0;
 };
@@ -76,7 +75,7 @@ bool build_connect_options(
         return false;
     }
 
-    if (!reality::try_parse_fingerprint_type(settings->fingerprint, options.fingerprint_type))
+    if (!reality::is_supported_fingerprint_name(settings->fingerprint))
     {
         ec = boost::asio::error::invalid_argument;
         LOG_ERROR("{} out_tag {} stage build_connect_options fingerprint invalid", log_event::kConnInit, outbound_tag);
@@ -192,7 +191,7 @@ boost::asio::awaitable<reality::client_handshake_result> perform_reality_handsha
     boost::asio::ip::tcp::socket& socket, const config& cfg, const connect_options& options, uint32_t conn_id, boost::system::error_code& ec)
 {
     const reality::client_handshaker handshaker(
-        cfg, options.sni, options.server_pub_key, options.short_id_bytes, options.fingerprint_type, options.max_handshake_records);
+        cfg, options.sni, options.server_pub_key, options.short_id_bytes, options.max_handshake_records);
     auto handshake_res = co_await handshaker.run(socket, conn_id, ec);
     if (ec)
     {
