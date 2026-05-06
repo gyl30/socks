@@ -264,6 +264,7 @@ set(SOCKS_SOURCES
     trace_web_server.cpp
     udp_proxy_outbound.cpp
     tcp_outbound_stream.cpp
+    vision_tcp.cpp
     proxy_protocol.cpp
     proxy_reality_connection.cpp
     socks_client_flow.cpp
@@ -403,6 +404,12 @@ if(UNIX AND NOT APPLE AND NOT ENABLE_STATIC_LINK)
   target_link_options(reality_engine_regression PRIVATE "-Wl,--no-as-needed" "${BROTLICOMMON_LIBRARY}" "-Wl,--as-needed")
 endif()
 
+add_executable(vision_tcp_regression scripts/test_vision_tcp_regression.cpp)
+target_link_libraries(vision_tcp_regression PRIVATE core)
+if(UNIX AND NOT APPLE AND NOT ENABLE_STATIC_LINK)
+  target_link_options(vision_tcp_regression PRIVATE "-Wl,--no-as-needed" "${BROTLICOMMON_LIBRARY}" "-Wl,--as-needed")
+endif()
+
 add_executable(router_regression scripts/test_router_regression.cpp)
 target_link_libraries(router_regression PRIVATE core)
 if(UNIX AND NOT APPLE AND NOT ENABLE_STATIC_LINK)
@@ -458,6 +465,10 @@ if(SOCKS_RUNTIME_DIRS)
                INSTALL_RPATH "${SOCKS_RUNTIME_DIRS}")
   set_target_properties(
     reality_engine_regression
+    PROPERTIES BUILD_RPATH "${SOCKS_RUNTIME_DIRS}"
+               INSTALL_RPATH "${SOCKS_RUNTIME_DIRS}")
+  set_target_properties(
+    vision_tcp_regression
     PROPERTIES BUILD_RPATH "${SOCKS_RUNTIME_DIRS}"
                INSTALL_RPATH "${SOCKS_RUNTIME_DIRS}")
   set_target_properties(
@@ -523,6 +534,9 @@ if(BUILD_TESTING)
 
   add_test(NAME reality_engine_regression COMMAND $<TARGET_FILE:reality_engine_regression>)
   set_tests_properties(reality_engine_regression PROPERTIES TIMEOUT 30)
+
+  add_test(NAME vision_tcp_regression COMMAND $<TARGET_FILE:vision_tcp_regression>)
+  set_tests_properties(vision_tcp_regression PROPERTIES TIMEOUT 30)
 
   add_test(NAME router_regression COMMAND $<TARGET_FILE:router_regression>)
   set_tests_properties(router_regression PROPERTIES TIMEOUT 30)
