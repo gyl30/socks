@@ -97,12 +97,14 @@ class socks_tcp_outbound final : public tcp_outbound_stream
                                 uint32_t conn_id,
                                 uint64_t trace_id,
                                 const config& cfg,
+                                const config::socks_t* settings,
                                 std::string outbound_tag,
                                 uint32_t connect_mark)
         : cfg_(cfg),
           conn_id_(conn_id),
           trace_id_(trace_id),
           connect_mark_(connect_mark),
+          settings_(settings),
           outbound_tag_(std::move(outbound_tag)),
           socket_(executor),
           resolver_(executor)
@@ -126,6 +128,7 @@ class socks_tcp_outbound final : public tcp_outbound_stream
     uint32_t conn_id_ = 0;
     uint64_t trace_id_ = 0;
     uint32_t connect_mark_ = 0;
+    const config::socks_t* settings_ = nullptr;
     std::string outbound_tag_;
     std::string target_host_ = "unknown";
     uint16_t target_port_ = 0;
@@ -336,7 +339,7 @@ boost::asio::awaitable<void> direct_tcp_outbound::shutdown_send(boost::system::e
     co_return;
 }
 
-const config::socks_t* socks_tcp_outbound::settings() const { return find_socks_outbound_settings(cfg_, outbound_tag_); }
+const config::socks_t* socks_tcp_outbound::settings() const { return settings_; }
 
 boost::asio::awaitable<bool> socks_tcp_outbound::connect_server(const config::socks_t& settings, boost::system::error_code& ec)
 {
@@ -594,7 +597,8 @@ std::shared_ptr<tcp_outbound_stream> make_proxy_tcp_outbound_stream(const boost:
     }
     if (outbound_kind == config_type::proxy_outbound_kind::kSocks)
     {
-        return std::make_shared<socks_tcp_outbound>(executor, conn_id, trace_id, cfg, outbound_tag, connect_mark);
+        const auto* socks_settings = outbound->socks.has_value() ? &*outbound->socks : nullptr;
+        return std::make_shared<socks_tcp_outbound>(executor, conn_id, trace_id, cfg, socks_settings, outbound_tag, connect_mark);
     }
     return nullptr;
 }

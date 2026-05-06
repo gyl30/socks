@@ -26,9 +26,9 @@ io_context_pool::io_context_pool(std::size_t pool_size) : next_io_context_(0)
 
     for (std::size_t i = 0; i < pool_size; ++i)
     {
-        auto worker = std::make_shared<io_worker>();
+        auto worker = std::make_unique<io_worker>();
         work_guards_.push_back(boost::asio::make_work_guard(worker->io_context));
-        workers_.push_back(worker);
+        workers_.push_back(std::move(worker));
     }
 }
 
@@ -39,7 +39,7 @@ void io_context_pool::run() const
 
     for (const auto& worker : workers_)
     {
-        threads.emplace_back([worker]() { worker->io_context.run(); });
+        threads.emplace_back([worker = worker.get()]() { worker->io_context.run(); });
     }
 
     LOG_INFO("{} stage io_context_pool running threads {}", log_event::kConnInit, threads.size());
@@ -69,7 +69,7 @@ void io_context_pool::emit_all(const boost::asio::cancellation_type type) const
 {
     for (const auto& worker : workers_)
     {
-        boost::asio::post(worker->io_context, [worker, type]() { worker->group.emit(type); });
+        boost::asio::post(worker->io_context, [worker = worker.get(), type]() { worker->group.emit(type); });
     }
 }
 

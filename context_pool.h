@@ -43,7 +43,7 @@ class io_context_pool
     using work_guard_t = decltype(boost::asio::make_work_guard(std::declval<boost::asio::io_context&>()));
 
     std::vector<work_guard_t> work_guards_;
-    std::vector<std::shared_ptr<io_worker>> workers_;
+    std::vector<std::unique_ptr<io_worker>> workers_;
     alignas(sizeof(std::size_t)) std::atomic<std::size_t> next_io_context_ = {0};
 };
 
