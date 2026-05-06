@@ -615,6 +615,10 @@ template <typename T>
     {
         return false;
     }
+    if (!parse_bool_field(value, "vision", path, out.vision, filename, false))
+    {
+        return false;
+    }
     if (!parse_string_field(value, "private_key", path, out.private_key, filename, true))
     {
         return false;
@@ -698,6 +702,10 @@ template <typename T>
     if (out.max_handshake_records == 0)
     {
         return fail_config(filename, join_path(path, "max_handshake_records") + " out_of_range");
+    }
+    if (!parse_bool_field(value, "vision", path, out.vision, filename, false))
+    {
+        return false;
     }
     return true;
 }

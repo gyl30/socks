@@ -11,6 +11,7 @@
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/asio/redirect_error.hpp>
 #include <boost/asio/experimental/channel_error.hpp>
+#include <boost/system/errc.hpp>
 
 #include "log.h"
 #include "config.h"
@@ -75,6 +76,7 @@ class proxy_tcp_outbound final : public tcp_outbound_stream
     boost::asio::awaitable<void> send_connect_request(const std::string& host, uint16_t port, boost::system::error_code& ec) const;
     boost::asio::awaitable<void> wait_connect_reply(const std::string& host, uint16_t port, tcp_outbound_connect_result& result) const;
     [[nodiscard]] uint32_t connect_ack_timeout() const;
+    [[nodiscard]] bool vision_requested() const;
 
    private:
     const config& cfg_;
@@ -613,6 +615,12 @@ uint32_t proxy_tcp_outbound::connect_ack_timeout() const
     return std::max(cfg_.timeout.read, cfg_.timeout.connect + 1);
 }
 
+bool proxy_tcp_outbound::vision_requested() const
+{
+    const auto* settings = find_reality_outbound_settings(cfg_, outbound_tag_);
+    return settings != nullptr && settings->vision;
+}
+
 boost::asio::awaitable<void> proxy_tcp_outbound::send_connect_request(const std::string& host, const uint16_t port, boost::system::error_code& ec) const
 {
     const auto connection = stream_.connection();
@@ -626,6 +634,10 @@ boost::asio::awaitable<void> proxy_tcp_outbound::send_connect_request(const std:
     request.target_host = host;
     request.target_port = port;
     request.trace_id = trace_id_;
+    if (vision_requested())
+    {
+        request.feature_flags |= proxy::kTcpFeatureVision;
+    }
 
     std::vector<uint8_t> packet;
     if (!proxy::encode_tcp_connect_request(request, packet))
@@ -711,6 +723,32 @@ boost::asio::awaitable<void> proxy_tcp_outbound::wait_connect_reply(const std::s
         set_connect_failure(result, socks::map_socks_rep_to_connect_error(reply.socks_rep));
         co_return;
     }
+    const bool requested_vision = vision_requested();
+    const bool accepted_vision = (reply.feature_flags & proxy::kTcpFeatureVision) != 0;
+    if (accepted_vision && !requested_vision)
+    {
+        LOG_WARN("{} trace {:016x} conn {} stage wait_connect_reply target {}:{} unexpected vision flag",
+                 log_event::kRoute,
+                 trace_id_,
+                 conn_id_,
+                 host,
+                 port);
+        set_connect_failure(result, boost::asio::error::invalid_argument);
+        co_return;
+    }
+    if (requested_vision && !accepted_vision)
+    {
+        LOG_WARN("{} trace {:016x} conn {} stage wait_connect_reply target {}:{} vision rejected",
+                 log_event::kRoute,
+                 trace_id_,
+                 conn_id_,
+                 host,
+                 port);
+        set_connect_failure(result, boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        result.socks_rep = socks::kRepNotAllowed;
+        co_return;
+    }
+    result.vision_accepted = accepted_vision;
 
     boost::system::error_code bind_ec;
     const auto bind_addr = boost::asio::ip::make_address(reply.bind_host, bind_ec);

@@ -114,7 +114,7 @@ boost::asio::awaitable<void> reality_protocol_session::start_tcp_connect_session
     request_done.extra = {{"type", "tcp"}};
     trace_store::instance().record_event(std::move(request_done));
     const auto tcp_connect_session = std::make_shared<reality_tcp_session>(
-        worker_.io_context, std::move(connection_), router_, context_.conn_id, request.trace_id, inbound_tag_, cfg_);
+        worker_.io_context, std::move(connection_), router_, context_.conn_id, request.trace_id, inbound_tag_, cfg_, context_.vision_enabled);
     co_await tcp_connect_session->start(request);
 }
 

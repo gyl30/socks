@@ -127,6 +127,7 @@ def make_reality_server_config(
     workers=1,
     idle_timeout=30,
     web_port=None,
+    vision=False,
     outbounds=None,
     routing=None,
 ):
@@ -147,6 +148,7 @@ def make_reality_server_config(
                     "private_key": private_key,
                     "public_key": public_key,
                     "short_id": short_id,
+                    "vision": vision,
                     "replay_cache_max_entries": 100000,
                 },
             }
@@ -196,6 +198,7 @@ def make_reality_client_config(
     workers=1,
     idle_timeout=30,
     web_port=None,
+    vision=False,
     reality_settings_overrides=None,
     extra_outbounds=None,
     routing=None,
@@ -208,6 +211,7 @@ def make_reality_client_config(
         "public_key": public_key,
         "short_id": short_id,
         "max_handshake_records": 256,
+        "vision": vision,
     }
     if reality_settings_overrides is not None:
         reality_settings.update(reality_settings_overrides)

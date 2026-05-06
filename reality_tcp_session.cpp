@@ -36,7 +36,8 @@ reality_tcp_session::reality_tcp_session(boost::asio::io_context& io_context,
                                                          const uint32_t conn_id,
                                                          const uint64_t trace_id,
                                                          std::string inbound_tag,
-                                                         const config& cfg)
+                                                         const config& cfg,
+                                                         const bool vision_enabled)
     : conn_id_(conn_id),
       trace_id_(trace_id),
       inbound_tag_(std::move(inbound_tag)),
@@ -44,7 +45,8 @@ reality_tcp_session::reality_tcp_session(boost::asio::io_context& io_context,
       executor_(io_context.get_executor()),
       idle_timer_(io_context),
       connection_(std::move(connection)),
-      router_(std::move(router))
+      router_(std::move(router)),
+      vision_enabled_(vision_enabled)
 {
     last_activity_time_ms_ = net::now_ms();
 }
@@ -153,6 +155,32 @@ boost::asio::awaitable<void> reality_tcp_session::run(const proxy::tcp_connect_r
              target_port_,
              connection_ != nullptr ? std::string(connection_->remote_host()) : "unknown",
              connection_ != nullptr ? connection_->remote_port() : 0);
+
+    const bool requested_vision = (request.feature_flags & proxy::kTcpFeatureVision) != 0;
+    if (requested_vision && !vision_enabled_)
+    {
+        trace_store::instance().record_event(trace_event{
+            .trace_id = trace_id_,
+            .conn_id = conn_id_,
+            .stage = trace_stage::kSessionError,
+            .result = trace_result::kFail,
+            .inbound_tag = inbound_tag_,
+            .inbound_type = "reality",
+            .target_host = target_host_,
+            .target_port = target_port_,
+            .error_message = "vision not enabled",
+            .extra = make_session_error_extra(session_close_reason::kRouteBlocked),
+        });
+        LOG_WARN("{} trace {:016x} conn {} target {}:{} vision requested but inbound disabled",
+                 log_event::kRoute,
+                 trace_id_,
+                 conn_id_,
+                 target_host_,
+                 target_port_);
+        (void)co_await send_connect_reply(socks::kRepNotAllowed, nullptr);
+        co_return;
+    }
+    vision_accepted_ = requested_vision && vision_enabled_;
 
     const auto request_ctx = make_request_context();
     auto flow_result = prepare_tcp_connect_flow(request_ctx, router_, executor_, cfg_);
@@ -368,6 +396,10 @@ boost::asio::awaitable<bool> reality_tcp_session::send_connect_reply(const uint8
 
     proxy::tcp_connect_reply reply;
     reply.socks_rep = socks_rep;
+    if (socks_rep == socks::kRepSuccess && vision_accepted_)
+    {
+        reply.feature_flags |= proxy::kTcpFeatureVision;
+    }
     if (connect_result != nullptr && connect_result->has_bind_endpoint)
     {
         reply.bind_host = connect_result->bind_addr.to_string();

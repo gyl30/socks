@@ -13,6 +13,8 @@ namespace relay::proxy
 
 // Covers framed TCP control/data messages and the largest supported UDP datagram.
 constexpr uint32_t kMaxPacketSize = 1U + 1U + 1U + 255U + 2U + 65507U;
+constexpr uint8_t kTcpFeatureVision = 0x01;
+constexpr uint8_t kKnownTcpFeatureFlags = kTcpFeatureVision;
 
 enum class message_type : uint8_t
 {
@@ -30,6 +32,7 @@ struct tcp_connect_request
     std::string target_host;
     uint16_t target_port = 0;
     uint64_t trace_id = 0;
+    uint8_t feature_flags = 0;
 };
 
 struct tcp_connect_reply
@@ -37,6 +40,7 @@ struct tcp_connect_reply
     uint8_t socks_rep = 0;
     std::string bind_host;
     uint16_t bind_port = 0;
+    uint8_t feature_flags = 0;
 };
 
 struct udp_associate_request

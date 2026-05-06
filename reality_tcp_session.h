@@ -29,7 +29,8 @@ class reality_tcp_session : public std::enable_shared_from_this<reality_tcp_sess
                                 uint32_t conn_id,
                                 uint64_t trace_id,
                                 std::string inbound_tag,
-                                const config& cfg);
+                                const config& cfg,
+                                bool vision_enabled);
 
     boost::asio::awaitable<void> start(const proxy::tcp_connect_request& request);
 
@@ -68,6 +69,8 @@ class reality_tcp_session : public std::enable_shared_from_this<reality_tcp_sess
     std::shared_ptr<router> router_;
     uint64_t last_activity_time_ms_{0};
     stream_relay_result::close_reason close_reason_ = stream_relay_result::close_reason::kUnknown;
+    bool vision_enabled_ = false;
+    bool vision_accepted_ = false;
 };
 
 }    // namespace relay

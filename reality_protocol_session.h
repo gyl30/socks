@@ -30,6 +30,7 @@ struct reality_protocol_context
     std::string remote_host;
     uint16_t remote_port = 0;
     std::string sni;
+    bool vision_enabled = false;
 };
 
 class reality_protocol_session

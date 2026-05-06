@@ -152,6 +152,7 @@ boost::asio::awaitable<void> reality_inbound::start_authenticated_session(io_wor
                                                                            .remote_host = reality_ctx.remote_addr,
                                                                            .remote_port = reality_ctx.remote_port,
                                                                            .sni = reality_ctx.sni,
+                                                                           .vision_enabled = settings_.vision,
                                                                        });
     co_await protocol_session->start();
 }

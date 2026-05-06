@@ -36,7 +36,9 @@ int main()
     using relay::proxy::encode_udp_associate_reply;
     using relay::proxy::encode_udp_associate_request;
     using relay::proxy::encode_udp_datagram;
+    using relay::proxy::kKnownTcpFeatureFlags;
     using relay::proxy::kMaxPacketSize;
+    using relay::proxy::kTcpFeatureVision;
     using relay::proxy::message_name;
     using relay::proxy::message_type;
     using relay::proxy::tcp_connect_reply;
@@ -68,10 +70,22 @@ int main()
         .target_port = 8443,
         .trace_id = 0x1112131415161718ULL,
     };
+    const tcp_connect_request vision_connect_request{
+        .target_host = "example.com",
+        .target_port = 443,
+        .trace_id = 0x3132333435363738ULL,
+        .feature_flags = kTcpFeatureVision,
+    };
     const tcp_connect_reply success_connect_reply{
         .socks_rep = 0x00,
         .bind_host = "",
         .bind_port = 0,
+    };
+    const tcp_connect_reply vision_connect_reply{
+        .socks_rep = 0x00,
+        .bind_host = "127.0.0.1",
+        .bind_port = 10001,
+        .feature_flags = kTcpFeatureVision,
     };
     const udp_associate_request outbound_associate_request{
         .trace_id = 0x2122232425262728ULL,
@@ -103,11 +117,33 @@ int main()
         require(connect_request.target_port == mapped_connect_request.target_port, "mapped tcp connect request port mismatch") &&
         require(!encode_tcp_connect_request(tcp_connect_request{.target_host = "example.com", .target_port = 0, .trace_id = 1}, packet),
                 "tcp connect request with zero port should be rejected") &&
+        require(encode_tcp_connect_request(vision_connect_request, packet), "failed to encode vision tcp connect request") &&
+        require(decode_tcp_connect_request(packet.data(), packet.size(), connect_request), "failed to decode vision tcp connect request") &&
+        require((connect_request.feature_flags & kTcpFeatureVision) != 0, "decoded tcp connect request vision flag missing") &&
+        require(!encode_tcp_connect_request(tcp_connect_request{.target_host = "example.com",
+                                                                .target_port = 443,
+                                                                .trace_id = 1,
+                                                                .feature_flags = static_cast<uint8_t>(kKnownTcpFeatureFlags << 1U)},
+                                            packet),
+                "tcp connect request with unknown feature flags should be rejected") &&
         require(encode_tcp_connect_reply(success_connect_reply, packet), "failed to encode tcp connect reply") &&
         require(decode_tcp_connect_reply(packet.data(), packet.size(), connect_reply), "failed to decode tcp connect reply") &&
         require(connect_reply.socks_rep == success_connect_reply.socks_rep, "decoded tcp connect reply rep mismatch") &&
         require(connect_reply.bind_host == "0.0.0.0", "decoded tcp connect reply default bind host mismatch") &&
         require(connect_reply.bind_port == 0, "decoded tcp connect reply default bind port mismatch") &&
+        require(connect_reply.feature_flags == 0, "decoded legacy tcp connect reply should not set feature flags") &&
+        require(encode_tcp_connect_reply(vision_connect_reply, packet), "failed to encode vision tcp connect reply") &&
+        require(decode_tcp_connect_reply(packet.data(), packet.size(), connect_reply), "failed to decode vision tcp connect reply") &&
+        require((connect_reply.feature_flags & kTcpFeatureVision) != 0, "decoded tcp connect reply vision flag missing") &&
+        require(!encode_tcp_connect_reply(tcp_connect_reply{.socks_rep = 0x00,
+                                                            .bind_host = "127.0.0.1",
+                                                            .bind_port = 1,
+                                                            .feature_flags = static_cast<uint8_t>(kKnownTcpFeatureFlags << 1U)},
+                                          packet),
+                "tcp connect reply with unknown feature flags should be rejected") &&
+        require(encode_tcp_connect_reply(success_connect_reply, packet), "failed to re-encode tcp connect reply") &&
+        require((packet.push_back(0), packet.push_back(0), !decode_tcp_connect_reply(packet.data(), packet.size(), connect_reply)),
+                "tcp connect reply with trailing junk should be rejected") &&
         require(encode_udp_associate_request(outbound_associate_request, packet), "failed to encode udp associate request") &&
         require(decode_udp_associate_request(packet.data(), packet.size(), associate_request), "failed to decode udp associate request") &&
         require(associate_request.trace_id == outbound_associate_request.trace_id, "decoded udp associate request trace id mismatch") &&

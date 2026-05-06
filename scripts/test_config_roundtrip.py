@@ -260,6 +260,16 @@ def run_invalid_reality_config_cases(binary, runtime_env, temp_root):
         )
     )
 
+    invalid_inbound_vision_type = copy.deepcopy(valid_inbound_reality)
+    invalid_inbound_vision_type["inbounds"][0]["settings"]["vision"] = "yes"
+    cases.append(
+        (
+            "invalid_inbound_vision_type",
+            invalid_inbound_vision_type,
+            "inbounds[0].settings.vision type invalid",
+        )
+    )
+
     for case_name, config_value, expected_error in cases:
         run_invalid_reality_config_case(binary, runtime_env, temp_root, case_name, config_value, expected_error)
         print(f"{case_name} ok")
@@ -483,6 +493,17 @@ def run_invalid_general_config_cases(binary, runtime_env, temp_root):
         "invalid_reality_outbound_zero_max_handshake_records",
         invalid_reality_outbound_handshake_limit,
         "outbounds[0].settings.max_handshake_records out_of_range",
+    )
+
+    invalid_reality_outbound_vision_type = copy.deepcopy(base_cfg)
+    invalid_reality_outbound_vision_type["outbounds"][0]["settings"]["vision"] = "yes"
+    run_invalid_config_value_case(
+        binary,
+        runtime_env,
+        temp_root,
+        "invalid_reality_outbound_vision_type",
+        invalid_reality_outbound_vision_type,
+        "outbounds[0].settings.vision type invalid",
     )
 
     invalid_socks_outbound_auth_username = copy.deepcopy(base_cfg)

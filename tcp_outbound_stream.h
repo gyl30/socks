@@ -26,6 +26,7 @@ struct tcp_outbound_connect_result
     uint8_t socks_rep = 0;
     bool has_bind_endpoint = false;
     bool has_resolved_target_endpoint = false;
+    bool vision_accepted = false;
 };
 
 class tcp_outbound_stream : public stream_relay_transport

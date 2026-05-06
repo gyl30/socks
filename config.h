@@ -69,6 +69,7 @@ struct config
         std::string sni = "www.apple.com";
         uint16_t site_port = 443;
         bool fetch_site_material = true;
+        bool vision = false;
         std::string private_key;
         std::string short_id;
         uint32_t replay_cache_max_entries = 100000;
@@ -83,6 +84,7 @@ struct config
         std::string public_key;
         std::string short_id;
         uint32_t max_handshake_records = 256;
+        bool vision = false;
     };
 
     struct inbound_entry_t

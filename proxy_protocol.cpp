@@ -233,6 +233,37 @@ void append_ipv6_address(std::vector<uint8_t>& out, const boost::asio::ip::addre
     return raw_type == static_cast<uint8_t>(expected);
 }
 
+[[nodiscard]] bool append_tcp_feature_flags(std::vector<uint8_t>& out, const uint8_t feature_flags)
+{
+    if ((feature_flags & ~relay::proxy::kKnownTcpFeatureFlags) != 0)
+    {
+        return false;
+    }
+    if (feature_flags != 0)
+    {
+        out.push_back(feature_flags);
+    }
+    return true;
+}
+
+[[nodiscard]] bool parse_optional_tcp_feature_flags(const uint8_t* data, const std::size_t len, std::size_t& pos, uint8_t& feature_flags)
+{
+    feature_flags = 0;
+    if (pos == len)
+    {
+        return true;
+    }
+    if (len - pos != 1U)
+    {
+        return false;
+    }
+    if (!read_u8(data, len, pos, feature_flags))
+    {
+        return false;
+    }
+    return (feature_flags & ~relay::proxy::kKnownTcpFeatureFlags) == 0;
+}
+
 }    // namespace
 
 namespace relay::proxy
@@ -294,7 +325,7 @@ bool encode_tcp_connect_request(const tcp_connect_request& request, std::vector<
     out.reserve(64 + request.target_host.size());
     out.push_back(static_cast<uint8_t>(message_type::kTcpConnectRequest));
     append_u64(out, request.trace_id);
-    return append_target_endpoint(out, request.target_host, request.target_port);
+    return append_target_endpoint(out, request.target_host, request.target_port) && append_tcp_feature_flags(out, request.feature_flags);
 }
 
 bool decode_tcp_connect_request(const uint8_t* data, const std::size_t len, tcp_connect_request& out)
@@ -312,6 +343,10 @@ bool decode_tcp_connect_request(const uint8_t* data, const std::size_t len, tcp_
     {
         return false;
     }
+    if (!parse_optional_tcp_feature_flags(data, len, pos, out.feature_flags))
+    {
+        return false;
+    }
     return pos == len && !out.target_host.empty() && out.target_port != 0;
 }
 
@@ -322,7 +357,7 @@ bool encode_tcp_connect_reply(const tcp_connect_reply& reply, std::vector<uint8_
     out.push_back(static_cast<uint8_t>(message_type::kTcpConnectReply));
     out.push_back(reply.socks_rep);
     const auto& bind_host = reply.bind_host.empty() ? std::string("0.0.0.0") : reply.bind_host;
-    return append_target_endpoint(out, bind_host, reply.bind_port);
+    return append_target_endpoint(out, bind_host, reply.bind_port) && append_tcp_feature_flags(out, reply.feature_flags);
 }
 
 bool decode_tcp_connect_reply(const uint8_t* data, const std::size_t len, tcp_connect_reply& out)
@@ -337,6 +372,10 @@ bool decode_tcp_connect_reply(const uint8_t* data, const std::size_t len, tcp_co
         return false;
     }
     if (!parse_target_endpoint(data, len, pos, out.bind_host, out.bind_port))
+    {
+        return false;
+    }
+    if (!parse_optional_tcp_feature_flags(data, len, pos, out.feature_flags))
     {
         return false;
     }
