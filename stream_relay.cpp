@@ -1,10 +1,10 @@
 #include "stream_relay.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <mutex>
 #include <span>
-#include <vector>
 
 #include <boost/asio/as_tuple.hpp>
 #include <boost/asio/experimental/awaitable_operators.hpp>
@@ -98,10 +98,10 @@ boost::asio::awaitable<void> relay_direction(stream_relay_context& context,
                                              relay_result_state& result_state)
 {
     boost::system::error_code ec;
-    std::vector<uint8_t> buffer(8192);
+    std::array<uint8_t, 8192> buffer{};
     for (;;)
     {
-        const auto bytes_read = co_await source.read(buffer, ec);
+        const auto bytes_read = co_await source.read(std::span<uint8_t>(buffer), ec);
         if (ec)
         {
             if (ec == boost::asio::error::timed_out)

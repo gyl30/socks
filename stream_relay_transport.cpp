@@ -7,7 +7,7 @@
 #include <boost/asio/use_awaitable.hpp>
 
 #include "net_utils.h"
-#include "proxy_protocol.h"
+#include "proxy_stream_relay_transport.h"
 
 namespace relay
 {
@@ -15,7 +15,7 @@ namespace relay
 namespace
 {
 
-std::size_t consume_pending_read_data(std::vector<uint8_t>& pending_read_data, std::size_t& pending_read_offset, std::vector<uint8_t>& buffer)
+std::size_t consume_pending_read_data(std::vector<uint8_t>& pending_read_data, std::size_t& pending_read_offset, std::span<uint8_t> buffer)
 {
     const auto remaining = pending_read_data.size() - pending_read_offset;
     const auto size = std::min(buffer.size(), remaining);
@@ -46,7 +46,7 @@ void proxy_connection_tcp_stream::reset(std::shared_ptr<proxy_reality_connection
 }
 
 boost::asio::awaitable<std::size_t> proxy_connection_tcp_stream::read(
-    std::vector<uint8_t>& buffer, const uint32_t read_timeout, boost::system::error_code& ec)
+    std::span<uint8_t> buffer, const uint32_t read_timeout, boost::system::error_code& ec)
 {
     ec.clear();
     if (buffer.empty())
@@ -173,7 +173,7 @@ tcp_socket_stream_relay_transport::tcp_socket_stream_relay_transport(boost::asio
 {
 }
 
-boost::asio::awaitable<std::size_t> tcp_socket_stream_relay_transport::read(std::vector<uint8_t>& buffer, boost::system::error_code& ec)
+boost::asio::awaitable<std::size_t> tcp_socket_stream_relay_transport::read(std::span<uint8_t> buffer, boost::system::error_code& ec)
 {
     ec.clear();
     if (buffer.empty())
@@ -182,7 +182,7 @@ boost::asio::awaitable<std::size_t> tcp_socket_stream_relay_transport::read(std:
     }
 
     const auto bytes_read = co_await socket_.async_read_some(
-        boost::asio::buffer(buffer), boost::asio::redirect_error(boost::asio::use_awaitable, ec));
+        boost::asio::buffer(buffer.data(), buffer.size()), boost::asio::redirect_error(boost::asio::use_awaitable, ec));
     if (ec)
     {
         co_return 0;
@@ -226,7 +226,7 @@ proxy_connection_stream_relay_transport::proxy_connection_stream_relay_transport
 {
 }
 
-boost::asio::awaitable<std::size_t> proxy_connection_stream_relay_transport::read(std::vector<uint8_t>& buffer, boost::system::error_code& ec)
+boost::asio::awaitable<std::size_t> proxy_connection_stream_relay_transport::read(std::span<uint8_t> buffer, boost::system::error_code& ec)
 {
     if (!stream_.has_connection())
     {

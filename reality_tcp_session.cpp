@@ -22,9 +22,9 @@
 #include "protocol.h"
 #include "trace_store.h"
 #include "net_utils.h"
+#include "proxy_stream_relay_transport.h"
 #include "stream_relay.h"
 #include "stream_relay_transport.h"
-#include "proxy_protocol.h"
 #include "reality_tcp_session.h"
 
 namespace relay

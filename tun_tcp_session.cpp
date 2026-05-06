@@ -1,6 +1,7 @@
 #include <chrono>
 #include <limits>
 #include <memory>
+#include <span>
 #include <vector>
 #include <cstddef>
 #include <cstdint>
@@ -563,7 +564,7 @@ boost::asio::awaitable<void> tun_tcp_session::outbound_to_client(const std::shar
 
     for (;;)
     {
-        const auto bytes_recv = co_await backend->read(buffer, ec);
+        const auto bytes_recv = co_await backend->read(std::span<uint8_t>(buffer.data(), buffer.size()), ec);
         if (ec)
         {
             const auto reason = classify_backend_io_error(ec);
