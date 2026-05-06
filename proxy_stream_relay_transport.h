@@ -2,8 +2,10 @@
 #define PROXY_STREAM_RELAY_TRANSPORT_H
 
 #include <span>
+#include <mutex>
 #include <memory>
 #include <vector>
+#include <cstdint>
 
 #include <boost/asio/awaitable.hpp>
 
@@ -63,7 +65,7 @@ class vision_connection_tcp_stream
     void reset(std::shared_ptr<proxy_reality_connection> connection = nullptr,
                vision::direction write_direction = vision::direction::kClientToServer,
                vision::direction read_direction = vision::direction::kServerToClient);
-    [[nodiscard]] bool has_connection() const { return connection_ != nullptr; }
+    [[nodiscard]] bool has_connection() const;
     [[nodiscard]] boost::asio::awaitable<std::size_t> read(
         std::span<uint8_t> buffer, uint32_t read_timeout, boost::system::error_code& ec);
     [[nodiscard]] boost::asio::awaitable<std::size_t> write(std::span<const uint8_t> data, boost::system::error_code& ec);
@@ -71,11 +73,12 @@ class vision_connection_tcp_stream
     boost::asio::awaitable<void> close();
 
    private:
-    [[nodiscard]] boost::asio::awaitable<void> apply_pending_read_switch(boost::system::error_code& ec);
-    [[nodiscard]] boost::asio::awaitable<std::size_t> read_outer_plain(std::span<uint8_t> buffer,
+    [[nodiscard]] boost::asio::awaitable<std::size_t> read_outer_plain(std::shared_ptr<proxy_reality_connection> connection,
+                                                                       std::span<uint8_t> buffer,
                                                                        uint32_t read_timeout,
                                                                        boost::system::error_code& ec);
 
+    mutable std::mutex mutex_;
     std::shared_ptr<proxy_reality_connection> connection_;
     vision::block_parser parser_;
     vision::tls_tracker tracker_;
@@ -89,6 +92,7 @@ class vision_connection_tcp_stream
     bool outer_plain_write_mode_ = false;
     vision::direction write_direction_ = vision::direction::kClientToServer;
     vision::direction read_direction_ = vision::direction::kServerToClient;
+    uint64_t generation_ = 0;
 };
 
 class vision_connection_stream_relay_transport final : public stream_relay_transport

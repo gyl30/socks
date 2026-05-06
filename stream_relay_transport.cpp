@@ -1,3 +1,5 @@
+#include <mutex>
+#include <cstdint>
 #include <algorithm>
 
 #include <boost/asio/buffer.hpp>
@@ -289,6 +291,7 @@ void vision_connection_tcp_stream::reset(std::shared_ptr<proxy_reality_connectio
                                          const vision::direction write_direction,
                                          const vision::direction read_direction)
 {
+    std::scoped_lock lock(mutex_);
     connection_ = std::move(connection);
     parser_ = vision::block_parser{};
     tracker_ = vision::tls_tracker{};
@@ -302,49 +305,22 @@ void vision_connection_tcp_stream::reset(std::shared_ptr<proxy_reality_connectio
     outer_plain_write_mode_ = false;
     write_direction_ = write_direction;
     read_direction_ = read_direction;
+    generation_++;
 }
 
-boost::asio::awaitable<void> vision_connection_tcp_stream::apply_pending_read_switch(boost::system::error_code& ec)
+bool vision_connection_tcp_stream::has_connection() const
 {
-    if (!pending_read_data_.empty())
-    {
-        ec.clear();
-        co_return;
-    }
-    if (pending_read_switch_raw_)
-    {
-        if (!parser_.empty())
-        {
-            ec = boost::asio::error::invalid_argument;
-            co_return;
-        }
-        pending_read_switch_raw_ = false;
-        co_await connection_->enter_raw_read_mode(ec);
-        if (ec)
-        {
-            co_return;
-        }
-        raw_read_mode_ = true;
-    }
-    if (pending_read_switch_outer_plain_)
-    {
-        if (!parser_.empty())
-        {
-            ec = boost::asio::error::invalid_argument;
-            co_return;
-        }
-        pending_read_switch_outer_plain_ = false;
-        outer_plain_read_mode_ = true;
-    }
-    ec.clear();
+    std::scoped_lock lock(mutex_);
+    return connection_ != nullptr;
 }
 
-boost::asio::awaitable<std::size_t> vision_connection_tcp_stream::read_outer_plain(std::span<uint8_t> buffer,
+boost::asio::awaitable<std::size_t> vision_connection_tcp_stream::read_outer_plain(std::shared_ptr<proxy_reality_connection> connection,
+                                                                                   std::span<uint8_t> buffer,
                                                                                    const uint32_t read_timeout,
                                                                                    boost::system::error_code& ec)
 {
     std::vector<uint8_t> outer_buffer(buffer.size());
-    const auto bytes_read = co_await connection_->read_some(outer_buffer, read_timeout, ec);
+    const auto bytes_read = co_await connection->read_some(outer_buffer, read_timeout, ec);
     if (ec)
     {
         co_return 0;
@@ -357,140 +333,334 @@ boost::asio::awaitable<std::size_t> vision_connection_tcp_stream::read(std::span
                                                                        const uint32_t read_timeout,
                                                                        boost::system::error_code& ec)
 {
+    enum class read_action : uint8_t
+    {
+        kReturn,
+        kReadRaw,
+        kReadOuter,
+        kReadOuterBlock,
+        kEnterRawThenReadRaw,
+        kEnterRawThenReturn,
+    };
+
+    struct read_step
+    {
+        read_action action = read_action::kReturn;
+        std::shared_ptr<proxy_reality_connection> connection;
+        uint64_t generation = 0;
+        std::size_t bytes = 0;
+    };
+
     ec.clear();
     if (buffer.empty())
     {
         co_return 0;
     }
-    if (connection_ == nullptr)
-    {
-        ec = boost::asio::error::not_connected;
-        co_return 0;
-    }
-    if (!pending_read_data_.empty())
-    {
-        const auto bytes = consume_pending_read_data(pending_read_data_, pending_read_offset_, buffer);
-        co_await apply_pending_read_switch(ec);
-        co_return bytes;
-    }
-    if (raw_read_mode_)
-    {
-        co_return co_await connection_->read_raw(buffer, read_timeout, ec);
-    }
-    if (outer_plain_read_mode_)
-    {
-        co_return co_await read_outer_plain(buffer, read_timeout, ec);
-    }
 
     for (;;)
     {
-        vision::block parsed;
-        const auto status = parser_.next(parsed, ec);
-        if (status == vision::parse_status::kError)
+        read_step step;
         {
-            co_return 0;
+            std::scoped_lock lock(mutex_);
+            if (connection_ == nullptr)
+            {
+                ec = boost::asio::error::not_connected;
+                co_return 0;
+            }
+            step.connection = connection_;
+            step.generation = generation_;
+
+            if (!pending_read_data_.empty())
+            {
+                step.bytes = consume_pending_read_data(pending_read_data_, pending_read_offset_, buffer);
+                if (pending_read_data_.empty() && pending_read_switch_raw_)
+                {
+                    if (!parser_.empty())
+                    {
+                        ec = boost::asio::error::invalid_argument;
+                        co_return 0;
+                    }
+                    pending_read_switch_raw_ = false;
+                    step.action = read_action::kEnterRawThenReturn;
+                }
+                else if (pending_read_data_.empty() && pending_read_switch_outer_plain_)
+                {
+                    if (!parser_.empty())
+                    {
+                        ec = boost::asio::error::invalid_argument;
+                        co_return 0;
+                    }
+                    pending_read_switch_outer_plain_ = false;
+                    outer_plain_read_mode_ = true;
+                    step.action = read_action::kReturn;
+                }
+                else
+                {
+                    step.action = read_action::kReturn;
+                }
+            }
+            else if (raw_read_mode_)
+            {
+                step.action = read_action::kReadRaw;
+            }
+            else if (outer_plain_read_mode_)
+            {
+                step.action = read_action::kReadOuter;
+            }
+            else
+            {
+                vision::block parsed;
+                const auto status = parser_.next(parsed, ec);
+                if (status == vision::parse_status::kError)
+                {
+                    co_return 0;
+                }
+                if (status == vision::parse_status::kNeedMore)
+                {
+                    step.action = read_action::kReadOuterBlock;
+                }
+                else if (!parsed.content.empty())
+                {
+                    tracker_.observe(read_direction_, parsed.content);
+                    pending_read_data_ = std::move(parsed.content);
+                    pending_read_offset_ = 0;
+                    pending_read_switch_raw_ = parsed.cmd == vision::command::kDirect;
+                    pending_read_switch_outer_plain_ = parsed.cmd == vision::command::kEnd;
+                    step.bytes = consume_pending_read_data(pending_read_data_, pending_read_offset_, buffer);
+                    if (pending_read_data_.empty() && pending_read_switch_raw_)
+                    {
+                        if (!parser_.empty())
+                        {
+                            ec = boost::asio::error::invalid_argument;
+                            co_return 0;
+                        }
+                        pending_read_switch_raw_ = false;
+                        step.action = read_action::kEnterRawThenReturn;
+                    }
+                    else if (pending_read_data_.empty() && pending_read_switch_outer_plain_)
+                    {
+                        if (!parser_.empty())
+                        {
+                            ec = boost::asio::error::invalid_argument;
+                            co_return 0;
+                        }
+                        pending_read_switch_outer_plain_ = false;
+                        outer_plain_read_mode_ = true;
+                        step.action = read_action::kReturn;
+                    }
+                    else
+                    {
+                        step.action = read_action::kReturn;
+                    }
+                }
+                else if (parsed.cmd == vision::command::kDirect)
+                {
+                    if (!parser_.empty())
+                    {
+                        ec = boost::asio::error::invalid_argument;
+                        co_return 0;
+                    }
+                    step.action = read_action::kEnterRawThenReadRaw;
+                }
+                else if (parsed.cmd == vision::command::kEnd)
+                {
+                    if (!parser_.empty())
+                    {
+                        ec = boost::asio::error::invalid_argument;
+                        co_return 0;
+                    }
+                    outer_plain_read_mode_ = true;
+                    step.action = read_action::kReadOuter;
+                }
+                else
+                {
+                    step.action = read_action::kReadOuterBlock;
+                }
+            }
         }
-        if (status == vision::parse_status::kBlock)
+
+        if (step.action == read_action::kReturn)
         {
-            if (!parsed.content.empty())
+            co_return step.bytes;
+        }
+        if (step.action == read_action::kReadRaw)
+        {
+            co_return co_await step.connection->read_raw(buffer, read_timeout, ec);
+        }
+        if (step.action == read_action::kReadOuter)
+        {
+            co_return co_await read_outer_plain(step.connection, buffer, read_timeout, ec);
+        }
+        if (step.action == read_action::kReadOuterBlock)
+        {
+            std::vector<uint8_t> outer_buffer(buffer.size());
+            const auto bytes_read = co_await step.connection->read_some(outer_buffer, read_timeout, ec);
+            if (ec)
             {
-                tracker_.observe(read_direction_, parsed.content);
-                pending_read_data_ = std::move(parsed.content);
-                pending_read_offset_ = 0;
-                pending_read_switch_raw_ = parsed.cmd == vision::command::kDirect;
-                pending_read_switch_outer_plain_ = parsed.cmd == vision::command::kEnd;
-                const auto bytes = consume_pending_read_data(pending_read_data_, pending_read_offset_, buffer);
-                co_await apply_pending_read_switch(ec);
-                co_return bytes;
+                co_return 0;
             }
-            if (parsed.cmd == vision::command::kDirect)
             {
-                if (!parser_.empty())
+                std::scoped_lock lock(mutex_);
+                if (generation_ != step.generation || connection_ != step.connection)
                 {
-                    ec = boost::asio::error::invalid_argument;
+                    ec = boost::asio::error::operation_aborted;
                     co_return 0;
                 }
-                co_await connection_->enter_raw_read_mode(ec);
-                if (ec)
-                {
-                    co_return 0;
-                }
-                raw_read_mode_ = true;
-                co_return co_await connection_->read_raw(buffer, read_timeout, ec);
-            }
-            if (parsed.cmd == vision::command::kEnd)
-            {
-                if (!parser_.empty())
-                {
-                    ec = boost::asio::error::invalid_argument;
-                    co_return 0;
-                }
-                outer_plain_read_mode_ = true;
-                co_return co_await read_outer_plain(buffer, read_timeout, ec);
+                parser_.append(std::span<const uint8_t>(outer_buffer.data(), bytes_read));
             }
             continue;
         }
 
-        std::vector<uint8_t> outer_buffer(buffer.size());
-        const auto bytes_read = co_await connection_->read_some(outer_buffer, read_timeout, ec);
+        co_await step.connection->enter_raw_read_mode(ec);
         if (ec)
         {
-            co_return 0;
+            co_return step.bytes;
         }
-        parser_.append(std::span<const uint8_t>(outer_buffer.data(), bytes_read));
+        {
+            std::scoped_lock lock(mutex_);
+            if (generation_ != step.generation || connection_ != step.connection)
+            {
+                ec = boost::asio::error::operation_aborted;
+                co_return step.bytes;
+            }
+            raw_read_mode_ = true;
+        }
+        if (step.action == read_action::kEnterRawThenReturn)
+        {
+            co_return step.bytes;
+        }
+        co_return co_await step.connection->read_raw(buffer, read_timeout, ec);
     }
 }
 
 boost::asio::awaitable<std::size_t> vision_connection_tcp_stream::write(std::span<const uint8_t> data, boost::system::error_code& ec)
 {
+    enum class write_action : uint8_t
+    {
+        kSegments,
+        kRaw,
+        kOuter,
+    };
+
+    struct encoded_segment
+    {
+        vision::write_segment segment;
+        vision::padding_mode mode = vision::padding_mode::kNone;
+    };
+
     ec.clear();
     if (data.empty())
     {
         co_return 0;
     }
-    if (connection_ == nullptr)
+    std::shared_ptr<proxy_reality_connection> connection;
+    uint64_t generation = 0;
+    write_action action = write_action::kSegments;
+    std::vector<encoded_segment> segments;
     {
-        ec = boost::asio::error::not_connected;
-        co_return 0;
+        std::scoped_lock lock(mutex_);
+        if (connection_ == nullptr)
+        {
+            ec = boost::asio::error::not_connected;
+            co_return 0;
+        }
+        connection = connection_;
+        generation = generation_;
+        if (raw_write_mode_)
+        {
+            action = write_action::kRaw;
+        }
+        else if (outer_plain_write_mode_)
+        {
+            action = write_action::kOuter;
+        }
+        else
+        {
+            const auto processed_segments = tracker_.process(write_direction_, data);
+            const auto continue_mode = tracker_.tls13_confirmed() ? vision::padding_mode::kShort : vision::padding_mode::kLong;
+            segments.reserve(processed_segments.size());
+            for (const auto& segment : processed_segments)
+            {
+                segments.push_back(encoded_segment{
+                    .segment = segment,
+                    .mode = segment.cmd == vision::command::kContinue ? continue_mode : vision::padding_mode::kNone,
+                });
+            }
+        }
     }
-    if (raw_write_mode_)
+
+    if (action == write_action::kRaw)
     {
-        co_await connection_->write_raw(data, ec);
+        co_await connection->write_raw(data, ec);
+        if (!ec)
+        {
+            std::scoped_lock lock(mutex_);
+            if (generation_ != generation || connection_ != connection)
+            {
+                ec = boost::asio::error::operation_aborted;
+                co_return 0;
+            }
+        }
         co_return ec ? 0 : data.size();
     }
-    if (outer_plain_write_mode_)
+    if (action == write_action::kOuter)
     {
-        co_await connection_->write(data, ec);
+        co_await connection->write(data, ec);
+        if (!ec)
+        {
+            std::scoped_lock lock(mutex_);
+            if (generation_ != generation || connection_ != connection)
+            {
+                ec = boost::asio::error::operation_aborted;
+                co_return 0;
+            }
+        }
         co_return ec ? 0 : data.size();
     }
 
-    const auto segments = tracker_.process(write_direction_, data);
-    for (const auto& segment : segments)
+    for (const auto& item : segments)
     {
-        const auto mode = segment.cmd == vision::command::kContinue
-                              ? (tracker_.tls13_confirmed() ? vision::padding_mode::kShort : vision::padding_mode::kLong)
-                              : vision::padding_mode::kNone;
         std::vector<uint8_t> encoded;
-        if (!vision::encode_block(segment.cmd, segment.content, mode, encoded, ec))
+        if (!vision::encode_block(item.segment.cmd, item.segment.content, item.mode, encoded, ec))
         {
             co_return 0;
         }
-        co_await connection_->write(encoded, ec);
+        co_await connection->write(encoded, ec);
         if (ec)
         {
             co_return 0;
         }
-        if (segment.switch_to_raw_after)
         {
-            co_await connection_->enter_raw_write_mode(ec);
+            std::scoped_lock lock(mutex_);
+            if (generation_ != generation || connection_ != connection)
+            {
+                ec = boost::asio::error::operation_aborted;
+                co_return 0;
+            }
+        }
+        if (item.segment.switch_to_raw_after)
+        {
+            co_await connection->enter_raw_write_mode(ec);
             if (ec)
             {
                 co_return 0;
             }
+            std::scoped_lock lock(mutex_);
+            if (generation_ != generation || connection_ != connection)
+            {
+                ec = boost::asio::error::operation_aborted;
+                co_return 0;
+            }
             raw_write_mode_ = true;
         }
-        if (segment.switch_to_outer_plain_after)
+        if (item.segment.switch_to_outer_plain_after)
         {
+            std::scoped_lock lock(mutex_);
+            if (generation_ != generation || connection_ != connection)
+            {
+                ec = boost::asio::error::operation_aborted;
+                co_return 0;
+            }
             outer_plain_write_mode_ = true;
         }
     }
@@ -500,22 +670,43 @@ boost::asio::awaitable<std::size_t> vision_connection_tcp_stream::write(std::spa
 boost::asio::awaitable<void> vision_connection_tcp_stream::shutdown_send(boost::system::error_code& ec)
 {
     ec.clear();
-    if (connection_ == nullptr)
+    std::shared_ptr<proxy_reality_connection> connection;
+    {
+        std::scoped_lock lock(mutex_);
+        connection = connection_;
+    }
+    if (connection == nullptr)
     {
         ec = boost::asio::error::not_connected;
         co_return;
     }
-    co_await connection_->shutdown_send(ec);
+    co_await connection->shutdown_send(ec);
 }
 
 boost::asio::awaitable<void> vision_connection_tcp_stream::close()
 {
-    if (connection_ != nullptr)
+    std::shared_ptr<proxy_reality_connection> connection;
+    {
+        std::scoped_lock lock(mutex_);
+        connection = std::move(connection_);
+        connection_.reset();
+        parser_ = vision::block_parser{};
+        tracker_ = vision::tls_tracker{};
+        pending_read_data_.clear();
+        pending_read_offset_ = 0;
+        pending_read_switch_raw_ = false;
+        pending_read_switch_outer_plain_ = false;
+        raw_read_mode_ = false;
+        raw_write_mode_ = false;
+        outer_plain_read_mode_ = false;
+        outer_plain_write_mode_ = false;
+        generation_++;
+    }
+    if (connection != nullptr)
     {
         boost::system::error_code ec;
-        connection_->close(ec);
+        connection->close(ec);
     }
-    reset();
     co_return;
 }
 
