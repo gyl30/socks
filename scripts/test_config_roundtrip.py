@@ -64,6 +64,63 @@ def run_marked_roundtrip(binary, runtime_env, temp_root):
         process.terminate()
 
 
+def run_vision_roundtrip(binary, runtime_env, temp_root):
+    cfg = dump_default_config(binary, runtime_env)
+    if cfg["outbounds"][0]["settings"].get("vision") is not False:
+        raise RuntimeError("default reality outbound vision should be false")
+
+    key_output = subprocess.run([str(binary), "x25519"], env=runtime_env, text=True, capture_output=True, check=False)
+    if key_output.returncode != 0:
+        raise RuntimeError(f"dump x25519 failed rc={key_output.returncode} stderr={key_output.stderr}")
+    private_key, public_key = parse_key_output(key_output.stdout)
+
+    socks_host = cfg["inbounds"][0]["settings"]["host"]
+    socks_port = allocate_tcp_port()
+    reality_port = allocate_tcp_port()
+    log_path = temp_root / "vision-roundtrip.log"
+    run_log = temp_root / "vision-roundtrip.stdout.log"
+
+    cfg["log"]["file"] = str(log_path)
+    cfg["inbounds"][0]["settings"]["port"] = socks_port
+    cfg["inbounds"].append(
+        {
+            "type": "reality",
+            "tag": "reality-in",
+            "settings": {
+                "host": "127.0.0.1",
+                "port": reality_port,
+                "sni": "localhost",
+                "site_port": 443,
+                "fetch_site_material": False,
+                "vision": True,
+                "private_key": private_key,
+                "short_id": "0102030405060708",
+                "replay_cache_max_entries": 1000,
+            },
+        }
+    )
+    cfg["outbounds"][0]["settings"]["host"] = "127.0.0.1"
+    cfg["outbounds"][0]["settings"]["port"] = reality_port
+    cfg["outbounds"][0]["settings"]["sni"] = "localhost"
+    cfg["outbounds"][0]["settings"]["public_key"] = public_key
+    cfg["outbounds"][0]["settings"]["short_id"] = "0102030405060708"
+    cfg["outbounds"][0]["settings"]["vision"] = True
+    cfg["routing"] = [
+        {"type": "inbound", "values": ["socks-in"], "out": "reality-out"},
+        {"type": "inbound", "values": ["reality-in"], "out": "direct"},
+    ]
+
+    config_path = temp_root / "vision-roundtrip.json"
+    save_json(config_path, cfg)
+
+    process = start_process([str(binary), "-c", str(config_path)], str(run_log), extra_env=runtime_env)
+    try:
+        wait_for_log_text(log_path, f"listen {socks_host}:{socks_port} socks listening", 20, "vision socks roundtrip log")
+        wait_for_log_text(log_path, f"listen 127.0.0.1:{reality_port} reality inbound listening", 20, "vision reality roundtrip log")
+    finally:
+        process.terminate()
+
+
 def run_invalid_config_case(binary, runtime_env, temp_root):
     invalid_path = temp_root / "invalid.json"
     invalid_path.write_text("{\n", encoding="utf-8")
@@ -563,6 +620,8 @@ def main():
         print("default_roundtrip ok")
         run_marked_roundtrip(binary, runtime_env, temp_root)
         print("marked_roundtrip ok")
+        run_vision_roundtrip(binary, runtime_env, temp_root)
+        print("vision_roundtrip ok")
         run_invalid_config_case(binary, runtime_env, temp_root)
         print("invalid_config ok")
         run_invalid_reality_config_cases(binary, runtime_env, temp_root)

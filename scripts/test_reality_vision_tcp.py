@@ -331,6 +331,9 @@ def main():
             expect_success=True,
             expected_stdout=f"{large_response}\n",
         )
+        wait_for_log_text(success_stack["client_log"], "vision requested", 10, "vision request log", success_stack["processes"])
+        wait_for_log_text(success_stack["client_log"], "vision accepted", 10, "vision client accept log", success_stack["processes"])
+        wait_for_log_text(success_stack["server_log"], "vision accepted", 10, "vision server accept log", success_stack["processes"])
         for log_path, label in ((success_stack["server_log"], "server"), (success_stack["client_log"], "client")):
             wait_for_log_text(log_path, "enter_raw_write_mode", 10, f"vision direct {label} write", success_stack["processes"])
             wait_for_log_text(log_path, "enter_raw_read_mode", 10, f"vision direct {label} read", success_stack["processes"])

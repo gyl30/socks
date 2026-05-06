@@ -636,7 +636,8 @@ boost::asio::awaitable<void> proxy_tcp_outbound::send_connect_request(const std:
     request.target_host = host;
     request.target_port = port;
     request.trace_id = trace_id_;
-    if (vision_requested())
+    const bool requested_vision = vision_requested();
+    if (requested_vision)
     {
         request.feature_flags |= proxy::kTcpFeatureVision;
     }
@@ -654,6 +655,15 @@ boost::asio::awaitable<void> proxy_tcp_outbound::send_connect_request(const std:
         co_return;
     }
 
+    if (requested_vision)
+    {
+        LOG_INFO("{} trace {:016x} conn {} stage send_connect_request target {}:{} vision requested",
+                 log_event::kRoute,
+                 trace_id_,
+                 conn_id_,
+                 host,
+                 port);
+    }
     LOG_INFO("{} trace {:016x} conn {} stage send_connect_request target {}:{} payload_size {}",
              log_event::kRoute,
              trace_id_,
@@ -751,6 +761,15 @@ boost::asio::awaitable<void> proxy_tcp_outbound::wait_connect_reply(const std::s
         co_return;
     }
     result.vision_accepted = accepted_vision;
+    if (accepted_vision)
+    {
+        LOG_INFO("{} trace {:016x} conn {} stage wait_connect_reply target {}:{} vision accepted",
+                 log_event::kRoute,
+                 trace_id_,
+                 conn_id_,
+                 host,
+                 port);
+    }
 
     boost::system::error_code bind_ec;
     const auto bind_addr = boost::asio::ip::make_address(reply.bind_host, bind_ec);

@@ -204,6 +204,15 @@ boost::asio::awaitable<void> reality_tcp_session::run(const proxy::tcp_connect_r
         co_return;
     }
     vision_accepted_ = requested_vision && vision_enabled_;
+    if (vision_accepted_)
+    {
+        LOG_INFO("{} trace {:016x} conn {} target {}:{} vision accepted",
+                 log_event::kRoute,
+                 trace_id_,
+                 conn_id_,
+                 target_host_,
+                 target_port_);
+    }
 
     const auto request_ctx = make_request_context();
     auto flow_result = prepare_tcp_connect_flow(request_ctx, router_, executor_, cfg_);
