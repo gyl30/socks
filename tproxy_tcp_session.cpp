@@ -380,7 +380,7 @@ boost::asio::awaitable<bool> tproxy_tcp_session::connect_backend(const route_dec
         .error_message = "",
         .extra = {},
     });
-    const auto connect_result = co_await backend->connect(target_addr_, target_port_);
+    const auto connect_result = co_await backend->connect(target_addr_, target_port_, 0);
     const auto latency_ms = static_cast<uint32_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - connect_start).count());
     if (connect_result.ec)

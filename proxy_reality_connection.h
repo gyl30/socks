@@ -31,6 +31,7 @@ class proxy_reality_connection : public std::enable_shared_from_this<proxy_reali
                                                                                                    const std::string& outbound_tag,
                                                                                                    uint32_t connect_mark,
                                                                                                    uint32_t conn_id,
+                                                                                                   uint32_t timeout_sec,
                                                                                                    boost::system::error_code& ec);
 
     [[nodiscard]] std::string_view local_host() const { return local_host_; }

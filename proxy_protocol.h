@@ -32,6 +32,7 @@ struct tcp_connect_request
     std::string target_host;
     uint16_t target_port = 0;
     uint64_t trace_id = 0;
+    uint16_t timeout_sec = 0;
     uint8_t feature_flags = 0;
 };
 
@@ -46,6 +47,7 @@ struct tcp_connect_reply
 struct udp_associate_request
 {
     uint64_t trace_id = 0;
+    uint16_t timeout_sec = 0;
 };
 
 struct udp_associate_reply

@@ -47,7 +47,8 @@ boost::asio::awaitable<udp_proxy_outbound_connect_result> connect_udp_proxy_flow
                                                                                  const config& cfg)
 {
     const auto connect_mark = resolve_socket_mark(cfg, request.inbound_tag, outbound_tag);
-    co_return co_await connect_udp_proxy_outbound(executor, request.conn_id, request.trace_id, cfg, outbound_tag, connect_mark);
+    co_return co_await connect_udp_proxy_outbound(
+        executor, request.conn_id, request.trace_id, cfg, outbound_tag, connect_mark, request.timeout_sec);
 }
 
 }    // namespace relay

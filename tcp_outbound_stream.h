@@ -35,7 +35,8 @@ class tcp_outbound_stream : public stream_relay_transport
     virtual ~tcp_outbound_stream() = default;
 
    public:
-    [[nodiscard]] virtual boost::asio::awaitable<tcp_outbound_connect_result> connect(const std::string& host, uint16_t port) = 0;
+    [[nodiscard]] virtual boost::asio::awaitable<tcp_outbound_connect_result> connect(
+        const std::string& host, uint16_t port, uint32_t timeout_sec) = 0;
     [[nodiscard]] virtual boost::asio::awaitable<std::size_t> write(std::span<const uint8_t> data, boost::system::error_code& ec) = 0;
 };
 

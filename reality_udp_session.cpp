@@ -189,11 +189,13 @@ request_context reality_udp_session::make_proxy_outbound_request() const
         .client_port = static_cast<uint16_t>(connection_ != nullptr ? connection_->remote_port() : 0U),
         .local_host = bind_host_,
         .local_port = bind_port_,
+        .timeout_sec = request_timeout_sec_,
     };
 }
 
-boost::asio::awaitable<void> reality_udp_session::start_impl(const proxy::udp_associate_request&)
+boost::asio::awaitable<void> reality_udp_session::start_impl(const proxy::udp_associate_request& request)
 {
+    request_timeout_sec_ = request.timeout_sec;
     if (!(co_await establish_udp_associate()))
     {
         co_return;

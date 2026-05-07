@@ -239,10 +239,15 @@ boost::asio::awaitable<std::shared_ptr<proxy_reality_connection>> proxy_reality_
                                                                                                     const std::string& outbound_tag,
                                                                                                     const uint32_t connect_mark,
                                                                                                     const uint32_t conn_id,
+                                                                                                    const uint32_t timeout_sec,
                                                                                                     boost::system::error_code& ec)
 {
+    config effective_cfg = cfg;
+    effective_cfg.timeout.connect = net::clamp_timeout_seconds(cfg.timeout.connect, timeout_sec);
+    effective_cfg.timeout.read = net::clamp_timeout_seconds(cfg.timeout.read, timeout_sec);
+    effective_cfg.timeout.write = net::clamp_timeout_seconds(cfg.timeout.write, timeout_sec);
     connect_options options;
-    if (!build_connect_options(cfg, outbound_tag, connect_mark, options, ec))
+    if (!build_connect_options(effective_cfg, outbound_tag, connect_mark, options, ec))
     {
         LOG_ERROR("{} conn {} stage build_connect_options out_tag {} error {}",
                   log_event::kConnInit,
@@ -252,13 +257,13 @@ boost::asio::awaitable<std::shared_ptr<proxy_reality_connection>> proxy_reality_
         co_return nullptr;
     }
     boost::asio::ip::tcp::socket socket(executor);
-    co_await tcp_connect_remote(socket, cfg, options, conn_id, ec);
+    co_await tcp_connect_remote(socket, effective_cfg, options, conn_id, ec);
     if (ec)
     {
         co_return nullptr;
     }
 
-    auto handshake_result = co_await perform_reality_handshake(socket, cfg, options, conn_id, ec);
+    auto handshake_result = co_await perform_reality_handshake(socket, effective_cfg, options, conn_id, ec);
     if (ec)
     {
         co_return nullptr;

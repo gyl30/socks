@@ -60,6 +60,7 @@ void reality_tcp_session::init_request_state(const proxy::tcp_connect_request& r
     bind_host_ = "0.0.0.0";
     bind_port_ = 0;
     route_name_ = "unknown";
+    request_timeout_sec_ = request.timeout_sec;
 }
 
 request_context reality_tcp_session::make_request_context() const
@@ -77,6 +78,7 @@ request_context reality_tcp_session::make_request_context() const
         .client_port = static_cast<uint16_t>(connection_ != nullptr ? connection_->remote_port() : 0U),
         .local_host = bind_host_,
         .local_port = bind_port_,
+        .timeout_sec = request_timeout_sec_,
     };
 }
 
@@ -342,7 +344,7 @@ boost::asio::awaitable<tcp_outbound_connect_result> reality_tcp_session::connect
         .remote_port = static_cast<uint16_t>(connection_ != nullptr ? connection_->remote_port() : 0U),
         .route_type = relay::to_string(route),
     });
-    const auto result = co_await backend->connect(host, port);
+    const auto result = co_await backend->connect(host, port, request_timeout_sec_);
     if (!result.ec)
     {
         if (result.has_bind_endpoint)

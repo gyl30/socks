@@ -311,7 +311,7 @@ boost::asio::awaitable<tcp_outbound_connect_result> socks_tcp_session::connect_b
         .remote_port = client_port_,
         .route_type = relay::to_string(route),
     });
-    const auto result = co_await backend->connect(host, port);
+    const auto result = co_await backend->connect(host, port, 0);
     if (!result.ec)
     {
         trace_event event{

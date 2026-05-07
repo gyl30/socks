@@ -85,6 +85,7 @@ class reality_udp_session : public std::enable_shared_from_this<reality_udp_sess
     const config& cfg_;
     std::string bind_host_ = "unknown";
     uint16_t bind_port_ = 0;
+    uint32_t request_timeout_sec_ = 0;
     uint64_t tx_bytes_ = 0;
     uint64_t rx_bytes_ = 0;
     std::chrono::steady_clock::time_point start_time_ = std::chrono::steady_clock::now();

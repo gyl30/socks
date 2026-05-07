@@ -51,7 +51,8 @@ boost::asio::awaitable<udp_proxy_outbound_connect_result> connect_udp_proxy_outb
                                                                                       uint64_t trace_id,
                                                                                       const config& cfg,
                                                                                       const std::string& outbound_tag,
-                                                                                      const uint32_t connect_mark)
+                                                                                      const uint32_t connect_mark,
+                                                                                      const uint32_t timeout_sec)
 {
     const auto outbound = resolve_outbound(cfg, outbound_tag);
     if (outbound.entry == nullptr)
@@ -76,7 +77,7 @@ boost::asio::awaitable<udp_proxy_outbound_connect_result> connect_udp_proxy_outb
         result.socks_rep = socks::map_connect_error_to_socks_rep(result.ec);
         co_return result;
     }
-    co_return co_await udp_proxy_outbound::connect(executor, conn_id, trace_id, cfg, *outbound.entry, connect_mark);
+    co_return co_await udp_proxy_outbound::connect(executor, conn_id, trace_id, cfg, *outbound.entry, connect_mark, timeout_sec);
 }
 
 }    // namespace relay

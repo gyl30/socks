@@ -74,6 +74,7 @@ int main()
         .target_host = "example.com",
         .target_port = 443,
         .trace_id = 0x3132333435363738ULL,
+        .timeout_sec = 7,
         .feature_flags = kTcpFeatureVision,
     };
     const tcp_connect_reply success_connect_reply{
@@ -89,6 +90,7 @@ int main()
     };
     const udp_associate_request outbound_associate_request{
         .trace_id = 0x2122232425262728ULL,
+        .timeout_sec = 9,
     };
     const udp_associate_reply success_associate_reply{
         .socks_rep = 0x00,
@@ -121,6 +123,7 @@ int main()
                 "tcp connect request with zero port should be rejected") &&
         require(encode_tcp_connect_request(vision_connect_request, packet), "failed to encode vision tcp connect request") &&
         require(decode_tcp_connect_request(packet.data(), packet.size(), connect_request), "failed to decode vision tcp connect request") &&
+        require(connect_request.timeout_sec == vision_connect_request.timeout_sec, "decoded tcp connect request timeout mismatch") &&
         require((connect_request.feature_flags & kTcpFeatureVision) != 0, "decoded tcp connect request vision flag missing") &&
         require(!encode_tcp_connect_request(tcp_connect_request{.target_host = "example.com",
                                                                 .target_port = 443,
@@ -151,6 +154,7 @@ int main()
         require(encode_udp_associate_request(outbound_associate_request, packet), "failed to encode udp associate request") &&
         require(decode_udp_associate_request(packet.data(), packet.size(), associate_request), "failed to decode udp associate request") &&
         require(associate_request.trace_id == outbound_associate_request.trace_id, "decoded udp associate request trace id mismatch") &&
+        require(associate_request.timeout_sec == outbound_associate_request.timeout_sec, "decoded udp associate request timeout mismatch") &&
         require(!decode_udp_associate_request(packet.data(), packet.size() - 1U, associate_request),
                 "truncated udp associate request should be rejected") &&
         require(encode_udp_associate_reply(success_associate_reply, packet), "failed to encode udp associate reply") &&

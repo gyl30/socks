@@ -246,14 +246,47 @@ void append_ipv6_address(std::vector<uint8_t>& out, const boost::asio::ip::addre
     return true;
 }
 
-[[nodiscard]] bool parse_optional_tcp_feature_flags(const uint8_t* data, const std::size_t len, std::size_t& pos, uint8_t& feature_flags)
+[[nodiscard]] bool append_optional_timeout_sec(std::vector<uint8_t>& out, const uint16_t timeout_sec)
 {
+    if (timeout_sec == 0)
+    {
+        return true;
+    }
+    append_u16(out, timeout_sec);
+    return true;
+}
+
+[[nodiscard]] bool parse_optional_timeout_and_tcp_feature_flags(
+    const uint8_t* data, const std::size_t len, std::size_t& pos, uint16_t& timeout_sec, uint8_t& feature_flags)
+{
+    timeout_sec = 0;
     feature_flags = 0;
     if (pos == len)
     {
         return true;
     }
-    if (len - pos != 1U)
+
+    const auto remaining = len - pos;
+    if (remaining == 1U)
+    {
+        if (!read_u8(data, len, pos, feature_flags))
+        {
+            return false;
+        }
+        return feature_flags != 0 && (feature_flags & ~relay::proxy::kKnownTcpFeatureFlags) == 0;
+    }
+
+    if (remaining == 2U)
+    {
+        return read_u16(data, len, pos, timeout_sec) && timeout_sec != 0;
+    }
+
+    if (remaining != 3U)
+    {
+        return false;
+    }
+
+    if (!read_u16(data, len, pos, timeout_sec) || timeout_sec == 0)
     {
         return false;
     }
@@ -262,6 +295,22 @@ void append_ipv6_address(std::vector<uint8_t>& out, const boost::asio::ip::addre
         return false;
     }
     return feature_flags != 0 && (feature_flags & ~relay::proxy::kKnownTcpFeatureFlags) == 0;
+}
+
+[[nodiscard]] bool parse_optional_tcp_feature_flags(const uint8_t* data, const std::size_t len, std::size_t& pos, uint8_t& feature_flags)
+{
+    uint16_t timeout_sec = 0;
+    return parse_optional_timeout_and_tcp_feature_flags(data, len, pos, timeout_sec, feature_flags) && timeout_sec == 0;
+}
+
+[[nodiscard]] bool parse_optional_timeout_sec(const uint8_t* data, const std::size_t len, std::size_t& pos, uint16_t& timeout_sec)
+{
+    timeout_sec = 0;
+    if (pos == len)
+    {
+        return true;
+    }
+    return read_u16(data, len, pos, timeout_sec) && timeout_sec != 0;
 }
 
 }    // namespace
@@ -325,7 +374,8 @@ bool encode_tcp_connect_request(const tcp_connect_request& request, std::vector<
     out.reserve(64 + request.target_host.size());
     out.push_back(static_cast<uint8_t>(message_type::kTcpConnectRequest));
     append_u64(out, request.trace_id);
-    return append_target_endpoint(out, request.target_host, request.target_port) && append_tcp_feature_flags(out, request.feature_flags);
+    return append_target_endpoint(out, request.target_host, request.target_port) && append_optional_timeout_sec(out, request.timeout_sec) &&
+           append_tcp_feature_flags(out, request.feature_flags);
 }
 
 bool decode_tcp_connect_request(const uint8_t* data, const std::size_t len, tcp_connect_request& out)
@@ -343,7 +393,7 @@ bool decode_tcp_connect_request(const uint8_t* data, const std::size_t len, tcp_
     {
         return false;
     }
-    if (!parse_optional_tcp_feature_flags(data, len, pos, out.feature_flags))
+    if (!parse_optional_timeout_and_tcp_feature_flags(data, len, pos, out.timeout_sec, out.feature_flags))
     {
         return false;
     }
@@ -388,7 +438,7 @@ bool encode_udp_associate_request(const udp_associate_request& request, std::vec
     out.reserve(16);
     out.push_back(static_cast<uint8_t>(message_type::kUdpAssociateRequest));
     append_u64(out, request.trace_id);
-    return true;
+    return append_optional_timeout_sec(out, request.timeout_sec);
 }
 
 bool decode_udp_associate_request(const uint8_t* data, const std::size_t len, udp_associate_request& out)
@@ -399,6 +449,10 @@ bool decode_udp_associate_request(const uint8_t* data, const std::size_t len, ud
         return false;
     }
     if (!read_u64(data, len, pos, out.trace_id))
+    {
+        return false;
+    }
+    if (!parse_optional_timeout_sec(data, len, pos, out.timeout_sec))
     {
         return false;
     }

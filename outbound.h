@@ -35,7 +35,8 @@ struct resolved_outbound
                                                                                                      uint64_t trace_id,
                                                                                                      const config& cfg,
                                                                                                      const std::string& outbound_tag,
-                                                                                                     uint32_t connect_mark);
+                                                                                                     uint32_t connect_mark,
+                                                                                                     uint32_t timeout_sec);
 
 }    // namespace relay
 

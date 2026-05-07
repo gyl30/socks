@@ -37,6 +37,7 @@ struct request_context
     uint16_t client_port = 0;
     std::string local_host{};
     uint16_t local_port = 0;
+    uint32_t timeout_sec = 0;
 };
 
 }    // namespace relay

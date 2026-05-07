@@ -2,6 +2,7 @@
 #define NET_UTILS_H
 
 #include <tuple>
+#include <algorithm>
 #include <chrono>
 #include <string>
 #include <cstddef>
@@ -197,6 +198,19 @@ inline boost::asio::awaitable<std::size_t> wait_size_op_with_timeout(uint32_t ti
 
 inline uint64_t timeout_seconds_to_milliseconds(uint32_t timeout_sec) { return static_cast<uint64_t>(timeout_sec) * 1000ULL; }
 
+inline uint32_t clamp_timeout_seconds(uint32_t configured_sec, uint32_t limit_sec)
+{
+    if (configured_sec == 0)
+    {
+        return limit_sec;
+    }
+    if (limit_sec == 0)
+    {
+        return configured_sec;
+    }
+    return std::min(configured_sec, limit_sec);
+}
+
 inline uint64_t now_ms()
 {
     return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
@@ -219,6 +233,25 @@ inline uint32_t remaining_timeout_seconds(uint64_t start_ms, uint32_t timeout_se
 
     const auto remaining_ms = timeout_ms - elapsed_ms;
     return static_cast<uint32_t>((remaining_ms + 999ULL) / 1000ULL);
+}
+
+inline uint32_t remaining_clamped_timeout_seconds(uint64_t start_ms,
+                                                  uint32_t timeout_sec,
+                                                  uint32_t configured_sec,
+                                                  boost::system::error_code& ec)
+{
+    if (timeout_sec == 0)
+    {
+        ec.clear();
+        return configured_sec;
+    }
+
+    const auto remaining_sec = remaining_timeout_seconds(start_ms, timeout_sec, ec);
+    if (ec)
+    {
+        return 0;
+    }
+    return clamp_timeout_seconds(configured_sec, remaining_sec);
 }
 
 inline uint64_t now_second()

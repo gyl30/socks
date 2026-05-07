@@ -36,7 +36,8 @@ class udp_proxy_outbound
                                                                                            uint64_t trace_id,
                                                                                            const config& cfg,
                                                                                            const config::outbound_entry_t& outbound,
-                                                                                           uint32_t connect_mark);
+                                                                                           uint32_t connect_mark,
+                                                                                           uint32_t timeout_sec);
 
     [[nodiscard]] static boost::asio::awaitable<udp_proxy_outbound_connect_result> connect_reality_outbound(
         const boost::asio::any_io_executor& executor,
@@ -44,14 +45,16 @@ class udp_proxy_outbound
         uint64_t trace_id,
         const config& cfg,
         const config::outbound_entry_t& outbound,
-        uint32_t connect_mark);
+        uint32_t connect_mark,
+        uint32_t timeout_sec);
     [[nodiscard]] static boost::asio::awaitable<udp_proxy_outbound_connect_result> connect_socks_outbound(
         const boost::asio::any_io_executor& executor,
         uint32_t conn_id,
         uint64_t trace_id,
         const config& cfg,
         const config::outbound_entry_t& outbound,
-        uint32_t connect_mark);
+        uint32_t connect_mark,
+        uint32_t timeout_sec);
 
     virtual boost::asio::awaitable<void> close() = 0;
     virtual boost::asio::awaitable<void> send_datagram(
@@ -65,7 +68,6 @@ class udp_proxy_outbound
    protected:
     explicit udp_proxy_outbound(const config& cfg) : cfg_(cfg) {}
     [[nodiscard]] const config& cfg() const { return cfg_; }
-    [[nodiscard]] uint32_t associate_reply_timeout() const;
     void set_bind_endpoint(std::string host, uint16_t port);
 
    private:

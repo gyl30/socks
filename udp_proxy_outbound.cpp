@@ -42,6 +42,15 @@ void set_connect_failure(udp_proxy_outbound_connect_result& result, const boost:
     result.socks_rep = socks::map_connect_error_to_socks_rep(ec);
 }
 
+uint32_t associate_timeout_budget(const config& cfg, const uint32_t timeout_sec)
+{
+    if (cfg.timeout.connect == 0)
+    {
+        return net::clamp_timeout_seconds(cfg.timeout.read, timeout_sec);
+    }
+    return net::clamp_timeout_seconds(std::max(cfg.timeout.read, cfg.timeout.connect + 1U), timeout_sec);
+}
+
 boost::asio::awaitable<bool> connect_socks_server(boost::asio::ip::tcp::socket& socket,
                                                   boost::asio::ip::tcp::resolver& resolver,
                                                   const config::socks_t& settings,
@@ -49,10 +58,11 @@ boost::asio::awaitable<bool> connect_socks_server(boost::asio::ip::tcp::socket& 
                                                   const uint32_t conn_id,
                                                   const std::string& outbound_tag,
                                                   const uint32_t connect_mark,
+                                                  const uint32_t timeout_sec,
                                                   boost::system::error_code& ec)
 {
     const auto connect_start_ms = net::now_ms();
-    auto endpoints = co_await net::wait_resolve_with_timeout(resolver, settings.host, std::to_string(settings.port), cfg.timeout.connect, ec);
+    auto endpoints = co_await net::wait_resolve_with_timeout(resolver, settings.host, std::to_string(settings.port), timeout_sec, ec);
     if (ec)
     {
         LOG_WARN("{} conn {} out_tag {} stage resolve socks server {}:{} error {}",
@@ -69,7 +79,7 @@ boost::asio::awaitable<bool> connect_socks_server(boost::asio::ip::tcp::socket& 
         socket,
         endpoints,
         connect_start_ms,
-        cfg.timeout.connect,
+        timeout_sec,
         ec,
         [&](const boost::asio::ip::tcp::endpoint& endpoint, boost::system::error_code& op_ec)
         {
@@ -102,22 +112,29 @@ boost::asio::awaitable<bool> connect_socks_server(boost::asio::ip::tcp::socket& 
     co_return true;
 }
 
-boost::asio::awaitable<bool> send_udp_associate_request(boost::asio::ip::tcp::socket& socket, const config& cfg, boost::system::error_code& ec)
+boost::asio::awaitable<bool> send_udp_associate_request(boost::asio::ip::tcp::socket& socket,
+                                                        const config& cfg,
+                                                        const uint32_t timeout_sec,
+                                                        boost::system::error_code& ec)
 {
     const uint8_t request[] = {socks::kVer, socks::kCmdUdpAssociate, 0x00, socks::kAtypIpv4, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
-    co_await net::wait_write_with_timeout(socket, boost::asio::buffer(request), cfg.timeout.write, ec);
+    co_await net::wait_write_with_timeout(
+        socket, boost::asio::buffer(request), net::clamp_timeout_seconds(cfg.timeout.write, timeout_sec), ec);
     co_return !ec;
 }
 
 boost::asio::awaitable<bool> read_udp_associate_reply(boost::asio::ip::tcp::socket& socket,
                                                       const config& cfg,
+                                                      const uint32_t timeout_sec,
                                                       std::string& bind_host,
                                                       uint16_t& bind_port,
                                                       uint8_t& socks_rep,
                                                       boost::system::error_code& ec)
 {
+    config effective_cfg = cfg;
+    effective_cfg.timeout.read = net::clamp_timeout_seconds(cfg.timeout.read, timeout_sec);
     uint8_t header[4] = {0};
-    co_await net::wait_read_with_timeout(socket, boost::asio::buffer(header), cfg.timeout.read, ec);
+    co_await net::wait_read_with_timeout(socket, boost::asio::buffer(header), effective_cfg.timeout.read, ec);
     if (ec)
     {
         co_return false;
@@ -134,7 +151,7 @@ boost::asio::awaitable<bool> read_udp_associate_reply(boost::asio::ip::tcp::sock
         co_return false;
     }
 
-    co_return co_await socks_client::read_reply_address(socket, header[3], cfg, bind_host, bind_port, ec);
+    co_return co_await socks_client::read_reply_address(socket, header[3], effective_cfg, bind_host, bind_port, ec);
 }
 
 socks_udp_associate_result make_socks_udp_associate_failure(boost::system::error_code ec, const uint8_t socks_rep)
@@ -150,28 +167,44 @@ boost::asio::awaitable<socks_udp_associate_result> open_socks_udp_associate(cons
                                                                             const config& cfg,
                                                                             const uint32_t conn_id,
                                                                             const std::string& outbound_tag,
-                                                                            const uint32_t connect_mark)
+                                                                            const uint32_t connect_mark,
+                                                                            const uint32_t timeout_sec)
 {
     auto control_socket = std::make_shared<boost::asio::ip::tcp::socket>(executor);
     boost::asio::ip::tcp::resolver tcp_resolver(executor);
+    const auto request_start_ms = net::now_ms();
+    const auto request_timeout_sec = associate_timeout_budget(cfg, timeout_sec);
     boost::system::error_code ec;
-    if (!(co_await connect_socks_server(*control_socket, tcp_resolver, settings, cfg, conn_id, outbound_tag, connect_mark, ec)))
+    auto remaining_timeout_sec = net::remaining_clamped_timeout_seconds(request_start_ms, request_timeout_sec, cfg.timeout.connect, ec);
+    if (ec || !(co_await connect_socks_server(
+                    *control_socket, tcp_resolver, settings, cfg, conn_id, outbound_tag, connect_mark, remaining_timeout_sec, ec)))
     {
         co_return make_socks_udp_associate_failure(ec ? ec : boost::asio::error::host_unreachable, socks::kRepSuccess);
     }
-    if (!(co_await socks_client::negotiate_method(*control_socket, settings, cfg, ec)))
+    remaining_timeout_sec = net::remaining_clamped_timeout_seconds(request_start_ms, request_timeout_sec, cfg.timeout.read, ec);
+    if (ec)
+    {
+        co_return make_socks_udp_associate_failure(ec, socks::kRepSuccess);
+    }
+    config effective_cfg = cfg;
+    effective_cfg.timeout.read = net::clamp_timeout_seconds(cfg.timeout.read, remaining_timeout_sec);
+    effective_cfg.timeout.write = net::clamp_timeout_seconds(cfg.timeout.write, remaining_timeout_sec);
+    if (!(co_await socks_client::negotiate_method(*control_socket, settings, effective_cfg, ec)))
     {
         co_return make_socks_udp_associate_failure(
             ec ? ec : boost::system::errc::make_error_code(boost::system::errc::permission_denied), socks::kRepSuccess);
     }
-    if (!(co_await send_udp_associate_request(*control_socket, cfg, ec)))
+    remaining_timeout_sec = net::remaining_clamped_timeout_seconds(request_start_ms, request_timeout_sec, cfg.timeout.write, ec);
+    if (ec || !(co_await send_udp_associate_request(*control_socket, cfg, remaining_timeout_sec, ec)))
     {
         co_return make_socks_udp_associate_failure(ec ? ec : boost::asio::error::operation_aborted, socks::kRepSuccess);
     }
 
     socks_udp_associate_result result;
     result.control_socket = std::move(control_socket);
-    if (!(co_await read_udp_associate_reply(*result.control_socket, cfg, result.bind_host, result.bind_port, result.socks_rep, ec)))
+    remaining_timeout_sec = net::remaining_clamped_timeout_seconds(request_start_ms, request_timeout_sec, cfg.timeout.read, ec);
+    if (ec || !(co_await read_udp_associate_reply(
+                    *result.control_socket, cfg, remaining_timeout_sec, result.bind_host, result.bind_port, result.socks_rep, ec)))
     {
         result.ec = result.socks_rep != socks::kRepSuccess ? socks::map_socks_rep_to_connect_error(result.socks_rep)
                                                            : (ec ? ec : boost::asio::error::operation_aborted);
@@ -512,13 +545,16 @@ boost::asio::awaitable<udp_proxy_outbound_connect_result> udp_proxy_outbound::co
     const uint64_t trace_id,
     const config& cfg,
     const config::outbound_entry_t& outbound,
-    const uint32_t connect_mark)
+    const uint32_t connect_mark,
+    const uint32_t timeout_sec)
 {
     udp_proxy_outbound_connect_result result;
     result.socks_rep = socks::kRepSuccess;
 
+    const auto request_timeout_sec = associate_timeout_budget(cfg, timeout_sec);
+    const auto request_start_ms = net::now_ms();
     boost::system::error_code ec;
-    auto connection = co_await proxy_reality_connection::connect(executor, cfg, outbound.tag, connect_mark, conn_id, ec);
+    auto connection = co_await proxy_reality_connection::connect(executor, cfg, outbound.tag, connect_mark, conn_id, request_timeout_sec, ec);
     if (connection == nullptr)
     {
         set_connect_failure(result, ec ? ec : boost::asio::error::not_connected);
@@ -528,6 +564,12 @@ boost::asio::awaitable<udp_proxy_outbound_connect_result> udp_proxy_outbound::co
     auto upstream = std::make_shared<reality_udp_proxy_outbound>(connection, cfg);
     proxy::udp_associate_request request;
     request.trace_id = trace_id;
+    request.timeout_sec = static_cast<uint16_t>(net::remaining_timeout_seconds(request_start_ms, request_timeout_sec, ec));
+    if (ec)
+    {
+        set_connect_failure(result, ec);
+        co_return result;
+    }
     std::vector<uint8_t> packet;
     if (!proxy::encode_udp_associate_request(request, packet))
     {
@@ -541,7 +583,13 @@ boost::asio::awaitable<udp_proxy_outbound_connect_result> udp_proxy_outbound::co
         co_return result;
     }
 
-    const auto reply_packet = co_await connection->read_packet(upstream->associate_reply_timeout(), ec);
+    const auto reply_timeout_sec = net::remaining_clamped_timeout_seconds(request_start_ms, request_timeout_sec, cfg.timeout.read, ec);
+    if (ec)
+    {
+        set_connect_failure(result, ec);
+        co_return result;
+    }
+    const auto reply_packet = co_await connection->read_packet(reply_timeout_sec, ec);
     if (ec)
     {
         set_connect_failure(result, ec);
@@ -577,7 +625,8 @@ boost::asio::awaitable<udp_proxy_outbound_connect_result> udp_proxy_outbound::co
     const uint64_t trace_id,
     const config& cfg,
     const config::outbound_entry_t& outbound,
-    const uint32_t connect_mark)
+    const uint32_t connect_mark,
+    const uint32_t timeout_sec)
 {
     (void)trace_id;
     udp_proxy_outbound_connect_result result;
@@ -589,7 +638,7 @@ boost::asio::awaitable<udp_proxy_outbound_connect_result> udp_proxy_outbound::co
         co_return result;
     }
 
-    auto associate = co_await open_socks_udp_associate(executor, *outbound.socks, cfg, conn_id, outbound.tag, connect_mark);
+    auto associate = co_await open_socks_udp_associate(executor, *outbound.socks, cfg, conn_id, outbound.tag, connect_mark, timeout_sec);
     if (!associate.success)
     {
         result.socks_rep = associate.socks_rep;
@@ -629,7 +678,8 @@ boost::asio::awaitable<udp_proxy_outbound_connect_result> udp_proxy_outbound::co
                                                                                        const uint64_t trace_id,
                                                                                        const config& cfg,
                                                                                        const config::outbound_entry_t& outbound,
-                                                                                       const uint32_t connect_mark)
+                                                                                       const uint32_t connect_mark,
+                                                                                       const uint32_t timeout_sec)
 {
     udp_proxy_outbound_connect_result result;
     result.socks_rep = socks::kRepSuccess;
@@ -637,7 +687,7 @@ boost::asio::awaitable<udp_proxy_outbound_connect_result> udp_proxy_outbound::co
     const auto outbound_kind = config_type::classify_proxy_outbound_type(outbound.type);
     if (outbound_kind == config_type::proxy_outbound_kind::kReality)
     {
-        co_return co_await connect_reality_outbound(executor, conn_id, trace_id, cfg, outbound, connect_mark);
+        co_return co_await connect_reality_outbound(executor, conn_id, trace_id, cfg, outbound, connect_mark, timeout_sec);
     }
 
     if (outbound_kind != config_type::proxy_outbound_kind::kSocks)
@@ -646,16 +696,7 @@ boost::asio::awaitable<udp_proxy_outbound_connect_result> udp_proxy_outbound::co
         co_return result;
     }
 
-    co_return co_await connect_socks_outbound(executor, conn_id, trace_id, cfg, outbound, connect_mark);
-}
-
-uint32_t udp_proxy_outbound::associate_reply_timeout() const
-{
-    if (cfg_.timeout.connect == 0)
-    {
-        return cfg_.timeout.read;
-    }
-    return std::max(cfg_.timeout.read, cfg_.timeout.connect + 1);
+    co_return co_await connect_socks_outbound(executor, conn_id, trace_id, cfg, outbound, connect_mark, timeout_sec);
 }
 
 void udp_proxy_outbound::set_bind_endpoint(std::string host, const uint16_t port)

@@ -39,7 +39,8 @@ class direct_tcp_outbound final : public tcp_outbound_stream
 
     boost::asio::awaitable<void> close() override;
     boost::asio::awaitable<void> shutdown_send(boost::system::error_code& ec) override;
-    [[nodiscard]] boost::asio::awaitable<tcp_outbound_connect_result> connect(const std::string& host, uint16_t port) override;
+    [[nodiscard]] boost::asio::awaitable<tcp_outbound_connect_result> connect(
+        const std::string& host, uint16_t port, uint32_t timeout_sec) override;
     [[nodiscard]] boost::asio::awaitable<std::size_t> write(std::span<const uint8_t> data, boost::system::error_code& ec) override;
     [[nodiscard]] boost::asio::awaitable<std::size_t> read(std::span<uint8_t> buf, boost::system::error_code& ec) override;
 
@@ -68,14 +69,16 @@ class proxy_tcp_outbound final : public tcp_outbound_stream
 
     boost::asio::awaitable<void> close() override;
     boost::asio::awaitable<void> shutdown_send(boost::system::error_code& ec) override;
-    [[nodiscard]] boost::asio::awaitable<tcp_outbound_connect_result> connect(const std::string& host, uint16_t port) override;
+    [[nodiscard]] boost::asio::awaitable<tcp_outbound_connect_result> connect(
+        const std::string& host, uint16_t port, uint32_t timeout_sec) override;
     [[nodiscard]] boost::asio::awaitable<std::size_t> write(std::span<const uint8_t> data, boost::system::error_code& ec) override;
     [[nodiscard]] boost::asio::awaitable<std::size_t> read(std::span<uint8_t> buf, boost::system::error_code& ec) override;
 
    private:
-    boost::asio::awaitable<void> send_connect_request(const std::string& host, uint16_t port, boost::system::error_code& ec) const;
-    boost::asio::awaitable<void> wait_connect_reply(const std::string& host, uint16_t port, tcp_outbound_connect_result& result) const;
-    [[nodiscard]] uint32_t connect_ack_timeout() const;
+    boost::asio::awaitable<void> send_connect_request(
+        const std::string& host, uint16_t port, uint32_t timeout_sec, boost::system::error_code& ec) const;
+    boost::asio::awaitable<void> wait_connect_reply(
+        const std::string& host, uint16_t port, uint64_t request_start_ms, uint32_t timeout_sec, tcp_outbound_connect_result& result) const;
     [[nodiscard]] bool vision_requested() const;
 
    private:
@@ -117,15 +120,19 @@ class socks_tcp_outbound final : public tcp_outbound_stream
 
     boost::asio::awaitable<void> close() override;
     boost::asio::awaitable<void> shutdown_send(boost::system::error_code& ec) override;
-    [[nodiscard]] boost::asio::awaitable<tcp_outbound_connect_result> connect(const std::string& host, uint16_t port) override;
+    [[nodiscard]] boost::asio::awaitable<tcp_outbound_connect_result> connect(
+        const std::string& host, uint16_t port, uint32_t timeout_sec) override;
     [[nodiscard]] boost::asio::awaitable<std::size_t> write(std::span<const uint8_t> data, boost::system::error_code& ec) override;
     [[nodiscard]] boost::asio::awaitable<std::size_t> read(std::span<uint8_t> buf, boost::system::error_code& ec) override;
 
    private:
     [[nodiscard]] const config::socks_t* settings() const;
-    [[nodiscard]] boost::asio::awaitable<bool> connect_server(const config::socks_t& settings, boost::system::error_code& ec);
-    [[nodiscard]] boost::asio::awaitable<bool> send_connect_request(const std::string& host, uint16_t port, boost::system::error_code& ec);
-    [[nodiscard]] boost::asio::awaitable<bool> read_connect_reply(tcp_outbound_connect_result& result, boost::system::error_code& ec);
+    [[nodiscard]] boost::asio::awaitable<bool> connect_server(
+        const config::socks_t& settings, uint32_t timeout_sec, boost::system::error_code& ec);
+    [[nodiscard]] boost::asio::awaitable<bool> send_connect_request(
+        const std::string& host, uint16_t port, uint32_t timeout_sec, boost::system::error_code& ec);
+    [[nodiscard]] boost::asio::awaitable<bool> read_connect_reply(
+        tcp_outbound_connect_result& result, uint32_t timeout_sec, boost::system::error_code& ec);
 
    private:
     const config& cfg_;
@@ -181,7 +188,18 @@ bool append_socks_target_address(std::vector<uint8_t>& packet, const std::string
     return true;
 }
 
-boost::asio::awaitable<tcp_outbound_connect_result> direct_tcp_outbound::connect(const std::string& host, uint16_t port)
+uint32_t clamp_connect_budget(const config& cfg, const uint32_t timeout_sec)
+{
+    if (cfg.timeout.connect == 0)
+    {
+        return net::clamp_timeout_seconds(std::max(cfg.timeout.read, cfg.timeout.connect), timeout_sec);
+    }
+    return net::clamp_timeout_seconds(std::max(cfg.timeout.read, cfg.timeout.connect + 1U), timeout_sec);
+}
+
+boost::asio::awaitable<tcp_outbound_connect_result> direct_tcp_outbound::connect(const std::string& host,
+                                                                                  const uint16_t port,
+                                                                                  const uint32_t timeout_sec)
 {
     tcp_outbound_connect_result result;
     result.socks_rep = socks::kRepSuccess;
@@ -190,8 +208,9 @@ boost::asio::awaitable<tcp_outbound_connect_result> direct_tcp_outbound::connect
     bind_host_ = "unknown";
     bind_port_ = 0;
     const auto connect_start_ms = net::now_ms();
+    const auto effective_timeout_sec = net::clamp_timeout_seconds(cfg_.timeout.connect, timeout_sec);
     boost::system::error_code ec;
-    auto endpoints = co_await net::wait_resolve_with_timeout(resolver_, host, std::to_string(port), cfg_.timeout.connect, ec);
+    auto endpoints = co_await net::wait_resolve_with_timeout(resolver_, host, std::to_string(port), effective_timeout_sec, ec);
     if (ec)
     {
         LOG_WARN(
@@ -205,7 +224,7 @@ boost::asio::awaitable<tcp_outbound_connect_result> direct_tcp_outbound::connect
         socket_,
         endpoints,
         connect_start_ms,
-        cfg_.timeout.connect,
+        effective_timeout_sec,
         last_ec,
         [&](const boost::asio::ip::tcp::endpoint& endpoint, boost::system::error_code& op_ec)
         {
@@ -344,10 +363,12 @@ boost::asio::awaitable<void> direct_tcp_outbound::shutdown_send(boost::system::e
 
 const config::socks_t* socks_tcp_outbound::settings() const { return settings_; }
 
-boost::asio::awaitable<bool> socks_tcp_outbound::connect_server(const config::socks_t& settings, boost::system::error_code& ec)
+boost::asio::awaitable<bool> socks_tcp_outbound::connect_server(const config::socks_t& settings,
+                                                                const uint32_t timeout_sec,
+                                                                boost::system::error_code& ec)
 {
     const auto connect_start_ms = net::now_ms();
-    auto endpoints = co_await net::wait_resolve_with_timeout(resolver_, settings.host, std::to_string(settings.port), cfg_.timeout.connect, ec);
+    auto endpoints = co_await net::wait_resolve_with_timeout(resolver_, settings.host, std::to_string(settings.port), timeout_sec, ec);
     if (ec)
     {
         LOG_WARN("{} trace {:016x} conn {} out_tag {} stage resolve socks server {}:{} error {}",
@@ -365,7 +386,7 @@ boost::asio::awaitable<bool> socks_tcp_outbound::connect_server(const config::so
         socket_,
         endpoints,
         connect_start_ms,
-        cfg_.timeout.connect,
+        timeout_sec,
         ec,
         [&](const boost::asio::ip::tcp::endpoint& endpoint, boost::system::error_code& op_ec)
         {
@@ -405,7 +426,10 @@ boost::asio::awaitable<bool> socks_tcp_outbound::connect_server(const config::so
     co_return false;
 }
 
-boost::asio::awaitable<bool> socks_tcp_outbound::send_connect_request(const std::string& host, const uint16_t port, boost::system::error_code& ec)
+boost::asio::awaitable<bool> socks_tcp_outbound::send_connect_request(const std::string& host,
+                                                                      const uint16_t port,
+                                                                      const uint32_t timeout_sec,
+                                                                      boost::system::error_code& ec)
 {
     std::vector<uint8_t> request = {socks::kVer, socks::kCmdConnect, 0x00};
     if (!append_socks_target_address(request, host))
@@ -415,14 +439,19 @@ boost::asio::awaitable<bool> socks_tcp_outbound::send_connect_request(const std:
     }
     request.push_back(static_cast<uint8_t>((port >> 8) & 0xFF));
     request.push_back(static_cast<uint8_t>(port & 0xFF));
-    co_await net::wait_write_with_timeout(socket_, boost::asio::buffer(request), cfg_.timeout.write, ec);
+    co_await net::wait_write_with_timeout(
+        socket_, boost::asio::buffer(request), net::clamp_timeout_seconds(cfg_.timeout.write, timeout_sec), ec);
     co_return !ec;
 }
 
-boost::asio::awaitable<bool> socks_tcp_outbound::read_connect_reply(tcp_outbound_connect_result& result, boost::system::error_code& ec)
+boost::asio::awaitable<bool> socks_tcp_outbound::read_connect_reply(tcp_outbound_connect_result& result,
+                                                                    const uint32_t timeout_sec,
+                                                                    boost::system::error_code& ec)
 {
     uint8_t header[4] = {0};
-    co_await net::wait_read_with_timeout(socket_, boost::asio::buffer(header), cfg_.timeout.read, ec);
+    config effective_cfg = cfg_;
+    effective_cfg.timeout.read = net::clamp_timeout_seconds(cfg_.timeout.read, timeout_sec);
+    co_await net::wait_read_with_timeout(socket_, boost::asio::buffer(header), effective_cfg.timeout.read, ec);
     if (ec)
     {
         co_return false;
@@ -442,7 +471,7 @@ boost::asio::awaitable<bool> socks_tcp_outbound::read_connect_reply(tcp_outbound
 
     std::string bind_host;
     uint16_t bind_port = 0;
-    if (!(co_await socks_client::read_reply_address(socket_, header[3], cfg_, bind_host, bind_port, ec)))
+    if (!(co_await socks_client::read_reply_address(socket_, header[3], effective_cfg, bind_host, bind_port, ec)))
     {
         co_return false;
     }
@@ -466,7 +495,9 @@ boost::asio::awaitable<bool> socks_tcp_outbound::read_connect_reply(tcp_outbound
     co_return true;
 }
 
-boost::asio::awaitable<tcp_outbound_connect_result> socks_tcp_outbound::connect(const std::string& host, uint16_t port)
+boost::asio::awaitable<tcp_outbound_connect_result> socks_tcp_outbound::connect(const std::string& host,
+                                                                                 const uint16_t port,
+                                                                                 const uint32_t timeout_sec)
 {
     tcp_outbound_connect_result result;
     result.socks_rep = socks::kRepSuccess;
@@ -482,23 +513,37 @@ boost::asio::awaitable<tcp_outbound_connect_result> socks_tcp_outbound::connect(
         co_return result;
     }
 
+    const auto request_start_ms = net::now_ms();
+    const auto request_timeout_sec = clamp_connect_budget(cfg_, timeout_sec);
     boost::system::error_code ec;
-    if (!(co_await connect_server(*outbound_settings, ec)))
+    auto remaining_timeout_sec = net::remaining_clamped_timeout_seconds(request_start_ms, request_timeout_sec, cfg_.timeout.connect, ec);
+    if (ec || !(co_await connect_server(*outbound_settings, remaining_timeout_sec, ec)))
     {
         set_connect_failure(result, ec ? ec : boost::asio::error::host_unreachable);
         co_return result;
     }
-    if (!(co_await socks_client::negotiate_method(socket_, *outbound_settings, cfg_, ec)))
+    remaining_timeout_sec = net::remaining_clamped_timeout_seconds(request_start_ms, request_timeout_sec, cfg_.timeout.read, ec);
+    if (ec)
+    {
+        set_connect_failure(result, ec);
+        co_return result;
+    }
+    config effective_cfg = cfg_;
+    effective_cfg.timeout.read = net::clamp_timeout_seconds(cfg_.timeout.read, remaining_timeout_sec);
+    effective_cfg.timeout.write = net::clamp_timeout_seconds(cfg_.timeout.write, remaining_timeout_sec);
+    if (!(co_await socks_client::negotiate_method(socket_, *outbound_settings, effective_cfg, ec)))
     {
         set_connect_failure(result, ec ? ec : boost::system::errc::make_error_code(boost::system::errc::permission_denied));
         co_return result;
     }
-    if (!(co_await send_connect_request(host, port, ec)))
+    remaining_timeout_sec = net::remaining_clamped_timeout_seconds(request_start_ms, request_timeout_sec, cfg_.timeout.write, ec);
+    if (ec || !(co_await send_connect_request(host, port, remaining_timeout_sec, ec)))
     {
         set_connect_failure(result, ec ? ec : boost::asio::error::operation_aborted);
         co_return result;
     }
-    if (!(co_await read_connect_reply(result, ec)))
+    remaining_timeout_sec = net::remaining_clamped_timeout_seconds(request_start_ms, request_timeout_sec, cfg_.timeout.read, ec);
+    if (ec || !(co_await read_connect_reply(result, remaining_timeout_sec, ec)))
     {
         if (!result.ec)
         {
@@ -606,23 +651,16 @@ std::shared_ptr<tcp_outbound_stream> make_proxy_tcp_outbound_stream(const boost:
     return nullptr;
 }
 
-uint32_t proxy_tcp_outbound::connect_ack_timeout() const
-{
-    if (cfg_.timeout.connect == 0)
-    {
-        return cfg_.timeout.read;
-    }
-
-    return std::max(cfg_.timeout.read, cfg_.timeout.connect + 1);
-}
-
 bool proxy_tcp_outbound::vision_requested() const
 {
     const auto* settings = find_reality_outbound_settings(cfg_, outbound_tag_);
     return settings != nullptr && settings->vision;
 }
 
-boost::asio::awaitable<void> proxy_tcp_outbound::send_connect_request(const std::string& host, const uint16_t port, boost::system::error_code& ec) const
+boost::asio::awaitable<void> proxy_tcp_outbound::send_connect_request(const std::string& host,
+                                                                      const uint16_t port,
+                                                                      const uint32_t timeout_sec,
+                                                                      boost::system::error_code& ec) const
 {
     const auto connection = stream_.connection();
     if (connection == nullptr)
@@ -635,6 +673,7 @@ boost::asio::awaitable<void> proxy_tcp_outbound::send_connect_request(const std:
     request.target_host = host;
     request.target_port = port;
     request.trace_id = trace_id_;
+    request.timeout_sec = static_cast<uint16_t>(timeout_sec);
     const bool requested_vision = vision_requested();
     if (requested_vision)
     {
@@ -684,7 +723,11 @@ boost::asio::awaitable<void> proxy_tcp_outbound::send_connect_request(const std:
     }
 }
 
-boost::asio::awaitable<void> proxy_tcp_outbound::wait_connect_reply(const std::string& host, const uint16_t port, tcp_outbound_connect_result& result) const
+boost::asio::awaitable<void> proxy_tcp_outbound::wait_connect_reply(const std::string& host,
+                                                                    const uint16_t port,
+                                                                    const uint64_t request_start_ms,
+                                                                    const uint32_t timeout_sec,
+                                                                    tcp_outbound_connect_result& result) const
 {
     const auto connection = stream_.connection();
     if (connection == nullptr)
@@ -694,7 +737,114 @@ boost::asio::awaitable<void> proxy_tcp_outbound::wait_connect_reply(const std::s
     }
 
     boost::system::error_code reply_ec;
-    const auto packet = co_await connection->read_packet(connect_ack_timeout(), reply_ec);
+    const auto read_timeout_sec = net::remaining_clamped_timeout_seconds(request_start_ms, timeout_sec, cfg_.timeout.read, reply_ec);
+    if (!reply_ec)
+    {
+        const auto packet = co_await connection->read_packet(read_timeout_sec, reply_ec);
+        if (reply_ec)
+        {
+            LOG_ERROR("{} trace {:016x} conn {} stage wait_connect_reply target {}:{} error {}",
+                      log_event::kRoute,
+                      trace_id_,
+                      conn_id_,
+                      host,
+                      port,
+                      reply_ec.message());
+            set_connect_failure(result, reply_ec);
+            co_return;
+        }
+
+        proxy::tcp_connect_reply reply;
+        if (!proxy::decode_tcp_connect_reply(packet.data(), packet.size(), reply))
+        {
+            LOG_WARN("{} trace {:016x} conn {} stage decode_connect_reply target {}:{} invalid_reply_payload payload_size {}",
+                     log_event::kRoute,
+                     trace_id_,
+                     conn_id_,
+                     host,
+                     port,
+                     packet.size());
+            set_connect_failure(result, boost::asio::error::invalid_argument);
+            co_return;
+        }
+        result.socks_rep = reply.socks_rep;
+        if (reply.socks_rep != socks::kRepSuccess)
+        {
+            LOG_WARN("{} trace {:016x} conn {} stage wait_connect_reply target {}:{} remote_rep {}",
+                     log_event::kRoute,
+                     trace_id_,
+                     conn_id_,
+                     host,
+                     port,
+                     reply.socks_rep);
+            set_connect_failure(result, socks::map_socks_rep_to_connect_error(reply.socks_rep));
+            co_return;
+        }
+        const bool requested_vision = vision_requested();
+        const bool accepted_vision = (reply.feature_flags & proxy::kTcpFeatureVision) != 0;
+        if (accepted_vision && !requested_vision)
+        {
+            LOG_WARN("{} trace {:016x} conn {} stage wait_connect_reply target {}:{} unexpected vision flag",
+                     log_event::kRoute,
+                     trace_id_,
+                     conn_id_,
+                     host,
+                     port);
+            set_connect_failure(result, boost::asio::error::invalid_argument);
+            co_return;
+        }
+        if (requested_vision && !accepted_vision)
+        {
+            LOG_WARN("{} trace {:016x} conn {} stage wait_connect_reply target {}:{} vision rejected",
+                     log_event::kRoute,
+                     trace_id_,
+                     conn_id_,
+                     host,
+                     port);
+            set_connect_failure(result, boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+            result.socks_rep = socks::kRepNotAllowed;
+            co_return;
+        }
+        result.vision_accepted = accepted_vision;
+        if (accepted_vision)
+        {
+            LOG_INFO("{} trace {:016x} conn {} stage wait_connect_reply target {}:{} vision accepted",
+                     log_event::kRoute,
+                     trace_id_,
+                     conn_id_,
+                     host,
+                     port);
+        }
+
+        boost::system::error_code bind_ec;
+        const auto bind_addr = boost::asio::ip::make_address(reply.bind_host, bind_ec);
+        if (bind_ec)
+        {
+            LOG_WARN("{} trace {:016x} conn {} stage wait_connect_reply target {}:{} invalid_bind_addr {}",
+                     log_event::kRoute,
+                     trace_id_,
+                     conn_id_,
+                     host,
+                     port,
+                     reply.bind_host);
+        }
+        else
+        {
+            result.bind_addr = socks_codec::normalize_ip_address(bind_addr);
+            result.bind_port = reply.bind_port;
+            result.has_bind_endpoint = true;
+        }
+
+        LOG_INFO("{} trace {:016x} conn {} stage wait_connect_reply target {}:{} bind {}:{}",
+                 log_event::kRoute,
+                 trace_id_,
+                 conn_id_,
+                 host,
+                 port,
+                 reply.bind_host,
+                 reply.bind_port);
+        co_return;
+    }
     if (reply_ec)
     {
         LOG_ERROR("{} trace {:016x} conn {} stage wait_connect_reply target {}:{} error {}",
@@ -708,98 +858,12 @@ boost::asio::awaitable<void> proxy_tcp_outbound::wait_connect_reply(const std::s
         co_return;
     }
 
-    proxy::tcp_connect_reply reply;
-    if (!proxy::decode_tcp_connect_reply(packet.data(), packet.size(), reply))
-    {
-        LOG_WARN("{} trace {:016x} conn {} stage decode_connect_reply target {}:{} invalid_reply_payload payload_size {}",
-                 log_event::kRoute,
-                 trace_id_,
-                 conn_id_,
-                 host,
-                 port,
-                 packet.size());
-        set_connect_failure(result, boost::asio::error::invalid_argument);
-        co_return;
-    }
-    result.socks_rep = reply.socks_rep;
-    if (reply.socks_rep != socks::kRepSuccess)
-    {
-        LOG_WARN("{} trace {:016x} conn {} stage wait_connect_reply target {}:{} remote_rep {}",
-                 log_event::kRoute,
-                 trace_id_,
-                 conn_id_,
-                 host,
-                 port,
-                 reply.socks_rep);
-        set_connect_failure(result, socks::map_socks_rep_to_connect_error(reply.socks_rep));
-        co_return;
-    }
-    const bool requested_vision = vision_requested();
-    const bool accepted_vision = (reply.feature_flags & proxy::kTcpFeatureVision) != 0;
-    if (accepted_vision && !requested_vision)
-    {
-        LOG_WARN("{} trace {:016x} conn {} stage wait_connect_reply target {}:{} unexpected vision flag",
-                 log_event::kRoute,
-                 trace_id_,
-                 conn_id_,
-                 host,
-                 port);
-        set_connect_failure(result, boost::asio::error::invalid_argument);
-        co_return;
-    }
-    if (requested_vision && !accepted_vision)
-    {
-        LOG_WARN("{} trace {:016x} conn {} stage wait_connect_reply target {}:{} vision rejected",
-                 log_event::kRoute,
-                 trace_id_,
-                 conn_id_,
-                 host,
-                 port);
-        set_connect_failure(result, boost::system::errc::make_error_code(boost::system::errc::protocol_error));
-        result.socks_rep = socks::kRepNotAllowed;
-        co_return;
-    }
-    result.vision_accepted = accepted_vision;
-    if (accepted_vision)
-    {
-        LOG_INFO("{} trace {:016x} conn {} stage wait_connect_reply target {}:{} vision accepted",
-                 log_event::kRoute,
-                 trace_id_,
-                 conn_id_,
-                 host,
-                 port);
-    }
-
-    boost::system::error_code bind_ec;
-    const auto bind_addr = boost::asio::ip::make_address(reply.bind_host, bind_ec);
-    if (bind_ec)
-    {
-        LOG_WARN("{} trace {:016x} conn {} stage wait_connect_reply target {}:{} invalid_bind_addr {}",
-                 log_event::kRoute,
-                 trace_id_,
-                 conn_id_,
-                 host,
-                 port,
-                 reply.bind_host);
-    }
-    else
-    {
-        result.bind_addr = socks_codec::normalize_ip_address(bind_addr);
-        result.bind_port = reply.bind_port;
-        result.has_bind_endpoint = true;
-    }
-
-    LOG_INFO("{} trace {:016x} conn {} stage wait_connect_reply target {}:{} bind {}:{}",
-             log_event::kRoute,
-             trace_id_,
-             conn_id_,
-             host,
-             port,
-             reply.bind_host,
-             reply.bind_port);
+    set_connect_failure(result, reply_ec);
 }
 
-boost::asio::awaitable<tcp_outbound_connect_result> proxy_tcp_outbound::connect(const std::string& host, uint16_t port)
+boost::asio::awaitable<tcp_outbound_connect_result> proxy_tcp_outbound::connect(const std::string& host,
+                                                                                 const uint16_t port,
+                                                                                 const uint32_t timeout_sec)
 {
     tcp_outbound_connect_result result;
     result.socks_rep = socks::kRepSuccess;
@@ -810,8 +874,11 @@ boost::asio::awaitable<tcp_outbound_connect_result> proxy_tcp_outbound::connect(
     use_vision_stream_ = false;
     stream_.reset();
     vision_stream_.reset();
+    const auto request_timeout_sec = clamp_connect_budget(cfg_, timeout_sec);
+    const auto request_start_ms = net::now_ms();
     boost::system::error_code ec;
-    auto connection = co_await proxy_reality_connection::connect(executor_, cfg_, outbound_tag_, connect_mark_, conn_id_, ec);
+    auto connection = co_await proxy_reality_connection::connect(
+        executor_, cfg_, outbound_tag_, connect_mark_, conn_id_, request_timeout_sec, ec);
     if (connection == nullptr)
     {
         if (!ec)
@@ -843,7 +910,11 @@ boost::asio::awaitable<tcp_outbound_connect_result> proxy_tcp_outbound::connect(
              connection->local_port(),
              connection->remote_host(),
              connection->remote_port());
-    co_await send_connect_request(host, port, ec);
+    auto remaining_timeout_sec = net::remaining_timeout_seconds(request_start_ms, request_timeout_sec, ec);
+    if (!ec)
+    {
+        co_await send_connect_request(host, port, remaining_timeout_sec, ec);
+    }
     if (ec)
     {
         set_connect_failure(result, ec);
@@ -852,7 +923,7 @@ boost::asio::awaitable<tcp_outbound_connect_result> proxy_tcp_outbound::connect(
         co_return result;
     }
 
-    co_await wait_connect_reply(host, port, result);
+    co_await wait_connect_reply(host, port, request_start_ms, request_timeout_sec, result);
     if (result.ec)
     {
         co_await stream_.close();
