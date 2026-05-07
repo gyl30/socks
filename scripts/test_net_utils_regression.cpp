@@ -3,7 +3,6 @@
 #include <vector>
 #include <chrono>
 #include <iostream>
-#include <optional>
 #include <cstdint>
 
 #include <boost/asio.hpp>
@@ -32,6 +31,23 @@ boost::asio::ip::tcp::resolver::results_type make_results(const std::vector<boos
     return boost::asio::ip::tcp::resolver::results_type::create(endpoints.begin(), endpoints.end(), "127.0.0.1", "0");
 }
 
+boost::asio::ip::tcp::socket open_refused_socket(boost::asio::io_context& io_context)
+{
+    boost::asio::ip::tcp::socket socket(io_context);
+    boost::system::error_code ec;
+    socket.open(boost::asio::ip::tcp::v4(), ec);
+    if (!require(!ec, "open_refused_socket open failed"))
+    {
+        std::exit(1);
+    }
+    socket.bind(boost::asio::ip::tcp::endpoint(boost::asio::ip::address_v4::loopback(), 0), ec);
+    if (!require(!ec, "open_refused_socket bind failed"))
+    {
+        std::exit(1);
+    }
+    return socket;
+}
+
 void prepare_socket(boost::asio::ip::tcp::socket& socket,
                     const boost::asio::ip::tcp::endpoint& endpoint,
                     boost::system::error_code& ec,
@@ -49,11 +65,11 @@ void prepare_socket(boost::asio::ip::tcp::socket& socket,
 bool test_connect_uses_second_endpoint()
 {
     boost::asio::io_context io_context;
+    auto refused_socket = open_refused_socket(io_context);
     boost::asio::ip::tcp::acceptor acceptor(
         io_context, boost::asio::ip::tcp::endpoint(boost::asio::ip::address_v4::loopback(), 0));
     const auto listener_endpoint = acceptor.local_endpoint();
-    const auto refused_endpoint =
-        boost::asio::ip::tcp::endpoint(boost::asio::ip::address_v4::loopback(), static_cast<uint16_t>(listener_endpoint.port() + 1));
+    const auto refused_endpoint = refused_socket.local_endpoint();
     const auto endpoints = make_results({refused_endpoint, listener_endpoint});
 
     std::promise<boost::system::error_code> accept_promise;
@@ -104,7 +120,8 @@ bool test_connect_uses_second_endpoint()
 bool test_expired_deadline_skips_connect_attempts()
 {
     boost::asio::io_context io_context;
-    const auto endpoint = boost::asio::ip::tcp::endpoint(boost::asio::ip::address_v4::loopback(), 9);
+    auto refused_socket = open_refused_socket(io_context);
+    const auto endpoint = refused_socket.local_endpoint();
     const auto endpoints = make_results({endpoint, endpoint});
 
     auto future = boost::asio::co_spawn(
