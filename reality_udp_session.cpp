@@ -241,7 +241,12 @@ boost::asio::awaitable<void> reality_udp_session::start_impl(const proxy::udp_as
             proxy_reader_group_.emit(boost::asio::cancellation_type::all);
             close_udp_socket();
             co_await close_proxy_outbounds();
-            const auto wait_ec = co_await proxy_reader_group_.async_wait();
+            auto wait_ec = co_await proxy_reader_group_.async_wait();
+            if (wait_ec == boost::asio::error::operation_aborted)
+            {
+                co_await boost::asio::this_coro::reset_cancellation_state(boost::asio::disable_cancellation());
+                wait_ec = co_await proxy_reader_group_.async_wait();
+            }
             (void)wait_ec;
             if (connection_ != nullptr)
             {

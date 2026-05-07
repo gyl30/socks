@@ -78,7 +78,12 @@ boost::asio::awaitable<void> io_context_pool::async_wait_all() const
     for (const auto& worker : workers_)
     {
         co_await boost::asio::post(worker->io_context, boost::asio::use_awaitable);
-        const auto ec = co_await worker->group.async_wait();
+        auto ec = co_await worker->group.async_wait();
+        if (ec == boost::asio::error::operation_aborted)
+        {
+            co_await boost::asio::this_coro::reset_cancellation_state(boost::asio::disable_cancellation());
+            ec = co_await worker->group.async_wait();
+        }
         if (ec && ec != boost::asio::error::operation_aborted)
         {
             LOG_ERROR("{} stage io_context_pool wait_all error {}", log_event::kConnClose, ec.message());

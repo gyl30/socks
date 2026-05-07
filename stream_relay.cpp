@@ -20,6 +20,26 @@ namespace relay
 namespace
 {
 
+[[nodiscard]] uint8_t close_reason_priority(const stream_relay_result::close_reason reason)
+{
+    switch (reason)
+    {
+        case stream_relay_result::close_reason::kUnknown:
+            return 0;
+        case stream_relay_result::close_reason::kInboundEof:
+        case stream_relay_result::close_reason::kOutboundEof:
+            return 1;
+        case stream_relay_result::close_reason::kStopped:
+            return 2;
+        case stream_relay_result::close_reason::kIdleTimeout:
+            return 3;
+        case stream_relay_result::close_reason::kInboundError:
+        case stream_relay_result::close_reason::kOutboundError:
+            return 4;
+    }
+    return 0;
+}
+
 struct relay_result_state
 {
     stream_relay_result& result;
@@ -30,7 +50,7 @@ struct relay_result_state
     void record(const stream_relay_result::close_reason reason, const boost::system::error_code& ec = {})
     {
         std::scoped_lock lock(mutex);
-        if (result.reason != stream_relay_result::close_reason::kUnknown)
+        if (close_reason_priority(reason) < close_reason_priority(result.reason))
         {
             return;
         }
@@ -221,15 +241,29 @@ boost::asio::awaitable<stream_relay_result> relay_streams(stream_relay_context& 
 
     if (context.timeout.idle == 0)
     {
-        const auto wait_ec = co_await tg.async_wait();
+        auto wait_ec = co_await tg.async_wait();
+        if (wait_ec == boost::asio::error::operation_aborted)
+        {
+            tg.emit(boost::asio::cancellation_type::all);
+            co_await boost::asio::this_coro::reset_cancellation_state(boost::asio::disable_cancellation());
+            wait_ec = co_await tg.async_wait();
+        }
         (void)wait_ec;
     }
     else
     {
         auto wait_or_timeout = co_await (tg.async_wait() || relay_idle_watchdog(context, result_state));
+        if (wait_or_timeout.index() == 0 && std::get<0>(wait_or_timeout) == boost::asio::error::operation_aborted)
+        {
+            tg.emit(boost::asio::cancellation_type::all);
+            co_await boost::asio::this_coro::reset_cancellation_state(boost::asio::disable_cancellation());
+            const auto wait_ec = co_await tg.async_wait();
+            (void)wait_ec;
+        }
         if (wait_or_timeout.index() == 1)
         {
             tg.emit(boost::asio::cancellation_type::all);
+            co_await boost::asio::this_coro::reset_cancellation_state(boost::asio::disable_cancellation());
             const auto wait_ec = co_await tg.async_wait();
             (void)wait_ec;
         }
