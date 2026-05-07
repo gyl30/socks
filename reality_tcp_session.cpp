@@ -61,6 +61,7 @@ void reality_tcp_session::init_request_state(const proxy::tcp_connect_request& r
     bind_port_ = 0;
     route_name_ = "unknown";
     request_timeout_sec_ = request.timeout_sec;
+    request_start_ms_ = net::now_ms();
 }
 
 request_context reality_tcp_session::make_request_context() const
@@ -459,7 +460,13 @@ boost::asio::awaitable<bool> reality_tcp_session::send_connect_reply(const uint8
     }
 
     boost::system::error_code ec;
-    co_await connection_->write_packet(packet, ec);
+    const auto remaining_timeout_sec = remaining_request_timeout_sec(ec);
+    if (ec)
+    {
+        co_return false;
+    }
+    const auto write_timeout_sec = net::clamp_timeout_seconds(cfg_.timeout.write, remaining_timeout_sec);
+    co_await connection_->write_packet(packet, write_timeout_sec, ec);
     if (ec)
     {
         LOG_WARN("{} trace {:016x} conn {} target {}:{} route {} bind {}:{} send tcp connect reply failed {} rep {}",
@@ -485,6 +492,16 @@ boost::asio::awaitable<bool> reality_tcp_session::send_connect_reply(const uint8
                  target_port_);
     }
     co_return true;
+}
+
+uint32_t reality_tcp_session::remaining_request_timeout_sec(boost::system::error_code& ec) const
+{
+    if (request_timeout_sec_ == 0)
+    {
+        ec.clear();
+        return 0;
+    }
+    return net::remaining_timeout_seconds(request_start_ms_, request_timeout_sec_, ec);
 }
 
 void reality_tcp_session::log_close_summary() const

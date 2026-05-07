@@ -125,7 +125,12 @@ boost::asio::awaitable<bool> reality_udp_session::send_udp_associate_reply(const
     }
 
     boost::system::error_code ec;
-    co_await connection_->write_packet(reply_packet, ec);
+    const auto write_timeout_sec = net::remaining_clamped_timeout_seconds(request_start_ms_, request_timeout_sec_, cfg_.timeout.write, ec);
+    if (ec)
+    {
+        co_return false;
+    }
+    co_await connection_->write_packet(reply_packet, write_timeout_sec, ec);
     co_return !ec;
 }
 
@@ -174,8 +179,9 @@ request_context reality_udp_session::make_route_request(const proxy::udp_datagra
     };
 }
 
-request_context reality_udp_session::make_proxy_outbound_request() const
+request_context reality_udp_session::make_proxy_outbound_request(boost::system::error_code& ec) const
 {
+    const auto timeout_sec = remaining_request_timeout_sec(ec);
     return request_context{
         .trace_id = trace_id_,
         .conn_id = conn_id_,
@@ -189,13 +195,24 @@ request_context reality_udp_session::make_proxy_outbound_request() const
         .client_port = static_cast<uint16_t>(connection_ != nullptr ? connection_->remote_port() : 0U),
         .local_host = bind_host_,
         .local_port = bind_port_,
-        .timeout_sec = request_timeout_sec_,
+        .timeout_sec = timeout_sec,
     };
+}
+
+uint32_t reality_udp_session::remaining_request_timeout_sec(boost::system::error_code& ec) const
+{
+    if (request_timeout_sec_ == 0)
+    {
+        ec.clear();
+        return 0;
+    }
+    return net::remaining_timeout_seconds(request_start_ms_, request_timeout_sec_, ec);
 }
 
 boost::asio::awaitable<void> reality_udp_session::start_impl(const proxy::udp_associate_request& request)
 {
     request_timeout_sec_ = request.timeout_sec;
+    request_start_ms_ = net::now_ms();
     if (!(co_await establish_udp_associate()))
     {
         co_return;
@@ -324,7 +341,15 @@ boost::asio::awaitable<std::shared_ptr<udp_proxy_outbound>> reality_udp_session:
         },
         [this](const std::string& tag) -> boost::asio::awaitable<udp_proxy_outbound_connect_result>
         {
-            const auto request = make_proxy_outbound_request();
+            boost::system::error_code request_ec;
+            const auto request = make_proxy_outbound_request(request_ec);
+            if (request_ec)
+            {
+                udp_proxy_outbound_connect_result result;
+                result.ec = request_ec;
+                result.socks_rep = socks::map_connect_error_to_socks_rep(request_ec);
+                co_return result;
+            }
             co_return co_await connect_udp_proxy_flow(udp_socket_.get_executor(), request, tag, cfg_);
         },
         [this](const std::string& tag, const udp_proxy_outbound_connect_result& connect_result)

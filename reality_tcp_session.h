@@ -48,6 +48,7 @@ class reality_tcp_session : public std::enable_shared_from_this<reality_tcp_sess
                                                                                   route_type route,
                                                                                   const std::string& outbound_type);
     void log_close_summary() const;
+    [[nodiscard]] uint32_t remaining_request_timeout_sec(boost::system::error_code& ec) const;
 
    private:
     uint32_t conn_id_ = 0;
@@ -61,6 +62,7 @@ class reality_tcp_session : public std::enable_shared_from_this<reality_tcp_sess
     uint16_t bind_port_ = 0;
     std::string route_name_ = "unknown";
     uint32_t request_timeout_sec_ = 0;
+    uint64_t request_start_ms_ = 0;
     uint64_t tx_bytes_ = 0;
     uint64_t rx_bytes_ = 0;
     std::chrono::steady_clock::time_point start_time_ = std::chrono::steady_clock::now();

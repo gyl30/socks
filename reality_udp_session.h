@@ -48,7 +48,8 @@ class reality_udp_session : public std::enable_shared_from_this<reality_udp_sess
     [[nodiscard]] bool open_bind_udp_socket();
     void close_udp_socket();
     [[nodiscard]] request_context make_route_request(const proxy::udp_datagram& datagram) const;
-    [[nodiscard]] request_context make_proxy_outbound_request() const;
+    [[nodiscard]] request_context make_proxy_outbound_request(boost::system::error_code& ec) const;
+    [[nodiscard]] uint32_t remaining_request_timeout_sec(boost::system::error_code& ec) const;
     [[nodiscard]] boost::asio::awaitable<bool> forward_direct_datagram(const proxy::udp_datagram& datagram, const std::string& route_name);
     [[nodiscard]] boost::asio::awaitable<bool> forward_proxy_datagram(const proxy::udp_datagram& datagram,
                                                                       const route_decision& decision,
@@ -86,6 +87,7 @@ class reality_udp_session : public std::enable_shared_from_this<reality_udp_sess
     std::string bind_host_ = "unknown";
     uint16_t bind_port_ = 0;
     uint32_t request_timeout_sec_ = 0;
+    uint64_t request_start_ms_ = 0;
     uint64_t tx_bytes_ = 0;
     uint64_t rx_bytes_ = 0;
     std::chrono::steady_clock::time_point start_time_ = std::chrono::steady_clock::now();
