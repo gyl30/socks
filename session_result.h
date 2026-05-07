@@ -216,9 +216,11 @@ struct session_close_trace_info
             break;
         case session_close_reason::kUnknown:
         case session_close_reason::kRouteBlocked:
-        case session_close_reason::kStopped:
         case session_close_reason::kTransportError:
             info.result = trace_result::kFail;
+            break;
+        case session_close_reason::kStopped:
+            info.result = trace_result::kSkip;
             break;
     }
 

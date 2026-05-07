@@ -21,7 +21,8 @@ enum class trace_status
     kRunning,
     kSuccess,
     kFailed,
-    kTimeout
+    kTimeout,
+    kStopped
 };
 
 enum class trace_result
@@ -205,6 +206,7 @@ struct trace_stats
     uint64_t success_sessions = 0;
     uint64_t failed_sessions = 0;
     uint64_t timeout_sessions = 0;
+    uint64_t stopped_sessions = 0;
     uint64_t total_events = 0;
     uint64_t total_tx_bytes = 0;
     uint64_t total_rx_bytes = 0;

@@ -99,10 +99,27 @@ bool test_completed_close()
            require(summary->final_error_message.empty(), "completed_close expected empty error message");
 }
 
+bool test_stopped_close()
+{
+    const uint64_t trace_id = 0x7100000000000004ULL;
+    relay::trace_store::instance().record_event(
+        make_close_event(trace_id, relay::stream_relay_result::close_reason::kStopped, boost::asio::error::operation_aborted));
+    const auto summary = load_summary(trace_id);
+    if (!require(summary.has_value(), "stopped_close missing trace summary"))
+    {
+        return false;
+    }
+    return require(summary->status == relay::trace_status::kStopped, "stopped_close expected stopped status") &&
+           require(summary->final_error_code == make_error_code(boost::asio::error::operation_aborted).value(),
+                   "stopped_close expected operation_aborted error code") &&
+           require(summary->final_error_message == make_error_code(boost::asio::error::operation_aborted).message(),
+                   "stopped_close expected operation_aborted error message");
+}
+
 }    // namespace
 
 int main()
 {
-    const bool ok = test_transport_error_close() && test_idle_timeout_close() && test_completed_close();
+    const bool ok = test_transport_error_close() && test_idle_timeout_close() && test_completed_close() && test_stopped_close();
     return ok ? 0 : 1;
 }

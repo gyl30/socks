@@ -55,7 +55,21 @@ void accumulate_stats(trace_stats& stats, const trace_session_summary& summary)
         case trace_status::kTimeout:
             stats.timeout_sessions++;
             break;
+        case trace_status::kStopped:
+            stats.stopped_sessions++;
+            break;
     }
+}
+
+bool has_stopped_close_reason(const trace_event& event)
+{
+    if (event.stage != trace_stage::kSessionClose && event.stage != trace_stage::kSessionError)
+    {
+        return false;
+    }
+
+    const auto it = event.extra.find("close_reason");
+    return it != event.extra.end() && it->second == "stopped";
 }
 
 }    // namespace
@@ -72,6 +86,8 @@ std::string_view to_string(const trace_status status)
             return "failed";
         case trace_status::kTimeout:
             return "timeout";
+        case trace_status::kStopped:
+            return "stopped";
     }
     return "unknown";
 }
@@ -181,6 +197,10 @@ std::optional<trace_status> parse_trace_status(const std::string_view value)
     if (value == "timeout")
     {
         return trace_status::kTimeout;
+    }
+    if (value == "stopped")
+    {
+        return trace_status::kStopped;
     }
     return std::nullopt;
 }
@@ -456,6 +476,13 @@ void trace_store::update_summary(trace_session_summary& summary, const trace_eve
 
     if (event.result == trace_result::kFail)
     {
+        if (has_stopped_close_reason(event))
+        {
+            summary.status = trace_status::kStopped;
+            summary.final_error_code = event.error_code;
+            summary.final_error_message = event.error_message;
+            return;
+        }
         summary.status = trace_status::kFailed;
         summary.final_error_code = event.error_code;
         summary.final_error_message = event.error_message;
@@ -470,7 +497,21 @@ void trace_store::update_summary(trace_session_summary& summary, const trace_eve
     }
     if (event.stage == trace_stage::kSessionError)
     {
+        if (has_stopped_close_reason(event))
+        {
+            summary.status = trace_status::kStopped;
+            summary.final_error_code = event.error_code;
+            summary.final_error_message = event.error_message;
+            return;
+        }
         summary.status = trace_status::kFailed;
+        summary.final_error_code = event.error_code;
+        summary.final_error_message = event.error_message;
+        return;
+    }
+    if (event.stage == trace_stage::kSessionClose && has_stopped_close_reason(event))
+    {
+        summary.status = trace_status::kStopped;
         summary.final_error_code = event.error_code;
         summary.final_error_message = event.error_message;
         return;

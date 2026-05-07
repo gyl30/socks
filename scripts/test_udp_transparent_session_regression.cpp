@@ -597,6 +597,7 @@ const relay::trace_event* find_event(const relay::trace_session_snapshot& snapsh
 [[nodiscard]] test_result expect_stopped_trace(const relay::trace_session_snapshot& snapshot, std::string_view inbound_type)
 {
     const auto& summary = snapshot.summary;
+    TEST_CHECK(summary.status == relay::trace_status::kStopped, "unexpected trace status for " + std::string(inbound_type));
     TEST_CHECK(summary.inbound_type == inbound_type, "unexpected inbound_type for " + std::string(inbound_type) + ": " + summary.inbound_type);
     TEST_CHECK(summary.route_type == "direct", "unexpected route_type for " + std::string(inbound_type) + ": " + summary.route_type);
     TEST_CHECK(summary.lifecycle.route_decide_done, "route_decide_done missing for " + std::string(inbound_type));
@@ -621,17 +622,10 @@ const relay::trace_event* find_event(const relay::trace_session_snapshot& snapsh
         }
     }
 
-    if (session_close != nullptr)
-    {
-        TEST_CHECK(summary.status == relay::trace_status::kSuccess, "unexpected success status for " + std::string(inbound_type));
-        TEST_CHECK(summary.lifecycle.session_close && !summary.lifecycle.session_error,
-                   "unexpected lifecycle for stopped session_close " + std::string(inbound_type));
-        return std::nullopt;
-    }
-
-    TEST_CHECK(summary.status == relay::trace_status::kFailed, "unexpected failed status for " + std::string(inbound_type));
-    TEST_CHECK(summary.lifecycle.session_error && !summary.lifecycle.session_close,
-               "unexpected lifecycle for stopped session_error " + std::string(inbound_type));
+    TEST_CHECK((session_close != nullptr) == summary.lifecycle.session_close,
+               "session_close lifecycle mismatch for " + std::string(inbound_type));
+    TEST_CHECK((session_error != nullptr) == summary.lifecycle.session_error,
+               "session_error lifecycle mismatch for " + std::string(inbound_type));
     return std::nullopt;
 }
 

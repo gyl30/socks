@@ -230,6 +230,8 @@ void write_trace_stats(Writer& writer, const trace_stats& stats)
     writer.Uint64(stats.failed_sessions);
     writer.Key("timeout_sessions");
     writer.Uint64(stats.timeout_sessions);
+    writer.Key("stopped_sessions");
+    writer.Uint64(stats.stopped_sessions);
     writer.Key("total_events");
     writer.Uint64(stats.total_events);
     writer.Key("total_tx_bytes");

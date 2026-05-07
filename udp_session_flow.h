@@ -45,7 +45,7 @@ inline void record_udp_session_close_trace(trace_event event,
                                            const udp_close_reason close_reason)
 {
     event.stage = trace_stage::kSessionClose;
-    event.result = trace_result::kOk;
+    event.result = close_reason == udp_close_reason::kStopped ? trace_result::kSkip : trace_result::kOk;
     event.bytes_tx = tx_bytes;
     event.bytes_rx = rx_bytes;
     event.latency_ms = static_cast<uint32_t>(duration_ms);
@@ -58,7 +58,7 @@ inline void record_udp_session_error_trace(trace_event event,
                                            const std::string& error_message = {})
 {
     event.stage = trace_stage::kSessionError;
-    event.result = trace_result::kFail;
+    event.result = close_reason == udp_close_reason::kStopped ? trace_result::kSkip : trace_result::kFail;
     if (!error_message.empty())
     {
         event.error_message = error_message;
