@@ -440,6 +440,12 @@ if(UNIX AND NOT APPLE AND NOT ENABLE_STATIC_LINK)
   target_link_options(net_utils_regression PRIVATE "-Wl,--no-as-needed" "${BROTLICOMMON_LIBRARY}" "-Wl,--as-needed")
 endif()
 
+add_executable(reality_tcp_budget_regression scripts/test_reality_tcp_budget_regression.cpp)
+target_link_libraries(reality_tcp_budget_regression PRIVATE core)
+if(UNIX AND NOT APPLE AND NOT ENABLE_STATIC_LINK)
+  target_link_options(reality_tcp_budget_regression PRIVATE "-Wl,--no-as-needed" "${BROTLICOMMON_LIBRARY}" "-Wl,--as-needed")
+endif()
+
 if(BUILD_TESTING)
   add_executable(test_reality_invalid_initial_request_client scripts/test_reality_invalid_initial_request_client.cpp)
   target_link_libraries(test_reality_invalid_initial_request_client PRIVATE core)
@@ -589,6 +595,9 @@ if(BUILD_TESTING)
 
   add_test(NAME net_utils_regression COMMAND $<TARGET_FILE:net_utils_regression>)
   set_tests_properties(net_utils_regression PROPERTIES TIMEOUT 30)
+
+  add_test(NAME reality_tcp_budget_regression COMMAND $<TARGET_FILE:reality_tcp_budget_regression>)
+  set_tests_properties(reality_tcp_budget_regression PROPERTIES TIMEOUT 30)
 
   add_test(
     NAME proxy_timeout_budget

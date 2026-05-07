@@ -345,7 +345,44 @@ boost::asio::awaitable<tcp_outbound_connect_result> reality_tcp_session::connect
         .remote_port = static_cast<uint16_t>(connection_ != nullptr ? connection_->remote_port() : 0U),
         .route_type = relay::to_string(route),
     });
-    const auto result = co_await backend->connect(host, port, request_timeout_sec_);
+    boost::system::error_code ec;
+    const auto connect_timeout_sec = remaining_request_timeout_sec(ec);
+    if (ec)
+    {
+        tcp_outbound_connect_result result;
+        result.ec = ec;
+        result.socks_rep = socks::map_connect_error_to_socks_rep(ec);
+        LOG_WARN("{} trace {:016x} conn {} target {}:{} route {} connect budget expired before outbound connect {}",
+                 log_event::kRoute,
+                 trace_id_,
+                 conn_id_,
+                 host,
+                 port,
+                 relay::to_string(route),
+                 ec.message());
+        trace_store::instance().record_event(trace_event{
+            .trace_id = trace_id_,
+            .conn_id = conn_id_,
+            .stage = trace_stage::kOutboundConnectDone,
+            .result = trace_result::kFail,
+            .inbound_tag = inbound_tag_,
+            .inbound_type = "reality",
+            .outbound_tag = route_name_,
+            .outbound_type = outbound_type,
+            .target_host = host,
+            .target_port = port,
+            .local_host = bind_host_,
+            .local_port = bind_port_,
+            .remote_host = host,
+            .remote_port = port,
+            .route_type = relay::to_string(route),
+            .error_code = static_cast<int32_t>(ec.value()),
+            .error_message = ec.message(),
+        });
+        co_return result;
+    }
+
+    const auto result = co_await backend->connect(host, port, connect_timeout_sec);
     if (!result.ec)
     {
         if (result.has_bind_endpoint)
