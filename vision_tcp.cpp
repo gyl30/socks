@@ -145,6 +145,27 @@ void append_u16(std::vector<uint8_t>& out, const std::size_t value)
     return true;
 }
 
+[[nodiscard]] bool matches_application_record_prefix(const std::span<const uint8_t> data)
+{
+    if (data.empty() || data.size() >= tls::kTlsRecordHeaderSize)
+    {
+        return false;
+    }
+    if (data[0] != tls::kContentTypeApplicationData)
+    {
+        return false;
+    }
+    if (data.size() >= 2U && data[1] != 0x03)
+    {
+        return false;
+    }
+    if (data.size() >= 3U && data[2] != 0x03)
+    {
+        return false;
+    }
+    return true;
+}
+
 [[nodiscard]] bool complete_record_at(const std::span<const uint8_t> data, const std::size_t pos, std::size_t& record_size)
 {
     record_size = 0;
@@ -172,6 +193,10 @@ void append_u16(std::vector<uint8_t>& out, const std::size_t value)
     {
         if (data.size() - pos < tls::kTlsRecordHeaderSize)
         {
+            if (matches_application_record_prefix(data.subspan(pos)))
+            {
+                return pos;
+            }
             return std::nullopt;
         }
         const auto tail = data.subspan(pos);
