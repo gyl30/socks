@@ -6,6 +6,7 @@
 #include <string>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <string_view>
 
 namespace relay::proxy
@@ -15,6 +16,12 @@ namespace relay::proxy
 constexpr uint32_t kMaxPacketSize = 1U + 1U + 1U + 255U + 2U + 65507U;
 constexpr uint8_t kTcpFeatureVision = 0x01;
 constexpr uint8_t kKnownTcpFeatureFlags = kTcpFeatureVision;
+
+[[nodiscard]] constexpr uint16_t clamp_timeout_sec(const uint32_t timeout_sec)
+{
+    return timeout_sec > static_cast<uint32_t>(std::numeric_limits<uint16_t>::max()) ? std::numeric_limits<uint16_t>::max()
+                                                                                      : static_cast<uint16_t>(timeout_sec);
+}
 
 enum class message_type : uint8_t
 {

@@ -673,7 +673,7 @@ boost::asio::awaitable<void> proxy_tcp_outbound::send_connect_request(const std:
     request.target_host = host;
     request.target_port = port;
     request.trace_id = trace_id_;
-    request.timeout_sec = static_cast<uint16_t>(timeout_sec);
+    request.timeout_sec = proxy::clamp_timeout_sec(timeout_sec);
     const bool requested_vision = vision_requested();
     if (requested_vision)
     {

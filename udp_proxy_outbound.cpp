@@ -564,7 +564,7 @@ boost::asio::awaitable<udp_proxy_outbound_connect_result> udp_proxy_outbound::co
     auto upstream = std::make_shared<reality_udp_proxy_outbound>(connection, cfg);
     proxy::udp_associate_request request;
     request.trace_id = trace_id;
-    request.timeout_sec = static_cast<uint16_t>(net::remaining_timeout_seconds(request_start_ms, request_timeout_sec, ec));
+    request.timeout_sec = proxy::clamp_timeout_sec(net::remaining_timeout_seconds(request_start_ms, request_timeout_sec, ec));
     if (ec)
     {
         set_connect_failure(result, ec);

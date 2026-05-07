@@ -29,6 +29,7 @@ int main()
     using relay::proxy::decode_udp_associate_reply;
     using relay::proxy::decode_udp_associate_request;
     using relay::proxy::decode_udp_datagram;
+    using relay::proxy::clamp_timeout_sec;
     using relay::proxy::encode_tcp_connect_reply;
     using relay::proxy::encode_tcp_connect_request;
     using relay::proxy::encode_tcp_stream_data;
@@ -104,6 +105,10 @@ int main()
     };
 
     const bool ok =
+        require(clamp_timeout_sec(0) == 0, "timeout clamp should keep zero") &&
+        require(clamp_timeout_sec(7) == 7, "timeout clamp should keep in-range value") &&
+        require(clamp_timeout_sec(65535) == 65535, "timeout clamp should keep uint16 max") &&
+        require(clamp_timeout_sec(65536) == 65535, "timeout clamp should cap oversized timeout") &&
         require(message_name(message_type::kTcpConnectRequest) == "tcp_connect_request", "unexpected tcp connect request message name") &&
         require(message_name(static_cast<message_type>(0xFF)) == "unknown", "unexpected unknown message name") &&
         require(encode_tcp_connect_request(domain_connect_request, packet), "failed to encode tcp connect request") &&
