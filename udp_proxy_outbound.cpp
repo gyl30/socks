@@ -51,6 +51,7 @@ boost::asio::awaitable<bool> connect_socks_server(boost::asio::ip::tcp::socket& 
                                                   const uint32_t connect_mark,
                                                   boost::system::error_code& ec)
 {
+    const auto connect_start_ms = net::now_ms();
     auto endpoints = co_await net::wait_resolve_with_timeout(resolver, settings.host, std::to_string(settings.port), cfg.timeout.connect, ec);
     if (ec)
     {
@@ -64,41 +65,41 @@ boost::asio::awaitable<bool> connect_socks_server(boost::asio::ip::tcp::socket& 
         co_return false;
     }
 
-    for (const auto& entry : endpoints)
-    {
-        if (socket.is_open())
+    const auto connected = co_await net::connect_resolved_endpoints_with_timeout(
+        socket,
+        endpoints,
+        connect_start_ms,
+        cfg.timeout.connect,
+        ec,
+        [&](const boost::asio::ip::tcp::endpoint& endpoint, boost::system::error_code& op_ec)
         {
-            boost::system::error_code close_ec;
-            close_ec = socket.close(close_ec);
-        }
-
-        ec = socket.open(entry.endpoint().protocol(), ec);
-        if (ec)
-        {
-            continue;
-        }
-        if (connect_mark != 0)
-        {
-            net::set_socket_mark(socket.native_handle(), connect_mark, ec);
-            if (ec)
+            if (socket.is_open())
             {
-                continue;
+                boost::system::error_code close_ec;
+                close_ec = socket.close(close_ec);
             }
-        }
 
-        co_await net::wait_connect_with_timeout(socket, entry.endpoint(), cfg.timeout.connect, ec);
-        if (ec)
-        {
-            continue;
-        }
-        ec = socket.set_option(boost::asio::ip::tcp::no_delay(true), ec);
-        if (ec)
-        {
-            ec.clear();
-        }
-        co_return true;
+            op_ec = socket.open(endpoint.protocol(), op_ec);
+            if (op_ec)
+            {
+                return;
+            }
+            if (connect_mark != 0)
+            {
+                net::set_socket_mark(socket.native_handle(), connect_mark, op_ec);
+            }
+        });
+    if (connected == endpoints.end())
+    {
+        co_return false;
     }
-    co_return false;
+
+    ec = socket.set_option(boost::asio::ip::tcp::no_delay(true), ec);
+    if (ec)
+    {
+        ec.clear();
+    }
+    co_return true;
 }
 
 boost::asio::awaitable<bool> send_udp_associate_request(boost::asio::ip::tcp::socket& socket, const config& cfg, boost::system::error_code& ec)
