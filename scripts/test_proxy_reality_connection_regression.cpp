@@ -95,8 +95,8 @@ boost::asio::awaitable<bool> run_error_code_regression()
 
     const std::vector<uint8_t> packet{'o', 'k'};
     ec = boost::asio::error::operation_aborted;
-    co_await client_connection->write_packet(packet, ec);
-    ok = ok && require(!ec, "write_packet should clear stale error_code on success");
+    co_await client_connection->write_packet(packet, 1, ec);
+    ok = ok && require(!ec, "write_packet(timeout) should clear stale error_code on success");
 
     ec = boost::asio::error::operation_aborted;
     const auto received_packet = co_await server_connection->read_packet(cfg.timeout.read, ec);
@@ -104,8 +104,8 @@ boost::asio::awaitable<bool> run_error_code_regression()
 
     const std::vector<uint8_t> plaintext{'d', 'a', 't', 'a'};
     ec = boost::asio::error::operation_aborted;
-    co_await server_connection->write(std::span<const uint8_t>(plaintext.data(), plaintext.size()), ec);
-    ok = ok && require(!ec, "write should clear stale error_code on success");
+    co_await server_connection->write(std::span<const uint8_t>(plaintext.data(), plaintext.size()), 1, ec);
+    ok = ok && require(!ec, "write(timeout) should clear stale error_code on success");
 
     std::vector<uint8_t> read_buffer(16);
     ec = boost::asio::error::operation_aborted;

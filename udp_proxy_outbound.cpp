@@ -576,7 +576,13 @@ boost::asio::awaitable<udp_proxy_outbound_connect_result> udp_proxy_outbound::co
         set_connect_failure(result, boost::asio::error::message_size);
         co_return result;
     }
-    co_await connection->write_packet(packet, ec);
+    const auto write_timeout_sec = net::remaining_clamped_timeout_seconds(request_start_ms, request_timeout_sec, cfg.timeout.write, ec);
+    if (ec)
+    {
+        set_connect_failure(result, ec);
+        co_return result;
+    }
+    co_await connection->write_packet(packet, write_timeout_sec, ec);
     if (ec)
     {
         set_connect_failure(result, ec);

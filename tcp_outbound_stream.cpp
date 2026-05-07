@@ -709,7 +709,7 @@ boost::asio::awaitable<void> proxy_tcp_outbound::send_connect_request(const std:
              host,
              port,
              packet.size());
-    co_await connection->write_packet(packet, ec);
+    co_await connection->write_packet(packet, timeout_sec, ec);
     if (ec)
     {
         LOG_ERROR("{} trace {:016x} conn {} stage send_connect_request target {}:{} error {}",

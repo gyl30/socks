@@ -301,6 +301,12 @@ boost::asio::awaitable<std::shared_ptr<proxy_reality_connection>> proxy_reality_
 
 boost::asio::awaitable<void> proxy_reality_connection::write(const std::span<const uint8_t> data, boost::system::error_code& ec)
 {
+    co_await write(data, cfg_.timeout.write, ec);
+}
+
+boost::asio::awaitable<void> proxy_reality_connection::write(
+    const std::span<const uint8_t> data, const uint32_t timeout_sec, boost::system::error_code& ec)
+{
     ec.clear();
     if (data.empty())
     {
@@ -334,7 +340,8 @@ boost::asio::awaitable<void> proxy_reality_connection::write(const std::span<con
                  ec.message());
         co_return;
     }
-    co_await net::wait_write_with_timeout(socket_, boost::asio::buffer(ciphertext.data(), ciphertext.size()), cfg_.timeout.write, ec);
+    co_await net::wait_write_with_timeout(
+        socket_, boost::asio::buffer(ciphertext.data(), ciphertext.size()), net::clamp_timeout_seconds(cfg_.timeout.write, timeout_sec), ec);
     if (ec)
     {
         LOG_WARN("{} conn {} local {}:{} remote {}:{} stage write_ciphertext error {}",
@@ -349,6 +356,12 @@ boost::asio::awaitable<void> proxy_reality_connection::write(const std::span<con
 }
 
 boost::asio::awaitable<void> proxy_reality_connection::write_packet(const std::vector<uint8_t>& packet, boost::system::error_code& ec)
+{
+    co_await write_packet(packet, cfg_.timeout.write, ec);
+}
+
+boost::asio::awaitable<void> proxy_reality_connection::write_packet(
+    const std::vector<uint8_t>& packet, const uint32_t timeout_sec, boost::system::error_code& ec)
 {
     ec.clear();
     if (packet.size() > proxy::kMaxPacketSize)
@@ -365,7 +378,7 @@ boost::asio::awaitable<void> proxy_reality_connection::write_packet(const std::v
     framed.push_back(static_cast<uint8_t>((size >> 8) & 0xFFU));
     framed.push_back(static_cast<uint8_t>(size & 0xFFU));
     framed.insert(framed.end(), packet.begin(), packet.end());
-    co_await write(framed, ec);
+    co_await write(framed, timeout_sec, ec);
 }
 
 std::size_t proxy_reality_connection::consume_plaintext(const std::span<uint8_t> output)

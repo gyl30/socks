@@ -40,7 +40,9 @@ class proxy_reality_connection : public std::enable_shared_from_this<proxy_reali
     [[nodiscard]] uint16_t remote_port() const { return remote_port_; }
 
     boost::asio::awaitable<void> write(std::span<const uint8_t> data, boost::system::error_code& ec);
+    boost::asio::awaitable<void> write(std::span<const uint8_t> data, uint32_t timeout_sec, boost::system::error_code& ec);
     boost::asio::awaitable<void> write_packet(const std::vector<uint8_t>& packet, boost::system::error_code& ec);
+    boost::asio::awaitable<void> write_packet(const std::vector<uint8_t>& packet, uint32_t timeout_sec, boost::system::error_code& ec);
     [[nodiscard]] boost::asio::awaitable<std::size_t> read_some(std::vector<uint8_t>& buffer, uint32_t timeout_sec, boost::system::error_code& ec);
     [[nodiscard]] boost::asio::awaitable<std::vector<uint8_t>> read_packet(uint32_t timeout_sec, boost::system::error_code& ec);
     boost::asio::awaitable<void> enter_raw_read_mode(boost::system::error_code& ec);
