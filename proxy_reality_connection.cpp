@@ -139,6 +139,7 @@ boost::asio::awaitable<void> tcp_connect_remote(
     boost::asio::ip::tcp::socket& socket, const config& cfg, const connect_options& options, uint32_t conn_id, boost::system::error_code& ec)
 {
     const auto timeout_sec = cfg.timeout.connect;
+    const auto connect_start_ms = net::now_ms();
     boost::asio::ip::tcp::resolver resolver(socket.get_executor());
     const auto resolve_endpoints = co_await net::wait_resolve_with_timeout(resolver, options.remote_host, options.remote_port, timeout_sec, ec);
     if (ec)
@@ -152,19 +153,17 @@ boost::asio::awaitable<void> tcp_connect_remote(
         co_return;
     }
 
-    for (const auto& entry : resolve_endpoints)
+    const auto connected = co_await net::connect_resolved_endpoints_with_timeout(
+        socket,
+        resolve_endpoints,
+        connect_start_ms,
+        timeout_sec,
+        ec,
+        [&](const boost::asio::ip::tcp::endpoint& endpoint, boost::system::error_code& op_ec)
+        { prepare_socket_for_connect(socket, endpoint, conn_id, options.connect_mark, op_ec); });
+    if (connected != resolve_endpoints.end())
     {
-        const auto endpoint = entry.endpoint();
-        prepare_socket_for_connect(socket, endpoint, conn_id, options.connect_mark, ec);
-        if (ec)
-        {
-            continue;
-        }
-        co_await net::wait_connect_with_timeout(socket, endpoint, timeout_sec, ec);
-        if (!ec)
-        {
-            co_return;
-        }
+        co_return;
     }
 
     if (ec == boost::asio::error::timed_out)

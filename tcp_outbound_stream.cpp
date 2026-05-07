@@ -189,6 +189,7 @@ boost::asio::awaitable<tcp_outbound_connect_result> direct_tcp_outbound::connect
     target_port_ = port;
     bind_host_ = "unknown";
     bind_port_ = 0;
+    const auto connect_start_ms = net::now_ms();
     boost::system::error_code ec;
     auto endpoints = co_await net::wait_resolve_with_timeout(resolver_, host, std::to_string(port), cfg_.timeout.connect, ec);
     if (ec)
@@ -200,39 +201,39 @@ boost::asio::awaitable<tcp_outbound_connect_result> direct_tcp_outbound::connect
     }
 
     boost::system::error_code last_ec = boost::asio::error::host_unreachable;
-    for (const auto& entry : endpoints)
-    {
-        result.resolved_target_addr = net::normalize_address(entry.endpoint().address());
-        result.resolved_target_port = entry.endpoint().port();
-        result.has_resolved_target_endpoint = true;
-        if (socket_.is_open())
+    const auto connected = co_await net::connect_resolved_endpoints_with_timeout(
+        socket_,
+        endpoints,
+        connect_start_ms,
+        cfg_.timeout.connect,
+        last_ec,
+        [&](const boost::asio::ip::tcp::endpoint& endpoint, boost::system::error_code& op_ec)
         {
-            boost::system::error_code close_ec;
-            close_ec = socket_.close(close_ec);
-        }
-        boost::system::error_code op_ec;
-        op_ec = socket_.open(entry.endpoint().protocol(), op_ec);
-        if (op_ec)
-        {
-            last_ec = op_ec;
-            continue;
-        }
-        if (connect_mark_ != 0)
-        {
-            net::set_socket_mark(socket_.native_handle(), connect_mark_, op_ec);
+            result.resolved_target_addr = net::normalize_address(endpoint.address());
+            result.resolved_target_port = endpoint.port();
+            result.has_resolved_target_endpoint = true;
+            if (socket_.is_open())
+            {
+                boost::system::error_code close_ec;
+                close_ec = socket_.close(close_ec);
+            }
+            op_ec = socket_.open(endpoint.protocol(), op_ec);
             if (op_ec)
             {
-                last_ec = op_ec;
-                continue;
+                return;
             }
-        }
-
-        co_await net::wait_connect_with_timeout(socket_, entry.endpoint(), cfg_.timeout.connect, op_ec);
-        if (op_ec)
-        {
-            last_ec = op_ec;
-            continue;
-        }
+            if (connect_mark_ != 0)
+            {
+                net::set_socket_mark(socket_.native_handle(), connect_mark_, op_ec);
+            }
+        });
+    if (connected == endpoints.end())
+    {
+        set_connect_failure(result, last_ec);
+        co_return result;
+    }
+    {
+        boost::system::error_code op_ec;
         boost::system::error_code remote_ec;
         const auto remote_ep = socket_.remote_endpoint(remote_ec);
         if (!remote_ec)
@@ -279,9 +280,7 @@ boost::asio::awaitable<tcp_outbound_connect_result> direct_tcp_outbound::connect
                  port,
                  bind_host_,
                  bind_port_);
-        co_return result;
     }
-    set_connect_failure(result, last_ec);
     co_return result;
 }
 
@@ -347,6 +346,7 @@ const config::socks_t* socks_tcp_outbound::settings() const { return settings_; 
 
 boost::asio::awaitable<bool> socks_tcp_outbound::connect_server(const config::socks_t& settings, boost::system::error_code& ec)
 {
+    const auto connect_start_ms = net::now_ms();
     auto endpoints = co_await net::wait_resolve_with_timeout(resolver_, settings.host, std::to_string(settings.port), cfg_.timeout.connect, ec);
     if (ec)
     {
@@ -361,33 +361,32 @@ boost::asio::awaitable<bool> socks_tcp_outbound::connect_server(const config::so
         co_return false;
     }
 
-    for (const auto& entry : endpoints)
-    {
-        if (socket_.is_open())
+    const auto connected = co_await net::connect_resolved_endpoints_with_timeout(
+        socket_,
+        endpoints,
+        connect_start_ms,
+        cfg_.timeout.connect,
+        ec,
+        [&](const boost::asio::ip::tcp::endpoint& endpoint, boost::system::error_code& op_ec)
         {
-            boost::system::error_code close_ec;
-            close_ec = socket_.close(close_ec);
-        }
-
-        ec = socket_.open(entry.endpoint().protocol(), ec);
-        if (ec)
-        {
-            continue;
-        }
-        if (connect_mark_ != 0)
-        {
-            net::set_socket_mark(socket_.native_handle(), connect_mark_, ec);
-            if (ec)
+            if (socket_.is_open())
             {
-                continue;
+                boost::system::error_code close_ec;
+                close_ec = socket_.close(close_ec);
             }
-        }
 
-        co_await net::wait_connect_with_timeout(socket_, entry.endpoint(), cfg_.timeout.connect, ec);
-        if (ec)
-        {
-            continue;
-        }
+            op_ec = socket_.open(endpoint.protocol(), op_ec);
+            if (op_ec)
+            {
+                return;
+            }
+            if (connect_mark_ != 0)
+            {
+                net::set_socket_mark(socket_.native_handle(), connect_mark_, op_ec);
+            }
+        });
+    if (connected != endpoints.end())
+    {
         ec = socket_.set_option(boost::asio::ip::tcp::no_delay(true), ec);
         if (ec)
         {

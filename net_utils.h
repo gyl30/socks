@@ -256,6 +256,47 @@ inline boost::asio::awaitable<void> wait_connect_with_timeout(boost::asio::ip::t
         });
 }
 
+template <typename PrepareSocket>
+inline boost::asio::awaitable<boost::asio::ip::tcp::resolver::results_type::const_iterator> connect_resolved_endpoints_with_timeout(
+    boost::asio::ip::tcp::socket& socket,
+    const boost::asio::ip::tcp::resolver::results_type& endpoints,
+    uint64_t start_ms,
+    uint32_t timeout_sec,
+    boost::system::error_code& ec,
+    PrepareSocket prepare_socket)
+{
+    boost::system::error_code last_ec = boost::asio::error::host_unreachable;
+    for (auto it = endpoints.begin(); it != endpoints.end(); ++it)
+    {
+        boost::system::error_code timeout_ec;
+        const auto remaining_sec = remaining_timeout_seconds(start_ms, timeout_sec, timeout_ec);
+        if (timeout_ec)
+        {
+            ec = timeout_ec;
+            co_return endpoints.end();
+        }
+
+        ec.clear();
+        prepare_socket(it->endpoint(), ec);
+        if (ec)
+        {
+            last_ec = ec;
+            continue;
+        }
+
+        co_await wait_connect_with_timeout(socket, it->endpoint(), remaining_sec, ec);
+        if (ec)
+        {
+            last_ec = ec;
+            continue;
+        }
+        co_return it;
+    }
+
+    ec = last_ec;
+    co_return endpoints.end();
+}
+
 inline boost::asio::awaitable<void> wait_connect_with_timeout(boost::asio::ip::tcp::socket& socket,
                                                               const boost::asio::ip::tcp::resolver::results_type& endpoints,
                                                               uint32_t timeout_sec,

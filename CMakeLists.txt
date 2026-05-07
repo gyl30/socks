@@ -434,6 +434,12 @@ if(UNIX AND NOT APPLE AND NOT ENABLE_STATIC_LINK)
   target_link_options(trace_store_regression PRIVATE "-Wl,--no-as-needed" "${BROTLICOMMON_LIBRARY}" "-Wl,--as-needed")
 endif()
 
+add_executable(net_utils_regression scripts/test_net_utils_regression.cpp)
+target_link_libraries(net_utils_regression PRIVATE core)
+if(UNIX AND NOT APPLE AND NOT ENABLE_STATIC_LINK)
+  target_link_options(net_utils_regression PRIVATE "-Wl,--no-as-needed" "${BROTLICOMMON_LIBRARY}" "-Wl,--as-needed")
+endif()
+
 if(BUILD_TESTING)
   add_executable(test_reality_invalid_initial_request_client scripts/test_reality_invalid_initial_request_client.cpp)
   target_link_libraries(test_reality_invalid_initial_request_client PRIVATE core)
@@ -580,6 +586,9 @@ if(BUILD_TESTING)
 
   add_test(NAME trace_store_regression COMMAND $<TARGET_FILE:trace_store_regression>)
   set_tests_properties(trace_store_regression PROPERTIES TIMEOUT 30)
+
+  add_test(NAME net_utils_regression COMMAND $<TARGET_FILE:net_utils_regression>)
+  set_tests_properties(net_utils_regression PROPERTIES TIMEOUT 30)
 
   foreach(UDP_TRANSPARENT_SCENARIO
           route_blocked
