@@ -298,6 +298,28 @@ boost::asio::awaitable<void> reality_tcp_session::run(const proxy::tcp_connect_r
 
     if (!(co_await send_connect_reply(socks::kRepSuccess, &connect_result)))
     {
+        trace_store::instance().record_event(trace_event{
+            .trace_id = trace_id_,
+            .conn_id = conn_id_,
+            .stage = trace_stage::kSessionError,
+            .result = trace_result::kFail,
+            .inbound_tag = inbound_tag_,
+            .inbound_type = "reality",
+            .outbound_tag = decision.outbound_tag,
+            .outbound_type = decision.outbound_type,
+            .target_host = target_host_,
+            .target_port = target_port_,
+            .local_host = bind_host_,
+            .local_port = bind_port_,
+            .remote_host = std::string(connection_ != nullptr ? connection_->remote_host() : std::string_view("unknown")),
+            .remote_port = static_cast<uint16_t>(connection_ != nullptr ? connection_->remote_port() : 0U),
+            .route_type = relay::to_string(decision.route),
+            .match_type = decision.match_type,
+            .match_value = decision.match_value,
+            .error_code = static_cast<int32_t>(close_ec_.value()),
+            .error_message = close_ec_ ? close_ec_.message() : "send connect reply failed",
+            .extra = make_session_error_extra(session_close_reason::kTransportError),
+        });
         co_await backend->close();
         co_return;
     }
@@ -458,6 +480,7 @@ boost::asio::awaitable<bool> reality_tcp_session::send_connect_reply(const uint8
 {
     if (connection_ == nullptr)
     {
+        close_ec_ = boost::asio::error::not_connected;
         co_return false;
     }
 
@@ -483,6 +506,7 @@ boost::asio::awaitable<bool> reality_tcp_session::send_connect_reply(const uint8
     std::vector<uint8_t> packet;
     if (!proxy::encode_tcp_connect_reply(reply, packet))
     {
+        close_ec_ = boost::asio::error::message_size;
         LOG_WARN("{} trace {:016x} conn {} target {}:{} route {} bind {}:{} encode tcp connect reply failed rep {}",
                  log_event::kRoute,
                  trace_id_,
@@ -500,12 +524,14 @@ boost::asio::awaitable<bool> reality_tcp_session::send_connect_reply(const uint8
     const auto remaining_timeout_sec = remaining_request_timeout_sec(ec);
     if (ec)
     {
+        close_ec_ = ec;
         co_return false;
     }
     const auto write_timeout_sec = net::clamp_timeout_seconds(cfg_.timeout.write, remaining_timeout_sec);
     co_await connection_->write_packet(packet, write_timeout_sec, ec);
     if (ec)
     {
+        close_ec_ = ec;
         LOG_WARN("{} trace {:016x} conn {} target {}:{} route {} bind {}:{} send tcp connect reply failed {} rep {}",
                  log_event::kRoute,
                  trace_id_,

@@ -44,8 +44,8 @@ class reality_udp_session : public std::enable_shared_from_this<reality_udp_sess
    private:
     boost::asio::awaitable<void> start_impl(const proxy::udp_associate_request& request);
     [[nodiscard]] boost::asio::awaitable<bool> establish_udp_associate();
-    [[nodiscard]] boost::asio::awaitable<bool> send_udp_associate_reply(uint8_t socks_rep);
-    [[nodiscard]] bool open_bind_udp_socket();
+    [[nodiscard]] boost::asio::awaitable<bool> send_udp_associate_reply(uint8_t socks_rep, boost::system::error_code* result_ec = nullptr);
+    [[nodiscard]] bool open_bind_udp_socket(boost::system::error_code& ec);
     void close_udp_socket();
     [[nodiscard]] request_context make_route_request(const proxy::udp_datagram& datagram) const;
     [[nodiscard]] request_context make_proxy_outbound_request(boost::system::error_code& ec) const;
@@ -104,6 +104,7 @@ class reality_udp_session : public std::enable_shared_from_this<reality_udp_sess
     lru_cache<boost::asio::ip::udp::endpoint, udp_peer_cache_entry, net::udp_endpoint_hash, net::udp_endpoint_equal> allowed_reply_peers_;
     std::atomic<bool> stopping_{false};
     udp_close_reason close_reason_ = udp_close_reason::kUnknown;
+    boost::system::error_code setup_ec_;
 };
 
 }    // namespace relay

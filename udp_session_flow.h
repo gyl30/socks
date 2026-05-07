@@ -55,10 +55,16 @@ inline void record_udp_session_close_trace(trace_event event,
 
 inline void record_udp_session_error_trace(trace_event event,
                                            const udp_close_reason close_reason,
-                                           const std::string& error_message = {})
+                                           const std::string& error_message = {},
+                                           const boost::system::error_code& ec = {})
 {
     event.stage = trace_stage::kSessionError;
     event.result = close_reason == udp_close_reason::kStopped ? trace_result::kSkip : trace_result::kFail;
+    if (ec)
+    {
+        event.error_code = static_cast<int32_t>(ec.value());
+        event.error_message = ec.message();
+    }
     if (!error_message.empty())
     {
         event.error_message = error_message;

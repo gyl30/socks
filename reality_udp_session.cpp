@@ -58,9 +58,9 @@ reality_udp_session::reality_udp_session(boost::asio::io_context& io_context,
 
 boost::asio::awaitable<void> reality_udp_session::start(const proxy::udp_associate_request& request) { co_await start_impl(request); }
 
-bool reality_udp_session::open_bind_udp_socket()
+bool reality_udp_session::open_bind_udp_socket(boost::system::error_code& ec)
 {
-    boost::system::error_code ec;
+    ec.clear();
     ec = udp_socket_.open(boost::asio::ip::udp::v6(), ec);
     if (!ec)
     {
@@ -108,7 +108,7 @@ void reality_udp_session::close_udp_socket()
     (void)ec;
 }
 
-boost::asio::awaitable<bool> reality_udp_session::send_udp_associate_reply(const uint8_t socks_rep)
+boost::asio::awaitable<bool> reality_udp_session::send_udp_associate_reply(const uint8_t socks_rep, boost::system::error_code* result_ec)
 {
     proxy::udp_associate_reply reply;
     reply.socks_rep = socks_rep;
@@ -128,33 +128,45 @@ boost::asio::awaitable<bool> reality_udp_session::send_udp_associate_reply(const
     const auto write_timeout_sec = net::remaining_clamped_timeout_seconds(request_start_ms_, request_timeout_sec_, cfg_.timeout.write, ec);
     if (ec)
     {
+        if (result_ec != nullptr)
+        {
+            *result_ec = ec;
+        }
         co_return false;
     }
     co_await connection_->write_packet(reply_packet, write_timeout_sec, ec);
+    if (result_ec != nullptr)
+    {
+        *result_ec = ec;
+    }
     co_return !ec;
 }
 
 boost::asio::awaitable<bool> reality_udp_session::establish_udp_associate()
 {
-    if (!open_bind_udp_socket())
+    boost::system::error_code reply_ec;
+    boost::system::error_code ec;
+    if (!open_bind_udp_socket(ec))
     {
-        (void)co_await send_udp_associate_reply(socks::kRepGenFail);
+        setup_ec_ = ec;
+        (void)co_await send_udp_associate_reply(socks::kRepGenFail, &reply_ec);
         co_return false;
     }
 
-    boost::system::error_code ec;
     const auto local_ep = udp_socket_.local_endpoint(ec);
     if (ec)
     {
-        (void)co_await send_udp_associate_reply(socks::kRepGenFail);
+        setup_ec_ = ec;
+        (void)co_await send_udp_associate_reply(socks::kRepGenFail, &reply_ec);
         close_udp_socket();
         co_return false;
     }
 
     bind_host_ = local_ep.address().to_string();
     bind_port_ = local_ep.port();
-    if (!(co_await send_udp_associate_reply(socks::kRepSuccess)))
+    if (!(co_await send_udp_associate_reply(socks::kRepSuccess, &reply_ec)))
     {
+        setup_ec_ = reply_ec;
         close_udp_socket();
         co_return false;
     }
@@ -213,8 +225,25 @@ boost::asio::awaitable<void> reality_udp_session::start_impl(const proxy::udp_as
 {
     request_timeout_sec_ = request.timeout_sec;
     request_start_ms_ = net::now_ms();
+    setup_ec_.clear();
     if (!(co_await establish_udp_associate()))
     {
+        const auto reason = close_reason_ == udp_close_reason::kUnknown ? udp_close_reason::kTransportError : close_reason_;
+        close_reason_ = reason;
+        record_udp_session_error_trace(make_bound_udp_trace_event(trace_id_,
+                                                                  conn_id_,
+                                                                  inbound_tag_,
+                                                                  "reality",
+                                                                  "",
+                                                                  "",
+                                                                  bind_host_,
+                                                                  bind_port_,
+                                                                  std::string(connection_ != nullptr ? connection_->remote_host()
+                                                                                                    : std::string_view("unknown")),
+                                                                  static_cast<uint16_t>(connection_ != nullptr ? connection_->remote_port() : 0U)),
+                                       reason,
+                                       setup_ec_ ? std::string{} : "udp associate setup failed",
+                                       setup_ec_);
         co_return;
     }
 
