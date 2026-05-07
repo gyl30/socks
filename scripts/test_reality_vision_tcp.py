@@ -275,6 +275,7 @@ def start_stack(repo_root, binary, runtime_env, temp_root, *, server_vision, cli
     wait_for_port("127.0.0.1", socks_port, 20, "vision socks proxy", processes)
     return {
         "processes": processes,
+        "https_process": https_process,
         "server_log": server_log,
         "client_log": client_log,
         "https_log": https_log,
@@ -381,6 +382,28 @@ def main():
         stop_processes(plain_stack["processes"])
         active_processes = []
 
+        connect_fail_stack = start_stack(
+            repo_root,
+            binary,
+            runtime_env,
+            temp_root / "connect-fail",
+            server_vision=True,
+            client_vision=True,
+            response_text="unused",
+        )
+        active_processes = connect_fail_stack["processes"]
+        connect_fail_stack["https_process"].terminate()
+        connect_fail_stack["processes"].remove(connect_fail_stack["https_process"])
+        run_curl_through_socks(
+            connect_fail_stack["socks_port"],
+            connect_fail_stack["cert_path"],
+            connect_fail_stack["https_port"],
+            expect_success=False,
+        )
+        assert_log_text_absent([connect_fail_stack["server_log"], connect_fail_stack["client_log"]], "vision accepted", "connect failure accept")
+        stop_processes(connect_fail_stack["processes"])
+        active_processes = []
+
         reject_stack_root = temp_root / "reject"
         reject_stack = start_stack(
             repo_root,
@@ -409,6 +432,7 @@ def main():
         print("reality_vision_tcp ok")
         print("reality_vision_tls12_fallback ok")
         print("reality_vision_plain_tcp ok")
+        print("reality_vision_connect_fail ok")
         print("reality_vision_half_close ok")
         print("reality_vision_reject ok")
         return 0
