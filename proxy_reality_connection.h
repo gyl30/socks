@@ -54,6 +54,7 @@ class proxy_reality_connection : public std::enable_shared_from_this<proxy_reali
                                                                boost::system::error_code& ec);
     boost::asio::awaitable<void> write_raw(std::span<const uint8_t> data, boost::system::error_code& ec);
     boost::asio::awaitable<void> shutdown_send(boost::system::error_code& ec);
+    boost::asio::awaitable<void> async_close(boost::system::error_code& ec);
     void close(boost::system::error_code& ec);
 
    private:

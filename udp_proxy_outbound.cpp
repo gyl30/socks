@@ -356,7 +356,7 @@ class reality_udp_proxy_outbound final : public udp_proxy_outbound
         if (connection_ != nullptr)
         {
             boost::system::error_code ec;
-            connection_->close(ec);
+            co_await connection_->async_close(ec);
         }
         connection_.reset();
         co_return;

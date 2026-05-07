@@ -719,6 +719,13 @@ boost::asio::awaitable<void> proxy_reality_connection::shutdown_send(boost::syst
     co_return;
 }
 
+boost::asio::awaitable<void> proxy_reality_connection::async_close(boost::system::error_code& ec)
+{
+    ec.clear();
+    co_await boost::asio::dispatch(strand_, boost::asio::use_awaitable);
+    close_on_strand(ec);
+}
+
 void proxy_reality_connection::close(boost::system::error_code& ec)
 {
     ec.clear();

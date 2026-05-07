@@ -270,7 +270,7 @@ boost::asio::awaitable<void> reality_udp_session::start_impl(const proxy::udp_as
             if (connection_ != nullptr)
             {
                 boost::system::error_code close_ec;
-                connection_->close(close_ec);
+                co_await connection_->async_close(close_ec);
             }
             co_return;
         });
@@ -635,7 +635,7 @@ boost::asio::awaitable<void> reality_udp_session::connection_writer()
         boost::system::error_code close_ec;
         if (connection_ != nullptr)
         {
-            connection_->close(close_ec);
+            co_await connection_->async_close(close_ec);
         }
         co_return;
     }

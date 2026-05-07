@@ -163,7 +163,7 @@ boost::asio::awaitable<void> proxy_connection_tcp_stream::close()
     if (connection_ != nullptr)
     {
         boost::system::error_code ec;
-        connection_->close(ec);
+        co_await connection_->async_close(ec);
     }
     reset();
     co_return;
@@ -732,7 +732,7 @@ boost::asio::awaitable<void> vision_connection_tcp_stream::close()
     if (connection != nullptr)
     {
         boost::system::error_code ec;
-        connection->close(ec);
+        co_await connection->async_close(ec);
     }
     co_return;
 }

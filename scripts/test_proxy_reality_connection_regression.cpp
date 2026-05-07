@@ -118,8 +118,17 @@ boost::asio::awaitable<bool> run_error_code_regression()
     ok = ok && require(ec == boost::asio::error::message_size, "oversized write_packet should report message_size");
 
     boost::system::error_code close_ec;
-    client_connection->close(close_ec);
-    server_connection->close(close_ec);
+    co_await client_connection->async_close(close_ec);
+    ok = ok && require(!close_ec, "async_close should close client without error");
+
+    std::vector<uint8_t> close_buffer(16);
+    boost::system::error_code read_close_ec;
+    const auto close_bytes = co_await server_connection->read_some(close_buffer, 1, read_close_ec);
+    ok = ok && require(close_bytes == 0, "peer close should not yield application bytes");
+    ok = ok && require(read_close_ec == boost::asio::error::eof, "async_close should complete before peer read observes eof");
+
+    co_await server_connection->async_close(close_ec);
+    ok = ok && require(!close_ec, "async_close should close server without error");
     co_return ok;
 }
 
