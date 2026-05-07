@@ -595,6 +595,11 @@ if(BUILD_TESTING)
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_proxy_timeout_budget.py --binary $<TARGET_FILE:socks>)
   set_tests_properties(proxy_timeout_budget PROPERTIES TIMEOUT 90)
 
+  add_test(
+    NAME proxy_udp_stale_budget
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_proxy_udp_stale_budget.py --binary $<TARGET_FILE:socks>)
+  set_tests_properties(proxy_udp_stale_budget PROPERTIES TIMEOUT 90)
+
   foreach(UDP_TRANSPARENT_SCENARIO
           route_blocked
           idle_timeout
