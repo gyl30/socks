@@ -55,7 +55,7 @@ boost::asio::awaitable<int> run_case(const relay::config& cfg, const std::string
 {
     boost::system::error_code ec;
     const auto executor = co_await boost::asio::this_coro::executor;
-    auto connection = co_await relay::proxy_reality_connection::connect(executor, cfg, outbound_tag, 0, 1, ec);
+    auto connection = co_await relay::proxy_reality_connection::connect(executor, cfg, outbound_tag, 0, 1, 0, ec);
     if (connection == nullptr)
     {
         std::cerr << "connect failed: " << ec.message() << '\n';
