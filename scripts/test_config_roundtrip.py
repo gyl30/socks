@@ -64,7 +64,7 @@ def run_marked_roundtrip(binary, runtime_env, temp_root):
         process.terminate()
 
 
-def run_vision_roundtrip(binary, runtime_env, temp_root):
+def run_vision_startup_smoke(binary, runtime_env, temp_root):
     cfg = dump_default_config(binary, runtime_env)
     if cfg["outbounds"][0]["settings"].get("vision") is not False:
         raise RuntimeError("default reality outbound vision should be false")
@@ -77,8 +77,8 @@ def run_vision_roundtrip(binary, runtime_env, temp_root):
     socks_host = cfg["inbounds"][0]["settings"]["host"]
     socks_port = allocate_tcp_port()
     reality_port = allocate_tcp_port()
-    log_path = temp_root / "vision-roundtrip.log"
-    run_log = temp_root / "vision-roundtrip.stdout.log"
+    log_path = temp_root / "vision-startup-smoke.log"
+    run_log = temp_root / "vision-startup-smoke.stdout.log"
 
     cfg["log"]["file"] = str(log_path)
     cfg["inbounds"][0]["settings"]["port"] = socks_port
@@ -110,13 +110,13 @@ def run_vision_roundtrip(binary, runtime_env, temp_root):
         {"type": "inbound", "values": ["reality-in"], "out": "direct"},
     ]
 
-    config_path = temp_root / "vision-roundtrip.json"
+    config_path = temp_root / "vision-startup-smoke.json"
     save_json(config_path, cfg)
 
     process = start_process([str(binary), "-c", str(config_path)], str(run_log), extra_env=runtime_env)
     try:
-        wait_for_log_text(log_path, f"listen {socks_host}:{socks_port} socks listening", 20, "vision socks roundtrip log")
-        wait_for_log_text(log_path, f"listen 127.0.0.1:{reality_port} reality inbound listening", 20, "vision reality roundtrip log")
+        wait_for_log_text(log_path, f"listen {socks_host}:{socks_port} socks listening", 20, "vision socks startup log")
+        wait_for_log_text(log_path, f"listen 127.0.0.1:{reality_port} reality inbound listening", 20, "vision reality startup log")
     finally:
         process.terminate()
 
@@ -620,8 +620,8 @@ def main():
         print("default_roundtrip ok")
         run_marked_roundtrip(binary, runtime_env, temp_root)
         print("marked_roundtrip ok")
-        run_vision_roundtrip(binary, runtime_env, temp_root)
-        print("vision_roundtrip ok")
+        run_vision_startup_smoke(binary, runtime_env, temp_root)
+        print("vision_startup_smoke ok")
         run_invalid_config_case(binary, runtime_env, temp_root)
         print("invalid_config ok")
         run_invalid_reality_config_cases(binary, runtime_env, temp_root)
