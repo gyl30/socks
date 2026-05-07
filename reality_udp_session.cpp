@@ -833,10 +833,6 @@ boost::asio::awaitable<void> reality_udp_session::idle_watchdog()
             stopping_.store(true);
             boost::system::error_code close_ec;
             udp_socket_.close(close_ec);
-            if (connection_ != nullptr)
-            {
-                connection_->close(close_ec);
-            }
         });
 }
 
