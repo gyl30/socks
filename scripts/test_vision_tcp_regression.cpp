@@ -1,14 +1,27 @@
 #include <span>
+#include <array>
+#include <chrono>
+#include <memory>
 #include <string>
 #include <vector>
+#include <utility>
 #include <cstddef>
 #include <cstdint>
 #include <iostream>
 
+#include <boost/asio.hpp>
 #include <boost/system/error_code.hpp>
+extern "C"
+{
+#include <openssl/evp.h>
+}
 
+#include "config.h"
 #include "tls/core.h"
 #include "vision_tcp.h"
+#include "proxy_reality_connection.h"
+#include "proxy_stream_relay_transport.h"
+#include "reality/session/record_context.h"
 
 namespace
 {
@@ -94,6 +107,75 @@ std::vector<uint8_t> make_server_hello_record(const bool tls13, const uint16_t c
 std::vector<uint8_t> make_application_record(const std::size_t payload_size = 3U)
 {
     return make_tls_record(tls::kContentTypeApplicationData, std::vector<uint8_t>(payload_size, 0x17));
+}
+
+reality::traffic_key_material make_key_material(const uint8_t key_seed, const uint8_t iv_seed)
+{
+    reality::traffic_key_material material;
+    material.key.assign(16, key_seed);
+    material.iv.assign(12, iv_seed);
+    return material;
+}
+
+reality::reality_record_context make_record_context()
+{
+    reality::reality_record_context context;
+    context.negotiated.cipher = EVP_aes_128_gcm();
+    context.read_keys = make_key_material(0x11, 0x22);
+    context.write_keys = make_key_material(0x11, 0x22);
+    return context;
+}
+
+struct connection_pair
+{
+    std::shared_ptr<relay::proxy_reality_connection> client;
+    std::shared_ptr<relay::proxy_reality_connection> server;
+};
+
+boost::asio::awaitable<connection_pair> make_connection_pair(const relay::config& cfg)
+{
+    auto executor = co_await boost::asio::this_coro::executor;
+    boost::system::error_code ec;
+    boost::asio::ip::tcp::acceptor acceptor(executor);
+    acceptor.open(boost::asio::ip::tcp::v4(), ec);
+    if (!require(!ec, "vision acceptor open failed"))
+    {
+        co_return connection_pair{};
+    }
+    acceptor.bind(boost::asio::ip::tcp::endpoint(boost::asio::ip::address_v4::loopback(), 0), ec);
+    if (!require(!ec, "vision acceptor bind failed"))
+    {
+        co_return connection_pair{};
+    }
+    acceptor.listen(boost::asio::socket_base::max_listen_connections, ec);
+    if (!require(!ec, "vision acceptor listen failed"))
+    {
+        co_return connection_pair{};
+    }
+
+    const auto endpoint = acceptor.local_endpoint(ec);
+    if (!require(!ec, "vision acceptor endpoint failed"))
+    {
+        co_return connection_pair{};
+    }
+
+    boost::asio::ip::tcp::socket client_socket(executor);
+    co_await client_socket.async_connect(endpoint, boost::asio::redirect_error(boost::asio::use_awaitable, ec));
+    if (!require(!ec, "vision client connect failed"))
+    {
+        co_return connection_pair{};
+    }
+
+    auto server_socket = co_await acceptor.async_accept(boost::asio::redirect_error(boost::asio::use_awaitable, ec));
+    if (!require(!ec, "vision server accept failed"))
+    {
+        co_return connection_pair{};
+    }
+
+    co_return connection_pair{
+        .client = std::make_shared<relay::proxy_reality_connection>(std::move(client_socket), make_record_context(), cfg, 1),
+        .server = std::make_shared<relay::proxy_reality_connection>(std::move(server_socket), make_record_context(), cfg, 2),
+    };
 }
 
 bool test_block_codec()
@@ -292,11 +374,75 @@ bool test_tls_tracker_observe()
     return ok;
 }
 
+boost::asio::awaitable<bool> test_vision_stream_close_aborts_stale_reads()
+{
+    relay::config cfg;
+    cfg.timeout.read = 5;
+    cfg.timeout.write = 5;
+
+    bool ok = true;
+    auto executor = co_await boost::asio::this_coro::executor;
+
+    auto run_close_race = [&](const relay::vision::command command) -> boost::asio::awaitable<std::pair<boost::system::error_code, std::size_t>>
+    {
+        auto pair = co_await make_connection_pair(cfg);
+        if (pair.client == nullptr || pair.server == nullptr)
+        {
+            co_return std::pair<boost::system::error_code, std::size_t>{boost::asio::error::not_connected, 0};
+        }
+        std::vector<uint8_t> block;
+        boost::system::error_code write_ec;
+        if (!relay::vision::encode_block(command, std::span<const uint8_t>{}, relay::vision::padding_mode::kNone, block, write_ec) || write_ec)
+        {
+            co_return std::pair<boost::system::error_code, std::size_t>{boost::asio::error::invalid_argument, 0};
+        }
+        co_await pair.server->write(block, write_ec);
+        if (write_ec)
+        {
+            co_return std::pair<boost::system::error_code, std::size_t>{write_ec, 0};
+        }
+
+        relay::vision_connection_tcp_stream stream(pair.client,
+                                                   relay::vision::direction::kClientToServer,
+                                                   relay::vision::direction::kServerToClient);
+        boost::asio::co_spawn(
+            executor,
+            [&stream]() -> boost::asio::awaitable<void>
+            {
+                auto timer_executor = co_await boost::asio::this_coro::executor;
+                boost::asio::steady_timer timer(timer_executor);
+                timer.expires_after(std::chrono::milliseconds(10));
+                co_await timer.async_wait(boost::asio::use_awaitable);
+                co_await stream.close();
+            },
+            boost::asio::detached);
+
+        std::array<uint8_t, 16> buffer{};
+        boost::system::error_code read_ec;
+        const auto bytes_read = co_await stream.read(std::span<uint8_t>(buffer), cfg.timeout.read, read_ec);
+        pair.server->close(write_ec);
+        co_return std::pair<boost::system::error_code, std::size_t>{read_ec, bytes_read};
+    };
+
+    auto [raw_ec, raw_bytes] = co_await run_close_race(relay::vision::command::kDirect);
+    ok = ok && require(raw_ec == boost::asio::error::operation_aborted && raw_bytes == 0,
+                       "direct close race should abort stale raw read");
+
+    auto [outer_ec, outer_bytes] = co_await run_close_race(relay::vision::command::kEnd);
+    ok = ok && require(outer_ec == boost::asio::error::operation_aborted && outer_bytes == 0,
+                       "end close race should abort stale outer read");
+
+    co_return ok;
+}
+
 }    // namespace
 
 int main()
 {
+    boost::asio::io_context io_context;
+    auto async_ok = boost::asio::co_spawn(io_context, test_vision_stream_close_aborts_stale_reads(), boost::asio::use_future);
     const bool ok = test_block_codec() && test_tls_tracker_direct() && test_tls_tracker_direct_boundaries() && test_tls_tracker_rejects() &&
                     test_tls_tracker_observe();
-    return ok ? 0 : 1;
+    io_context.run();
+    return ok && async_ok.get() ? 0 : 1;
 }

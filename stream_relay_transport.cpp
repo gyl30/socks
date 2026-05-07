@@ -485,11 +485,29 @@ boost::asio::awaitable<std::size_t> vision_connection_tcp_stream::read(std::span
         }
         if (step.action == read_action::kReadRaw)
         {
-            co_return co_await step.connection->read_raw(buffer, read_timeout, ec);
+            const auto bytes_read = co_await step.connection->read_raw(buffer, read_timeout, ec);
+            {
+                std::scoped_lock lock(mutex_);
+                if (generation_ != step.generation || connection_ != step.connection)
+                {
+                    ec = boost::asio::error::operation_aborted;
+                    co_return 0;
+                }
+            }
+            co_return bytes_read;
         }
         if (step.action == read_action::kReadOuter)
         {
-            co_return co_await read_outer_plain(step.connection, buffer, read_timeout, ec);
+            const auto bytes_read = co_await read_outer_plain(step.connection, buffer, read_timeout, ec);
+            {
+                std::scoped_lock lock(mutex_);
+                if (generation_ != step.generation || connection_ != step.connection)
+                {
+                    ec = boost::asio::error::operation_aborted;
+                    co_return 0;
+                }
+            }
+            co_return bytes_read;
         }
         if (step.action == read_action::kReadOuterBlock)
         {
@@ -529,7 +547,16 @@ boost::asio::awaitable<std::size_t> vision_connection_tcp_stream::read(std::span
         {
             co_return step.bytes;
         }
-        co_return co_await step.connection->read_raw(buffer, read_timeout, ec);
+        const auto bytes_read = co_await step.connection->read_raw(buffer, read_timeout, ec);
+        {
+            std::scoped_lock lock(mutex_);
+            if (generation_ != step.generation || connection_ != step.connection)
+            {
+                ec = boost::asio::error::operation_aborted;
+                co_return 0;
+            }
+        }
+        co_return bytes_read;
     }
 }
 
