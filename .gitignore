@@ -31,5 +31,6 @@ Testing/
 __pycache__/
 *.pyc
 .tmp-*/
+doc/vision_tcp_development_plan.md
 all
 1
