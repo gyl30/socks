@@ -32,7 +32,6 @@ struct stream_relay_result
         kNone = 0,
         kShutdownSend,
         kClose,
-        kAbort,
     };
 
     struct close_policy
@@ -43,7 +42,6 @@ struct stream_relay_result
 
     uint64_t tx_bytes = 0;
     uint64_t rx_bytes = 0;
-    uint64_t duration_ms = 0;
     boost::system::error_code ec;
     close_reason reason = close_reason::kUnknown;
 };

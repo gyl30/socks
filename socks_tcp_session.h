@@ -1,7 +1,6 @@
 #ifndef SOCKS_TCP_CONNECT_SESSION_H
 #define SOCKS_TCP_CONNECT_SESSION_H
 
-#include <atomic>
 #include <chrono>
 #include <memory>
 #include <string>
@@ -67,7 +66,6 @@ class socks_tcp_session : public std::enable_shared_from_this<socks_tcp_session>
     boost::asio::ip::tcp::socket socket_;
     boost::asio::steady_timer idle_timer_;
     uint64_t last_activity_time_ms_{0};
-    std::atomic<bool> backend_closed_{false};
     std::string target_host_;
     uint16_t target_port_ = 0;
     std::string route_name_ = "unknown";

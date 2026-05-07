@@ -96,7 +96,6 @@ boost::asio::awaitable<void> apply_close_action(stream_relay_transport& transpor
             co_await transport.shutdown_send(ec);
             co_return;
         case stream_relay_result::close_action::kClose:
-        case stream_relay_result::close_action::kAbort:
             co_await transport.close();
             co_return;
     }
