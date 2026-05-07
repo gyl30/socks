@@ -69,6 +69,7 @@ class reality_tcp_session : public std::enable_shared_from_this<reality_tcp_sess
     std::shared_ptr<router> router_;
     uint64_t last_activity_time_ms_{0};
     stream_relay_result::close_reason close_reason_ = stream_relay_result::close_reason::kUnknown;
+    boost::system::error_code close_ec_;
     bool vision_enabled_ = false;
     bool vision_accepted_ = false;
 };

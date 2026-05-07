@@ -74,6 +74,7 @@ class tproxy_tcp_session : public std::enable_shared_from_this<tproxy_tcp_sessio
     config::tproxy_t settings_;
     uint64_t last_activity_time_ms_{0};
     stream_relay_result::close_reason close_reason_ = stream_relay_result::close_reason::kUnknown;
+    boost::system::error_code close_ec_;
 };
 
 }    // namespace relay

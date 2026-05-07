@@ -9,6 +9,7 @@
 #include <boost/system/error_code.hpp>
 
 #include "router.h"
+#include "trace_store.h"
 
 namespace relay
 {
@@ -192,6 +193,77 @@ enum class udp_close_reason : uint8_t
             return session_close_reason::kStopped;
     }
     return session_close_reason::kUnknown;
+}
+
+struct session_close_trace_info
+{
+    trace_result result = trace_result::kOk;
+    session_close_reason close_reason = session_close_reason::kUnknown;
+    int32_t error_code = 0;
+    std::string error_message;
+};
+
+[[nodiscard]] inline session_close_trace_info make_session_close_trace_info(
+    const stream_relay_result::close_reason reason, const boost::system::error_code& ec)
+{
+    session_close_trace_info info;
+    info.close_reason = to_session_close_reason(reason);
+    switch (info.close_reason)
+    {
+        case session_close_reason::kCompleted:
+            info.result = trace_result::kOk;
+            break;
+        case session_close_reason::kIdleTimeout:
+            info.result = trace_result::kTimeout;
+            break;
+        case session_close_reason::kUnknown:
+        case session_close_reason::kRouteBlocked:
+        case session_close_reason::kStopped:
+        case session_close_reason::kTransportError:
+            info.result = trace_result::kFail;
+            break;
+    }
+
+    if (info.result == trace_result::kOk)
+    {
+        return info;
+    }
+    if (ec)
+    {
+        info.error_code = ec.value();
+        info.error_message = ec.message();
+        return info;
+    }
+
+    switch (info.close_reason)
+    {
+        case session_close_reason::kUnknown:
+            info.error_message = "unknown";
+            break;
+        case session_close_reason::kCompleted:
+            break;
+        case session_close_reason::kRouteBlocked:
+            info.error_message = "route blocked";
+            break;
+        case session_close_reason::kIdleTimeout:
+        {
+            const auto timeout_ec = make_error_code(boost::asio::error::timed_out);
+            info.error_code = timeout_ec.value();
+            info.error_message = timeout_ec.message();
+            break;
+        }
+        case session_close_reason::kStopped:
+        {
+            const auto stopped_ec = make_error_code(boost::asio::error::operation_aborted);
+            info.error_code = stopped_ec.value();
+            info.error_message = stopped_ec.message();
+            break;
+        }
+        case session_close_reason::kTransportError:
+            info.error_message = "transport error";
+            break;
+    }
+    return info;
 }
 
 [[nodiscard]] inline session_close_reason to_session_close_reason(udp_close_reason reason)

@@ -517,12 +517,12 @@ boost::asio::awaitable<void> tproxy_tcp_session::finish_connected_session(
     co_await backend->close();
     close_client_socket();
     const auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time_).count();
-    const auto session_reason = to_session_close_reason(close_reason_);
+    const auto close_trace = make_session_close_trace_info(close_reason_, close_ec_);
     trace_store::instance().record_event(trace_event{
         .trace_id = trace_id_,
         .conn_id = conn_id_,
         .stage = trace_stage::kSessionClose,
-        .result = trace_result::kOk,
+        .result = close_trace.result,
         .inbound_tag = inbound_tag_,
         .inbound_type = "tproxy",
         .outbound_tag = decision.outbound_tag,
@@ -539,9 +539,9 @@ boost::asio::awaitable<void> tproxy_tcp_session::finish_connected_session(
         .bytes_tx = tx_bytes_,
         .bytes_rx = rx_bytes_,
         .latency_ms = static_cast<uint32_t>(duration_ms),
-        .error_code = 0,
-        .error_message = "",
-        .extra = make_session_close_extra(duration_ms, session_reason),
+        .error_code = close_trace.error_code,
+        .error_message = close_trace.error_message,
+        .extra = make_session_close_extra(static_cast<uint64_t>(duration_ms), close_trace.close_reason),
     });
     log_close_summary();
     co_return;
@@ -564,6 +564,7 @@ boost::asio::awaitable<void> tproxy_tcp_session::relay_backend(const std::shared
     };
     const auto relay_result = co_await relay_streams(relay_context);
     close_reason_ = relay_result.reason;
+    close_ec_ = relay_result.ec;
 }
 
 void tproxy_tcp_session::close_client_socket()

@@ -73,6 +73,7 @@ class socks_tcp_session : public std::enable_shared_from_this<socks_tcp_session>
     std::string route_name_ = "unknown";
     std::shared_ptr<router> router_;
     stream_relay_result::close_reason close_reason_ = stream_relay_result::close_reason::kUnknown;
+    boost::system::error_code close_ec_;
 };
 
 }    // namespace relay

@@ -93,6 +93,7 @@ class tun_tcp_session : public std::enable_shared_from_this<tun_tcp_session>
     bool close_pending_ = false;
     bool stopped_ = false;
     stream_relay_result::close_reason close_reason_ = stream_relay_result::close_reason::kUnknown;
+    boost::system::error_code close_ec_;
 };
 
 }    // namespace relay
