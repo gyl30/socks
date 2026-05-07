@@ -168,12 +168,11 @@ boost::asio::awaitable<socks_udp_associate_result> open_socks_udp_associate(cons
                                                                             const uint32_t conn_id,
                                                                             const std::string& outbound_tag,
                                                                             const uint32_t connect_mark,
-                                                                            const uint32_t timeout_sec)
+                                                                            const uint64_t request_start_ms,
+                                                                            const uint32_t request_timeout_sec)
 {
     auto control_socket = std::make_shared<boost::asio::ip::tcp::socket>(executor);
     boost::asio::ip::tcp::resolver tcp_resolver(executor);
-    const auto request_start_ms = net::now_ms();
-    const auto request_timeout_sec = associate_timeout_budget(cfg, timeout_sec);
     boost::system::error_code ec;
     auto remaining_timeout_sec = net::remaining_clamped_timeout_seconds(request_start_ms, request_timeout_sec, cfg.timeout.connect, ec);
     if (ec || !(co_await connect_socks_server(
@@ -219,10 +218,12 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> resolve_udp_endpoint(cons
                                                                              std::string host,
                                                                              const uint16_t port,
                                                                              const config& cfg,
+                                                                             const uint32_t timeout_sec,
                                                                              boost::system::error_code& ec)
 {
     boost::asio::ip::udp::resolver resolver(executor);
-    auto results = co_await net::wait_resolve_with_timeout(resolver, std::move(host), std::to_string(port), cfg.timeout.connect, ec);
+    auto results = co_await net::wait_resolve_with_timeout(
+        resolver, std::move(host), std::to_string(port), net::clamp_timeout_seconds(cfg.timeout.connect, timeout_sec), ec);
     if (ec || results.begin() == results.end())
     {
         if (!ec)
@@ -644,7 +645,10 @@ boost::asio::awaitable<udp_proxy_outbound_connect_result> udp_proxy_outbound::co
         co_return result;
     }
 
-    auto associate = co_await open_socks_udp_associate(executor, *outbound.socks, cfg, conn_id, outbound.tag, connect_mark, timeout_sec);
+    const auto request_start_ms = net::now_ms();
+    const auto request_timeout_sec = associate_timeout_budget(cfg, timeout_sec);
+    auto associate =
+        co_await open_socks_udp_associate(executor, *outbound.socks, cfg, conn_id, outbound.tag, connect_mark, request_start_ms, request_timeout_sec);
     if (!associate.success)
     {
         result.socks_rep = associate.socks_rep;
@@ -658,7 +662,13 @@ boost::asio::awaitable<udp_proxy_outbound_connect_result> udp_proxy_outbound::co
 
     boost::system::error_code ec;
     const auto udp_host = select_socks_udp_host(associate.bind_host, *associate.control_socket);
-    auto udp_server_endpoint = co_await resolve_udp_endpoint(executor, udp_host, associate.bind_port, cfg, ec);
+    const auto resolve_timeout_sec = net::remaining_clamped_timeout_seconds(request_start_ms, request_timeout_sec, cfg.timeout.connect, ec);
+    if (ec)
+    {
+        set_connect_failure(result, ec);
+        co_return result;
+    }
+    auto udp_server_endpoint = co_await resolve_udp_endpoint(executor, udp_host, associate.bind_port, cfg, resolve_timeout_sec, ec);
     if (ec)
     {
         set_connect_failure(result, ec);

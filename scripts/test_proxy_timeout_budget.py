@@ -34,6 +34,21 @@ def read_exact(sock, size):
     return bytes(data)
 
 
+def read_socks5_reply(sock):
+    reply = read_exact(sock, 4)
+    atyp = reply[3]
+    if atyp == 1:
+        bind_host = socket.inet_ntoa(read_exact(sock, 4))
+    elif atyp == 3:
+        bind_host = read_exact(sock, read_exact(sock, 1)[0]).decode("ascii")
+    elif atyp == 4:
+        bind_host = socket.inet_ntop(socket.AF_INET6, read_exact(sock, 16))
+    else:
+        raise RuntimeError(f"unexpected socks5 reply atyp={atyp}")
+    bind_port = int.from_bytes(read_exact(sock, 2), "big")
+    return reply[1], bind_host, bind_port
+
+
 def socks5_connect_expect_fail(socks_port, target_host, target_port):
     start = time.monotonic()
     with socket.create_connection(("127.0.0.1", socks_port), timeout=5) as sock:
@@ -45,25 +60,40 @@ def socks5_connect_expect_fail(socks_port, target_host, target_port):
         addr = socket.inet_aton(target_host)
         request = b"\x05\x01\x00\x01" + addr + target_port.to_bytes(2, "big")
         sock.sendall(request)
-        reply = read_exact(sock, 4)
-        atyp = reply[3]
-        if atyp == 1:
-            read_exact(sock, 4)
-        elif atyp == 3:
-            read_exact(sock, read_exact(sock, 1)[0])
-        elif atyp == 4:
-            read_exact(sock, 16)
-        else:
-            raise RuntimeError(f"unexpected socks5 reply atyp={atyp}")
-        read_exact(sock, 2)
-        if reply[1] == 0:
+        reply_rep, _bind_host, _bind_port = read_socks5_reply(sock)
+        if reply_rep == 0:
             raise RuntimeError("socks5 connect unexpectedly succeeded")
-    return time.monotonic() - start, reply[1]
+    return time.monotonic() - start, reply_rep
+
+
+def open_socks5_udp_associate(socks_port):
+    tcp_sock = socket.create_connection(("127.0.0.1", socks_port), timeout=5)
+    tcp_sock.settimeout(10)
+    tcp_sock.sendall(b"\x05\x01\x00")
+    if read_exact(tcp_sock, 2) != b"\x05\x00":
+        tcp_sock.close()
+        raise RuntimeError("socks5 auth negotiation failed")
+
+    tcp_sock.sendall(b"\x05\x03\x00\x01\x00\x00\x00\x00\x00\x00")
+    reply_rep, bind_host, bind_port = read_socks5_reply(tcp_sock)
+    if reply_rep != 0:
+        tcp_sock.close()
+        raise RuntimeError(f"socks5 udp associate failed rep={reply_rep}")
+    return tcp_sock, bind_host, bind_port
+
+
+def send_socks5_udp_datagram(bind_host, bind_port, target_host, target_port, payload):
+    udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    udp_sock.settimeout(1)
+    packet = b"\x00\x00\x00\x01" + socket.inet_aton(target_host) + target_port.to_bytes(2, "big") + payload
+    udp_sock.sendto(packet, (bind_host, bind_port))
+    udp_sock.close()
 
 
 class DelayedSocksServer:
-    def __init__(self, delay_seconds):
+    def __init__(self, delay_seconds, max_connections=1):
         self.delay_seconds = delay_seconds
+        self.max_connections = max_connections
         self._ready = threading.Event()
         self._done = threading.Event()
         self._errors = []
@@ -71,7 +101,7 @@ class DelayedSocksServer:
         self._listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._listener.bind(("127.0.0.1", 0))
-        self._listener.listen(1)
+        self._listener.listen(max_connections)
         self.port = self._listener.getsockname()[1]
         self._thread.start()
         if not self._ready.wait(5):
@@ -80,30 +110,31 @@ class DelayedSocksServer:
     def _serve(self):
         try:
             self._ready.set()
-            conn, _addr = self._listener.accept()
-            with conn:
-                conn.settimeout(10)
-                method_request = read_exact(conn, 3)
-                if method_request != b"\x05\x01\x00":
-                    raise RuntimeError(f"unexpected method request {method_request!r}")
-                conn.sendall(b"\x05\x00")
+            for _ in range(self.max_connections):
+                conn, _addr = self._listener.accept()
+                with conn:
+                    conn.settimeout(10)
+                    method_request = read_exact(conn, 3)
+                    if method_request != b"\x05\x01\x00":
+                        raise RuntimeError(f"unexpected method request {method_request!r}")
+                    conn.sendall(b"\x05\x00")
 
-                request = read_exact(conn, 4)
-                if request[:3] != b"\x05\x01\x00":
-                    raise RuntimeError(f"unexpected connect request head {request!r}")
-                atyp = request[3]
-                if atyp == 1:
-                    read_exact(conn, 4)
-                elif atyp == 3:
-                    read_exact(conn, read_exact(conn, 1)[0])
-                elif atyp == 4:
-                    read_exact(conn, 16)
-                else:
-                    raise RuntimeError(f"unexpected atyp {atyp}")
-                read_exact(conn, 2)
+                    request = read_exact(conn, 4)
+                    if request[0] != 0x05 or request[2] != 0x00 or request[1] not in (0x01, 0x03):
+                        raise RuntimeError(f"unexpected socks request head {request!r}")
+                    atyp = request[3]
+                    if atyp == 1:
+                        read_exact(conn, 4)
+                    elif atyp == 3:
+                        read_exact(conn, read_exact(conn, 1)[0])
+                    elif atyp == 4:
+                        read_exact(conn, 16)
+                    else:
+                        raise RuntimeError(f"unexpected atyp {atyp}")
+                    read_exact(conn, 2)
 
-                time.sleep(self.delay_seconds)
-                conn.sendall(b"\x05\x05\x00\x01\x00\x00\x00\x00\x00\x00")
+                    time.sleep(self.delay_seconds)
+                    conn.sendall(b"\x05\x05\x00\x01\x00\x00\x00\x00\x00\x00")
         except Exception as exc:
             self._errors.append(str(exc))
         finally:
@@ -111,7 +142,7 @@ class DelayedSocksServer:
             self._listener.close()
 
     def wait(self):
-        self._thread.join(timeout=self.delay_seconds + 5)
+        self._thread.join(timeout=self.delay_seconds * self.max_connections + 5)
         if self._thread.is_alive():
             raise RuntimeError("delayed socks server did not exit")
         if self._errors:
@@ -140,7 +171,7 @@ def main():
     processes = []
 
     try:
-        delayed_socks = DelayedSocksServer(delay_seconds=4.0)
+        delayed_socks = DelayedSocksServer(delay_seconds=4.0, max_connections=2)
 
         client_socks_port = allocate_tcp_port()
         reality_a_port = allocate_tcp_port()
@@ -258,8 +289,32 @@ def main():
             processes,
         )
 
+        udp_tcp_sock, udp_bind_host, udp_bind_port = open_socks5_udp_associate(client_socks_port)
+        udp_elapsed_start = time.monotonic()
+        send_socks5_udp_datagram(udp_bind_host, udp_bind_port, "127.0.0.1", 80, b"budget")
+        wait_for_log_text(
+            server_b_log,
+            "out_tag socks-out open proxy udp outbound failed",
+            6,
+            "server b budgeted udp associate failure",
+            processes,
+        )
+        udp_elapsed_seconds = time.monotonic() - udp_elapsed_start
+        udp_tcp_sock.close()
+        if udp_elapsed_seconds > 3.5:
+            fail_with_logs(
+                f"proxy udp timeout budget exceeded elapsed={udp_elapsed_seconds:.2f}s",
+                client_log,
+                server_a_log,
+                server_b_log,
+            )
+
         delayed_socks.wait()
-        print(f"proxy timeout budget ok elapsed={elapsed_seconds:.2f}s rep={reply_rep}")
+        print(
+            "proxy timeout budget ok "
+            f"connect_elapsed={elapsed_seconds:.2f}s connect_rep={reply_rep} "
+            f"udp_elapsed={udp_elapsed_seconds:.2f}s"
+        )
     finally:
         for process in reversed(processes):
             process.terminate()
