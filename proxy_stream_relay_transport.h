@@ -94,11 +94,54 @@ class vision_connection_tcp_stream
         kOuterPlain,
     };
 
+    enum class read_action : uint8_t
+    {
+        kReturn,
+        kReadRaw,
+        kReadOuter,
+        kReadOuterBlock,
+        kEnterRawThenReadRaw,
+        kEnterRawThenReturn,
+    };
+
+    enum class write_action : uint8_t
+    {
+        kSegments,
+        kRaw,
+        kOuter,
+    };
+
+    struct read_step
+    {
+        read_action action = read_action::kReturn;
+        std::shared_ptr<proxy_reality_connection> connection;
+        uint64_t generation = 0;
+        std::size_t bytes = 0;
+    };
+
+    struct encoded_segment
+    {
+        vision::write_segment segment;
+        vision::padding_mode mode = vision::padding_mode::kNone;
+    };
+
     [[nodiscard]] boost::asio::awaitable<std::size_t> read_outer_plain(std::shared_ptr<proxy_reality_connection> connection,
                                                                        std::span<uint8_t> buffer,
                                                                        uint32_t read_timeout,
                                                                        boost::system::error_code& ec);
     void clear_state_locked();
+    [[nodiscard]] read_step plan_read_step_locked(std::span<uint8_t> buffer, boost::system::error_code& ec);
+    void plan_pending_read_step_locked(read_step& step, std::span<uint8_t> buffer, boost::system::error_code& ec);
+    void plan_parsed_read_step_locked(vision::block parsed, read_step& step, std::span<uint8_t> buffer, boost::system::error_code& ec);
+    void finalize_pending_read_step_locked(read_step& step, boost::system::error_code& ec);
+    [[nodiscard]] bool validate_generation_locked(
+        const std::shared_ptr<proxy_reality_connection>& connection, uint64_t generation, boost::system::error_code& ec) const;
+    void capture_write_plan_locked(std::span<const uint8_t> data,
+                                   std::shared_ptr<proxy_reality_connection>& connection,
+                                   uint64_t& generation,
+                                   write_action& action,
+                                   std::vector<encoded_segment>& segments,
+                                   boost::system::error_code& ec);
 
     mutable std::mutex mutex_;
     std::shared_ptr<proxy_reality_connection> connection_;
