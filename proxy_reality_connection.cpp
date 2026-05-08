@@ -31,6 +31,31 @@ constexpr std::size_t kRealityServerKeyBytes = 32;
 constexpr std::size_t kRealityShortIdMinBytes = 1;
 constexpr std::size_t kRealityShortIdMaxBytes = 8;
 
+bool contains_only_new_session_tickets(const std::span<const uint8_t> plaintext)
+{
+    if (plaintext.size() < 4U)
+    {
+        return false;
+    }
+    std::size_t pos = 0;
+    while (pos < plaintext.size())
+    {
+        if (plaintext.size() - pos < 4U || plaintext[pos] != tls::kHandshakeTypeNewSessionTicket)
+        {
+            return false;
+        }
+        const auto message_len = (static_cast<std::size_t>(plaintext[pos + 1]) << 16U) |
+                                 (static_cast<std::size_t>(plaintext[pos + 2]) << 8U) | static_cast<std::size_t>(plaintext[pos + 3]);
+        const auto message_size = 4U + message_len;
+        if (plaintext.size() - pos < message_size)
+        {
+            return false;
+        }
+        pos += message_size;
+    }
+    return true;
+}
+
 struct connect_options
 {
     std::string sni;
@@ -418,6 +443,18 @@ boost::asio::awaitable<bool> proxy_reality_connection::ensure_plaintext_availabl
         }
         if (record.has_value())
         {
+            if (record->content_type == tls::kContentTypeHandshake && contains_only_new_session_tickets(record->payload))
+            {
+                LOG_DEBUG("{} conn {} local {}:{} remote {}:{} stage ignore_post_handshake_ticket plaintext {}",
+                          log_event::kDataRecv,
+                          conn_id_,
+                          local_host_,
+                          local_port_,
+                          remote_host_,
+                          remote_port_,
+                          record->payload.size());
+                continue;
+            }
             if (record->content_type != tls::kContentTypeApplicationData)
             {
                 ec = boost::asio::error::invalid_argument;
