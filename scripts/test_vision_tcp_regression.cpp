@@ -273,9 +273,10 @@ bool test_tls_tracker_direct_boundaries()
     auto partial_app = make_application_record(32U);
     partial_app.resize(tls::kTlsRecordHeaderSize + 2U);
     segments = partial_app_tracker.process(direction::kClientToServer, partial_app);
-    ok = ok && require(segments.size() == 1 && segments[0].cmd == command::kDirect, "partial app data header should direct immediately") &&
-         require(segments[0].content == partial_app, "partial app direct content mismatch") &&
-         require(segments[0].switch_to_raw_after, "partial app data should switch writer to raw");
+    ok = ok && require(segments.size() == 1 && segments[0].cmd == command::kContinue,
+                       "partial app data header should stay wrapped until a full record is available") &&
+         require(segments[0].content == partial_app, "partial app wrapped content mismatch") &&
+         require(!segments[0].switch_to_raw_after, "partial app data should not switch writer to raw");
 
     tls_tracker tiny_prefix_tracker;
     segments = tiny_prefix_tracker.process(direction::kClientToServer, client_hello);
@@ -285,10 +286,10 @@ bool test_tls_tracker_direct_boundaries()
     {
         const std::vector<uint8_t> app_prefix(full_app.begin(), full_app.begin() + static_cast<std::ptrdiff_t>(prefix_len));
         segments = tiny_prefix_tracker.process(direction::kClientToServer, app_prefix);
-        ok = ok && require(segments.size() == 1 && segments[0].cmd == command::kDirect,
-                           "partial app header prefix should direct immediately") &&
+        ok = ok && require(segments.size() == 1 && segments[0].cmd == command::kContinue,
+                           "partial app header prefix should stay wrapped") &&
              require(segments[0].content == app_prefix, "partial app header prefix content mismatch") &&
-             require(segments[0].switch_to_raw_after, "partial app header prefix should switch writer to raw");
+             require(!segments[0].switch_to_raw_after, "partial app header prefix should not switch writer to raw");
         tiny_prefix_tracker = tls_tracker{};
         segments = tiny_prefix_tracker.process(direction::kClientToServer, client_hello);
         segments = tiny_prefix_tracker.process(direction::kServerToClient, server_hello);
@@ -298,11 +299,20 @@ bool test_tls_tracker_direct_boundaries()
     segments = same_chunk_prefix_tracker.process(direction::kClientToServer, client_hello);
     const std::vector<uint8_t> app_prefix(full_app.begin(), full_app.begin() + 3);
     segments = same_chunk_prefix_tracker.process(direction::kServerToClient, append_all(server_hello, app_prefix));
-    ok = ok && require(segments.size() == 2, "server hello with partial app header should split into two segments") &&
-         require(segments[0].cmd == command::kContinue && segments[0].content == server_hello,
-                 "server hello with partial app header should keep wrapped prefix") &&
-         require(segments[1].cmd == command::kDirect && segments[1].content == app_prefix, "partial app header tail should direct") &&
-         require(segments[1].switch_to_raw_after, "partial app header tail should switch writer to raw");
+    ok = ok && require(segments.size() == 1, "server hello with partial app header should stay fully wrapped") &&
+         require(segments[0].cmd == command::kContinue && segments[0].content == append_all(server_hello, app_prefix),
+                 "server hello with partial app header should remain wrapped as one segment") &&
+         require(!segments[0].switch_to_raw_after, "partial app header tail should not switch writer to raw");
+
+    tls_tracker trailing_partial_tracker;
+    segments = trailing_partial_tracker.process(direction::kClientToServer, client_hello);
+    segments = trailing_partial_tracker.process(direction::kServerToClient, server_hello);
+    const auto second_partial = std::vector<uint8_t>(full_app.begin(), full_app.begin() + static_cast<std::ptrdiff_t>(tls::kTlsRecordHeaderSize + 1U));
+    segments = trailing_partial_tracker.process(direction::kClientToServer, append_all(full_app, second_partial));
+    ok = ok && require(segments.size() == 1 && segments[0].cmd == command::kContinue,
+                       "complete app record followed by partial app record should stay wrapped") &&
+         require(segments[0].content == append_all(full_app, second_partial), "trailing partial app content mismatch") &&
+         require(!segments[0].switch_to_raw_after, "trailing partial app should not switch writer to raw");
 
     tls_tracker fragmented_tracker;
     segments = fragmented_tracker.process(direction::kClientToServer, client_hello);

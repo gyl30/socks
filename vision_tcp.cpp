@@ -145,27 +145,6 @@ void append_u16(std::vector<uint8_t>& out, const std::size_t value)
     return true;
 }
 
-[[nodiscard]] bool matches_application_record_prefix(const std::span<const uint8_t> data)
-{
-    if (data.empty() || data.size() >= tls::kTlsRecordHeaderSize)
-    {
-        return false;
-    }
-    if (data[0] != tls::kContentTypeApplicationData)
-    {
-        return false;
-    }
-    if (data.size() >= 2U && data[1] != 0x03)
-    {
-        return false;
-    }
-    if (data.size() >= 3U && data[2] != 0x03)
-    {
-        return false;
-    }
-    return true;
-}
-
 [[nodiscard]] bool complete_record_at(const std::span<const uint8_t> data, const std::size_t pos, std::size_t& record_size)
 {
     record_size = 0;
@@ -182,6 +161,29 @@ void append_u16(std::vector<uint8_t>& out, const std::size_t value)
     return data.size() - pos >= record_size;
 }
 
+[[nodiscard]] bool complete_application_records(const std::span<const uint8_t> data)
+{
+    if (data.size() < tls::kTlsRecordHeaderSize)
+    {
+        return false;
+    }
+    for (std::size_t pos = 0; pos < data.size();)
+    {
+        const auto tail = data.subspan(pos);
+        if (!is_application_record_header(tail))
+        {
+            return false;
+        }
+        std::size_t record_size = 0;
+        if (!complete_record_at(data, pos, record_size))
+        {
+            return false;
+        }
+        pos += record_size;
+    }
+    return true;
+}
+
 [[nodiscard]] std::optional<std::size_t> find_direct_offset(const std::span<const uint8_t> data, const bool tls13_confirmed)
 {
     if (!tls13_confirmed)
@@ -193,16 +195,16 @@ void append_u16(std::vector<uint8_t>& out, const std::size_t value)
     {
         if (data.size() - pos < tls::kTlsRecordHeaderSize)
         {
-            if (matches_application_record_prefix(data.subspan(pos)))
-            {
-                return pos;
-            }
             return std::nullopt;
         }
         const auto tail = data.subspan(pos);
         if (is_application_record_header(tail))
         {
-            return pos;
+            if (complete_application_records(tail))
+            {
+                return pos;
+            }
+            return std::nullopt;
         }
 
         std::size_t record_size = 0;
