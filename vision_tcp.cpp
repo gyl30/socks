@@ -22,7 +22,22 @@ namespace relay::vision
 namespace
 {
 
+constexpr uint16_t kTlsAes128CcmSha256 = 0x1304;
 constexpr uint16_t kTlsAes128Ccm8Sha256 = 0x1305;
+
+[[nodiscard]] bool directable_tls13_cipher(const uint16_t cipher_suite)
+{
+    switch (cipher_suite)
+    {
+        case tls::consts::cipher::kTlsAes128GcmSha256:
+        case tls::consts::cipher::kTlsAes256GcmSha384:
+        case tls::consts::cipher::kTlsChacha20Poly1305Sha256:
+        case kTlsAes128CcmSha256:
+            return true;
+        default:
+            return false;
+    }
+}
 constexpr std::size_t kLongPaddingThreshold = 900;
 
 [[nodiscard]] std::size_t dir_index(const direction dir) { return static_cast<std::size_t>(dir); }
@@ -256,6 +271,10 @@ enum class server_hello_status : uint8_t
     const auto cipher_suite = read_u16(body, pos);
     pos += 2U;
     if (cipher_suite == kTlsAes128Ccm8Sha256)
+    {
+        return server_hello_status::kNotTls13;
+    }
+    if (!directable_tls13_cipher(cipher_suite))
     {
         return server_hello_status::kNotTls13;
     }

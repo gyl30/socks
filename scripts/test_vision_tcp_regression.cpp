@@ -244,6 +244,12 @@ bool test_tls_tracker_direct()
     segments = tracker.process(direction::kServerToClient, app);
     ok = ok && require(segments.size() == 1 && segments[0].cmd == command::kDirect, "server app data should direct") &&
          require(tracker.direct_write_mode(direction::kServerToClient), "tracker should remember server direct mode");
+
+    tls_tracker ccm_tracker;
+    segments = ccm_tracker.process(direction::kClientToServer, client_hello);
+    segments = ccm_tracker.process(direction::kServerToClient, make_server_hello_record(true, 0x1304));
+    ok = ok && require(segments.size() == 1 && segments[0].cmd == command::kContinue, "ccm tls13 should remain directable") &&
+         require(ccm_tracker.tls13_confirmed(), "ccm tls13 should confirm directable tls13");
     return ok;
 }
 
@@ -359,6 +365,12 @@ bool test_tls_tracker_rejects()
     ok = ok && require(segments.size() == 1 && segments[0].cmd == command::kEnd, "ccm8 tls13 should end vision") &&
          require(!ccm_tracker.tls13_confirmed(), "ccm8 should not confirm directable tls13");
 
+    tls_tracker unknown_cipher_tracker;
+    segments = unknown_cipher_tracker.process(direction::kClientToServer, make_client_hello_record());
+    segments = unknown_cipher_tracker.process(direction::kServerToClient, make_server_hello_record(true, 0x1306));
+    ok = ok && require(segments.size() == 1 && segments[0].cmd == command::kEnd, "unknown tls13 cipher should end vision") &&
+         require(!unknown_cipher_tracker.tls13_confirmed(), "unknown tls13 cipher should not confirm directable tls13");
+
     tls_tracker server_first_tracker;
     segments = server_first_tracker.process(direction::kServerToClient, make_server_hello_record(true, tls::consts::cipher::kTlsAes128GcmSha256));
     ok = ok && require(segments.size() == 1 && segments[0].cmd == command::kEnd, "server hello without client hello should end vision") &&
@@ -445,14 +457,81 @@ boost::asio::awaitable<bool> test_vision_stream_close_aborts_stale_reads()
     co_return ok;
 }
 
+boost::asio::awaitable<bool> test_vision_stream_direct_read_merges_buffered_raw()
+{
+    relay::config cfg;
+    cfg.timeout.read = 5;
+    cfg.timeout.write = 5;
+
+    auto pair = co_await make_connection_pair(cfg);
+    if (!require(pair.client != nullptr && pair.server != nullptr, "vision direct read merge connection pair failed"))
+    {
+        co_return false;
+    }
+
+    const std::vector<uint8_t> direct_payload{'v', 'i', 's'};
+    const std::vector<uint8_t> raw_tail{'r', 'a', 'w'};
+    std::vector<uint8_t> encoded;
+    boost::system::error_code ec;
+    if (!require(relay::vision::encode_block(relay::vision::command::kDirect,
+                                             std::span<const uint8_t>(direct_payload),
+                                             relay::vision::padding_mode::kNone,
+                                             encoded,
+                                             ec) &&
+                     !ec,
+                 "vision direct read merge encode failed"))
+    {
+        co_return false;
+    }
+
+    co_await pair.server->write(encoded, ec);
+    if (!require(!ec, "vision direct read merge write block failed"))
+    {
+        co_return false;
+    }
+    co_await pair.server->enter_raw_write_mode(ec);
+    if (!require(!ec, "vision direct read merge enter raw write failed"))
+    {
+        co_return false;
+    }
+    co_await pair.server->write_raw(raw_tail, ec);
+    if (!require(!ec, "vision direct read merge write raw tail failed"))
+    {
+        co_return false;
+    }
+
+    auto executor = co_await boost::asio::this_coro::executor;
+    boost::asio::steady_timer timer(executor);
+    timer.expires_after(std::chrono::milliseconds(10));
+    co_await timer.async_wait(boost::asio::use_awaitable);
+
+    relay::vision_connection_tcp_stream stream(pair.client,
+                                               relay::vision::direction::kClientToServer,
+                                               relay::vision::direction::kServerToClient);
+    std::array<uint8_t, 16> buffer{};
+    boost::system::error_code read_ec;
+    const auto bytes_read = co_await stream.read(std::span<uint8_t>(buffer), cfg.timeout.read, read_ec);
+
+    std::vector<uint8_t> expected = direct_payload;
+    expected.insert(expected.end(), raw_tail.begin(), raw_tail.end());
+    bool ok = require(!read_ec, "vision direct read merge read failed") &&
+              require(bytes_read == expected.size(), "vision direct read merge size mismatch") &&
+              require(std::equal(expected.begin(), expected.end(), buffer.begin()), "vision direct read merge content mismatch");
+
+    co_await stream.close();
+    pair.server->close(ec);
+    co_return ok;
+}
+
 }    // namespace
 
 int main()
 {
     boost::asio::io_context io_context;
     auto async_ok = boost::asio::co_spawn(io_context, test_vision_stream_close_aborts_stale_reads(), boost::asio::use_future);
+    auto async_merge_ok = boost::asio::co_spawn(io_context, test_vision_stream_direct_read_merges_buffered_raw(), boost::asio::use_future);
     const bool ok = test_block_codec() && test_tls_tracker_direct() && test_tls_tracker_direct_boundaries() && test_tls_tracker_rejects() &&
                     test_tls_tracker_observe();
     io_context.run();
-    return ok && async_ok.get() ? 0 : 1;
+    return ok && async_ok.get() && async_merge_ok.get() ? 0 : 1;
 }

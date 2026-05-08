@@ -52,6 +52,7 @@ class proxy_reality_connection : public std::enable_shared_from_this<proxy_reali
     [[nodiscard]] boost::asio::awaitable<std::size_t> read_raw(std::span<uint8_t> buffer,
                                                                uint32_t timeout_sec,
                                                                boost::system::error_code& ec);
+    [[nodiscard]] boost::asio::awaitable<std::size_t> read_raw_pending(std::span<uint8_t> buffer);
     boost::asio::awaitable<void> write_raw(std::span<const uint8_t> data, boost::system::error_code& ec);
     boost::asio::awaitable<void> shutdown_send(boost::system::error_code& ec);
     boost::asio::awaitable<void> async_close(boost::system::error_code& ec);

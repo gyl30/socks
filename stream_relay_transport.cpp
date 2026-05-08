@@ -607,6 +607,11 @@ boost::asio::awaitable<std::size_t> vision_connection_tcp_stream::read(std::span
         }
         if (step.action == read_action::kEnterRawThenReturn)
         {
+            if (step.bytes < buffer.size())
+            {
+                const auto pending_raw_bytes = co_await step.connection->read_raw_pending(buffer.subspan(step.bytes));
+                co_return step.bytes + pending_raw_bytes;
+            }
             co_return step.bytes;
         }
         const auto bytes_read = co_await step.connection->read_raw(buffer, read_timeout, ec);

@@ -680,6 +680,16 @@ boost::asio::awaitable<std::size_t> proxy_reality_connection::read_raw(const std
     co_return bytes_read;
 }
 
+boost::asio::awaitable<std::size_t> proxy_reality_connection::read_raw_pending(const std::span<uint8_t> buffer)
+{
+    co_await boost::asio::dispatch(strand_, boost::asio::use_awaitable);
+    if (!raw_read_mode_ || !pending_plaintext_.empty() || buffer.empty())
+    {
+        co_return 0;
+    }
+    co_return consume_raw_pending(buffer);
+}
+
 boost::asio::awaitable<void> proxy_reality_connection::write_raw(const std::span<const uint8_t> data, boost::system::error_code& ec)
 {
     ec.clear();
