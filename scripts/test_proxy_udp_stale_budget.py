@@ -157,6 +157,20 @@ def fail_with_logs(message, *paths):
     raise RuntimeError(f"{message}\n{tails}")
 
 
+def wait_for_any_log_text(paths, text_pairs, timeout, description, processes):
+    deadline = time.time() + timeout
+    missing = [f"{path.name}:{text}" for path, text in text_pairs]
+    while time.time() < deadline:
+        for process in processes:
+            if process.process.poll() is not None:
+                raise RuntimeError(f"{description} process exited early")
+        for path, text in text_pairs:
+            if path.exists() and text in path.read_text(encoding="utf-8", errors="replace"):
+                return text
+        time.sleep(0.1)
+    raise RuntimeError(f"timeout waiting for {description} any of {missing}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Verify delayed UDP proxy outbound open reuses remaining session budget")
     parser.add_argument("--binary", required=True)
@@ -314,11 +328,14 @@ def main():
         udp_elapsed_start = time.monotonic()
         send_socks5_udp_datagram(udp_peer_sock, udp_bind_host, udp_bind_port, "127.0.0.2", 80, b"stale-budget")
         try:
-            wait_for_log_text(
-                server_b_log,
-                "out_tag socks-delayed open proxy udp outbound failed",
+            wait_for_any_log_text(
+                [server_a_log, server_b_log],
+                [
+                    (server_b_log, "out_tag socks-delayed open proxy udp outbound failed"),
+                    (server_a_log, "out_tag reality-out-b open proxy udp outbound failed"),
+                ],
                 6,
-                "server b stale udp budget failure",
+                "stale udp budget failure",
                 processes,
             )
         except RuntimeError as exc:

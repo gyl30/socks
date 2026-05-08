@@ -54,7 +54,6 @@ uint32_t associate_timeout_budget(const config& cfg, const uint32_t timeout_sec)
 boost::asio::awaitable<bool> connect_socks_server(boost::asio::ip::tcp::socket& socket,
                                                   boost::asio::ip::tcp::resolver& resolver,
                                                   const config::socks_t& settings,
-                                                  const config& cfg,
                                                   const uint32_t conn_id,
                                                   const std::string& outbound_tag,
                                                   const uint32_t connect_mark,
@@ -176,7 +175,7 @@ boost::asio::awaitable<socks_udp_associate_result> open_socks_udp_associate(cons
     boost::system::error_code ec;
     auto remaining_timeout_sec = net::remaining_clamped_timeout_seconds(request_start_ms, request_timeout_sec, cfg.timeout.connect, ec);
     if (ec || !(co_await connect_socks_server(
-                    *control_socket, tcp_resolver, settings, cfg, conn_id, outbound_tag, connect_mark, remaining_timeout_sec, ec)))
+                    *control_socket, tcp_resolver, settings, conn_id, outbound_tag, connect_mark, remaining_timeout_sec, ec)))
     {
         co_return make_socks_udp_associate_failure(ec ? ec : boost::asio::error::host_unreachable, socks::kRepSuccess);
     }

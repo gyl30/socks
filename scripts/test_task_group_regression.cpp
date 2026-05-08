@@ -10,6 +10,7 @@
 #include <boost/asio/executor_work_guard.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/redirect_error.hpp>
+#include <boost/asio/post.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/use_awaitable.hpp>
 
@@ -73,12 +74,18 @@ int main()
 
         if (ok)
         {
+            boost::asio::steady_timer cancel_timer(io_context, 50ms);
             boost::asio::co_spawn(io_context,
                                   wait_for_group(group, wait_result_promise),
                                   boost::asio::bind_cancellation_slot(wait_signal.slot(), boost::asio::detached));
-
-            std::this_thread::sleep_for(50ms);
-            wait_signal.emit(boost::asio::cancellation_type::all);
+            cancel_timer.async_wait(
+                [&wait_signal](const boost::system::error_code& timer_ec)
+                {
+                    if (!timer_ec)
+                    {
+                        wait_signal.emit(boost::asio::cancellation_type::all);
+                    }
+                });
             ok = require(wait_result.wait_for(1s) == std::future_status::ready,
                          "async_wait did not observe external cancellation");
         }

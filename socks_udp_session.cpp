@@ -414,7 +414,8 @@ boost::asio::awaitable<void> socks_udp_session::run(const std::string& host, con
         });
     (void)completed;
 
-    const auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time_).count();
+    const auto duration_ms =
+        static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time_).count());
     record_udp_session_close_trace(make_bound_udp_trace_event(trace_id_,
                                                               conn_id_,
                                                               inbound_tag_,

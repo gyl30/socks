@@ -79,7 +79,8 @@ boost::asio::awaitable<void> tun_udp_session::start()
         co_return;
     }
 
-    const auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time_).count();
+    const auto duration_ms =
+        static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time_).count());
     record_transparent_udp_session_close(make_transparent_udp_trace_event(trace_id_,
                                                                           conn_id_,
                                                                           inbound_tag_,

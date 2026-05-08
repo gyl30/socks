@@ -305,7 +305,8 @@ boost::asio::awaitable<void> reality_udp_session::start_impl(const proxy::udp_as
         });
     (void)completed;
 
-    const auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time_).count();
+    const auto duration_ms =
+        static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time_).count());
     record_udp_session_close_trace(make_bound_udp_trace_event(trace_id_,
                                                               conn_id_,
                                                               inbound_tag_,
