@@ -287,22 +287,24 @@ vision_connection_tcp_stream::vision_connection_tcp_stream(std::shared_ptr<proxy
 {
 }
 
+void vision_connection_tcp_stream::clear_state_locked()
+{
+    parser_ = vision::block_parser{};
+    tracker_ = vision::tls_tracker{};
+    pending_read_data_.clear();
+    pending_read_offset_ = 0;
+    pending_read_switch_ = pending_read_switch::kNone;
+    read_mode_ = read_mode::kVision;
+    write_mode_ = write_mode::kVision;
+}
+
 void vision_connection_tcp_stream::reset(std::shared_ptr<proxy_reality_connection> connection,
                                          const vision::direction write_direction,
                                          const vision::direction read_direction)
 {
     std::scoped_lock lock(mutex_);
     connection_ = std::move(connection);
-    parser_ = vision::block_parser{};
-    tracker_ = vision::tls_tracker{};
-    pending_read_data_.clear();
-    pending_read_offset_ = 0;
-    pending_read_switch_raw_ = false;
-    pending_read_switch_outer_plain_ = false;
-    raw_read_mode_ = false;
-    raw_write_mode_ = false;
-    outer_plain_read_mode_ = false;
-    outer_plain_write_mode_ = false;
+    clear_state_locked();
     write_direction_ = write_direction;
     read_direction_ = read_direction;
     generation_++;
@@ -373,25 +375,25 @@ boost::asio::awaitable<std::size_t> vision_connection_tcp_stream::read(std::span
             if (!pending_read_data_.empty())
             {
                 step.bytes = consume_pending_read_data(pending_read_data_, pending_read_offset_, buffer);
-                if (pending_read_data_.empty() && pending_read_switch_raw_)
+                if (pending_read_data_.empty() && pending_read_switch_ == pending_read_switch::kRaw)
                 {
                     if (!parser_.empty())
                     {
                         ec = boost::asio::error::invalid_argument;
                         co_return 0;
                     }
-                    pending_read_switch_raw_ = false;
+                    pending_read_switch_ = pending_read_switch::kNone;
                     step.action = read_action::kEnterRawThenReturn;
                 }
-                else if (pending_read_data_.empty() && pending_read_switch_outer_plain_)
+                else if (pending_read_data_.empty() && pending_read_switch_ == pending_read_switch::kOuterPlain)
                 {
                     if (!parser_.empty())
                     {
                         ec = boost::asio::error::invalid_argument;
                         co_return 0;
                     }
-                    pending_read_switch_outer_plain_ = false;
-                    outer_plain_read_mode_ = true;
+                    pending_read_switch_ = pending_read_switch::kNone;
+                    read_mode_ = read_mode::kOuterPlain;
                     step.action = read_action::kReturn;
                 }
                 else
@@ -399,11 +401,11 @@ boost::asio::awaitable<std::size_t> vision_connection_tcp_stream::read(std::span
                     step.action = read_action::kReturn;
                 }
             }
-            else if (raw_read_mode_)
+            else if (read_mode_ == read_mode::kRaw)
             {
                 step.action = read_action::kReadRaw;
             }
-            else if (outer_plain_read_mode_)
+            else if (read_mode_ == read_mode::kOuterPlain)
             {
                 step.action = read_action::kReadOuter;
             }
@@ -424,28 +426,38 @@ boost::asio::awaitable<std::size_t> vision_connection_tcp_stream::read(std::span
                     tracker_.observe(read_direction_, parsed.content);
                     pending_read_data_ = std::move(parsed.content);
                     pending_read_offset_ = 0;
-                    pending_read_switch_raw_ = parsed.cmd == vision::command::kDirect;
-                    pending_read_switch_outer_plain_ = parsed.cmd == vision::command::kEnd;
+                    if (parsed.cmd == vision::command::kDirect)
+                    {
+                        pending_read_switch_ = pending_read_switch::kRaw;
+                    }
+                    else if (parsed.cmd == vision::command::kEnd)
+                    {
+                        pending_read_switch_ = pending_read_switch::kOuterPlain;
+                    }
+                    else
+                    {
+                        pending_read_switch_ = pending_read_switch::kNone;
+                    }
                     step.bytes = consume_pending_read_data(pending_read_data_, pending_read_offset_, buffer);
-                    if (pending_read_data_.empty() && pending_read_switch_raw_)
+                    if (pending_read_data_.empty() && pending_read_switch_ == pending_read_switch::kRaw)
                     {
                         if (!parser_.empty())
                         {
                             ec = boost::asio::error::invalid_argument;
                             co_return 0;
                         }
-                        pending_read_switch_raw_ = false;
+                        pending_read_switch_ = pending_read_switch::kNone;
                         step.action = read_action::kEnterRawThenReturn;
                     }
-                    else if (pending_read_data_.empty() && pending_read_switch_outer_plain_)
+                    else if (pending_read_data_.empty() && pending_read_switch_ == pending_read_switch::kOuterPlain)
                     {
                         if (!parser_.empty())
                         {
                             ec = boost::asio::error::invalid_argument;
                             co_return 0;
                         }
-                        pending_read_switch_outer_plain_ = false;
-                        outer_plain_read_mode_ = true;
+                        pending_read_switch_ = pending_read_switch::kNone;
+                        read_mode_ = read_mode::kOuterPlain;
                         step.action = read_action::kReturn;
                     }
                     else
@@ -469,7 +481,7 @@ boost::asio::awaitable<std::size_t> vision_connection_tcp_stream::read(std::span
                         ec = boost::asio::error::invalid_argument;
                         co_return 0;
                     }
-                    outer_plain_read_mode_ = true;
+                    read_mode_ = read_mode::kOuterPlain;
                     step.action = read_action::kReadOuter;
                 }
                 else
@@ -541,7 +553,7 @@ boost::asio::awaitable<std::size_t> vision_connection_tcp_stream::read(std::span
                 ec = boost::asio::error::operation_aborted;
                 co_return step.bytes;
             }
-            raw_read_mode_ = true;
+            read_mode_ = read_mode::kRaw;
         }
         if (step.action == read_action::kEnterRawThenReturn)
         {
@@ -593,11 +605,11 @@ boost::asio::awaitable<std::size_t> vision_connection_tcp_stream::write(std::spa
         }
         connection = connection_;
         generation = generation_;
-        if (raw_write_mode_)
+        if (write_mode_ == write_mode::kRaw)
         {
             action = write_action::kRaw;
         }
-        else if (outer_plain_write_mode_)
+        else if (write_mode_ == write_mode::kOuterPlain)
         {
             action = write_action::kOuter;
         }
@@ -678,7 +690,7 @@ boost::asio::awaitable<std::size_t> vision_connection_tcp_stream::write(std::spa
                 ec = boost::asio::error::operation_aborted;
                 co_return 0;
             }
-            raw_write_mode_ = true;
+            write_mode_ = write_mode::kRaw;
         }
         if (item.segment.switch_to_outer_plain_after)
         {
@@ -688,7 +700,7 @@ boost::asio::awaitable<std::size_t> vision_connection_tcp_stream::write(std::spa
                 ec = boost::asio::error::operation_aborted;
                 co_return 0;
             }
-            outer_plain_write_mode_ = true;
+            write_mode_ = write_mode::kOuterPlain;
         }
     }
     co_return data.size();
@@ -717,16 +729,7 @@ boost::asio::awaitable<void> vision_connection_tcp_stream::close()
         std::scoped_lock lock(mutex_);
         connection = std::move(connection_);
         connection_.reset();
-        parser_ = vision::block_parser{};
-        tracker_ = vision::tls_tracker{};
-        pending_read_data_.clear();
-        pending_read_offset_ = 0;
-        pending_read_switch_raw_ = false;
-        pending_read_switch_outer_plain_ = false;
-        raw_read_mode_ = false;
-        raw_write_mode_ = false;
-        outer_plain_read_mode_ = false;
-        outer_plain_write_mode_ = false;
+        clear_state_locked();
         generation_++;
     }
     if (connection != nullptr)

@@ -73,10 +73,32 @@ class vision_connection_tcp_stream
     boost::asio::awaitable<void> close();
 
    private:
+    enum class pending_read_switch : uint8_t
+    {
+        kNone,
+        kRaw,
+        kOuterPlain,
+    };
+
+    enum class read_mode : uint8_t
+    {
+        kVision,
+        kRaw,
+        kOuterPlain,
+    };
+
+    enum class write_mode : uint8_t
+    {
+        kVision,
+        kRaw,
+        kOuterPlain,
+    };
+
     [[nodiscard]] boost::asio::awaitable<std::size_t> read_outer_plain(std::shared_ptr<proxy_reality_connection> connection,
                                                                        std::span<uint8_t> buffer,
                                                                        uint32_t read_timeout,
                                                                        boost::system::error_code& ec);
+    void clear_state_locked();
 
     mutable std::mutex mutex_;
     std::shared_ptr<proxy_reality_connection> connection_;
@@ -84,12 +106,9 @@ class vision_connection_tcp_stream
     vision::tls_tracker tracker_;
     std::vector<uint8_t> pending_read_data_;
     std::size_t pending_read_offset_ = 0;
-    bool pending_read_switch_raw_ = false;
-    bool pending_read_switch_outer_plain_ = false;
-    bool raw_read_mode_ = false;
-    bool raw_write_mode_ = false;
-    bool outer_plain_read_mode_ = false;
-    bool outer_plain_write_mode_ = false;
+    pending_read_switch pending_read_switch_ = pending_read_switch::kNone;
+    read_mode read_mode_ = read_mode::kVision;
+    write_mode write_mode_ = write_mode::kVision;
     vision::direction write_direction_ = vision::direction::kClientToServer;
     vision::direction read_direction_ = vision::direction::kServerToClient;
     uint64_t generation_ = 0;
