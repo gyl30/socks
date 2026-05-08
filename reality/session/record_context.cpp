@@ -88,7 +88,13 @@ reality_record_context build_reality_record_context(const client_handshake_resul
 
 reality_record_context build_reality_record_context(const authenticated_session& authenticated, boost::system::error_code& ec)
 {
-    return build_reality_record_context_from_parts(authenticated.negotiated, authenticated.secrets, perspective::kServer, ec);
+    auto context = build_reality_record_context_from_parts(authenticated.negotiated, authenticated.secrets, perspective::kServer, ec);
+    if (ec)
+    {
+        return {};
+    }
+    context.initial_write_seq = authenticated.initial_server_write_seq;
+    return context;
 }
 
 }    // namespace reality

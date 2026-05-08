@@ -19,7 +19,11 @@ extern "C"
 namespace relay
 {
 
-reality_engine::reality_engine(reality::reality_record_context context) : context_(std::move(context)) { tx_buf_.reserve(kMaxBufSize); }
+reality_engine::reality_engine(reality::reality_record_context context)
+    : context_(std::move(context)), read_seq_(context_.initial_read_seq), write_seq_(context_.initial_write_seq)
+{
+    tx_buf_.reserve(kMaxBufSize);
+}
 
 boost::asio::mutable_buffer reality_engine::read_buffer(std::size_t size_hint, boost::system::error_code& ec)
 {

@@ -254,7 +254,7 @@ bool reality_inbound::start(boost::system::error_code& ec)
         }
         else
         {
-            LOG_INFO("{} target {}:{} sni {} certs {} alpn '{}' cipher 0x{:04x} sh_exts {} ee_exts {} ee_padding {} ccs {} hs_records {}",
+            LOG_INFO("{} target {}:{} sni {} certs {} alpn '{}' cipher 0x{:04x} sh_exts {} ee_exts {} ee_padding {} ccs {} hs_records {} post_hs_tickets {}",
                      log_event::kCert,
                      settings_.sni,
                      settings_.site_port,
@@ -266,7 +266,8 @@ bool reality_inbound::start(boost::system::error_code& ec)
                      loaded_material.encrypted_extension_types.size(),
                      loaded_material.encrypted_extensions_padding_len.value_or(0),
                      loaded_material.sends_change_cipher_spec,
-                     loaded_material.encrypted_handshake_record_sizes.size());
+                     loaded_material.encrypted_handshake_record_sizes.size(),
+                     loaded_material.post_handshake_ticket_plaintext_sizes.size());
             site_material_ = std::move(loaded_material);
         }
     }

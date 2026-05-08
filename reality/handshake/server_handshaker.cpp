@@ -978,6 +978,15 @@ std::vector<uint16_t> select_encrypted_handshake_record_sizes(const site_materia
     return site_material->encrypted_handshake_record_sizes;
 }
 
+std::vector<uint16_t> select_post_handshake_ticket_plaintext_sizes(const site_material* site_material)
+{
+    if (site_material == nullptr)
+    {
+        return {};
+    }
+    return site_material->post_handshake_ticket_plaintext_sizes;
+}
+
 std::size_t select_reality_certificate_chain_size(const site_material* site_material)
 {
     if (site_material == nullptr)
@@ -1233,6 +1242,70 @@ std::vector<uint8_t> compose_server_hello_flight(const std::vector<uint8_t>& sh_
     return out_sh;
 }
 
+void push_u16(std::vector<uint8_t>& out, uint16_t value)
+{
+    out.push_back(static_cast<uint8_t>((value >> 8U) & 0xFFU));
+    out.push_back(static_cast<uint8_t>(value & 0xFFU));
+}
+
+void push_u24(std::vector<uint8_t>& out, uint32_t value)
+{
+    out.push_back(static_cast<uint8_t>((value >> 16U) & 0xFFU));
+    out.push_back(static_cast<uint8_t>((value >> 8U) & 0xFFU));
+    out.push_back(static_cast<uint8_t>(value & 0xFFU));
+}
+
+void push_u32(std::vector<uint8_t>& out, uint32_t value)
+{
+    out.push_back(static_cast<uint8_t>((value >> 24U) & 0xFFU));
+    out.push_back(static_cast<uint8_t>((value >> 16U) & 0xFFU));
+    out.push_back(static_cast<uint8_t>((value >> 8U) & 0xFFU));
+    out.push_back(static_cast<uint8_t>(value & 0xFFU));
+}
+
+std::vector<uint8_t> build_new_session_ticket_plaintext(const uint16_t plaintext_size, const uint32_t ticket_age_add, boost::system::error_code& ec)
+{
+    constexpr uint16_t kMinTicketPlaintextSize = 18;
+    constexpr uint32_t kTicketLifetime = 24U * 60U * 60U;
+
+    if (plaintext_size < kMinTicketPlaintextSize)
+    {
+        ec = boost::asio::error::message_size;
+        return {};
+    }
+
+    const auto ticket_len = static_cast<uint16_t>(plaintext_size - 17U);
+    if (ticket_len == 0)
+    {
+        ec = boost::asio::error::message_size;
+        return {};
+    }
+
+    std::vector<uint8_t> ticket(ticket_len, 0);
+    if (RAND_bytes(ticket.data(), static_cast<int>(ticket.size())) != 1)
+    {
+        ec = boost::system::errc::make_error_code(boost::system::errc::operation_canceled);
+        return {};
+    }
+
+    std::vector<uint8_t> out;
+    out.reserve(plaintext_size);
+    out.push_back(tls::kHandshakeTypeNewSessionTicket);
+    push_u24(out, static_cast<uint32_t>(plaintext_size - 4U));
+    push_u32(out, kTicketLifetime);
+    push_u32(out, ticket_age_add);
+    out.push_back(0x00);
+    push_u16(out, ticket_len);
+    out.insert(out.end(), ticket.begin(), ticket.end());
+    push_u16(out, 0x0000);
+    if (out.size() != plaintext_size)
+    {
+        ec = boost::asio::error::fault;
+        return {};
+    }
+    return out;
+}
+
 struct authenticated_handshake_plan
 {
     handshake_crypto_result crypto;
@@ -1242,6 +1315,7 @@ struct authenticated_handshake_plan
     std::size_t cert_chain_size = 1;
     bool send_change_cipher_spec = true;
     std::vector<uint16_t> encrypted_handshake_record_sizes;
+    std::vector<uint16_t> post_handshake_ticket_plaintext_sizes;
 };
 
 boost::asio::awaitable<bool> read_client_hello_or_decide(const server_handshake_context& handshake_ctx,
@@ -1676,11 +1750,12 @@ authenticated_handshake_plan prepare_authenticated_handshake(server_handshake_st
     const auto encrypted_extensions_padding_len = select_encrypted_extensions_padding_len(site_material);
     plan.send_change_cipher_spec = should_send_change_cipher_spec(site_material);
     plan.encrypted_handshake_record_sizes = select_encrypted_handshake_record_sizes(site_material);
+    plan.post_handshake_ticket_plaintext_sizes = select_post_handshake_ticket_plaintext_sizes(site_material);
     plan.cert_chain_size = select_reality_certificate_chain_size(site_material);
 
     LOG_INFO(
         "{} conn {} local {}:{} remote {}:{} sni {} success path material cache {} certs {} group 0x{:04x} {} key share len {} cipher "
-        "0x{:04x} alpn '{}' sh exts {} ee exts {} ee padding {} ee padding len {} ccs {} hs records {}",
+        "0x{:04x} alpn '{}' sh exts {} ee exts {} ee padding {} ee padding len {} ccs {} hs records {} post hs tickets {}",
         relay::log_event::kHandshake,
         state.log_context.conn_id,
         state.log_context.local_addr,
@@ -1700,7 +1775,8 @@ authenticated_handshake_plan prepare_authenticated_handshake(server_handshake_st
         include_ee_padding,
         encrypted_extensions_padding_len.value_or(0),
         plan.send_change_cipher_spec,
-        plan.encrypted_handshake_record_sizes.size());
+        plan.encrypted_handshake_record_sizes.size(),
+        plan.post_handshake_ticket_plaintext_sizes.size());
 
     plan.crypto = build_handshake_crypto(state,
                                          plan.cipher_suite,
@@ -1842,6 +1918,80 @@ boost::asio::awaitable<bool> complete_authenticated_handshake(const server_hands
         co_return false;
     }
 
+    auto server_app_keys =
+        tls::key_schedule::derive_traffic_keys(app_sec.second, ec, tls::select_tls13_suite(plan.cipher_suite)->key_len, constants::crypto::kIvLen, plan.crypto.md);
+    if (ec)
+    {
+        co_return false;
+    }
+
+    std::vector<uint8_t> post_handshake_records;
+    const tls::cipher_context record_ctx;
+    const traffic_key_material key_material{
+        .key = server_app_keys.first,
+        .iv = server_app_keys.second,
+    };
+    uint64_t post_handshake_write_seq = 0;
+    for (const auto plaintext_size : plan.post_handshake_ticket_plaintext_sizes)
+    {
+        uint32_t ticket_age_add = 0;
+        if (RAND_bytes(reinterpret_cast<unsigned char*>(&ticket_age_add), static_cast<int>(sizeof(ticket_age_add))) != 1)
+        {
+            ec = boost::system::errc::make_error_code(boost::system::errc::operation_canceled);
+            co_return false;
+        }
+        auto ticket_plaintext = build_new_session_ticket_plaintext(plaintext_size, ticket_age_add, ec);
+        if (ec)
+        {
+            LOG_WARN("{} conn {} local {}:{} remote {}:{} sni {} skip invalid cached post-handshake ticket size {} error {}",
+                     relay::log_event::kHandshake,
+                     state.log_context.conn_id,
+                     state.log_context.local_addr,
+                     state.log_context.local_port,
+                     state.log_context.remote_addr,
+                     state.log_context.remote_port,
+                     server_log_sni(state.log_context),
+                     plaintext_size,
+                     ec.message());
+            ec.clear();
+            continue;
+        }
+        tls::record_layer::encrypt_tls_record(
+            record_ctx, plan.crypto.cipher, key_material, post_handshake_write_seq, ticket_plaintext, tls::kContentTypeHandshake, post_handshake_records, ec);
+        if (ec)
+        {
+            LOG_ERROR("{} conn {} local {}:{} remote {}:{} sni {} encrypt post-handshake ticket failed {}",
+                      relay::log_event::kHandshake,
+                      state.log_context.conn_id,
+                      state.log_context.local_addr,
+                      state.log_context.local_port,
+                      state.log_context.remote_addr,
+                      state.log_context.remote_port,
+                      server_log_sni(state.log_context),
+                      ec.message());
+            co_return false;
+        }
+        ++post_handshake_write_seq;
+    }
+
+    if (!post_handshake_records.empty())
+    {
+        co_await relay::net::wait_write_with_timeout(*handshake_ctx.socket, boost::asio::buffer(post_handshake_records), cfg.timeout.write, ec);
+        if (ec)
+        {
+            LOG_ERROR("{} conn {} local {}:{} remote {}:{} sni {} write post-handshake tickets failed {}",
+                      relay::log_event::kHandshake,
+                      state.log_context.conn_id,
+                      state.log_context.local_addr,
+                      state.log_context.local_port,
+                      state.log_context.remote_addr,
+                      state.log_context.remote_port,
+                      server_log_sni(state.log_context),
+                      ec.message());
+            co_return false;
+        }
+    }
+
     authenticated.secrets = {
         .c_app_secret = std::move(app_sec.first),
         .s_app_secret = std::move(app_sec.second),
@@ -1853,6 +2003,7 @@ boost::asio::awaitable<bool> complete_authenticated_handshake(const server_hands
         .md = plan.crypto.md,
         .cipher = plan.crypto.cipher,
     };
+    authenticated.initial_server_write_seq = post_handshake_write_seq;
     co_return true;
 }
 

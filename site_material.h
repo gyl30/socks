@@ -23,6 +23,7 @@ struct site_material
     std::optional<uint16_t> encrypted_extensions_padding_len;
     bool sends_change_cipher_spec = false;
     std::vector<uint16_t> encrypted_handshake_record_sizes;
+    std::vector<uint16_t> post_handshake_ticket_plaintext_sizes;
 };
 
 }    // namespace reality

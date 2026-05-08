@@ -63,6 +63,7 @@ struct authenticated_session
 {
     traffic_secrets secrets;
     negotiated_params negotiated;
+    uint64_t initial_server_write_seq = 0;
 };
 
 struct server_accept_result

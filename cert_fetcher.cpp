@@ -8,6 +8,7 @@
 #include <cstring>
 #include <utility>
 #include <system_error>
+#include <thread>
 
 extern "C"
 {
@@ -60,6 +61,9 @@ struct fetch_context
     uint8_t client_public[32] = {0};
     uint8_t client_private[32] = {0};
     const EVP_CIPHER* negotiated_cipher = nullptr;
+    const EVP_MD* negotiated_md = nullptr;
+    std::size_t negotiated_key_len = 0;
+    tls::handshake_keys handshake_keys;
     std::vector<uint8_t> dec_key;
     std::vector<uint8_t> dec_iv;
     uint64_t seq = 0;
@@ -152,6 +156,9 @@ boost::system::error_code derive_server_record_protection(fetch_context& ctx,
     }
 
     ctx.negotiated_cipher = suite.cipher;
+    ctx.negotiated_md = suite.md;
+    ctx.negotiated_key_len = suite.key_len;
+    ctx.handshake_keys = std::move(handshake_keys);
     ctx.dec_key = std::move(server_handshake_keys.first);
     ctx.dec_iv = std::move(server_handshake_keys.second);
     return boost::system::error_code{};
@@ -732,6 +739,118 @@ bool process_handshake_message(fetch_context& ctx, const std::vector<uint8_t>& m
     return ctx.saw_certificate && ctx.saw_server_finished;
 }
 
+bool contains_only_new_session_tickets(const std::span<const uint8_t> plaintext)
+{
+    if (plaintext.size() < 4U)
+    {
+        return false;
+    }
+    std::size_t pos = 0;
+    while (pos < plaintext.size())
+    {
+        if (plaintext.size() - pos < 4U || plaintext[pos] != tls::kHandshakeTypeNewSessionTicket)
+        {
+            return false;
+        }
+        const auto message_len = (static_cast<std::size_t>(plaintext[pos + 1]) << 16U) |
+                                 (static_cast<std::size_t>(plaintext[pos + 2]) << 8U) | static_cast<std::size_t>(plaintext[pos + 3]);
+        const auto message_size = 4U + message_len;
+        if (plaintext.size() - pos < message_size)
+        {
+            return false;
+        }
+        pos += message_size;
+    }
+    return true;
+}
+
+bool wait_for_post_handshake_data(fetch_context& ctx, const std::chrono::milliseconds timeout, boost::system::error_code& ec)
+{
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (std::chrono::steady_clock::now() < deadline)
+    {
+        const auto available = ctx.socket.available(ec);
+        if (ec)
+        {
+            return false;
+        }
+        if (available != 0)
+        {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ec.clear();
+    return false;
+}
+
+bool send_client_finished_and_prepare_application_keys(fetch_context& ctx, boost::system::error_code& ec)
+{
+    constexpr std::size_t kIvLen = 12;
+
+    if (ctx.negotiated_cipher == nullptr || ctx.negotiated_md == nullptr || ctx.handshake_keys.client_handshake_traffic_secret.empty() ||
+        ctx.handshake_keys.master_secret.empty())
+    {
+        ec = boost::asio::error::invalid_argument;
+        return false;
+    }
+
+    const auto c_hs_keys =
+        tls::key_schedule::derive_traffic_keys(ctx.handshake_keys.client_handshake_traffic_secret, ec, ctx.negotiated_key_len, kIvLen, ctx.negotiated_md);
+    if (ec)
+    {
+        return false;
+    }
+
+    const auto transcript_hash = ctx.transcript.finish();
+    const auto verify_data =
+        tls::key_schedule::compute_finished_verify_data(ctx.handshake_keys.client_handshake_traffic_secret, transcript_hash, ctx.negotiated_md, ec);
+    if (ec)
+    {
+        return false;
+    }
+
+    const auto finished_message = tls::construct_finished(verify_data);
+    const tls::cipher_context record_ctx;
+    const traffic_key_material key_material{
+        .key = c_hs_keys.first,
+        .iv = c_hs_keys.second,
+    };
+
+    std::vector<uint8_t> out = {0x14, 0x03, 0x03, 0x00, 0x01, 0x01};
+    tls::record_layer::encrypt_tls_record(record_ctx, ctx.negotiated_cipher, key_material, 0, finished_message, tls::kContentTypeHandshake, out, ec);
+    if (ec)
+    {
+        return false;
+    }
+
+    const auto written = boost::asio::write(ctx.socket, boost::asio::buffer(out), ec);
+    if (ec)
+    {
+        return false;
+    }
+    if (written != out.size())
+    {
+        ec = boost::asio::error::fault;
+        return false;
+    }
+
+    const auto app_secrets = tls::key_schedule::derive_application_secrets(ctx.handshake_keys.master_secret, transcript_hash, ctx.negotiated_md, ec);
+    if (ec)
+    {
+        return false;
+    }
+    auto server_app_keys = tls::key_schedule::derive_traffic_keys(app_secrets.second, ec, ctx.negotiated_key_len, kIvLen, ctx.negotiated_md);
+    if (ec)
+    {
+        return false;
+    }
+    ctx.dec_key = std::move(server_app_keys.first);
+    ctx.dec_iv = std::move(server_app_keys.second);
+    ctx.seq = 0;
+    return true;
+}
+
 bool consume_handshake_messages(fetch_context& ctx,
                                 tls::handshake_reassembler& assembler,
                                 std::vector<uint8_t>& message,
@@ -793,6 +912,48 @@ void append_next_handshake_record(fetch_context& ctx,
     assembler.append(read_result.second);
 }
 
+void collect_post_handshake_tickets(fetch_context& ctx)
+{
+    constexpr std::size_t kMaxPostHandshakeTicketRecords = 2;
+    const auto timeout = std::chrono::milliseconds(500);
+    std::vector<uint8_t> plaintext_buffer(tls::kMaxTlsPlaintextLen + 256);
+    for (std::size_t i = 0; i < kMaxPostHandshakeTicketRecords; ++i)
+    {
+        boost::system::error_code ec;
+        if (!wait_for_post_handshake_data(ctx, timeout, ec))
+        {
+            return;
+        }
+
+        const auto read_result = read_record(ctx, plaintext_buffer, ec);
+        if (ec)
+        {
+            LOG_WARN("{} target {}:{} sni {} fingerprint {} read post-handshake ticket record {} failed {}",
+                     relay::log_event::kCert,
+                     ctx.host,
+                     ctx.port,
+                     cert_log_sni(ctx),
+                     fingerprint_name(ctx.fingerprint),
+                     i,
+                     ec.message());
+            return;
+        }
+        if (read_result.first != tls::kContentTypeHandshake || read_result.second.empty() ||
+            !contains_only_new_session_tickets(read_result.second))
+        {
+            return;
+        }
+        ctx.material.post_handshake_ticket_plaintext_sizes.push_back(static_cast<uint16_t>(read_result.second.size()));
+        LOG_INFO("{} target {}:{} sni {} fingerprint {} observed post-handshake new session ticket plaintext len {}",
+                 relay::log_event::kCert,
+                 ctx.host,
+                 ctx.port,
+                 cert_log_sni(ctx),
+                 fingerprint_name(ctx.fingerprint),
+                 read_result.second.size());
+    }
+}
+
 bool collect_site_material(fetch_context& ctx)
 {
     tls::handshake_reassembler assembler;
@@ -817,6 +978,21 @@ bool collect_site_material(fetch_context& ctx)
 
         if (consume_handshake_messages(ctx, assembler, message, ec))
         {
+            if (!send_client_finished_and_prepare_application_keys(ctx, ec))
+            {
+                LOG_WARN("{} target {}:{} sni {} fingerprint {} send client finished for post-handshake sampling failed {}",
+                         relay::log_event::kCert,
+                         ctx.host,
+                         ctx.port,
+                         cert_log_sni(ctx),
+                         fingerprint_name(ctx.fingerprint),
+                         ec.message());
+                ec.clear();
+            }
+            else
+            {
+                collect_post_handshake_tickets(ctx);
+            }
             return true;
         }
         if (ec)
