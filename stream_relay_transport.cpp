@@ -481,8 +481,7 @@ void vision_connection_tcp_stream::capture_write_plan_locked(std::span<const uin
         auto mode = vision::padding_mode::kNone;
         if (segment.cmd == vision::command::kContinue)
         {
-            mode = first_continue_padding_ ? vision::padding_mode::kLong : vision::padding_mode::kShort;
-            first_continue_padding_ = false;
+            mode = vision::next_continue_padding_mode(first_continue_padding_);
         }
         segments.push_back(encoded_segment{
             .segment = segment,

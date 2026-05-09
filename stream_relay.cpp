@@ -9,6 +9,7 @@
 #include <boost/asio/as_tuple.hpp>
 #include <boost/asio/experimental/awaitable_operators.hpp>
 
+#include "constants.h"
 #include "log.h"
 #include "net_utils.h"
 #include "task_group.h"
@@ -117,7 +118,7 @@ boost::asio::awaitable<void> relay_direction(stream_relay_context& context,
                                              relay_result_state& result_state)
 {
     boost::system::error_code ec;
-    std::array<uint8_t, 8192> buffer{};
+    std::array<uint8_t, constants::net::kBufferSize> buffer{};
     for (;;)
     {
         const auto bytes_read = co_await source.read(std::span<uint8_t>(buffer), ec);

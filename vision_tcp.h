@@ -47,6 +47,7 @@ struct block
                                              std::span<const uint8_t> content,
                                              std::span<const uint8_t> padding,
                                              std::vector<uint8_t>& out);
+[[nodiscard]] padding_mode next_continue_padding_mode(bool& first_continue);
 
 [[nodiscard]] bool encode_block(command cmd,
                                 std::span<const uint8_t> content,

@@ -422,6 +422,12 @@ if(UNIX AND NOT APPLE AND NOT ENABLE_STATIC_LINK)
   target_link_options(vision_tcp_regression PRIVATE "-Wl,--no-as-needed" "${BROTLICOMMON_LIBRARY}" "-Wl,--as-needed")
 endif()
 
+add_executable(vision_padding_regression scripts/test_vision_padding_regression.cpp)
+target_link_libraries(vision_padding_regression PRIVATE core)
+if(UNIX AND NOT APPLE AND NOT ENABLE_STATIC_LINK)
+  target_link_options(vision_padding_regression PRIVATE "-Wl,--no-as-needed" "${BROTLICOMMON_LIBRARY}" "-Wl,--as-needed")
+endif()
+
 add_executable(router_regression scripts/test_router_regression.cpp)
 target_link_libraries(router_regression PRIVATE core)
 if(UNIX AND NOT APPLE AND NOT ENABLE_STATIC_LINK)
@@ -596,6 +602,9 @@ if(BUILD_TESTING)
 
   add_test(NAME vision_tcp_regression COMMAND $<TARGET_FILE:vision_tcp_regression>)
   set_tests_properties(vision_tcp_regression PROPERTIES TIMEOUT 30)
+
+  add_test(NAME vision_padding_regression COMMAND $<TARGET_FILE:vision_padding_regression>)
+  set_tests_properties(vision_padding_regression PROPERTIES TIMEOUT 30)
 
   add_test(NAME router_regression COMMAND $<TARGET_FILE:router_regression>)
   set_tests_properties(router_regression PROPERTIES TIMEOUT 30)

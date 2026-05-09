@@ -38,7 +38,8 @@ constexpr uint16_t kTlsAes128Ccm8Sha256 = 0x1305;
             return false;
     }
 }
-constexpr std::size_t kLongPaddingThreshold = 900;
+constexpr std::size_t kLongPaddingThreshold = 512;
+constexpr std::size_t kLongPaddingJitter = 128;
 
 [[nodiscard]] std::size_t dir_index(const direction dir) { return static_cast<std::size_t>(dir); }
 
@@ -99,7 +100,7 @@ void append_u16(std::vector<uint8_t>& out, const std::size_t value)
     std::size_t wanted = seed % 256U;
     if (mode == padding_mode::kLong && content_len < kLongPaddingThreshold)
     {
-        wanted = (kLongPaddingThreshold - content_len) + (seed % 500U);
+        wanted = (kLongPaddingThreshold - content_len) + (seed % kLongPaddingJitter);
     }
     return std::min(wanted, max_padding);
 }
@@ -352,6 +353,16 @@ bool encode_block_with_padding(const command cmd,
     out.insert(out.end(), content.begin(), content.end());
     out.insert(out.end(), padding.begin(), padding.end());
     return true;
+}
+
+padding_mode next_continue_padding_mode(bool& first_continue)
+{
+    if (first_continue)
+    {
+        first_continue = false;
+        return padding_mode::kLong;
+    }
+    return padding_mode::kShort;
 }
 
 bool encode_block(const command cmd,

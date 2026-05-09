@@ -209,8 +209,8 @@ bool test_block_codec()
     ok = ok && require(encode_block(command::kContinue, content, padding_mode::kShort, random_encoded, ec) && !ec, "random padding encode failed") &&
          require(random_encoded.size() <= relay::vision::kBlockHeaderSize + content.size() + 255U, "short padded block should stay bounded");
     ok = ok && require(encode_block(command::kContinue, content, padding_mode::kLong, random_encoded, ec) && !ec, "long padding encode failed") &&
-         require(random_encoded.size() >= relay::vision::kBlockHeaderSize + 900U, "long padded block should hide small payloads") &&
-         require(random_encoded.size() <= relay::vision::kBlockHeaderSize + 1399U, "long padded block should stay bounded");
+         require(random_encoded.size() >= relay::vision::kBlockHeaderSize + 512U, "long padded block should hide small payloads") &&
+         require(random_encoded.size() <= relay::vision::kBlockHeaderSize + 639U, "long padded block should stay bounded");
 
     const std::vector<uint8_t> oversized(tls::kMaxTlsApplicationDataPayloadLen, 0x42);
     ok = ok && require(!encode_block(command::kContinue, oversized, padding_mode::kNone, random_encoded, ec), "oversized content should fail");
@@ -218,6 +218,16 @@ bool test_block_codec()
     const std::vector<uint8_t> unknown_cmd{0xFE, 0x00, 0x00, 0x00, 0x00};
     parser.append(unknown_cmd);
     ok = ok && require(parser.next(parsed, ec) == parse_status::kError && ec, "unknown command should fail");
+    return ok;
+}
+
+bool test_continue_padding_policy()
+{
+    bool first_continue = true;
+    bool ok = require(relay::vision::next_continue_padding_mode(first_continue) == relay::vision::padding_mode::kLong,
+                      "first continue segment should use long padding");
+    ok = ok && require(relay::vision::next_continue_padding_mode(first_continue) == relay::vision::padding_mode::kShort,
+                       "subsequent continue segments should use short padding");
     return ok;
 }
 
@@ -533,8 +543,8 @@ int main()
     boost::asio::io_context io_context;
     auto async_ok = boost::asio::co_spawn(io_context, test_vision_stream_close_aborts_stale_reads(), boost::asio::use_future);
     auto async_merge_ok = boost::asio::co_spawn(io_context, test_vision_stream_direct_read_merges_buffered_raw(), boost::asio::use_future);
-    const bool ok = test_block_codec() && test_tls_tracker_direct() && test_tls_tracker_direct_boundaries() && test_tls_tracker_rejects() &&
-                    test_tls_tracker_observe();
+    const bool ok = test_block_codec() && test_continue_padding_policy() && test_tls_tracker_direct() &&
+                    test_tls_tracker_direct_boundaries() && test_tls_tracker_rejects() && test_tls_tracker_observe();
     io_context.run();
     return ok && async_ok.get() && async_merge_ok.get() ? 0 : 1;
 }
