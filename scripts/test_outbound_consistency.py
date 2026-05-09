@@ -490,7 +490,6 @@ def main():
         socks_retry_upstream_port = allocate_tcp_port()
         socks_retry_upstream_udp_port = allocate_udp_port()
         udp_echo_port = allocate_udp_port()
-        short_id = "0102030405060708"
         sni = "www.example.com"
 
         key_output = run_checked([str(binary), "x25519"], env=runtime_env, capture_output=True)
@@ -541,7 +540,6 @@ def main():
                         "sni": sni,
                         "private_key": private_key,
                         "public_key": public_key,
-                        "short_id": short_id,
                         "replay_cache_max_entries": 100000,
                     },
                 }
@@ -652,7 +650,6 @@ def main():
                         "sni": sni,
                         "fingerprint": "random",
                         "public_key": public_key,
-                        "short_id": short_id,
                         "max_handshake_records": 256,
                     },
                 },

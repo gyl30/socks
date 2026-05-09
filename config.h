@@ -71,7 +71,6 @@ struct config
         bool fetch_site_material = true;
         bool vision = false;
         std::string private_key;
-        std::string short_id;
         uint32_t replay_cache_max_entries = 100000;
     };
 
@@ -82,7 +81,6 @@ struct config
         std::string sni = "www.apple.com";
         std::string fingerprint = "random";
         std::string public_key;
-        std::string short_id;
         uint32_t max_handshake_records = 256;
         bool vision = false;
     };

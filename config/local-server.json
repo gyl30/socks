@@ -15,7 +15,6 @@
         "site_port": 443,
         "private_key": "d095934f8e38d187ffb43304fb6cebb96aeb51deb2d00a06ebb8c8a841924a47",
         "public_key": "8e9e4aaa52f801da410b42390e8de31602263ef385da0bd677fd4d585c0a727b",
-        "short_id": "0102030405060708",
         "replay_cache_max_entries": 100000
       }
     },

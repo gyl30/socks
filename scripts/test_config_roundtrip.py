@@ -94,7 +94,6 @@ def run_vision_startup_smoke(binary, runtime_env, temp_root):
                 "fetch_site_material": False,
                 "vision": True,
                 "private_key": private_key,
-                "short_id": "0102030405060708",
                 "replay_cache_max_entries": 1000,
             },
         }
@@ -103,7 +102,6 @@ def run_vision_startup_smoke(binary, runtime_env, temp_root):
     cfg["outbounds"][0]["settings"]["port"] = reality_port
     cfg["outbounds"][0]["settings"]["sni"] = "localhost"
     cfg["outbounds"][0]["settings"]["public_key"] = public_key
-    cfg["outbounds"][0]["settings"]["short_id"] = "0102030405060708"
     cfg["outbounds"][0]["settings"]["vision"] = True
     cfg["routing"] = [
         {"type": "inbound", "values": ["socks-in"], "out": "reality-out"},
@@ -182,16 +180,6 @@ def run_invalid_reality_config_cases(binary, runtime_env, temp_root):
         )
     )
 
-    invalid_outbound_short_id = copy.deepcopy(base_cfg)
-    invalid_outbound_short_id["outbounds"][0]["settings"]["short_id"] = "001"
-    cases.append(
-        (
-            "invalid_outbound_short_id",
-            invalid_outbound_short_id,
-            "outbounds[0].settings.short_id hex length invalid",
-        )
-    )
-
     invalid_outbound_fingerprint = copy.deepcopy(base_cfg)
     invalid_outbound_fingerprint["outbounds"][0]["settings"]["fingerprint"] = "not-real"
     cases.append(
@@ -233,7 +221,6 @@ def run_invalid_reality_config_cases(binary, runtime_env, temp_root):
                 "sni": "localhost",
                 "site_port": 443,
                 "private_key": "xyz",
-                "short_id": "0102030405060708",
                 "replay_cache_max_entries": 1000,
             },
         }
@@ -248,8 +235,8 @@ def run_invalid_reality_config_cases(binary, runtime_env, temp_root):
         )
     )
 
-    invalid_inbound_short_id = copy.deepcopy(base_cfg)
-    invalid_inbound_short_id["inbounds"] = [
+    valid_inbound_reality = copy.deepcopy(base_cfg)
+    valid_inbound_reality["inbounds"] = [
         {
             "type": "reality",
             "tag": "reality-in",
@@ -259,23 +246,12 @@ def run_invalid_reality_config_cases(binary, runtime_env, temp_root):
                 "sni": "localhost",
                 "site_port": 443,
                 "private_key": private_key,
-                "short_id": "xyz",
                 "replay_cache_max_entries": 1000,
             },
         }
     ]
-    invalid_inbound_short_id["outbounds"] = [{"type": "direct", "tag": "direct"}]
-    invalid_inbound_short_id["routing"] = [{"type": "inbound", "values": ["reality-in"], "out": "direct"}]
-    cases.append(
-        (
-            "invalid_inbound_short_id",
-            invalid_inbound_short_id,
-            "inbounds[0].settings.short_id hex length invalid",
-        )
-    )
-
-    valid_inbound_reality = copy.deepcopy(invalid_inbound_short_id)
-    valid_inbound_reality["inbounds"][0]["settings"]["short_id"] = "0102030405060708"
+    valid_inbound_reality["outbounds"] = [{"type": "direct", "tag": "direct"}]
+    valid_inbound_reality["routing"] = [{"type": "inbound", "values": ["reality-in"], "out": "direct"}]
 
     invalid_inbound_port_zero = copy.deepcopy(valid_inbound_reality)
     invalid_inbound_port_zero["inbounds"][0]["settings"]["port"] = 0
@@ -358,7 +334,6 @@ def run_reality_material_fetch_startup_case(binary, runtime_env, temp_root):
                     "site_port": 443,
                     "fetch_site_material": True,
                     "private_key": private_key,
-                    "short_id": "0102030405060708",
                     "replay_cache_max_entries": 1000,
                 },
             }

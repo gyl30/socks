@@ -46,7 +46,6 @@ namespace
 
 constexpr std::size_t kMaxConfigBytes = 1024UL * 1024UL;
 constexpr std::size_t kRealityKeyBytes = 32;
-constexpr std::size_t kRealityShortIdMaxBytes = 8;
 
 [[nodiscard]] std::string read_file_to_string(const std::string& filename)
 {
@@ -627,14 +626,6 @@ template <typename T>
     {
         return false;
     }
-    if (!parse_string_field(value, "short_id", path, out.short_id, filename, true))
-    {
-        return false;
-    }
-    if (!validate_reality_hex_field(out.short_id, filename, join_path(path, "short_id"), 1, kRealityShortIdMaxBytes))
-    {
-        return false;
-    }
     if (!parse_unsigned_field(value, "replay_cache_max_entries", path, out.replay_cache_max_entries, filename, true))
     {
         return false;
@@ -684,14 +675,6 @@ template <typename T>
         return false;
     }
     if (!validate_reality_hex_field(out.public_key, filename, join_path(path, "public_key"), kRealityKeyBytes, kRealityKeyBytes))
-    {
-        return false;
-    }
-    if (!parse_string_field(value, "short_id", path, out.short_id, filename, true))
-    {
-        return false;
-    }
-    if (!validate_reality_hex_field(out.short_id, filename, join_path(path, "short_id"), 1, kRealityShortIdMaxBytes))
     {
         return false;
     }
@@ -1402,12 +1385,10 @@ std::string dump_default_config()
 
     uint8_t public_key[32] = {0};
     uint8_t private_key[32] = {0};
-    uint8_t short_id[8] = {0};
     auto cleanse_generated_keys = [&]()
     {
         OPENSSL_cleanse(private_key, sizeof(private_key));
         OPENSSL_cleanse(public_key, sizeof(public_key));
-        OPENSSL_cleanse(short_id, sizeof(short_id));
     };
 
     if (tls::crypto_util::generate_x25519_keypair(public_key, private_key))
@@ -1431,14 +1412,6 @@ std::string dump_default_config()
         reality_outbound.reality->sni = "www.apple.com";
         reality_outbound.reality->fingerprint = "random";
         reality_outbound.reality->public_key = public_hex;
-
-        if (RAND_bytes(short_id, static_cast<int>(sizeof(short_id))) != 1)
-        {
-            std::memcpy(short_id, private_key, sizeof(short_id));
-        }
-        const std::vector<uint8_t> short_id_bytes(short_id, short_id + sizeof(short_id));
-        const std::string short_id_hex = tls::crypto_util::bytes_to_hex(short_id_bytes);
-        reality_outbound.reality->short_id = short_id_hex;
 
         config::outbound_entry_t direct_outbound;
         direct_outbound.type = std::string(config_type::kOutboundDirect);

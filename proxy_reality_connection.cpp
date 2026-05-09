@@ -28,8 +28,6 @@ namespace relay
 namespace
 {
 constexpr std::size_t kRealityServerKeyBytes = 32;
-constexpr std::size_t kRealityShortIdMinBytes = 1;
-constexpr std::size_t kRealityShortIdMaxBytes = 8;
 
 bool contains_only_new_session_tickets(const std::span<const uint8_t> plaintext)
 {
@@ -89,14 +87,6 @@ bool build_connect_options(
     {
         ec = boost::asio::error::invalid_argument;
         LOG_ERROR("{} out_tag {} stage build_connect_options public_key invalid", log_event::kConnInit, outbound_tag);
-        return false;
-    }
-
-    if (reality::decode_hex_field(settings->short_id, kRealityShortIdMinBytes, kRealityShortIdMaxBytes, options.short_id_bytes) !=
-        reality::hex_field_status::kOk)
-    {
-        ec = boost::asio::error::invalid_argument;
-        LOG_ERROR("{} out_tag {} stage build_connect_options short_id invalid", log_event::kConnInit, outbound_tag);
         return false;
     }
 

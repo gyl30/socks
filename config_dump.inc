@@ -97,8 +97,6 @@ void write_reality_inbound_settings(rapidjson::PrettyWriter<rapidjson::StringBuf
     writer.Bool(value.vision);
     writer.Key("private_key");
     writer.String(value.private_key.c_str());
-    writer.Key("short_id");
-    writer.String(value.short_id.c_str());
     writer.Key("replay_cache_max_entries");
     writer.Uint(value.replay_cache_max_entries);
 }
@@ -115,8 +113,6 @@ void write_reality_outbound_settings(rapidjson::PrettyWriter<rapidjson::StringBu
     writer.String(value.fingerprint.c_str());
     writer.Key("public_key");
     writer.String(value.public_key.c_str());
-    writer.Key("short_id");
-    writer.String(value.short_id.c_str());
     writer.Key("max_handshake_records");
     writer.Uint(value.max_handshake_records);
     writer.Key("vision");

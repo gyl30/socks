@@ -34,7 +34,6 @@ def run_guard_case(repo_root, binary, runtime_env, temp_root, case_name, client_
     origin_host = "localhost"
     socks_host = "127.0.0.1"
     reality_sni = "www.example.com"
-    server_short_id = "0102030405060708"
 
     key_output = run_checked([str(binary), "x25519"], env=runtime_env, capture_output=True)
     private_key, public_key = parse_key_output(key_output.stdout)
@@ -71,7 +70,6 @@ def run_guard_case(repo_root, binary, runtime_env, temp_root, case_name, client_
             sni=reality_sni,
             private_key=private_key,
             public_key=public_key,
-            short_id=server_short_id,
         )
         client_cfg = make_reality_client_config(
             log_file=client_log,
@@ -80,7 +78,6 @@ def run_guard_case(repo_root, binary, runtime_env, temp_root, case_name, client_
             server_port=server_port,
             sni=reality_sni,
             public_key=public_key,
-            short_id=server_short_id,
             reality_settings_overrides=client_outbound_overrides,
         )
 
@@ -160,17 +157,6 @@ def main():
     temp_root = pathlib.Path(tempfile.mkdtemp(prefix=".tmp-reality-handshake-guards.", dir=repo_root))
     try:
         runtime_env = build_runtime_env(binary)
-
-        run_guard_case(
-            repo_root,
-            binary,
-            runtime_env,
-            temp_root,
-            "wrong_short_id",
-            {"short_id": "1111111111111111"},
-            expected_server_log="auth fail short id mismatch",
-        )
-        print("wrong_short_id ok")
 
         run_guard_case(
             repo_root,

@@ -176,7 +176,6 @@ def main():
         client_socks_port = allocate_tcp_port()
         reality_a_port = allocate_tcp_port()
         reality_b_port = allocate_tcp_port()
-        short_id = "0102030405060708"
         sni = "www.apple.com"
 
         a_private_key, a_public_key = build_reality_keypair(binary, runtime_env)
@@ -192,7 +191,6 @@ def main():
             sni=sni,
             private_key=b_private_key,
             public_key=b_public_key,
-            short_id=short_id,
             outbounds=[
                 {
                     "type": "socks",
@@ -220,7 +218,6 @@ def main():
             sni=sni,
             private_key=a_private_key,
             public_key=a_public_key,
-            short_id=short_id,
             outbounds=[
                 {
                     "type": "reality",
@@ -231,7 +228,6 @@ def main():
                         "sni": sni,
                         "fingerprint": "random",
                         "public_key": b_public_key,
-                        "short_id": short_id,
                         "max_handshake_records": 256,
                     },
                 }
@@ -252,7 +248,6 @@ def main():
             server_port=reality_a_port,
             sni=sni,
             public_key=a_public_key,
-            short_id=short_id,
         )
         client_cfg["timeout"].update({"read": 1, "write": 1, "connect": 1, "idle": 5})
 

@@ -195,8 +195,6 @@ reality_inbound::reality_inbound(io_context_pool& pool,
         LOG_ERROR("{} stage init private_key length invalid {}", log_event::kConnInit, private_key_.size());
         return;
     }
-    boost::algorithm::unhex(settings_.short_id, std::back_inserter(short_id_bytes_));
-
     uint8_t cert_public_key[32] = {};
     if (!tls::crypto_util::generate_ed25519_keypair(cert_public_key, reality_cert_private_key_.data()))
     {

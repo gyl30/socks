@@ -126,7 +126,6 @@ def main():
 
         key_output = run_checked([str(binary), "x25519"], env=runtime_env, capture_output=True)
         private_key, public_key = parse_key_output(key_output.stdout)
-        short_id = "0102030405060708"
         sni = "www.example.com"
 
         http_root = temp_root / "http"
@@ -159,7 +158,6 @@ def main():
                         "sni": sni,
                         "private_key": private_key,
                         "public_key": public_key,
-                        "short_id": short_id,
                         "replay_cache_max_entries": 100000,
                     },
                 },
@@ -239,7 +237,6 @@ def main():
                         "sni": sni,
                         "fingerprint": "random",
                         "public_key": public_key,
-                        "short_id": short_id,
                         "max_handshake_records": 256,
                     },
                 },

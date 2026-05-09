@@ -398,7 +398,7 @@ def check_thresholds(resource_summary):
             raise RuntimeError(f"{label} peak fd exceeded threshold")
 
 
-def build_server_config(tmp_dir, server_port, private_key, public_key, short_id, sni, args):
+def build_server_config(tmp_dir, server_port, private_key, public_key, sni, args):
     return {
         "workers": args.server_workers,
         "log": {
@@ -415,7 +415,6 @@ def build_server_config(tmp_dir, server_port, private_key, public_key, short_id,
                     "sni": sni,
                     "private_key": private_key,
                     "public_key": public_key,
-                    "short_id": short_id,
                     "replay_cache_max_entries": 100000,
                 },
             }
@@ -446,7 +445,7 @@ def build_server_config(tmp_dir, server_port, private_key, public_key, short_id,
     }
 
 
-def build_client_config(tmp_dir, socks_port, server_port, public_key, short_id, sni, args):
+def build_client_config(tmp_dir, socks_port, server_port, public_key, sni, args):
     return {
         "workers": args.client_workers,
         "log": {
@@ -474,7 +473,6 @@ def build_client_config(tmp_dir, socks_port, server_port, public_key, short_id, 
                     "sni": sni,
                     "fingerprint": "random",
                     "public_key": public_key,
-                    "short_id": short_id,
                     "max_handshake_records": args.client_max_handshake_records,
                 },
             },
@@ -585,11 +583,10 @@ def main():
         server_port, socks_port, http_port = allocate_ports(3)
         key_output = run_command([str(binary), "x25519"], cwd=repo_root)
         private_key, public_key = parse_key_output(key_output)
-        short_id = "0102030405060708"
         sni = "www.example.com"
 
-        write_json(tmp_dir / "server.json", build_server_config(tmp_dir, server_port, private_key, public_key, short_id, sni, args))
-        write_json(tmp_dir / "client.json", build_client_config(tmp_dir, socks_port, server_port, public_key, short_id, sni, args))
+        write_json(tmp_dir / "server.json", build_server_config(tmp_dir, server_port, private_key, public_key, sni, args))
+        write_json(tmp_dir / "client.json", build_client_config(tmp_dir, socks_port, server_port, public_key, sni, args))
 
         http_dir = tmp_dir / "http"
         http_dir.mkdir(parents=True, exist_ok=True)

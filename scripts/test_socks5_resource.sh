@@ -84,7 +84,6 @@ PY
 key_output="$("$binary" x25519)"
 private_key="$(awk '/private key:/{print $3}' <<<"$key_output")"
 public_key="$(awk '/public key:/{print $3}' <<<"$key_output")"
-short_id="0102030405060708"
 sni="www.example.com"
 
 cat >"$tmp_dir/server.json" <<EOF
@@ -104,7 +103,6 @@ cat >"$tmp_dir/server.json" <<EOF
         "sni": "$sni",
         "private_key": "$private_key",
         "public_key": "$public_key",
-        "short_id": "$short_id",
         "replay_cache_max_entries": 100000
       }
     }
@@ -163,7 +161,6 @@ cat >"$tmp_dir/client.json" <<EOF
         "sni": "$sni",
         "fingerprint": "random",
         "public_key": "$public_key",
-        "short_id": "$short_id",
         "max_handshake_records": $client_max_handshake_records
       }
     },

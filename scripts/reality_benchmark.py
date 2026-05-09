@@ -255,7 +255,6 @@ def start_client_server_pair(repo_root, temp_root, binary, socks_port, server_po
                     "sni": reality_sni,
                     "private_key": private_key,
                     "public_key": public_key,
-                    "short_id": "0102030405060708",
                     "replay_cache_max_entries": 100000,
                 },
             }
@@ -312,7 +311,6 @@ def start_client_server_pair(repo_root, temp_root, binary, socks_port, server_po
                     "sni": reality_sni,
                     "fingerprint": fingerprint,
                     "public_key": public_key,
-                    "short_id": "0102030405060708",
                     "max_handshake_records": 256,
                 },
             },

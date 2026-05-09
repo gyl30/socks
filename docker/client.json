@@ -19,8 +19,7 @@
     },
     "reality": {
         "sni": "www.docker.test",
-        "public_key": "9b0afbe80e0b4307adc3a71bd79d4819ddfb12b0510e9282f551b34f7046fc6b",
-        "short_id": "0102030405060708"
+        "public_key": "9b0afbe80e0b4307adc3a71bd79d4819ddfb12b0510e9282f551b34f7046fc6b"
     },
     "timeout": {
         "idle": 300

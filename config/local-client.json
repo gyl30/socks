@@ -47,7 +47,6 @@
         "sni": "www.apple.com",
         "fingerprint": "random",
         "public_key": "8e9e4aaa52f801da410b42390e8de31602263ef385da0bd677fd4d585c0a727b",
-        "short_id": "0102030405060708",
         "max_handshake_records": 256
       }
     },
