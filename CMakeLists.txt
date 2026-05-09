@@ -540,6 +540,10 @@ endif()
 if(BUILD_TESTING)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
+  function(socks_append_test_labels test_name)
+    set_property(TEST ${test_name} APPEND PROPERTY LABELS ${ARGN})
+  endfunction()
+
   add_test(
     NAME reality_integration_smoke
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_reality_integration.py --binary $<TARGET_FILE:socks>)
@@ -645,5 +649,49 @@ if(BUILD_TESTING)
       NAME udp_transparent_${UDP_TRANSPARENT_SCENARIO}
       COMMAND $<TARGET_FILE:udp_transparent_session_regression> ${UDP_TRANSPARENT_SCENARIO})
     set_tests_properties(udp_transparent_${UDP_TRANSPARENT_SCENARIO} PROPERTIES TIMEOUT 30)
+  endforeach()
+
+  foreach(UNIT_TEST
+          socket_mark_regression
+          proxy_protocol_regression
+          reality_engine_regression
+          reality_auth_regression
+          vision_padding_regression
+          router_regression
+          task_group_regression
+          trace_store_regression
+          reality_tcp_budget_regression)
+    socks_append_test_labels(${UNIT_TEST} unit)
+  endforeach()
+
+  foreach(INTEGRATION_TEST
+          reality_integration_smoke
+          reality_handshake_guardrails
+          reality_protocol_guardrails
+          reality_vision_tcp
+          config_roundtrip_smoke
+          protocol_guardrails
+          trace_web_integration
+          outbound_consistency
+          reality_resource_stability
+          proxy_reality_connection_regression
+          vision_tcp_regression
+          net_utils_regression
+          proxy_timeout_budget
+          proxy_udp_stale_budget)
+    socks_append_test_labels(${INTEGRATION_TEST} integration requires-loopback)
+  endforeach()
+
+  foreach(UDP_TRANSPARENT_SCENARIO
+          route_blocked
+          idle_timeout
+          concurrent_sessions
+          closed_no_io
+          stopped
+          proxy_connect_fail
+          direct_connect_fail
+          transport_error
+          multi_outbound)
+    socks_append_test_labels(udp_transparent_${UDP_TRANSPARENT_SCENARIO} integration requires-loopback)
   endforeach()
 endif()
