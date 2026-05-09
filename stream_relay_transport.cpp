@@ -182,8 +182,9 @@ boost::asio::awaitable<std::size_t> tcp_socket_stream_relay_transport::read(std:
         co_return 0;
     }
 
-    const auto bytes_read = co_await socket_.async_read_some(
-        boost::asio::buffer(buffer.data(), buffer.size()), boost::asio::redirect_error(boost::asio::use_awaitable, ec));
+    const auto read_timeout = timeout_.idle == 0 ? timeout_.read : std::max(timeout_.read, timeout_.idle + 2U);
+    const auto bytes_read = co_await net::wait_read_some_with_timeout(
+        socket_, boost::asio::buffer(buffer.data(), buffer.size()), read_timeout, ec);
     if (ec)
     {
         co_return 0;

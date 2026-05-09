@@ -305,8 +305,8 @@ boost::asio::awaitable<tcp_outbound_connect_result> direct_tcp_outbound::connect
 
 boost::asio::awaitable<std::size_t> direct_tcp_outbound::read(std::span<uint8_t> buf, boost::system::error_code& ec)
 {
-    auto n = co_await socket_.async_read_some(
-        boost::asio::buffer(buf.data(), buf.size()), boost::asio::redirect_error(boost::asio::use_awaitable, ec));
+    const auto read_timeout = cfg_.timeout.idle == 0 ? cfg_.timeout.read : std::max(cfg_.timeout.read, cfg_.timeout.idle + 2U);
+    auto n = co_await net::wait_read_some_with_timeout(socket_, boost::asio::buffer(buf.data(), buf.size()), read_timeout, ec);
     co_return n;
 }
 
@@ -570,8 +570,8 @@ boost::asio::awaitable<tcp_outbound_connect_result> socks_tcp_outbound::connect(
 
 boost::asio::awaitable<std::size_t> socks_tcp_outbound::read(std::span<uint8_t> buf, boost::system::error_code& ec)
 {
-    const auto bytes = co_await socket_.async_read_some(
-        boost::asio::buffer(buf.data(), buf.size()), boost::asio::redirect_error(boost::asio::use_awaitable, ec));
+    const auto read_timeout = cfg_.timeout.idle == 0 ? cfg_.timeout.read : std::max(cfg_.timeout.read, cfg_.timeout.idle + 2U);
+    const auto bytes = co_await net::wait_read_some_with_timeout(socket_, boost::asio::buffer(buf.data(), buf.size()), read_timeout, ec);
     co_return bytes;
 }
 
