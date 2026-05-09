@@ -154,6 +154,76 @@ boost::asio::awaitable<bool> run_post_handshake_ticket_regression()
     co_return ok;
 }
 
+boost::asio::awaitable<bool> run_close_notify_regression()
+{
+    auto executor = co_await boost::asio::this_coro::executor;
+    relay::config cfg;
+    cfg.timeout.read = 5;
+    cfg.timeout.write = 5;
+
+    boost::system::error_code ec;
+    boost::asio::ip::tcp::acceptor acceptor(executor);
+    acceptor.open(boost::asio::ip::tcp::v4(), ec);
+    bool ok = require(!ec, "close_notify acceptor open failed");
+    acceptor.bind(boost::asio::ip::tcp::endpoint(boost::asio::ip::address_v4::loopback(), 0), ec);
+    ok = ok && require(!ec, "close_notify acceptor bind failed");
+    acceptor.listen(boost::asio::socket_base::max_listen_connections, ec);
+    ok = ok && require(!ec, "close_notify acceptor listen failed");
+    if (!ok)
+    {
+        co_return false;
+    }
+
+    const auto endpoint = acceptor.local_endpoint(ec);
+    if (!require(!ec, "close_notify endpoint failed"))
+    {
+        co_return false;
+    }
+
+    boost::asio::ip::tcp::socket client_socket(executor);
+    co_await client_socket.async_connect(endpoint, boost::asio::redirect_error(boost::asio::use_awaitable, ec));
+    if (!require(!ec, "close_notify client connect failed"))
+    {
+        co_return false;
+    }
+
+    auto server_socket = co_await acceptor.async_accept(boost::asio::redirect_error(boost::asio::use_awaitable, ec));
+    if (!require(!ec, "close_notify server accept failed"))
+    {
+        co_return false;
+    }
+
+    auto client_connection = std::make_shared<relay::proxy_reality_connection>(std::move(client_socket), make_record_context(), cfg, 4);
+
+    const tls::cipher_context record_ctx;
+    const auto key_material = make_key_material(0x11, 0x22);
+    std::vector<uint8_t> ciphertext;
+    const std::vector<uint8_t> close_notify{0x01, 0x00};
+    tls::record_layer::encrypt_tls_record(
+        record_ctx, EVP_aes_128_gcm(), key_material, 0, close_notify, tls::kContentTypeAlert, ciphertext, ec);
+    if (!require(!ec, "close_notify encrypt failed"))
+    {
+        co_return false;
+    }
+
+    co_await boost::asio::async_write(server_socket, boost::asio::buffer(ciphertext), boost::asio::redirect_error(boost::asio::use_awaitable, ec));
+    if (!require(!ec, "close_notify write ciphertext failed"))
+    {
+        co_return false;
+    }
+
+    std::vector<uint8_t> read_buffer(16);
+    const auto bytes_read = co_await client_connection->read_some(read_buffer, cfg.timeout.read, ec);
+    ok = ok && require(bytes_read == 0, "close_notify should not yield plaintext");
+    ok = ok && require(ec == boost::asio::error::eof, "close_notify should surface eof");
+
+    boost::system::error_code close_ec;
+    server_socket.close(close_ec);
+    co_await client_connection->async_close(close_ec);
+    ok = ok && require(!close_ec, "close_notify close failed");
+    co_return ok;
+}
+
 boost::asio::awaitable<bool> run_error_code_regression()
 {
     auto executor = co_await boost::asio::this_coro::executor;
@@ -253,7 +323,12 @@ int main()
             {
                 co_return false;
             }
-            co_return co_await run_post_handshake_ticket_regression();
+            const auto ticket_ok = co_await run_post_handshake_ticket_regression();
+            if (!ticket_ok)
+            {
+                co_return false;
+            }
+            co_return co_await run_close_notify_regression();
         }(),
         boost::asio::use_future);
     io_context.run();

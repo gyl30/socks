@@ -28,6 +28,7 @@ namespace relay
 namespace
 {
 constexpr std::size_t kRealityServerKeyBytes = 32;
+constexpr uint8_t kTlsAlertDescriptionCloseNotify = 0x00;
 
 bool contains_only_new_session_tickets(const std::span<const uint8_t> plaintext)
 {
@@ -52,6 +53,11 @@ bool contains_only_new_session_tickets(const std::span<const uint8_t> plaintext)
         pos += message_size;
     }
     return true;
+}
+
+bool is_close_notify_alert(const std::span<const uint8_t> plaintext)
+{
+    return plaintext.size() == 2U && plaintext[1] == kTlsAlertDescriptionCloseNotify;
 }
 
 struct connect_options
@@ -443,6 +449,33 @@ boost::asio::awaitable<bool> proxy_reality_connection::ensure_plaintext_availabl
                           remote_port_,
                           record->payload.size());
                 continue;
+            }
+            if (record->content_type == tls::kContentTypeAlert)
+            {
+                if (is_close_notify_alert(record->payload))
+                {
+                    LOG_DEBUG("{} conn {} local {}:{} remote {}:{} stage close_notify",
+                              log_event::kDataRecv,
+                              conn_id_,
+                              local_host_,
+                              local_port_,
+                              remote_host_,
+                              remote_port_);
+                    ec = boost::asio::error::eof;
+                }
+                else
+                {
+                    ec = boost::asio::error::connection_reset;
+                    LOG_WARN("{} conn {} local {}:{} remote {}:{} stage unexpected_alert plaintext {}",
+                             log_event::kDataRecv,
+                             conn_id_,
+                             local_host_,
+                             local_port_,
+                             remote_host_,
+                             remote_port_,
+                             record->payload.size());
+                }
+                co_return false;
             }
             if (record->content_type != tls::kContentTypeApplicationData)
             {
