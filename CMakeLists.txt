@@ -589,6 +589,11 @@ if(BUILD_TESTING)
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_reality_resource_stability.py --binary $<TARGET_FILE:socks>)
   set_tests_properties(reality_resource_stability PROPERTIES TIMEOUT 180)
 
+  add_test(
+    NAME reality_vision_load
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_reality_vision_load.py --binary $<TARGET_FILE:socks>)
+  set_tests_properties(reality_vision_load PROPERTIES TIMEOUT 240)
+
   add_test(NAME socket_mark_regression COMMAND $<TARGET_FILE:socket_mark_regression>)
   set_tests_properties(socket_mark_regression PROPERTIES TIMEOUT 30)
 
@@ -669,6 +674,7 @@ if(BUILD_TESTING)
           reality_handshake_guardrails
           reality_protocol_guardrails
           reality_vision_tcp
+          reality_vision_load
           config_roundtrip_smoke
           protocol_guardrails
           trace_web_integration
