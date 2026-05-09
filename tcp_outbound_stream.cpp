@@ -461,6 +461,11 @@ boost::asio::awaitable<bool> socks_tcp_outbound::read_connect_reply(tcp_outbound
         ec = boost::asio::error::invalid_argument;
         co_return false;
     }
+    if (header[2] != 0x00)
+    {
+        ec = boost::asio::error::invalid_argument;
+        co_return false;
+    }
 
     result.socks_rep = header[1];
     if (result.socks_rep != socks::kRepSuccess)

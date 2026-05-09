@@ -404,6 +404,12 @@ if(UNIX AND NOT APPLE AND NOT ENABLE_STATIC_LINK)
   target_link_options(proxy_reality_connection_regression PRIVATE "-Wl,--no-as-needed" "${BROTLICOMMON_LIBRARY}" "-Wl,--as-needed")
 endif()
 
+add_executable(socks_outbound_regression scripts/test_socks_outbound_regression.cpp)
+target_link_libraries(socks_outbound_regression PRIVATE core)
+if(UNIX AND NOT APPLE AND NOT ENABLE_STATIC_LINK)
+  target_link_options(socks_outbound_regression PRIVATE "-Wl,--no-as-needed" "${BROTLICOMMON_LIBRARY}" "-Wl,--as-needed")
+endif()
+
 add_executable(reality_engine_regression scripts/test_reality_engine_regression.cpp)
 target_link_libraries(reality_engine_regression PRIVATE core)
 if(UNIX AND NOT APPLE AND NOT ENABLE_STATIC_LINK)
@@ -603,6 +609,9 @@ if(BUILD_TESTING)
   add_test(NAME proxy_reality_connection_regression COMMAND $<TARGET_FILE:proxy_reality_connection_regression>)
   set_tests_properties(proxy_reality_connection_regression PROPERTIES TIMEOUT 30)
 
+  add_test(NAME socks_outbound_regression COMMAND $<TARGET_FILE:socks_outbound_regression>)
+  set_tests_properties(socks_outbound_regression PROPERTIES TIMEOUT 30)
+
   add_test(NAME reality_engine_regression COMMAND $<TARGET_FILE:reality_engine_regression>)
   set_tests_properties(reality_engine_regression PROPERTIES TIMEOUT 30)
 
@@ -681,6 +690,7 @@ if(BUILD_TESTING)
           outbound_consistency
           reality_resource_stability
           proxy_reality_connection_regression
+          socks_outbound_regression
           vision_tcp_regression
           net_utils_regression
           proxy_timeout_budget

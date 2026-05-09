@@ -126,6 +126,11 @@ boost::asio::awaitable<bool> read_reply_address(
         {
             co_return false;
         }
+        if (length == 0)
+        {
+            ec = boost::asio::error::invalid_argument;
+            co_return false;
+        }
         payload.resize(static_cast<std::size_t>(length) + 2U);
         co_await net::wait_read_with_timeout(socket, boost::asio::buffer(payload), cfg.timeout.read, ec);
         if (ec)
@@ -133,6 +138,11 @@ boost::asio::awaitable<bool> read_reply_address(
             co_return false;
         }
         host.assign(payload.begin(), payload.end() - 2);
+        if (!socks::is_valid_domain(host))
+        {
+            ec = boost::asio::error::invalid_argument;
+            co_return false;
+        }
         port = static_cast<uint16_t>((payload[payload.size() - 2] << 8) | payload[payload.size() - 1]);
         co_return true;
     }

@@ -143,6 +143,11 @@ boost::asio::awaitable<bool> read_udp_associate_reply(boost::asio::ip::tcp::sock
         ec = boost::asio::error::invalid_argument;
         co_return false;
     }
+    if (header[2] != 0x00)
+    {
+        ec = boost::asio::error::invalid_argument;
+        co_return false;
+    }
 
     socks_rep = header[1];
     if (socks_rep != socks::kRepSuccess)
