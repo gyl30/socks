@@ -25,7 +25,6 @@ class server_handshaker
         const relay::config& cfg;
         const relay::config::reality_inbound_t& settings;
         const std::vector<uint8_t>& private_key;
-        const std::vector<uint8_t>& short_id_bytes;
         relay::replay_cache& replay_cache;
         const site_material* site_material_ptr = nullptr;
         const std::array<uint8_t, 32>& reality_cert_private_key;
@@ -41,7 +40,6 @@ class server_handshaker
     const relay::config& cfg_;
     const relay::config::reality_inbound_t& settings_;
     const std::vector<uint8_t>& private_key_;
-    const std::vector<uint8_t>& short_id_bytes_;
     relay::replay_cache& replay_cache_;
     const site_material* site_material_ = nullptr;
     const std::array<uint8_t, 32>& reality_cert_private_key_;

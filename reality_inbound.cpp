@@ -387,7 +387,6 @@ boost::asio::awaitable<void> reality_inbound::handle(io_worker& worker, std::sha
         .cfg = cfg_,
         .settings = settings_,
         .private_key = private_key_,
-        .short_id_bytes = short_id_bytes_,
         .replay_cache = replay_cache_,
         .site_material_ptr = site_material_ ? &*site_material_ : nullptr,
         .reality_cert_private_key = reality_cert_private_key_,

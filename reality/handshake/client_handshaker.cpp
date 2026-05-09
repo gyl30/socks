@@ -897,7 +897,6 @@ authenticated_client_hello build_authenticated_client_hello(const uint8_t* publi
                                                             const uint8_t* private_key,
                                                             const std::vector<uint8_t>& x25519_mlkem768_key_share,
                                                             const std::vector<uint8_t>& server_pub_key,
-                                                            const std::vector<uint8_t>& short_id_bytes,
                                                             const std::array<uint8_t, 3>& client_ver,
                                                             const fingerprint_template& spec,
                                                             const std::string& sni,
@@ -914,7 +913,7 @@ authenticated_client_hello build_authenticated_client_hello(const uint8_t* publi
     const auto now_seconds = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
     const auto now = static_cast<uint32_t>(now_seconds);
     std::array<uint8_t, kAuthPayloadLen> payload{};
-    if (!build_auth_payload(short_id_bytes, client_ver, now, payload))
+    if (!build_auth_payload(client_ver, now, payload))
     {
         ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
         return {};
@@ -1345,7 +1344,6 @@ boost::asio::awaitable<void> generate_and_send_client_hello(boost::asio::ip::tcp
                                                             const std::vector<uint8_t>& x25519_mlkem768_key_share,
                                                             const fingerprint_template& spec,
                                                             const std::vector<uint8_t>& server_pub_key,
-                                                            const std::vector<uint8_t>& short_id_bytes,
                                                             const std::string& sni,
                                                             tls::transcript& trans,
                                                             std::vector<uint8_t>& auth_key,
@@ -1356,7 +1354,7 @@ boost::asio::awaitable<void> generate_and_send_client_hello(boost::asio::ip::tcp
 {
     constexpr std::array<uint8_t, 3> client_ver_{1, 0, 0};
     auto client_hello_result = build_authenticated_client_hello(
-        public_key, private_key, x25519_mlkem768_key_share, server_pub_key, short_id_bytes, client_ver_, spec, sni, log_context, ec);
+        public_key, private_key, x25519_mlkem768_key_share, server_pub_key, client_ver_, spec, sni, log_context, ec);
     if (ec)
     {
         co_return;
@@ -1636,7 +1634,6 @@ boost::asio::awaitable<client_handshake_result> execute_client_handshake(boost::
                                                                          uint32_t conn_id,
                                                                          const client_ephemeral_keys& keys,
                                                                          const std::vector<uint8_t>& server_public_key,
-                                                                         const std::vector<uint8_t>& short_id_bytes,
                                                                          const std::string& sni,
                                                                          uint32_t max_handshake_records,
                                                                          uint32_t read_timeout_sec,
@@ -1656,7 +1653,6 @@ boost::asio::awaitable<client_handshake_result> execute_client_handshake(boost::
                                             keys.hybrid_key_share,
                                             keys.template_spec,
                                             server_public_key,
-                                            short_id_bytes,
                                             sni,
                                             trans,
                                             auth_key,
@@ -1730,12 +1726,10 @@ boost::asio::awaitable<client_handshake_result> execute_client_handshake(boost::
 client_handshaker::client_handshaker(const relay::config& cfg,
                                      std::string_view sni,
                                      const std::vector<uint8_t>& server_public_key,
-                                     const std::vector<uint8_t>& short_id_bytes,
                                      uint32_t max_handshake_records)
     : cfg_(cfg),
       sni_(sni),
       server_public_key_(server_public_key),
-      short_id_bytes_(short_id_bytes),
       max_handshake_records_(max_handshake_records)
 {
 }
@@ -1753,7 +1747,7 @@ boost::asio::awaitable<client_handshake_result> client_handshaker::run(boost::as
     log_selected_client_key_share(conn_id, sni_, keys);
 
     auto result = co_await execute_client_handshake(
-        socket, conn_id, keys, server_public_key_, short_id_bytes_, sni_, max_handshake_records_, cfg_.timeout.read, cfg_.timeout.write, ec);
+        socket, conn_id, keys, server_public_key_, sni_, max_handshake_records_, cfg_.timeout.read, cfg_.timeout.write, ec);
     co_return result;
 }
 

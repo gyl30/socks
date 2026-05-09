@@ -60,7 +60,6 @@ struct connect_options
     std::string remote_host;
     std::string remote_port;
     std::vector<uint8_t> server_pub_key;
-    std::vector<uint8_t> short_id_bytes;
     uint32_t max_handshake_records = constants::reality_limits::kMaxHandshakeRecords;
     uint32_t connect_mark = 0;
 };
@@ -205,7 +204,7 @@ boost::asio::awaitable<reality::client_handshake_result> perform_reality_handsha
     boost::asio::ip::tcp::socket& socket, const config& cfg, const connect_options& options, uint32_t conn_id, boost::system::error_code& ec)
 {
     const reality::client_handshaker handshaker(
-        cfg, options.sni, options.server_pub_key, options.short_id_bytes, options.max_handshake_records);
+        cfg, options.sni, options.server_pub_key, options.max_handshake_records);
     auto handshake_res = co_await handshaker.run(socket, conn_id, ec);
     if (ec)
     {

@@ -1,6 +1,5 @@
 std::optional<server_accept_result> authenticate_client_hello(server_handshake_state& state,
                                                               const std::vector<uint8_t>& private_key,
-                                                              const std::vector<uint8_t>& short_id_bytes,
                                                               boost::system::error_code& ec)
 {
     auto auth = decrypt_auth_payload(state, private_key, ec);
@@ -9,7 +8,7 @@ std::optional<server_accept_result> authenticate_client_hello(server_handshake_s
         ec.clear();
         return make_decision_result(accept_mode::kFallbackToTarget, "decrypt_auth_payload_failed", state);
     }
-    if (!verify_auth_payload_fields(auth, short_id_bytes, state))
+    if (!verify_auth_payload_fields(auth, state))
     {
         return make_decision_result(accept_mode::kFallbackToTarget, "verify_auth_payload_failed", state);
     }
@@ -61,7 +60,6 @@ std::optional<server_accept_result> validate_client_hello_and_authenticate(serve
                                                                            const relay::config& cfg,
                                                                            const relay::config::reality_inbound_t& settings,
                                                                            const std::vector<uint8_t>& private_key,
-                                                                           const std::vector<uint8_t>& short_id_bytes,
                                                                            relay::replay_cache& replay_cache,
                                                                            boost::system::error_code& ec)
 {
@@ -78,7 +76,7 @@ std::optional<server_accept_result> validate_client_hello_and_authenticate(serve
     {
         return result;
     }
-    if (auto result = authenticate_client_hello(state, private_key, short_id_bytes, ec); result.has_value())
+    if (auto result = authenticate_client_hello(state, private_key, ec); result.has_value())
     {
         return result;
     }

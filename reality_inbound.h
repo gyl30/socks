@@ -54,7 +54,6 @@ class reality_inbound : public std::enable_shared_from_this<reality_inbound>
     io_worker& owner_worker_;
     boost::asio::ip::tcp::acceptor acceptor_{owner_worker_.io_context};
     std::vector<uint8_t> private_key_;
-    std::vector<uint8_t> short_id_bytes_;
     std::array<uint8_t, 32> reality_cert_private_key_{};
     std::vector<uint8_t> reality_cert_public_key_;
     std::vector<uint8_t> reality_cert_template_;

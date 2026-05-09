@@ -2013,7 +2013,6 @@ server_handshaker::server_handshaker(const dependencies& deps)
     : cfg_(deps.cfg),
       settings_(deps.settings),
       private_key_(deps.private_key),
-      short_id_bytes_(deps.short_id_bytes),
       replay_cache_(deps.replay_cache),
       site_material_(deps.site_material_ptr),
       reality_cert_private_key_(deps.reality_cert_private_key),
@@ -2034,7 +2033,7 @@ boost::asio::awaitable<server_accept_result> server_handshaker::accept(server_ha
     }
 
     const auto decision =
-        validate_client_hello_and_authenticate(handshake_ctx, state, cfg_, settings_, private_key_, short_id_bytes_, replay_cache_, ec);
+        validate_client_hello_and_authenticate(handshake_ctx, state, cfg_, settings_, private_key_, replay_cache_, ec);
     if (decision.has_value())
     {
         co_return *decision;

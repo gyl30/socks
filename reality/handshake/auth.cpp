@@ -1,6 +1,5 @@
 #include <span>
 #include <array>
-#include <vector>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -11,16 +10,10 @@
 namespace reality
 {
 
-bool build_auth_payload(const std::vector<uint8_t>& short_id,
-                        const std::array<uint8_t, 3>& version,
+bool build_auth_payload(const std::array<uint8_t, 3>& version,
                         uint32_t timestamp,
                         std::array<uint8_t, kAuthPayloadLen>& out)
 {
-    if (short_id.size() > kShortIdMaxLen)
-    {
-        return false;
-    }
-
     out.fill(0);
 
     out[0] = version[0];
@@ -32,11 +25,6 @@ bool build_auth_payload(const std::vector<uint8_t>& short_id,
     out[5] = static_cast<uint8_t>((timestamp >> 16) & 0xFF);
     out[6] = static_cast<uint8_t>((timestamp >> 8) & 0xFF);
     out[7] = static_cast<uint8_t>(timestamp & 0xFF);
-
-    for (std::size_t i = 0; i < short_id.size(); ++i)
-    {
-        out[8 + i] = short_id[i];
-    }
 
     return true;
 }
@@ -61,9 +49,14 @@ std::optional<auth_payload> parse_auth_payload(std::span<const uint8_t> payload)
     out.timestamp = (static_cast<uint32_t>(payload[4]) << 24) | (static_cast<uint32_t>(payload[5]) << 16) | (static_cast<uint32_t>(payload[6]) << 8) |
                     static_cast<uint32_t>(payload[7]);
 
-    std::copy(payload.begin() + 8, payload.begin() + 16, out.short_id.begin());
+    std::copy(payload.begin() + 8, payload.begin() + 16, out.reserved_bytes.begin());
 
     return out;
+}
+
+bool has_zero_reserved_bytes(const auth_payload& payload)
+{
+    return std::all_of(payload.reserved_bytes.begin(), payload.reserved_bytes.end(), [](const uint8_t byte) { return byte == 0; });
 }
 
 }    // namespace reality

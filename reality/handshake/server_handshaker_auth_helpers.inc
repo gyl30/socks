@@ -33,7 +33,7 @@ reality::auth_payload decrypt_auth_payload(server_handshake_state& state, const 
     return *payload;
 }
 
-bool verify_auth_payload_fields(const auth_payload& auth, const std::vector<uint8_t>& short_id_bytes, const server_handshake_state& state)
+bool verify_auth_payload_fields(const auth_payload& auth, const server_handshake_state& state)
 {
     (void)state;
     if (auth.version_x != 1 || auth.version_y != 0 || auth.version_z != 0)
@@ -52,40 +52,20 @@ bool verify_auth_payload_fields(const auth_payload& auth, const std::vector<uint
         return false;
     }
 
-    if (short_id_bytes.empty())
+    if (has_zero_reserved_bytes(auth))
     {
         return true;
     }
 
-    if (short_id_bytes.size() > kShortIdMaxLen)
-    {
-        LOG_ERROR("{} conn {} local {}:{} remote {}:{} sni {} auth fail short id length invalid {}",
-                  relay::log_event::kAuth,
-                  state.log_context.conn_id,
-                  state.log_context.local_addr,
-                  state.log_context.local_port,
-                  state.log_context.remote_addr,
-                  state.log_context.remote_port,
-                  server_log_sni(state.log_context),
-                  short_id_bytes.size());
-        return false;
-    }
-
-    std::array<uint8_t, kShortIdMaxLen> expected_short_id = {};
-    std::ranges::copy(short_id_bytes, expected_short_id.begin());
-    if (CRYPTO_memcmp(auth.short_id.data(), expected_short_id.data(), expected_short_id.size()) != 0)
-    {
-        LOG_WARN("{} conn {} local {}:{} remote {}:{} sni {} auth fail short id mismatch",
-                 relay::log_event::kAuth,
-                 state.log_context.conn_id,
-                 state.log_context.local_addr,
-                 state.log_context.local_port,
-                 state.log_context.remote_addr,
-                 state.log_context.remote_port,
-                 server_log_sni(state.log_context));
-        return false;
-    }
-    return true;
+    LOG_WARN("{} conn {} local {}:{} remote {}:{} sni {} auth fail reserved bytes not zero",
+             relay::log_event::kAuth,
+             state.log_context.conn_id,
+             state.log_context.local_addr,
+             state.log_context.local_port,
+             state.log_context.remote_addr,
+             state.log_context.remote_port,
+             server_log_sni(state.log_context));
+    return false;
 }
 
 bool verify_auth_timestamp(uint32_t timestamp, const server_handshake_state& state)

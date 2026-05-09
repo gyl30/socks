@@ -22,7 +22,6 @@ class client_handshaker
     client_handshaker(const relay::config& cfg,
                       std::string_view sni,
                       const std::vector<uint8_t>& server_public_key,
-                      const std::vector<uint8_t>& short_id_bytes,
                       uint32_t max_handshake_records);
 
     [[nodiscard]] boost::asio::awaitable<client_handshake_result> run(boost::asio::ip::tcp::socket& socket,
@@ -33,7 +32,6 @@ class client_handshaker
     const relay::config& cfg_;
     std::string sni_;
     std::vector<uint8_t> server_public_key_;
-    std::vector<uint8_t> short_id_bytes_;
     uint32_t max_handshake_records_ = 0;
 };
 
