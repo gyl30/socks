@@ -296,6 +296,7 @@ void vision_connection_tcp_stream::clear_state_locked()
     pending_read_switch_ = pending_read_switch::kNone;
     read_mode_ = read_mode::kVision;
     write_mode_ = write_mode::kVision;
+    first_continue_padding_ = true;
 }
 
 void vision_connection_tcp_stream::finalize_pending_read_step_locked(read_step& step, boost::system::error_code& ec)
@@ -474,13 +475,18 @@ void vision_connection_tcp_stream::capture_write_plan_locked(std::span<const uin
     }
 
     const auto processed_segments = tracker_.process(write_direction_, data);
-    const auto continue_mode = tracker_.tls13_confirmed() ? vision::padding_mode::kShort : vision::padding_mode::kLong;
     segments.reserve(processed_segments.size());
     for (const auto& segment : processed_segments)
     {
+        auto mode = vision::padding_mode::kNone;
+        if (segment.cmd == vision::command::kContinue)
+        {
+            mode = first_continue_padding_ ? vision::padding_mode::kLong : vision::padding_mode::kShort;
+            first_continue_padding_ = false;
+        }
         segments.push_back(encoded_segment{
             .segment = segment,
-            .mode = segment.cmd == vision::command::kContinue ? continue_mode : vision::padding_mode::kNone,
+            .mode = mode,
         });
     }
 }

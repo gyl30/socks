@@ -206,8 +206,11 @@ bool test_block_codec()
          require(parser.empty(), "parser should consume parsed block");
 
     std::vector<uint8_t> random_encoded;
-    ok = ok && require(encode_block(command::kContinue, content, padding_mode::kLong, random_encoded, ec) && !ec, "random padding encode failed") &&
-         require(random_encoded.size() <= tls::kMaxTlsApplicationDataPayloadLen, "random padded block too large");
+    ok = ok && require(encode_block(command::kContinue, content, padding_mode::kShort, random_encoded, ec) && !ec, "random padding encode failed") &&
+         require(random_encoded.size() <= relay::vision::kBlockHeaderSize + content.size() + 255U, "short padded block should stay bounded");
+    ok = ok && require(encode_block(command::kContinue, content, padding_mode::kLong, random_encoded, ec) && !ec, "long padding encode failed") &&
+         require(random_encoded.size() >= relay::vision::kBlockHeaderSize + 900U, "long padded block should hide small payloads") &&
+         require(random_encoded.size() <= relay::vision::kBlockHeaderSize + 1399U, "long padded block should stay bounded");
 
     const std::vector<uint8_t> oversized(tls::kMaxTlsApplicationDataPayloadLen, 0x42);
     ok = ok && require(!encode_block(command::kContinue, oversized, padding_mode::kNone, random_encoded, ec), "oversized content should fail");

@@ -152,6 +152,7 @@ class vision_connection_tcp_stream
     pending_read_switch pending_read_switch_ = pending_read_switch::kNone;
     read_mode read_mode_ = read_mode::kVision;
     write_mode write_mode_ = write_mode::kVision;
+    bool first_continue_padding_ = true;
     vision::direction write_direction_ = vision::direction::kClientToServer;
     vision::direction read_direction_ = vision::direction::kServerToClient;
     uint64_t generation_ = 0;
