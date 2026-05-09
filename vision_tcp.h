@@ -78,7 +78,7 @@ struct write_segment
     command cmd = command::kContinue;
     std::vector<uint8_t> content;
     bool switch_to_raw_after = false;
-    bool switch_to_outer_plain_after = false;
+    bool switch_to_outer_reality_after = false;
 };
 
 class tls_tracker
@@ -90,7 +90,7 @@ class tls_tracker
     [[nodiscard]] bool tls13_confirmed() const { return tls13_confirmed_; }
     [[nodiscard]] bool direct_disabled() const { return direct_disabled_; }
     [[nodiscard]] bool direct_write_mode(direction dir) const;
-    [[nodiscard]] bool outer_plain_mode(direction dir) const;
+    [[nodiscard]] bool outer_reality_mode(direction dir) const;
 
    private:
     void analyze_buffer(direction dir);
@@ -102,7 +102,7 @@ class tls_tracker
     std::array<std::vector<uint8_t>, 2> buffers_;
     std::array<std::vector<uint8_t>, 2> handshake_buffers_;
     std::array<bool, 2> direct_write_mode_{false, false};
-    std::array<bool, 2> outer_plain_mode_{false, false};
+    std::array<bool, 2> outer_reality_mode_{false, false};
     bool client_hello_seen_ = false;
     bool tls13_confirmed_ = false;
     bool direct_disabled_ = false;

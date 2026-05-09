@@ -363,7 +363,7 @@ bool test_tls_tracker_rejects()
     const std::vector<uint8_t> http{'G', 'E', 'T', ' ', '/'};
     auto segments = http_tracker.process(direction::kClientToServer, http);
     bool ok = require(segments.size() == 1 && segments[0].cmd == command::kEnd, "plain http should end vision") &&
-              require(segments[0].switch_to_outer_plain_after, "plain http should switch to outer plain") &&
+              require(segments[0].switch_to_outer_reality_after, "plain http should switch to outer reality") &&
               require(http_tracker.direct_disabled(), "plain http should disable direct");
 
     tls_tracker tls12_tracker;

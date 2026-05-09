@@ -319,7 +319,7 @@ void vision_connection_tcp_stream::finalize_pending_read_step_locked(read_step& 
         return;
     }
 
-    if (pending_read_switch_ == pending_read_switch::kOuterPlain)
+    if (pending_read_switch_ == pending_read_switch::kOuterReality)
     {
         if (!parser_.empty())
         {
@@ -327,7 +327,7 @@ void vision_connection_tcp_stream::finalize_pending_read_step_locked(read_step& 
             return;
         }
         pending_read_switch_ = pending_read_switch::kNone;
-        read_mode_ = read_mode::kOuterPlain;
+        read_mode_ = read_mode::kOuterReality;
     }
 
     step.action = read_action::kReturn;
@@ -357,7 +357,7 @@ void vision_connection_tcp_stream::plan_parsed_read_step_locked(vision::block pa
         }
         else if (parsed.cmd == vision::command::kEnd)
         {
-            pending_read_switch_ = pending_read_switch::kOuterPlain;
+            pending_read_switch_ = pending_read_switch::kOuterReality;
         }
         else
         {
@@ -385,7 +385,7 @@ void vision_connection_tcp_stream::plan_parsed_read_step_locked(vision::block pa
             ec = boost::asio::error::invalid_argument;
             return;
         }
-        read_mode_ = read_mode::kOuterPlain;
+        read_mode_ = read_mode::kOuterReality;
         step.action = read_action::kReadOuter;
         return;
     }
@@ -412,7 +412,7 @@ vision_connection_tcp_stream::read_step vision_connection_tcp_stream::plan_read_
         return step;
     }
 
-    if (read_mode_ == read_mode::kOuterPlain)
+    if (read_mode_ == read_mode::kOuterReality)
     {
         step.action = read_action::kReadOuter;
         return step;
@@ -468,7 +468,7 @@ void vision_connection_tcp_stream::capture_write_plan_locked(std::span<const uin
         return;
     }
 
-    if (write_mode_ == write_mode::kOuterPlain)
+    if (write_mode_ == write_mode::kOuterReality)
     {
         action = write_action::kOuter;
         return;
@@ -508,10 +508,10 @@ bool vision_connection_tcp_stream::has_connection() const
     return connection_ != nullptr;
 }
 
-boost::asio::awaitable<std::size_t> vision_connection_tcp_stream::read_outer_plain(std::shared_ptr<proxy_reality_connection> connection,
-                                                                                   std::span<uint8_t> buffer,
-                                                                                   const uint32_t read_timeout,
-                                                                                   boost::system::error_code& ec)
+boost::asio::awaitable<std::size_t> vision_connection_tcp_stream::read_outer_reality(std::shared_ptr<proxy_reality_connection> connection,
+                                                                                     std::span<uint8_t> buffer,
+                                                                                     const uint32_t read_timeout,
+                                                                                     boost::system::error_code& ec)
 {
     std::vector<uint8_t> outer_buffer(buffer.size());
     const auto bytes_read = co_await connection->read_some(outer_buffer, read_timeout, ec);
@@ -568,7 +568,7 @@ boost::asio::awaitable<std::size_t> vision_connection_tcp_stream::read(std::span
         }
         if (step.action == read_action::kReadOuter)
         {
-            const auto bytes_read = co_await read_outer_plain(step.connection, buffer, read_timeout, ec);
+            const auto bytes_read = co_await read_outer_reality(step.connection, buffer, read_timeout, ec);
             {
                 std::scoped_lock lock(mutex_);
                 if (!validate_generation_locked(step.connection, step.generation, ec))
@@ -711,14 +711,14 @@ boost::asio::awaitable<std::size_t> vision_connection_tcp_stream::write(std::spa
             }
             write_mode_ = write_mode::kRaw;
         }
-        if (item.segment.switch_to_outer_plain_after)
+        if (item.segment.switch_to_outer_reality_after)
         {
             std::scoped_lock lock(mutex_);
             if (!validate_generation_locked(connection, generation, ec))
             {
                 co_return 0;
             }
-            write_mode_ = write_mode::kOuterPlain;
+            write_mode_ = write_mode::kOuterReality;
         }
     }
     co_return data.size();

@@ -323,13 +323,13 @@ enum class server_hello_status : uint8_t
 [[nodiscard]] write_segment make_segment(const command cmd,
                                          const std::span<const uint8_t> data,
                                          const bool switch_to_raw,
-                                         const bool switch_to_outer_plain)
+                                         const bool switch_to_outer_reality)
 {
     return write_segment{
         .cmd = cmd,
         .content = std::vector<uint8_t>(data.begin(), data.end()),
         .switch_to_raw_after = switch_to_raw,
-        .switch_to_outer_plain_after = switch_to_outer_plain,
+        .switch_to_outer_reality_after = switch_to_outer_reality,
     };
 }
 
@@ -441,7 +441,7 @@ parse_status block_parser::next(block& out, boost::system::error_code& ec)
 std::vector<write_segment> tls_tracker::process(const direction dir, const std::span<const uint8_t> data)
 {
     std::vector<write_segment> segments;
-    if (data.empty() || direct_write_mode(dir) || outer_plain_mode(dir))
+    if (data.empty() || direct_write_mode(dir) || outer_reality_mode(dir))
     {
         return segments;
     }
@@ -455,7 +455,7 @@ std::vector<write_segment> tls_tracker::process(const direction dir, const std::
     }
     if (direct_disabled_)
     {
-        outer_plain_mode_[idx] = true;
+        outer_reality_mode_[idx] = true;
         buffers_[idx].clear();
         handshake_buffers_[idx].clear();
         segments.push_back(make_segment(command::kEnd, data, false, true));
@@ -482,7 +482,7 @@ std::vector<write_segment> tls_tracker::process(const direction dir, const std::
 
 void tls_tracker::observe(const direction dir, const std::span<const uint8_t> data)
 {
-    if (data.empty() || direct_write_mode(dir) || outer_plain_mode(dir))
+    if (data.empty() || direct_write_mode(dir) || outer_reality_mode(dir))
     {
         return;
     }
@@ -500,7 +500,7 @@ void tls_tracker::observe(const direction dir, const std::span<const uint8_t> da
 
 bool tls_tracker::direct_write_mode(const direction dir) const { return direct_write_mode_[dir_index(dir)]; }
 
-bool tls_tracker::outer_plain_mode(const direction dir) const { return outer_plain_mode_[dir_index(dir)]; }
+bool tls_tracker::outer_reality_mode(const direction dir) const { return outer_reality_mode_[dir_index(dir)]; }
 
 void tls_tracker::analyze_buffer(const direction dir)
 {

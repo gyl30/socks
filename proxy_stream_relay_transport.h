@@ -77,21 +77,21 @@ class vision_connection_tcp_stream
     {
         kNone,
         kRaw,
-        kOuterPlain,
+        kOuterReality,
     };
 
     enum class read_mode : uint8_t
     {
         kVision,
         kRaw,
-        kOuterPlain,
+        kOuterReality,
     };
 
     enum class write_mode : uint8_t
     {
         kVision,
         kRaw,
-        kOuterPlain,
+        kOuterReality,
     };
 
     enum class read_action : uint8_t
@@ -125,10 +125,10 @@ class vision_connection_tcp_stream
         vision::padding_mode mode = vision::padding_mode::kNone;
     };
 
-    [[nodiscard]] boost::asio::awaitable<std::size_t> read_outer_plain(std::shared_ptr<proxy_reality_connection> connection,
-                                                                       std::span<uint8_t> buffer,
-                                                                       uint32_t read_timeout,
-                                                                       boost::system::error_code& ec);
+    [[nodiscard]] boost::asio::awaitable<std::size_t> read_outer_reality(std::shared_ptr<proxy_reality_connection> connection,
+                                                                         std::span<uint8_t> buffer,
+                                                                         uint32_t read_timeout,
+                                                                         boost::system::error_code& ec);
     void clear_state_locked();
     [[nodiscard]] read_step plan_read_step_locked(std::span<uint8_t> buffer, boost::system::error_code& ec);
     void plan_pending_read_step_locked(read_step& step, std::span<uint8_t> buffer, boost::system::error_code& ec);
