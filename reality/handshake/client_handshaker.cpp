@@ -948,10 +948,14 @@ bool fingerprint_uses_hybrid_key_share(const fingerprint_template& spec)
     return fingerprint_has_key_share_group(spec, tls::consts::group::kX25519MLKEM768);
 }
 
-client_ephemeral_keys prepare_client_ephemeral_keys(boost::system::error_code& ec)
+client_ephemeral_keys prepare_client_ephemeral_keys(const std::string_view fingerprint_name, boost::system::error_code& ec)
 {
     client_ephemeral_keys keys;
-    keys.template_spec = build_random_fingerprint_template();
+    if (!build_named_fingerprint_template(fingerprint_name, keys.template_spec))
+    {
+        ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
+        return {};
+    }
     keys.use_hybrid = fingerprint_uses_hybrid_key_share(keys.template_spec);
 
     if (!tls::crypto_util::generate_x25519_keypair(keys.public_key.data(), keys.private_key.data()))
@@ -1725,10 +1729,12 @@ boost::asio::awaitable<client_handshake_result> execute_client_handshake(boost::
 
 client_handshaker::client_handshaker(const relay::config& cfg,
                                      std::string_view sni,
+                                     std::string_view fingerprint_name,
                                      const std::vector<uint8_t>& server_public_key,
                                      uint32_t max_handshake_records)
     : cfg_(cfg),
       sni_(sni),
+      fingerprint_name_(fingerprint_name),
       server_public_key_(server_public_key),
       max_handshake_records_(max_handshake_records)
 {
@@ -1738,7 +1744,7 @@ boost::asio::awaitable<client_handshake_result> client_handshaker::run(boost::as
                                                                        uint32_t conn_id,
                                                                        boost::system::error_code& ec) const
 {
-    auto keys = prepare_client_ephemeral_keys(ec);
+    auto keys = prepare_client_ephemeral_keys(fingerprint_name_, ec);
     if (ec)
     {
         co_return client_handshake_result{};

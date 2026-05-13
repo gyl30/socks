@@ -21,6 +21,7 @@ class client_handshaker
    public:
     client_handshaker(const relay::config& cfg,
                       std::string_view sni,
+                      std::string_view fingerprint_name,
                       const std::vector<uint8_t>& server_public_key,
                       uint32_t max_handshake_records);
 
@@ -31,6 +32,7 @@ class client_handshaker
    private:
     const relay::config& cfg_;
     std::string sni_;
+    std::string fingerprint_name_;
     std::vector<uint8_t> server_public_key_;
     uint32_t max_handshake_records_ = 0;
 };

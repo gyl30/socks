@@ -2,6 +2,7 @@
 #define REALITY_FINGERPRINT_H
 
 #include <memory>
+#include <string_view>
 #include <vector>
 #include <cstdint>
 
@@ -60,6 +61,7 @@ class grease_context
 };
 
 [[nodiscard]] fingerprint_template build_random_fingerprint_template();
+[[nodiscard]] bool build_named_fingerprint_template(std::string_view name, fingerprint_template& out);
 
 }    // namespace reality
 

@@ -63,6 +63,7 @@ bool is_close_notify_alert(const std::span<const uint8_t> plaintext)
 struct connect_options
 {
     std::string sni;
+    std::string fingerprint;
     std::string remote_host;
     std::string remote_port;
     std::vector<uint8_t> server_pub_key;
@@ -82,6 +83,7 @@ bool build_connect_options(
     }
 
     options.sni = settings->sni;
+    options.fingerprint = settings->fingerprint;
     options.remote_host = settings->host;
     options.remote_port = std::to_string(settings->port);
     options.max_handshake_records = settings->max_handshake_records;
@@ -210,7 +212,7 @@ boost::asio::awaitable<reality::client_handshake_result> perform_reality_handsha
     boost::asio::ip::tcp::socket& socket, const config& cfg, const connect_options& options, uint32_t conn_id, boost::system::error_code& ec)
 {
     const reality::client_handshaker handshaker(
-        cfg, options.sni, options.server_pub_key, options.max_handshake_records);
+        cfg, options.sni, options.fingerprint, options.server_pub_key, options.max_handshake_records);
     auto handshake_res = co_await handshaker.run(socket, conn_id, ec);
     if (ec)
     {

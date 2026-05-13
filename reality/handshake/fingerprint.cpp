@@ -12,6 +12,7 @@ extern "C"
 #include <openssl/rand.h>
 }
 
+#include "reality/config_validation.h"
 #include "tls/core.h"
 #include "reality/handshake/fingerprint.h"
 #include "reality/handshake/fingerprint_patch.h"
@@ -163,7 +164,7 @@ uint16_t grease_context::get_extension_grease(int nth_occurrence) const
 namespace
 {
 
-fingerprint_template build_random_template()
+fingerprint_template build_chrome_template(const bool hybrid_key_share)
 {
     fingerprint_template spec;
     set_fingerprint_client_version(spec, tls::consts::kVer12);
@@ -192,7 +193,14 @@ fingerprint_template build_random_template()
     mutable_fingerprint_extensions(spec).push_back(std::make_shared<renegotiation_blueprint>());
 
     auto curves = std::make_shared<supported_groups_blueprint>();
-    curves->groups() = {tls::kGreasePlaceholder, tls::consts::group::kX25519, tls::consts::group::kSecp256r1, tls::consts::group::kSecp384r1};
+    curves->groups() = {tls::kGreasePlaceholder};
+    if (hybrid_key_share)
+    {
+        curves->groups().push_back(tls::consts::group::kX25519MLKEM768);
+    }
+    curves->groups().push_back(tls::consts::group::kX25519);
+    curves->groups().push_back(tls::consts::group::kSecp256r1);
+    curves->groups().push_back(tls::consts::group::kSecp384r1);
     mutable_fingerprint_extensions(spec).push_back(curves);
 
     auto points = std::make_shared<ec_point_formats_blueprint>();
@@ -223,6 +231,10 @@ fingerprint_template build_random_template()
 
     auto ks = std::make_shared<key_share_blueprint>();
     ks->key_shares().push_back({.group = tls::kGreasePlaceholder, .data = {}});
+    if (hybrid_key_share)
+    {
+        ks->key_shares().push_back({.group = tls::consts::group::kX25519MLKEM768, .data = {}});
+    }
     ks->key_shares().push_back({.group = tls::consts::group::kX25519, .data = {}});
     mutable_fingerprint_extensions(spec).push_back(ks);
 
@@ -248,6 +260,8 @@ fingerprint_template build_random_template()
     set_fingerprint_shuffle_extensions(spec, true);
     return spec;
 }
+
+fingerprint_template build_random_template() { return build_chrome_template(false); }
 
 }    // namespace
 
@@ -304,5 +318,26 @@ fingerprint_instance instantiate_fingerprint_instance(const fingerprint_template
 }
 
 fingerprint_template build_random_fingerprint_template() { return build_random_template(); }
+
+bool build_named_fingerprint_template(const std::string_view name, fingerprint_template& out)
+{
+    const auto normalized_name = normalize_fingerprint_name(name);
+    if (normalized_name.empty() || normalized_name == "random")
+    {
+        out = build_random_template();
+        return true;
+    }
+    if (normalized_name == "chrome")
+    {
+        out = build_chrome_template(false);
+        return true;
+    }
+    if (normalized_name == "chrome_mlkem768")
+    {
+        out = build_chrome_template(true);
+        return true;
+    }
+    return false;
+}
 
 }    // namespace reality

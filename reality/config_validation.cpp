@@ -40,7 +40,7 @@ std::string normalize_fingerprint_name(const std::string_view name)
 bool is_supported_fingerprint_name(const std::string_view name)
 {
     const auto normalized_name = normalize_fingerprint_name(name);
-    return normalized_name.empty() || normalized_name == "random";
+    return normalized_name.empty() || normalized_name == "random" || normalized_name == "chrome" || normalized_name == "chrome_mlkem768";
 }
 
 hex_field_status validate_hex_field(const std::string_view value, const std::size_t min_bytes, const std::size_t max_bytes)

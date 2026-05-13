@@ -422,6 +422,12 @@ if(UNIX AND NOT APPLE AND NOT ENABLE_STATIC_LINK)
   target_link_options(reality_auth_regression PRIVATE "-Wl,--no-as-needed" "${BROTLICOMMON_LIBRARY}" "-Wl,--as-needed")
 endif()
 
+add_executable(reality_fingerprint_regression scripts/test_reality_fingerprint_regression.cpp)
+target_link_libraries(reality_fingerprint_regression PRIVATE core)
+if(UNIX AND NOT APPLE AND NOT ENABLE_STATIC_LINK)
+  target_link_options(reality_fingerprint_regression PRIVATE "-Wl,--no-as-needed" "${BROTLICOMMON_LIBRARY}" "-Wl,--as-needed")
+endif()
+
 add_executable(vision_tcp_regression scripts/test_vision_tcp_regression.cpp)
 target_link_libraries(vision_tcp_regression PRIVATE core)
 if(UNIX AND NOT APPLE AND NOT ENABLE_STATIC_LINK)
@@ -618,6 +624,9 @@ if(BUILD_TESTING)
   add_test(NAME reality_auth_regression COMMAND $<TARGET_FILE:reality_auth_regression>)
   set_tests_properties(reality_auth_regression PROPERTIES TIMEOUT 30)
 
+  add_test(NAME reality_fingerprint_regression COMMAND $<TARGET_FILE:reality_fingerprint_regression>)
+  set_tests_properties(reality_fingerprint_regression PROPERTIES TIMEOUT 30)
+
   add_test(NAME vision_tcp_regression COMMAND $<TARGET_FILE:vision_tcp_regression>)
   set_tests_properties(vision_tcp_regression PROPERTIES TIMEOUT 30)
 
@@ -670,6 +679,7 @@ if(BUILD_TESTING)
           proxy_protocol_regression
           reality_engine_regression
           reality_auth_regression
+          reality_fingerprint_regression
           vision_padding_regression
           router_regression
           task_group_regression

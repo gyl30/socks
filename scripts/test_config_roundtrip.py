@@ -119,6 +119,27 @@ def run_vision_startup_smoke(binary, runtime_env, temp_root):
         process.terminate()
 
 
+def run_named_fingerprint_startup_smoke(binary, runtime_env, temp_root):
+    for fingerprint in ("chrome", "chrome_mlkem768"):
+        cfg = dump_default_config(binary, runtime_env)
+        listen_host = cfg["inbounds"][0]["settings"]["host"]
+        listen_port = allocate_tcp_port()
+        log_path = temp_root / f"{fingerprint}-startup.log"
+        run_log = temp_root / f"{fingerprint}-startup.stdout.log"
+        cfg["log"]["file"] = str(log_path)
+        cfg["inbounds"][0]["settings"]["port"] = listen_port
+        cfg["outbounds"][0]["settings"]["fingerprint"] = fingerprint
+
+        config_path = temp_root / f"{fingerprint}-startup.json"
+        save_json(config_path, cfg)
+
+        process = start_process([str(binary), "-c", str(config_path)], str(run_log), extra_env=runtime_env)
+        try:
+            wait_for_log_text(log_path, f"listen {listen_host}:{listen_port} socks listening", 20, f"{fingerprint} startup log")
+        finally:
+            process.terminate()
+
+
 def run_invalid_config_case(binary, runtime_env, temp_root):
     invalid_path = temp_root / "invalid.json"
     invalid_path.write_text("{\n", encoding="utf-8")
@@ -597,6 +618,8 @@ def main():
         print("marked_roundtrip ok")
         run_vision_startup_smoke(binary, runtime_env, temp_root)
         print("vision_startup_smoke ok")
+        run_named_fingerprint_startup_smoke(binary, runtime_env, temp_root)
+        print("named_fingerprint_startup_smoke ok")
         run_invalid_config_case(binary, runtime_env, temp_root)
         print("invalid_config ok")
         run_invalid_reality_config_cases(binary, runtime_env, temp_root)
