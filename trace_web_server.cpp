@@ -1,5 +1,7 @@
 #include "trace_web_server.h"
 
+#include <chrono>
+#include <cstdint>
 #include <algorithm>
 #include <string_view>
 #include <utility>
@@ -33,6 +35,17 @@ using tcp = boost::asio::ip::tcp;
         return {target, std::string_view{}};
     }
     return {target.substr(0, question), target.substr(question + 1)};
+}
+
+// 与项目其他读写超时一致：0 表示不限时。到期后 beast::tcp_stream 关闭 socket，进行中的读写以 timeout 结束。
+void set_stream_deadline(beast::tcp_stream& stream, const uint32_t timeout_sec)
+{
+    if (timeout_sec == 0)
+    {
+        stream.expires_never();
+        return;
+    }
+    stream.expires_after(std::chrono::seconds(timeout_sec));
 }
 
 }    // namespace
@@ -92,6 +105,14 @@ bool trace_web_server::start(boost::system::error_code& ec)
     }
 
     LOG_INFO("{} stage start web listen {}:{} started", log_event::kConnInit, cfg_.web.host, cfg_.web.port);
+    if (!listen_addr.is_loopback())
+    {
+        // Trace API 没有认证，会返回连接、目标、路由与流量等诊断信息。
+        LOG_WARN("{} stage start web listen {}:{} is not loopback, trace data is exposed without authentication",
+                 log_event::kConnInit,
+                 cfg_.web.host,
+                 cfg_.web.port);
+    }
     worker_.group.spawn([self = shared_from_this()]() -> boost::asio::awaitable<void> { co_await self->accept_loop(); });
     return true;
 }
@@ -148,6 +169,7 @@ boost::asio::awaitable<void> trace_web_server::serve_session(boost::asio::ip::tc
     beast::flat_buffer buffer;
     http::request<http::string_body> req;
     boost::system::error_code ec;
+    set_stream_deadline(stream, cfg_.timeout.read);
     co_await http::async_read(stream, buffer, req, boost::asio::redirect_error(boost::asio::use_awaitable, ec));
     if (ec)
     {
@@ -182,6 +204,7 @@ boost::asio::awaitable<void> trace_web_server::serve_session(boost::asio::ip::tc
     res.keep_alive(false);
     res.body() = std::move(reply.body);
     res.prepare_payload();
+    set_stream_deadline(stream, cfg_.timeout.write);
     co_await http::async_write(stream, res, boost::asio::redirect_error(boost::asio::use_awaitable, ec));
     if (ec && ec != boost::asio::error::operation_aborted)
     {

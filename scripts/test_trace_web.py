@@ -6,6 +6,7 @@ import json
 import os
 import pathlib
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -93,6 +94,26 @@ def fetch_text(url, proxy_url=None):
     args.append(url)
     result = run_checked(args, capture_output=True)
     return result.stdout
+
+
+def wait_for_server_close(sock, timeout_seconds, what):
+    # 服务端超时后应主动关闭连接：recv 返回 EOF 或连接被重置。
+    sock.settimeout(timeout_seconds)
+    try:
+        while True:
+            chunk = sock.recv(65536)
+            if not chunk:
+                return
+    except ConnectionResetError:
+        return
+    except socket.timeout:
+        raise RuntimeError(f"trace web kept {what} connection open beyond {timeout_seconds}s") from None
+
+
+def expect_partial_request_closed(port, read_timeout):
+    with socket.create_connection(("127.0.0.1", port), timeout=5) as sock:
+        sock.sendall(b"GET /api/traces HTTP/1.1\r\nHost: 127.0.0.1\r\n")
+        wait_for_server_close(sock, read_timeout + 5, "partial request")
 
 
 def main():
@@ -296,6 +317,8 @@ def main():
         wait_for_port("127.0.0.1", web_port, 20, "trace_web", helper_processes)
 
         fetch_json(f"http://127.0.0.1:{web_port}/", proxy_url=None)
+        expect_partial_request_closed(web_port, client_cfg["timeout"]["read"])
+        print("trace web partial request closed ok", flush=True)
         dashboard_html = fetch_text(f"http://127.0.0.1:{web_port}/dashboard")
         if "Trace Dashboard" not in dashboard_html or "trace-dashboard" not in dashboard_html:
             raise RuntimeError("unexpected dashboard html payload")

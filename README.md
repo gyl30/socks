@@ -211,6 +211,8 @@ A simplified client-side shape looks like this:
 }
 ```
 
+The optional `web` section enables the trace web server (`/dashboard` and `/api/traces*`). It is disabled by default and listens on `127.0.0.1:18080` when enabled. The API has no authentication and returns connection, target, routing, and traffic details, so keep it on a loopback address; a non-loopback `web.host` logs a warning at startup. Request reads and response writes use `timeout.read` and `timeout.write`.
+
 Generate the complete default configuration with:
 
 ```bash
