@@ -474,7 +474,7 @@ boost::asio::awaitable<const char*> read_client_hello_handshake(boost::asio::ip:
             co_return error_reason;
         }
 
-        const auto record_len = static_cast<uint16_t>((record_buf[3] << 8) | record_buf[4]);
+        const auto record_len = tls::get_record_payload_len(record_buf.data());
         if (record_buf[0] == 0x14)
         {
             co_await read_tls_record_body(socket, record_buf, record_len, handshake_start_ms, timeout, ec);
@@ -978,13 +978,22 @@ std::vector<uint16_t> select_encrypted_handshake_record_sizes(const site_materia
     return site_material->encrypted_handshake_record_sizes;
 }
 
-std::vector<uint16_t> select_post_handshake_ticket_plaintext_sizes(const site_material* site_material)
+std::vector<uint16_t> select_encrypted_handshake_record_wire_sizes(const site_material* site_material)
 {
     if (site_material == nullptr)
     {
         return {};
     }
-    return site_material->post_handshake_ticket_plaintext_sizes;
+    return site_material->encrypted_handshake_record_wire_sizes;
+}
+
+std::vector<uint16_t> select_post_handshake_record_wire_sizes(const site_material* site_material)
+{
+    if (site_material == nullptr)
+    {
+        return {};
+    }
+    return site_material->post_handshake_record_wire_sizes;
 }
 
 std::size_t select_reality_certificate_chain_size(const site_material* site_material)
@@ -1178,6 +1187,7 @@ std::vector<uint8_t> compose_server_hello_flight(const std::vector<uint8_t>& sh_
                                                  const std::vector<uint8_t>& flight2_plain,
                                                  bool send_change_cipher_spec,
                                                  std::span<const uint16_t> encrypted_handshake_record_sizes,
+                                                 std::span<const uint16_t> encrypted_handshake_record_wire_sizes,
                                                  const EVP_CIPHER* cipher,
                                                  const std::pair<std::vector<uint8_t>, std::vector<uint8_t>>& s_hs_keys,
                                                  boost::system::error_code& ec)
@@ -1198,6 +1208,23 @@ std::vector<uint8_t> compose_server_hello_flight(const std::vector<uint8_t>& sh_
         .key = s_hs_keys.first,
         .iv = s_hs_keys.second,
     };
+    std::size_t encrypted_record_index = 0;
+    const auto select_padding_len = [&](std::size_t plaintext_len) -> std::size_t
+    {
+        if (encrypted_record_index >= encrypted_handshake_record_wire_sizes.size())
+        {
+            return 0;
+        }
+        const auto wire_size = static_cast<std::size_t>(encrypted_handshake_record_wire_sizes[encrypted_record_index]);
+        const auto unpadded_wire_size = tls::kTls13UnpaddedRecordWireOverhead + plaintext_len;
+        if (wire_size <= unpadded_wire_size || plaintext_len + 1U > tls::kMaxTlsInnerPlaintextLen)
+        {
+            return 0;
+        }
+        const auto padding_len = wire_size - unpadded_wire_size;
+        const auto max_padding_len = tls::kMaxTlsInnerPlaintextLen - plaintext_len - 1U;
+        return padding_len <= max_padding_len ? padding_len : 0;
+    };
     const auto append_encrypted_chunk = [&](std::size_t len) -> bool
     {
         if (len == 0 || offset >= flight2_plain.size())
@@ -1215,12 +1242,14 @@ std::vector<uint8_t> compose_server_hello_flight(const std::vector<uint8_t>& sh_
         const auto end = offset + len;
         const std::vector<uint8_t> chunk(flight2_plain.begin() + static_cast<std::ptrdiff_t>(offset),
                                          flight2_plain.begin() + static_cast<std::ptrdiff_t>(end));
-        tls::record_layer::encrypt_tls_record(record_ctx, cipher, key_material, seq++, chunk, tls::kContentTypeHandshake, out_sh, ec);
+        const auto padding_len = select_padding_len(chunk.size());
+        tls::record_layer::encrypt_tls_record(record_ctx, cipher, key_material, seq++, chunk, tls::kContentTypeHandshake, out_sh, ec, padding_len);
         if (ec)
         {
             return false;
         }
         offset += len;
+        ++encrypted_record_index;
         return true;
     };
 
@@ -1315,7 +1344,8 @@ struct authenticated_handshake_plan
     std::size_t cert_chain_size = 1;
     bool send_change_cipher_spec = true;
     std::vector<uint16_t> encrypted_handshake_record_sizes;
-    std::vector<uint16_t> post_handshake_ticket_plaintext_sizes;
+    std::vector<uint16_t> encrypted_handshake_record_wire_sizes;
+    std::vector<uint16_t> post_handshake_record_wire_sizes;
 };
 
 boost::asio::awaitable<bool> read_client_hello_or_decide(const server_handshake_context& handshake_ctx,
@@ -1750,7 +1780,8 @@ authenticated_handshake_plan prepare_authenticated_handshake(server_handshake_st
     const auto encrypted_extensions_padding_len = select_encrypted_extensions_padding_len(site_material);
     plan.send_change_cipher_spec = should_send_change_cipher_spec(site_material);
     plan.encrypted_handshake_record_sizes = select_encrypted_handshake_record_sizes(site_material);
-    plan.post_handshake_ticket_plaintext_sizes = select_post_handshake_ticket_plaintext_sizes(site_material);
+    plan.encrypted_handshake_record_wire_sizes = select_encrypted_handshake_record_wire_sizes(site_material);
+    plan.post_handshake_record_wire_sizes = select_post_handshake_record_wire_sizes(site_material);
     plan.cert_chain_size = select_reality_certificate_chain_size(site_material);
 
     LOG_INFO(
@@ -1776,7 +1807,7 @@ authenticated_handshake_plan prepare_authenticated_handshake(server_handshake_st
         encrypted_extensions_padding_len.value_or(0),
         plan.send_change_cipher_spec,
         plan.encrypted_handshake_record_sizes.size(),
-        plan.post_handshake_ticket_plaintext_sizes.size());
+        plan.post_handshake_record_wire_sizes.size());
 
     plan.crypto = build_handshake_crypto(state,
                                          plan.cipher_suite,
@@ -1801,6 +1832,7 @@ boost::asio::awaitable<bool> complete_authenticated_handshake(const server_hands
                                                     plan.crypto.flight2_plain,
                                                     plan.send_change_cipher_spec,
                                                     plan.encrypted_handshake_record_sizes,
+                                                    plan.encrypted_handshake_record_wire_sizes,
                                                     plan.crypto.cipher,
                                                     plan.crypto.s_hs_keys,
                                                     ec);
@@ -1932,8 +1964,26 @@ boost::asio::awaitable<bool> complete_authenticated_handshake(const server_hands
         .iv = server_app_keys.second,
     };
     uint64_t post_handshake_write_seq = 0;
-    for (const auto plaintext_size : plan.post_handshake_ticket_plaintext_sizes)
+    for (const auto wire_size : plan.post_handshake_record_wire_sizes)
     {
+        if (wire_size <= tls::kTls13UnpaddedRecordWireOverhead || wire_size > tls::kMaxTls13RecordWireLen)
+        {
+            LOG_WARN("{} conn {} local {}:{} remote {}:{} sni {} skip invalid cached post-handshake wire size {}",
+                     relay::log_event::kHandshake,
+                     state.log_context.conn_id,
+                     state.log_context.local_addr,
+                     state.log_context.local_port,
+                     state.log_context.remote_addr,
+                     state.log_context.remote_port,
+                     server_log_sni(state.log_context),
+                     wire_size);
+            continue;
+        }
+        const auto inner_plaintext_size = static_cast<std::size_t>(wire_size) - tls::kTlsRecordHeaderSize - tls::kAeadTagSize;
+        const auto plaintext_size =
+            static_cast<uint16_t>(std::min<std::size_t>(inner_plaintext_size - 1U, tls::kMaxTlsPlaintextLen));
+        const auto padding_len = inner_plaintext_size - static_cast<std::size_t>(plaintext_size) - 1U;
+
         uint32_t ticket_age_add = 0;
         if (RAND_bytes(reinterpret_cast<unsigned char*>(&ticket_age_add), static_cast<int>(sizeof(ticket_age_add))) != 1)
         {
@@ -1943,7 +1993,7 @@ boost::asio::awaitable<bool> complete_authenticated_handshake(const server_hands
         auto ticket_plaintext = build_new_session_ticket_plaintext(plaintext_size, ticket_age_add, ec);
         if (ec)
         {
-            LOG_WARN("{} conn {} local {}:{} remote {}:{} sni {} skip invalid cached post-handshake ticket size {} error {}",
+            LOG_WARN("{} conn {} local {}:{} remote {}:{} sni {} skip invalid cached post-handshake wire size {} plaintext size {} error {}",
                      relay::log_event::kHandshake,
                      state.log_context.conn_id,
                      state.log_context.local_addr,
@@ -1951,13 +2001,21 @@ boost::asio::awaitable<bool> complete_authenticated_handshake(const server_hands
                      state.log_context.remote_addr,
                      state.log_context.remote_port,
                      server_log_sni(state.log_context),
+                     wire_size,
                      plaintext_size,
                      ec.message());
             ec.clear();
             continue;
         }
-        tls::record_layer::encrypt_tls_record(
-            record_ctx, plan.crypto.cipher, key_material, post_handshake_write_seq, ticket_plaintext, tls::kContentTypeHandshake, post_handshake_records, ec);
+        tls::record_layer::encrypt_tls_record(record_ctx,
+                                              plan.crypto.cipher,
+                                              key_material,
+                                              post_handshake_write_seq,
+                                              ticket_plaintext,
+                                              tls::kContentTypeHandshake,
+                                              post_handshake_records,
+                                              ec,
+                                              padding_len);
         if (ec)
         {
             LOG_ERROR("{} conn {} local {}:{} remote {}:{} sni {} encrypt post-handshake ticket failed {}",

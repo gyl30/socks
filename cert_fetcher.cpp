@@ -67,6 +67,7 @@ struct fetch_context
     std::vector<uint8_t> dec_key;
     std::vector<uint8_t> dec_iv;
     uint64_t seq = 0;
+    uint16_t last_record_wire_size = 0;
     const tls::cipher_context decrypt_ctx;
 
     ~fetch_context() { OPENSSL_cleanse(client_private, sizeof(client_private)); }
@@ -310,7 +311,7 @@ std::pair<boost::system::error_code, std::vector<uint8_t>> read_record_plaintext
             return std::make_pair(boost::asio::error::fault, std::vector<uint8_t>{});
         }
 
-        const auto len = static_cast<uint16_t>((static_cast<uint16_t>(header[3]) << 8) | static_cast<uint16_t>(header[4]));
+        const auto len = tls::get_record_payload_len(header);
         boost::system::error_code len_ec;
         validate_record_length(len, len_ec);
         if (len_ec)
@@ -609,12 +610,13 @@ std::pair<uint8_t, std::span<uint8_t>> read_record(fetch_context& ctx, std::vect
         return {};
     }
 
-    const auto len = static_cast<uint16_t>((static_cast<uint16_t>(header[3]) << 8) | static_cast<uint16_t>(header[4]));
+    const auto len = tls::get_record_payload_len(header);
     validate_record_length(len, ec);
     if (ec)
     {
         return {};
     }
+    ctx.last_record_wire_size = static_cast<uint16_t>(tls::kTlsRecordHeaderSize + len);
 
     std::vector<uint8_t> record;
     read_record_body(ctx, len, record, ec);
@@ -907,6 +909,7 @@ void append_next_handshake_record(fetch_context& ctx,
     if (!read_result.second.empty())
     {
         ctx.material.encrypted_handshake_record_sizes.push_back(static_cast<uint16_t>(read_result.second.size()));
+        ctx.material.encrypted_handshake_record_wire_sizes.push_back(ctx.last_record_wire_size);
     }
 
     assembler.append(read_result.second);
@@ -943,13 +946,27 @@ void collect_post_handshake_tickets(fetch_context& ctx)
         {
             return;
         }
-        ctx.material.post_handshake_ticket_plaintext_sizes.push_back(static_cast<uint16_t>(read_result.second.size()));
-        LOG_INFO("{} target {}:{} sni {} fingerprint {} observed post-handshake new session ticket plaintext len {}",
+        if (ctx.last_record_wire_size <= tls::kTls13UnpaddedRecordWireOverhead ||
+            ctx.last_record_wire_size > tls::kMaxTls13RecordWireLen)
+        {
+            LOG_WARN("{} target {}:{} sni {} fingerprint {} skip unreplayable post-handshake new session ticket wire len {} plaintext len {}",
+                     relay::log_event::kCert,
+                     ctx.host,
+                     ctx.port,
+                     cert_log_sni(ctx),
+                     fingerprint_name(ctx.fingerprint),
+                     ctx.last_record_wire_size,
+                     read_result.second.size());
+            continue;
+        }
+        ctx.material.post_handshake_record_wire_sizes.push_back(ctx.last_record_wire_size);
+        LOG_INFO("{} target {}:{} sni {} fingerprint {} observed post-handshake new session ticket wire len {} plaintext len {}",
                  relay::log_event::kCert,
                  ctx.host,
                  ctx.port,
                  cert_log_sni(ctx),
                  fingerprint_name(ctx.fingerprint),
+                 ctx.last_record_wire_size,
                  read_result.second.size());
     }
 }

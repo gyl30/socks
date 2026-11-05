@@ -74,6 +74,67 @@ std::vector<uint8_t> make_new_session_ticket_plaintext(const std::size_t plainte
     return out;
 }
 
+bool test_explicit_record_padding()
+{
+    boost::system::error_code ec;
+    const tls::cipher_context encrypt_ctx;
+    const auto key_material = make_key_material(0x11, 0x22);
+    const std::vector<uint8_t> plaintext{'h', 's'};
+    constexpr std::size_t padding_len = 7;
+    std::vector<uint8_t> ciphertext;
+    tls::record_layer::encrypt_tls_record(
+        encrypt_ctx, EVP_aes_128_gcm(), key_material, 0, plaintext, tls::kContentTypeHandshake, ciphertext, ec, padding_len);
+
+    bool ok = require(!ec, "explicit padding encrypt failed");
+    const auto expected_wire_size = tls::kTlsRecordHeaderSize + plaintext.size() + 1U + padding_len + tls::kAeadTagSize;
+    ok = ok && require(ciphertext.size() == expected_wire_size, "explicit padding produced wrong wire size");
+
+    const tls::cipher_context decrypt_ctx;
+    std::vector<uint8_t> decrypted(plaintext.size() + 1U + padding_len);
+    uint8_t content_type = 0;
+    const auto decrypted_len = tls::record_layer::decrypt_tls_record(
+        decrypt_ctx, EVP_aes_128_gcm(), key_material.key, key_material.iv, 0, ciphertext, decrypted, content_type, ec);
+    decrypted.resize(decrypted_len);
+    ok = ok && require(!ec, "explicit padding decrypt failed");
+    ok = ok && require(content_type == tls::kContentTypeHandshake, "explicit padding changed content type");
+    ok = ok && require(decrypted == plaintext, "explicit padding changed plaintext");
+
+    constexpr std::size_t max_record_padding_len = 128;
+    const std::vector<uint8_t> max_plaintext(tls::kMaxTlsPlaintextLen, 0x42);
+    std::vector<uint8_t> max_ciphertext;
+    tls::record_layer::encrypt_tls_record(encrypt_ctx,
+                                          EVP_aes_128_gcm(),
+                                          key_material,
+                                          1,
+                                          max_plaintext,
+                                          tls::kContentTypeApplicationData,
+                                          max_ciphertext,
+                                          ec,
+                                          max_record_padding_len);
+    const auto expected_max_wire_size =
+        tls::kTlsRecordHeaderSize + max_plaintext.size() + 1U + max_record_padding_len + tls::kAeadTagSize;
+    ok = ok && require(!ec, "max plaintext explicit padding encrypt failed");
+    ok = ok && require(max_ciphertext.size() == expected_max_wire_size, "max plaintext explicit padding produced wrong wire size");
+    ok = ok && require(max_ciphertext.size() <= tls::kMaxTls13RecordWireLen, "max plaintext explicit padding exceeded tls13 record limit");
+
+    std::vector<uint8_t> max_decrypted(max_plaintext.size() + 1U + max_record_padding_len);
+    content_type = 0;
+    const auto max_decrypted_len = tls::record_layer::decrypt_tls_record(
+        decrypt_ctx, EVP_aes_128_gcm(), key_material.key, key_material.iv, 1, max_ciphertext, max_decrypted, content_type, ec);
+    max_decrypted.resize(max_decrypted_len);
+    ok = ok && require(!ec, "max plaintext explicit padding decrypt failed");
+    ok = ok && require(content_type == tls::kContentTypeApplicationData, "max plaintext explicit padding changed content type");
+    ok = ok && require(max_decrypted == max_plaintext, "max plaintext explicit padding changed plaintext");
+
+    std::vector<uint8_t> app_ciphertext;
+    tls::record_layer::encrypt_tls_record(
+        encrypt_ctx, EVP_aes_128_gcm(), key_material, 2, plaintext, tls::kContentTypeApplicationData, app_ciphertext, ec);
+    const auto expected_unpadded_app_size = tls::kTlsRecordHeaderSize + plaintext.size() + 1U + tls::kAeadTagSize;
+    ok = ok && require(!ec, "default application data encrypt failed");
+    ok = ok && require(app_ciphertext.size() == expected_unpadded_app_size, "application data should not get default inner padding");
+    return ok;
+}
+
 boost::asio::awaitable<bool> run_post_handshake_ticket_regression()
 {
     auto executor = co_await boost::asio::this_coro::executor;
@@ -313,6 +374,11 @@ boost::asio::awaitable<bool> run_error_code_regression()
 
 int main()
 {
+    if (!test_explicit_record_padding())
+    {
+        return 1;
+    }
+
     boost::asio::io_context io_context;
     auto result = boost::asio::co_spawn(
         io_context,

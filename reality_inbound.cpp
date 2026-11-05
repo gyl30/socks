@@ -265,7 +265,7 @@ bool reality_inbound::start(boost::system::error_code& ec)
                      loaded_material.encrypted_extensions_padding_len.value_or(0),
                      loaded_material.sends_change_cipher_spec,
                      loaded_material.encrypted_handshake_record_sizes.size(),
-                     loaded_material.post_handshake_ticket_plaintext_sizes.size());
+                     loaded_material.post_handshake_record_wire_sizes.size());
             site_material_ = std::move(loaded_material);
         }
     }

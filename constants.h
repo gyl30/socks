@@ -75,7 +75,7 @@ constexpr std::size_t kTcpControlIgnoreLimitBytes = 4096;
 
 namespace tls_limits
 {
-constexpr std::size_t kMaxCiphertextRecordLen = tls::kMaxTlsPlaintextLen + 256;
+constexpr std::size_t kMaxCiphertextRecordLen = tls::kMaxTlsCiphertextLen;
 constexpr uint32_t kMaxCompatCcsRecords = 8;
 constexpr std::size_t kMaxHandshakeMessageSize = 64L * 1024;
 constexpr std::size_t kMaxHandshakeReassembleBuffer = kMaxHandshakeMessageSize + 4;

@@ -25,15 +25,28 @@ inline constexpr uint8_t kContentTypeApplicationData = 0x17;
 inline constexpr std::size_t kTlsRecordHeaderSize = 5;
 inline constexpr std::size_t kAeadTagSize = 16;
 inline constexpr std::size_t kMaxTlsPlaintextLen = 16384;
-inline constexpr std::size_t kMaxTlsInnerPlaintextLen = kMaxTlsPlaintextLen + 1;
-inline constexpr std::size_t kMaxTlsApplicationDataPaddingLen = 63;
-inline constexpr std::size_t kMaxTlsApplicationDataPayloadLen = kMaxTlsInnerPlaintextLen - 1 - kMaxTlsApplicationDataPaddingLen;
+inline constexpr std::size_t kMaxTlsCiphertextLen = kMaxTlsPlaintextLen + 256;
+inline constexpr std::size_t kMaxTlsInnerPlaintextLen = kMaxTlsCiphertextLen - kAeadTagSize;
+inline constexpr std::size_t kTls13UnpaddedRecordWireOverhead = kTlsRecordHeaderSize + kAeadTagSize + 1;
+inline constexpr std::size_t kMaxTls13UnpaddedRecordWireLen = kTls13UnpaddedRecordWireOverhead + kMaxTlsPlaintextLen;
+inline constexpr std::size_t kMaxTls13RecordWireLen = kTlsRecordHeaderSize + kMaxTlsCiphertextLen;
+inline constexpr std::size_t kMaxTlsApplicationDataPayloadLen = kMaxTlsPlaintextLen;
 inline constexpr std::size_t kMlkem768PublicKeySize = 1184;
 inline constexpr std::size_t kMlkem768PrivateKeySize = 2400;
 inline constexpr std::size_t kMlkem768CiphertextSize = 1088;
 inline constexpr std::size_t kMlkem768SharedSecretSize = 32;
 
 inline constexpr uint16_t kGreasePlaceholder = 0x0A0A;
+
+inline uint16_t load_u16_be(const uint8_t* p)
+{
+    return static_cast<uint16_t>((static_cast<uint16_t>(p[0]) << 8) | p[1]);
+}
+
+inline uint16_t get_record_payload_len(const uint8_t* header)
+{
+    return load_u16_be(header + 3);
+}
 
 namespace consts
 {

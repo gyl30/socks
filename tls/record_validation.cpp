@@ -1,6 +1,7 @@
 #include <array>
 #include <cstdint>
 
+#include "tls/core.h"
 #include "tls/record_validation.h"
 
 namespace tls
@@ -16,7 +17,7 @@ bool is_valid_tls13_compat_ccs(const std::array<uint8_t, 5>& header, uint8_t bod
     {
         return false;
     }
-    const auto body_len = static_cast<uint16_t>((header[3] << 8) | header[4]);
+    const auto body_len = tls::get_record_payload_len(header.data());
     if (body_len != 1)
     {
         return false;

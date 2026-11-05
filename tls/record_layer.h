@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <optional>
 
 extern "C"
 {
@@ -28,7 +29,8 @@ void encrypt_tls_record(const cipher_context& ctx,
                         const std::vector<uint8_t>& plaintext,
                         uint8_t content_type,
                         std::vector<uint8_t>& output_buffer,
-                        boost::system::error_code& ec);
+                        boost::system::error_code& ec,
+                        std::optional<std::size_t> padding_len_override = std::nullopt);
 
 [[nodiscard]] std::size_t decrypt_tls_record(const cipher_context& ctx,
                                              const EVP_CIPHER* cipher,

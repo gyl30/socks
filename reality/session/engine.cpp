@@ -121,7 +121,7 @@ void reality_engine::decrypt_tls_record(uint8_t& content_type, std::size_t& payl
     }
 
     const auto* record_header = rx_buf_.data() + static_cast<std::ptrdiff_t>(rx_buf_offset_);
-    const auto record_len = static_cast<uint16_t>((static_cast<uint16_t>(record_header[3]) << 8) | record_header[4]);
+    const auto record_len = tls::get_record_payload_len(record_header);
     if (record_len > constants::tls_limits::kMaxCiphertextRecordLen)
     {
         ec = boost::system::errc::make_error_code(boost::system::errc::message_size);

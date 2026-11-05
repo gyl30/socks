@@ -4,10 +4,10 @@
 #include <vector>
 #include <cstddef>
 #include <cstring>
+#include <optional>
 
 extern "C"
 {
-#include <openssl/rand.h>
 #include <openssl/types.h>
 }
 
@@ -92,7 +92,8 @@ void encrypt_tls_record(const cipher_context& ctx,
                         const std::vector<uint8_t>& plaintext,
                         uint8_t content_type,
                         std::vector<uint8_t>& output_buffer,
-                        boost::system::error_code& ec)
+                        boost::system::error_code& ec,
+                        std::optional<std::size_t> padding_len_override)
 {
     ensure_openssl_initialized();
 
@@ -112,16 +113,9 @@ void encrypt_tls_record(const cipher_context& ctx,
     std::vector<uint8_t> inner_plaintext;
     std::size_t padding_len = 0;
 
-    if (content_type == kContentTypeApplicationData)
+    if (padding_len_override.has_value())
     {
-        uint8_t padding_seed = 0;
-        if (RAND_bytes(&padding_seed, 1) != 1)
-        {
-            ec = boost::system::errc::make_error_code(boost::system::errc::operation_canceled);
-            return;
-        }
-
-        padding_len = static_cast<std::size_t>(padding_seed % 64);
+        padding_len = *padding_len_override;
     }
 
     inner_plaintext.reserve(plaintext.size() + 1 + padding_len);
