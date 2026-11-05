@@ -1286,6 +1286,13 @@ boost::asio::awaitable<void> socks_udp_session::udp_socket_loop()
                      client_addr_.port());
             continue;
         }
+        socks_udp_header udp_header;
+        if (!decode_client_udp_header(buf, n, udp_header, trace_id_, normalized_sender, udp_bind_host_, udp_bind_port_, conn_id_))
+        {
+            continue;
+        }
+
+        // 只有通过 SOCKS5 UDP 报文校验的数据报才能完成首次绑定，避免同 IP 其他端口的非法报文抢占会话。
         if (!has_client_addr_)
         {
             client_addr_ = normalized_sender;
@@ -1300,12 +1307,6 @@ boost::asio::awaitable<void> socks_udp_session::udp_socket_loop()
                      udp_bind_port_,
                      client_addr_.address().to_string(),
                      client_addr_.port());
-        }
-
-        socks_udp_header udp_header;
-        if (!decode_client_udp_header(buf, n, udp_header, trace_id_, normalized_sender, udp_bind_host_, udp_bind_port_, conn_id_))
-        {
-            continue;
         }
 
         last_target_addr_ = udp_header.addr;

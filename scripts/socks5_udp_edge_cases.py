@@ -5,6 +5,7 @@ import ipaddress
 import socket
 import struct
 import sys
+import time
 
 
 def recv_exact(sock, size):
@@ -288,6 +289,80 @@ def expect_udp_bound_peer_rebind_ignored(host, port, timeout, target_port):
         tcp_sock.close()
 
 
+def bind_udp_socket_on(host, timeout):
+    udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    udp_sock.bind((host, 0))
+    udp_sock.settimeout(timeout)
+    return udp_sock
+
+
+INVALID_FIRST_PACKETS = (
+    ("short", b"\x00\x00\x00"),
+    ("invalid atyp", b"\x00\x00\x00\x05\x00\x50bad"),
+    ("zero domain length", b"\x00\x00\x00\x03\x00\x00\x50bad"),
+    ("truncated domain", b"\x00\x00\x00\x03\x20abc"),
+)
+
+
+def expect_udp_invalid_first_packet_does_not_bind(host, port, timeout, target_port):
+    # 首包绑定只能由通过 SOCKS5 UDP 报文校验的数据报完成：其他端口先发来的非法报文不能占用会话。
+    for name, invalid_packet in INVALID_FIRST_PACKETS:
+        tcp_sock, relay_host, relay_port = create_associated_session(host, port, timeout)
+        intruder_sock = bind_udp_socket(timeout)
+        client_sock = bind_udp_socket(timeout)
+        try:
+            send_and_expect_timeout(intruder_sock, relay_host, relay_port, invalid_packet)
+            packet = encode_udp_packet("127.0.0.1", target_port, b"udp-valid-after-" + name.encode())
+            try:
+                send_and_expect_echo(client_sock, relay_host, relay_port, packet, "127.0.0.1", target_port, b"udp-valid-after-" + name.encode())
+            except socket.timeout:
+                raise RuntimeError(f"{name} packet from another port bound the udp session") from None
+
+            # 合法首包完成绑定后，防重绑定保持不变。
+            late_packet = encode_udp_packet("127.0.0.1", target_port, b"udp-intruder-late")
+            send_and_expect_timeout(intruder_sock, relay_host, relay_port, late_packet)
+        finally:
+            client_sock.close()
+            intruder_sock.close()
+            tcp_sock.close()
+
+
+def expect_udp_wrong_source_ip_ignored(host, port, timeout, target_port):
+    tcp_sock, relay_host, relay_port = create_associated_session(host, port, timeout)
+    foreign_sock = bind_udp_socket_on("127.0.0.2", timeout)
+    client_sock = bind_udp_socket(timeout)
+    try:
+        foreign_packet = encode_udp_packet("127.0.0.1", target_port, b"udp-foreign-ip")
+        send_and_expect_timeout(foreign_sock, relay_host, relay_port, foreign_packet)
+        packet = encode_udp_packet("127.0.0.1", target_port, b"udp-client-ip-ok")
+        send_and_expect_echo(client_sock, relay_host, relay_port, packet, "127.0.0.1", target_port, b"udp-client-ip-ok")
+    finally:
+        client_sock.close()
+        foreign_sock.close()
+        tcp_sock.close()
+
+
+def expect_udp_closed_with_control_connection(host, port, timeout, target_port):
+    tcp_sock, relay_host, relay_port = create_associated_session(host, port, timeout)
+    client_sock = bind_udp_socket(timeout)
+    try:
+        packet = encode_udp_packet("127.0.0.1", target_port, b"udp-before-close")
+        send_and_expect_echo(client_sock, relay_host, relay_port, packet, "127.0.0.1", target_port, b"udp-before-close")
+        tcp_sock.close()
+        # 控制连接关闭后 association 结束，之后的数据报不再转发。
+        deadline = time.monotonic() + timeout * 4
+        while time.monotonic() < deadline:
+            try:
+                send_and_expect_timeout(client_sock, relay_host, relay_port, encode_udp_packet("127.0.0.1", target_port, b"udp-after-close"))
+                return
+            except RuntimeError:
+                continue
+        raise RuntimeError("udp association kept relaying after control connection closed")
+    finally:
+        client_sock.close()
+        tcp_sock.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description="SOCKS5 UDP edge case checks")
     parser.add_argument("--socks-host", required=True)
@@ -319,6 +394,15 @@ def main():
 
     expect_udp_bound_peer_rebind_ignored(args.socks_host, args.socks_port, args.timeout, args.target_port)
     print("socks5 udp bound peer rebind ignored ok")
+
+    expect_udp_invalid_first_packet_does_not_bind(args.socks_host, args.socks_port, args.timeout, args.target_port)
+    print("socks5 udp invalid first packet does not bind ok")
+
+    expect_udp_wrong_source_ip_ignored(args.socks_host, args.socks_port, args.timeout, args.target_port)
+    print("socks5 udp wrong source ip ignored ok")
+
+    expect_udp_closed_with_control_connection(args.socks_host, args.socks_port, args.timeout, args.target_port)
+    print("socks5 udp closed with control connection ok")
 
     return 0
 
