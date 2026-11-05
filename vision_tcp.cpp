@@ -38,8 +38,9 @@ constexpr uint16_t kTlsAes128Ccm8Sha256 = 0x1305;
             return false;
     }
 }
-constexpr std::size_t kLongPaddingThreshold = 512;
-constexpr std::size_t kLongPaddingJitter = 128;
+constexpr std::size_t kLongPaddingTarget = 900;
+constexpr std::size_t kLongPaddingJitter = 500;
+constexpr std::size_t kShortPaddingJitter = 256;
 
 [[nodiscard]] std::size_t dir_index(const direction dir) { return static_cast<std::size_t>(dir); }
 
@@ -65,16 +66,33 @@ void append_u16(std::vector<uint8_t>& out, const std::size_t value)
            content_len + padding_len + kBlockHeaderSize <= tls::kMaxTlsApplicationDataPayloadLen;
 }
 
-[[nodiscard]] std::size_t random_u16(boost::system::error_code& ec)
+[[nodiscard]] std::size_t random_below(const std::size_t upper, boost::system::error_code& ec)
 {
-    uint16_t value = 0;
-    if (RAND_bytes(reinterpret_cast<unsigned char*>(&value), static_cast<int>(sizeof(value))) != 1)
+    if (upper == 0)
     {
-        ec = boost::system::errc::make_error_code(boost::system::errc::io_error);
+        ec = boost::asio::error::invalid_argument;
         return 0;
     }
+    if (upper == 1)
+    {
+        ec.clear();
+        return 0;
+    }
+
+    constexpr uint64_t kRange = uint64_t{1} << 32U;
+    const auto limit = kRange - (kRange % upper);
+    uint32_t value = 0;
+    do
+    {
+        if (RAND_bytes(reinterpret_cast<unsigned char*>(&value), static_cast<int>(sizeof(value))) != 1)
+        {
+            ec = boost::system::errc::make_error_code(boost::system::errc::io_error);
+            return 0;
+        }
+    } while (static_cast<uint64_t>(value) >= limit);
+
     ec.clear();
-    return value;
+    return static_cast<std::size_t>(value % upper);
 }
 
 [[nodiscard]] std::size_t choose_padding_len(const padding_mode mode, const std::size_t content_len, boost::system::error_code& ec)
@@ -91,16 +109,14 @@ void append_u16(std::vector<uint8_t>& out, const std::size_t value)
     }
 
     const auto max_padding = tls::kMaxTlsApplicationDataPayloadLen - kBlockHeaderSize - content_len;
-    const auto seed = random_u16(ec);
+    std::size_t wanted = random_below(kShortPaddingJitter, ec);
+    if (!ec && mode == padding_mode::kLong && content_len < kLongPaddingTarget)
+    {
+        wanted = (kLongPaddingTarget - content_len) + random_below(kLongPaddingJitter, ec);
+    }
     if (ec)
     {
         return 0;
-    }
-
-    std::size_t wanted = seed % 256U;
-    if (mode == padding_mode::kLong && content_len < kLongPaddingThreshold)
-    {
-        wanted = (kLongPaddingThreshold - content_len) + (seed % kLongPaddingJitter);
     }
     return std::min(wanted, max_padding);
 }

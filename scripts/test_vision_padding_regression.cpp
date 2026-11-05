@@ -46,8 +46,8 @@ bool test_padding_block_sizes()
 
     ok = ok && require(relay::vision::encode_block(relay::vision::command::kContinue, content, relay::vision::padding_mode::kLong, encoded, ec) && !ec,
                        "long padding encode failed") &&
-         require(encoded.size() >= relay::vision::kBlockHeaderSize + 512U, "long padded block should hide small payloads") &&
-         require(encoded.size() <= relay::vision::kBlockHeaderSize + 639U, "long padded block should stay bounded");
+         require(encoded.size() >= relay::vision::kBlockHeaderSize + 900U, "long padded block should hide small payloads") &&
+         require(encoded.size() <= relay::vision::kBlockHeaderSize + 1399U, "long padded block should stay bounded");
 
     const std::vector<uint8_t> oversized(tls::kMaxTlsApplicationDataPayloadLen, 0x42);
     ok = ok && require(!relay::vision::encode_block(relay::vision::command::kContinue, oversized, relay::vision::padding_mode::kNone, encoded, ec),
