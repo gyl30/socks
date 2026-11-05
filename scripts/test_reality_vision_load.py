@@ -63,6 +63,8 @@ class large_https_handler(http.server.BaseHTTPRequestHandler):
 
 class threaded_https_server(http.server.ThreadingHTTPServer):
     daemon_threads = True
+    # socketserver 默认 backlog 为 5，低于并发请求数时全连接队列溢出，SYN 重传会给单个请求增加约 1 秒延迟。
+    request_queue_size = 128
 
 
 class https_origin_server:
@@ -73,7 +75,8 @@ class https_origin_server:
         self.server.chunk = b"x" * 65536
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.load_cert_chain(certfile=str(cert_path), keyfile=str(key_path))
-        self.server.socket = context.wrap_socket(self.server.socket, server_side=True)
+        # 握手放到各连接的处理线程，避免 accept 线程串行执行 TLS 握手而无法及时取出新连接。
+        self.server.socket = context.wrap_socket(self.server.socket, server_side=True, do_handshake_on_connect=False)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
 
