@@ -30,6 +30,11 @@ from testlib import (
 )
 
 
+STALL_PROBE_REQUESTS = 5
+STALL_APPCONNECT_LIMIT_SECONDS = 0.03
+STALL_FIRST_BYTE_LIMIT_SECONDS = 0.02
+
+
 def stop_processes(processes):
     for process in reversed(processes):
         try:
@@ -190,7 +195,8 @@ def run_curl_request(stack, tls_version, body_bytes):
         "--output",
         "/dev/null",
         "--write-out",
-        "size_download=%{size_download}\n",
+        "size_download=%{size_download} time_appconnect=%{time_appconnect} "
+        "time_starttransfer=%{time_starttransfer} time_total=%{time_total}\n",
         f"https://localhost:{stack['origin_port']}/load?size={body_bytes}",
     ]
     result = subprocess.run(args, text=True, capture_output=True, check=False)
@@ -199,12 +205,30 @@ def run_curl_request(stack, tls_version, body_bytes):
 
     for line in result.stdout.splitlines():
         if line.startswith("size_download="):
-            downloaded = int(float(line.split("=", 1)[1]))
+            fields = dict(item.split("=", 1) for item in line.split())
+            downloaded = int(float(fields["size_download"]))
             if downloaded != body_bytes:
                 raise RuntimeError(f"curl downloaded unexpected bytes downloaded={downloaded} expected={body_bytes}")
-            return downloaded
+            return {
+                "bytes": downloaded,
+                "appconnect_seconds": float(fields["time_appconnect"]),
+                "first_byte_wait_seconds": float(fields["time_starttransfer"]) - float(fields["time_appconnect"]),
+                "total_seconds": float(fields["time_total"]),
+            }
 
     raise RuntimeError(f"curl output missing size_download {result.stdout!r}")
+
+
+def check_no_write_stall(stack, tls_version, body_bytes):
+    # Linux 延迟 ACK 最短 40ms；连续小写入被 Nagle 扣住时，握手或首个响应会整体推迟至少 40ms。
+    # 顺序请求排除并发争用，正常情况两项中位数都只有几毫秒。
+    probes = [run_curl_request(stack, tls_version, body_bytes) for _ in range(STALL_PROBE_REQUESTS)]
+    appconnect = sorted(probe["appconnect_seconds"] for probe in probes)[STALL_PROBE_REQUESTS // 2]
+    first_byte_wait = sorted(probe["first_byte_wait_seconds"] for probe in probes)[STALL_PROBE_REQUESTS // 2]
+    summary = {"appconnect_seconds_median": appconnect, "first_byte_wait_seconds_median": first_byte_wait}
+    if appconnect > STALL_APPCONNECT_LIMIT_SECONDS or first_byte_wait > STALL_FIRST_BYTE_LIMIT_SECONDS:
+        raise RuntimeError(f"write stall detected {summary}")
+    return summary
 
 
 def run_parallel_load(stack, tls_version, body_bytes, concurrency, requests_per_worker):
@@ -217,7 +241,8 @@ def run_parallel_load(stack, tls_version, body_bytes, concurrency, requests_per_
     with ThreadPoolExecutor(max_workers=concurrency) as executor:
         results = list(executor.map(one_request, range(total_requests)))
     duration = time.perf_counter() - started_at
-    total_bytes = sum(results)
+    total_bytes = sum(result["bytes"] for result in results)
+    request_seconds = sorted(result["total_seconds"] for result in results)
     throughput_mib_per_s = (total_bytes / (1024.0 * 1024.0)) / duration if duration > 0 else 0.0
 
     return {
@@ -225,6 +250,9 @@ def run_parallel_load(stack, tls_version, body_bytes, concurrency, requests_per_
         "total_bytes": total_bytes,
         "duration_seconds": duration,
         "throughput_mib_per_s": throughput_mib_per_s,
+        "request_seconds_median": request_seconds[len(request_seconds) // 2],
+        "request_seconds_max": request_seconds[-1],
+        "appconnect_seconds_max": max(result["appconnect_seconds"] for result in results),
     }
 
 
@@ -314,6 +342,7 @@ def main():
             active_monitor = start_resource_monitor(repo_root, stack, active_monitor_path)
 
             try:
+                latency_summary = check_no_write_stall(stack, tls_version, args.body_bytes)
                 load_summary = run_parallel_load(
                     stack,
                     tls_version,
@@ -333,6 +362,7 @@ def main():
             resources = summarize_resources(resource_summary)
             assert_resource_bounds(resources)
             results[name] = {
+                "latency": latency_summary,
                 "load": load_summary,
                 "resources": resources,
                 "artifacts": str(scenario_root),
@@ -342,17 +372,18 @@ def main():
         if baseline <= 0.0:
             raise RuntimeError("baseline throughput must be positive")
 
+        # 先输出各场景的耗时分布，阈值失败时可直接区分整体变慢与单个请求长尾。
+        summary_path = temp_root / "summary.json"
+        save_json(summary_path, results)
+        print(json.dumps(results, ensure_ascii=False, indent=2))
+        print(f"summary_path={summary_path}")
+
         for name in ("vision_tls13_direct", "vision_tls12_fallback"):
             throughput = results[name]["load"]["throughput_mib_per_s"]
             if throughput < baseline * 0.6:
                 raise RuntimeError(
                     f"{name} throughput regressed too much throughput={throughput:.2f} baseline={baseline:.2f}"
                 )
-
-        summary_path = temp_root / "summary.json"
-        save_json(summary_path, results)
-        print(json.dumps(results, ensure_ascii=False, indent=2))
-        print(f"summary_path={summary_path}")
         return 0
     except Exception as exc:
         print(f"vision load regression failed {exc}", file=sys.stderr)

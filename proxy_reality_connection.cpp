@@ -185,6 +185,18 @@ boost::asio::awaitable<void> tcp_connect_remote(
         { prepare_socket_for_connect(socket, endpoint, conn_id, options.connect_mark, op_ec); });
     if (connected != resolve_endpoints.end())
     {
+        // 握手与 Vision 切换 direct 时会连续写小报文，Nagle 与对端延迟 ACK 叠加会让每条连接停顿约 40ms。
+        boost::system::error_code no_delay_ec;
+        no_delay_ec = socket.set_option(boost::asio::ip::tcp::no_delay(true), no_delay_ec);
+        if (no_delay_ec)
+        {
+            LOG_WARN("{} conn {} stage set_no_delay target {}:{} error {}",
+                     log_event::kConnInit,
+                     conn_id,
+                     options.remote_host,
+                     options.remote_port,
+                     no_delay_ec.message());
+        }
         co_return;
     }
 
