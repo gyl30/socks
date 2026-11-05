@@ -8,6 +8,8 @@
 
 #include "config.h"
 #include "router.h"
+#include "request_context.h"
+#include "route_flow_utils.h"
 
 namespace
 {
@@ -137,6 +139,47 @@ bool require_file_rule_parse_and_dump()
     return ok;
 }
 
+// IP 规则只匹配请求中的 IP 字面量，不对域名的 DNS 解析结果再次求值（与 Xray domainStrategy AsIs 相同）。
+bool require_ip_rules_match_ip_literals_only()
+{
+    relay::config cfg = make_router_config();
+    relay::config::route_rule_t ip_rule;
+    ip_rule.type = "ip";
+    ip_rule.values = {"127.0.0.0/8"};
+    ip_rule.out = "block";
+    cfg.routing.insert(cfg.routing.begin(), std::move(ip_rule));
+
+    auto shared_state = relay::router::build_shared_state(cfg);
+    if (!require(shared_state != nullptr, "failed to build shared state for ip rule"))
+    {
+        return false;
+    }
+    const auto socks_router = std::make_shared<relay::router>(shared_state, "socks-in");
+
+    relay::request_context domain_request;
+    domain_request.target_host = "localhost";
+    relay::request_context ip_request;
+    ip_request.target_host = "127.0.0.1";
+    relay::request_context mapped_ip_request;
+    mapped_ip_request.target_host = "::ffff:127.0.0.1";
+
+    return require_decision(relay::resolve_route_decision_for_request(domain_request, socks_router, true),
+                            relay::route_type::kDirect,
+                            "direct",
+                            "inbound",
+                            "socks-in") &&
+           require_decision(relay::resolve_route_decision_for_request(ip_request, socks_router, true),
+                            relay::route_type::kBlock,
+                            "block",
+                            "ip",
+                            "127.0.0.1") &&
+           require_decision(relay::resolve_route_decision_for_request(mapped_ip_request, socks_router, true),
+                            relay::route_type::kBlock,
+                            "block",
+                            "ip",
+                            "127.0.0.1");
+}
+
 }    // namespace
 
 int main()
@@ -168,7 +211,7 @@ int main()
                          "direct",
                          "inbound",
                          "socks-in") &&
-        require_file_rule_parse_and_dump();
+        require_file_rule_parse_and_dump() && require_ip_rules_match_ip_literals_only();
 
     return ok ? 0 : 1;
 }

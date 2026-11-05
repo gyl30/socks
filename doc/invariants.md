@@ -27,6 +27,8 @@
 
 - 当前只支持 `first-match`，不支持多条件组合求值。
 - `domain` 规则按精确匹配处理，不是 suffix / wildcard。
+- `ip` 规则只匹配请求中的 IP 字面量（`::ffff:x.y.z.w` 按 IPv4 匹配）；域名请求只按 `domain` / `inbound` 规则决策，
+  出站解析出的地址不会再经过 `ip` 规则，因此 IP block 不能拦截解析到该网段的域名。
 - `inbound` 规则可以直接选定 outbound。
 - `block` 是显式路由结果，不是错误分支。
 

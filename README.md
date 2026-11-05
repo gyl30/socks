@@ -265,6 +265,7 @@ Before changing protocol or session behavior, read [`doc/invariants.md`](doc/inv
 
 - Routing is first-match.
 - Domain rules are exact matches, not suffix or wildcard matches.
+- IP rules match only IP-literal targets; DNS results of domain targets are not re-checked against IP rules, so an IP block does not stop a domain that resolves into the blocked range.
 - `block` is an explicit routing result.
 - TCP proxy frames follow a fixed request/reply/data/shutdown sequence.
 - UDP proxy frames preserve datagram boundaries.
