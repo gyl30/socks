@@ -286,7 +286,6 @@ When modifying a specific subsystem, also update or add the corresponding regres
 .github/workflows/     CI workflow
 config/                Example configuration and routing rule files
 doc/                   Architecture notes and UML diagrams
-docker/                Container-related development files
 fuzz/                  libFuzzer targets
 reality/               REALITY handshake, policy, and session code
 scripts/               Regression and integration tests
