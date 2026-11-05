@@ -1,6 +1,7 @@
 #ifndef REALITY_FINGERPRINT_H
 #define REALITY_FINGERPRINT_H
 
+#include <array>
 #include <memory>
 #include <string_view>
 #include <vector>
@@ -57,7 +58,7 @@ class grease_context
     [[nodiscard]] uint16_t get_extension_grease(int nth_occurrence) const;
 
    private:
-    std::array<uint16_t, 8> seed_;
+    std::array<uint8_t, 5> seed_{};
 };
 
 [[nodiscard]] fingerprint_template build_random_fingerprint_template();

@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <algorithm>
+#include <utility>
 
 extern "C"
 {
@@ -97,67 +98,70 @@ bool has_key_share_group(const Spec& spec, uint16_t group)
     return std::ranges::any_of(values, [group](const key_share_blueprint::key_share_entry& entry) { return entry.group == group; });
 }
 
+uint64_t secure_shuffle_seed()
+{
+    uint64_t seed = 0;
+    if (RAND_bytes(reinterpret_cast<unsigned char*>(&seed), static_cast<int>(sizeof(seed))) == 1)
+    {
+        return seed;
+    }
+
+    std::random_device rd;
+    return (static_cast<uint64_t>(rd()) << 32U) ^ static_cast<uint64_t>(rd());
+}
+
 void shuffle_extensions(std::vector<std::shared_ptr<extension_blueprint>>& exts)
 {
-    std::vector<std::size_t> indices;
-    std::vector<std::shared_ptr<extension_blueprint>> shufflable_exts;
-
-    for (std::size_t i = 0; i < exts.size(); ++i)
-    {
-        if (exts[i]->is_shufflable())
-        {
-            indices.push_back(i);
-            shufflable_exts.push_back(exts[i]);
-        }
-    }
-    if (indices.empty())
+    if (exts.size() < 2)
     {
         return;
     }
 
-    std::random_device rd;
-    std::mt19937 g(rd());
-    std::ranges::shuffle(shufflable_exts, g);
-
-    for (std::size_t i = 0; i < indices.size(); ++i)
+    std::mt19937_64 g(secure_shuffle_seed());
+    for (std::size_t i = exts.size() - 1; i > 0; --i)
     {
-        exts[indices[i]] = shufflable_exts[i];
+        std::uniform_int_distribution<std::size_t> dist(0, i);
+        const auto j = dist(g);
+        if (exts[i] == nullptr || exts[j] == nullptr || !exts[i]->is_shufflable() || !exts[j]->is_shufflable())
+        {
+            continue;
+        }
+        std::swap(exts[i], exts[j]);
     }
 }
 
 constexpr auto kGreaseValues = std::to_array<uint16_t>(
     {0x0a0a, 0x1a1a, 0x2a2a, 0x3a3a, 0x4a4a, 0x5a5a, 0x6a6a, 0x7a7a, 0x8a8a, 0x9a9a, 0xaaaa, 0xbaba, 0xcaca, 0xdada, 0xeaea, 0xfafa});
 
+uint16_t grease_value_from_seed(uint8_t seed)
+{
+    return kGreaseValues[(seed >> 4U) & 0x0FU];
+}
+
 }    // namespace
 
 grease_context::grease_context()
 {
-    const std::size_t seed_len = seed_.size() * sizeof(seed_[0]);
-    if (seed_len > static_cast<std::size_t>(std::numeric_limits<int>::max()) ||
-        RAND_bytes(reinterpret_cast<uint8_t*>(seed_.data()), static_cast<int>(seed_len)) != 1)
+    if (RAND_bytes(seed_.data(), static_cast<int>(seed_.size())) != 1)
     {
-        for (auto& s : seed_)
-        {
-            s = 0x0a0a;
-        }
+        seed_.fill(0);
+    }
+    if (grease_value_from_seed(seed_[2]) == grease_value_from_seed(seed_[3]))
+    {
+        seed_[3] ^= 0x10U;
     }
 }
 
 uint16_t grease_context::get_grease(int index) const
 {
-    const uint16_t val = seed_[static_cast<std::size_t>(index) % seed_.size()];
-    const auto idx = static_cast<uint8_t>((val >> 8) ^ (val & 0xFF));
-    return kGreaseValues[idx % kGreaseValues.size()];
+    const auto idx = static_cast<std::size_t>(index < 0 ? 0 : index) % seed_.size();
+    return grease_value_from_seed(seed_[idx]);
 }
 
 uint16_t grease_context::get_extension_grease(int nth_occurrence) const
 {
     const uint16_t val1 = get_grease(2);
-    uint16_t val2 = get_grease(3);
-    if (val1 == val2)
-    {
-        val2 ^= 0x1010;
-    }
+    const uint16_t val2 = get_grease(3);
     return (nth_occurrence == 0) ? val1 : val2;
 }
 
@@ -256,7 +260,10 @@ fingerprint_template build_chrome_template(const bool hybrid_key_share)
 
     mutable_fingerprint_extensions(spec).push_back(std::make_shared<grease_ech_blueprint>());
     mutable_fingerprint_extensions(spec).push_back(std::make_shared<grease_blueprint>());
-    mutable_fingerprint_extensions(spec).push_back(std::make_shared<padding_blueprint>());
+    if (!hybrid_key_share)
+    {
+        mutable_fingerprint_extensions(spec).push_back(std::make_shared<padding_blueprint>());
+    }
     set_fingerprint_shuffle_extensions(spec, true);
     return spec;
 }

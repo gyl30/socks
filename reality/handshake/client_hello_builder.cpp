@@ -11,6 +11,7 @@
 extern "C"
 {
 #include <openssl/ec.h>
+#include <openssl/crypto.h>
 #include <openssl/evp.h>
 #include <openssl/rand.h>
 #include <openssl/types.h>
@@ -19,6 +20,7 @@ extern "C"
 }
 
 #include "tls/core.h"
+#include "tls/crypto_util.h"
 #include "tls/server_name.h"
 #include "reality/handshake/fingerprint.h"
 #include "reality/handshake/client_hello_builder.h"
@@ -369,11 +371,14 @@ bool build_grease_ech_ext(std::vector<uint8_t>& ext_buffer, uint16_t& ext_type)
     }
     ext_buffer.push_back(config_id);
 
-    std::vector<uint8_t> enc_key(32, 0);
-    if (!fill_random_bytes(enc_key))
+    std::array<uint8_t, 32> enc_public{};
+    std::array<uint8_t, 32> enc_private{};
+    if (!tls::crypto_util::generate_x25519_keypair(enc_public.data(), enc_private.data()))
     {
         return false;
     }
+    OPENSSL_cleanse(enc_private.data(), enc_private.size());
+    const std::vector<uint8_t> enc_key(enc_public.begin(), enc_public.end());
     message_builder::push_vector_u16(ext_buffer, enc_key);
 
     const uint16_t payload_len = select_grease_ech_payload_len();
@@ -433,12 +438,13 @@ bool build_pre_shared_key_ext(std::vector<uint8_t>& ext_buffer, uint16_t& ext_ty
 bool build_padding_ext(std::vector<uint8_t>& ext_buffer, uint16_t& ext_type, const extension_build_context& ctx)
 {
     ext_type = tls::consts::ext::kPadding;
-    const auto current_len = ctx.hello_size + 2 + ctx.exts_size + 4;
+    const auto current_len = ctx.hello_size + 2 + ctx.exts_size;
     const std::size_t padding_len = boring_padding_len(current_len);
-    if (padding_len > 0)
+    if (padding_len == 0)
     {
-        ext_buffer.resize(padding_len, 0x00);
+        return false;
     }
+    ext_buffer.resize(padding_len, 0x00);
     return true;
 }
 
