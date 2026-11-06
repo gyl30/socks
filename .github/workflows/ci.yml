@@ -342,9 +342,13 @@ jobs:
           - runner: macos-15
             arch: arm64
             openssl_target: darwin64-arm64-cc
+            llvm_formula: llvm
+            ccache_launcher: ccache
           - runner: macos-15-intel
             arch: x86_64
             openssl_target: darwin64-x86_64-cc
+            llvm_formula: llvm@18
+            ccache_launcher: ''
 
     steps:
       - uses: actions/checkout@v5
@@ -371,6 +375,7 @@ jobs:
             macos-15-${{ runner.arch }}-openssl-${{ env.OPENSSL_VERSION }}-
 
       - name: Restore macOS ccache
+        if: matrix.arch == 'arm64'
         uses: actions/cache/restore@v5
         with:
           path: ~/.cache/ccache/macos-${{ runner.arch }}
@@ -382,7 +387,13 @@ jobs:
         run: |
           set -euo pipefail
           brew update
-          brew install brotli ccache cmake ninja llvm wget
+          if [ "${{ matrix.arch }}" = "x86_64" ]; then
+            # Intel Homebrew no longer provides fresh LLVM/ccache bottles; use the runner's LLVM 18.
+            brew install brotli
+            test -x "$(brew --prefix llvm@18)/bin/clang++"
+          else
+            brew install brotli ccache cmake ninja llvm wget
+          fi
 
       - name: Prepare Boost Headers
         run: |
@@ -426,7 +437,7 @@ jobs:
           BOOST_ROOT="$HOME/.cache/boost/${BOOST_SRC_DIR}"
           BROTLI_INCLUDE_DIR="$(brew --prefix brotli)/include"
           test -f "${BROTLI_INCLUDE_DIR}/brotli/decode.h"
-          LLVM_ROOT="$(brew --prefix llvm)"
+          LLVM_ROOT="$(brew --prefix "${{ matrix.llvm_formula }}")"
           OPENSSL_ROOT="$HOME/.cache/openssl/install-${OPENSSL_VERSION}"
           OPENSSL_CMAKE_DIR="${OPENSSL_ROOT}/lib64/cmake/OpenSSL"
           CCACHE_DIR="$HOME/.cache/ccache/macos-${{ runner.arch }}"
@@ -436,8 +447,10 @@ jobs:
           export CCACHE_COMPILERCHECK=content
           export CCACHE_NOHASHDIR=true
           export CCACHE_COMPRESS=1
-          ccache -M "${CCACHE_MAXSIZE}"
-          ccache -z
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            ccache -M "${CCACHE_MAXSIZE}"
+            ccache -z
+          fi
           if [ ! -d "${OPENSSL_CMAKE_DIR}" ]; then
             OPENSSL_CMAKE_DIR="${OPENSSL_ROOT}/lib/cmake/OpenSSL"
           fi
@@ -446,8 +459,8 @@ jobs:
             -DCMAKE_OSX_ARCHITECTURES="${{ matrix.arch }}" \
             -DCMAKE_C_COMPILER="${LLVM_ROOT}/bin/clang" \
             -DCMAKE_CXX_COMPILER="${LLVM_ROOT}/bin/clang++" \
-            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
-            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_C_COMPILER_LAUNCHER="${{ matrix.ccache_launcher }}" \
+            -DCMAKE_CXX_COMPILER_LAUNCHER="${{ matrix.ccache_launcher }}" \
             -DENABLE_TSAN=OFF \
             -DENABLE_ASAN=OFF \
             -DBoost_NO_BOOST_CMAKE=ON \
@@ -467,7 +480,9 @@ jobs:
           export CCACHE_NOHASHDIR=true
           export CCACHE_COMPRESS=1
           cmake --build build --target socks --parallel
-          ccache -s
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            ccache -s
+          fi
 
       - name: Verify Binary Architecture and Smoke
         run: |
@@ -478,7 +493,7 @@ jobs:
           ./build/socks config >/dev/null
 
       - name: Save macOS ccache
-        if: always()
+        if: always() && matrix.arch == 'arm64'
         uses: actions/cache/save@v5
         with:
           path: ~/.cache/ccache/macos-${{ runner.arch }}
