@@ -386,13 +386,39 @@ jobs:
       - name: Install Dependencies
         run: |
           set -euo pipefail
-          brew update
           if [ "${{ matrix.arch }}" = "x86_64" ]; then
-            # Intel Homebrew no longer provides fresh LLVM/ccache bottles; use the runner's LLVM 18.
-            brew install brotli
+            # Homebrew does not provide new Intel bottles; use the runner's tools.
+            command -v cmake
+            command -v ninja
+            command -v wget
             test -x "$(brew --prefix llvm@18)/bin/clang++"
           else
+            brew update
             brew install brotli ccache cmake ninja llvm wget
+          fi
+
+      - name: Build Intel Brotli
+        if: matrix.arch == 'x86_64'
+        run: |
+          set -euo pipefail
+          BROTLI_CACHE_DIR="$HOME/.cache/brotli"
+          BROTLI_ROOT="${BROTLI_CACHE_DIR}/install-${BROTLI_VERSION}"
+          BROTLI_ARCHIVE_PATH="${BROTLI_CACHE_DIR}/${BROTLI_ARCHIVE}"
+          BROTLI_SOURCE_DIR="${BROTLI_CACHE_DIR}/${BROTLI_SRC_DIR}"
+          mkdir -p "${BROTLI_CACHE_DIR}"
+          if [ ! -f "${BROTLI_ROOT}/lib/libbrotlidec.a" ] || [ ! -f "${BROTLI_ROOT}/lib/libbrotlicommon.a" ]; then
+            if [ ! -f "${BROTLI_ARCHIVE_PATH}" ]; then
+              wget -O "${BROTLI_ARCHIVE_PATH}" "https://github.com/google/brotli/archive/refs/tags/v${BROTLI_VERSION}.tar.gz"
+            fi
+            rm -rf "${BROTLI_SOURCE_DIR}" "${BROTLI_ROOT}"
+            tar xf "${BROTLI_ARCHIVE_PATH}" -C "${BROTLI_CACHE_DIR}"
+            cmake -S "${BROTLI_SOURCE_DIR}" -B "${BROTLI_SOURCE_DIR}/build" -GNinja \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_INSTALL_PREFIX="${BROTLI_ROOT}" \
+              -DCMAKE_INSTALL_LIBDIR=lib \
+              -DBUILD_SHARED_LIBS=OFF \
+              -DBROTLI_DISABLE_TESTS=ON
+            cmake --build "${BROTLI_SOURCE_DIR}/build" --target install --parallel
           fi
 
       - name: Prepare Boost Headers
@@ -435,8 +461,20 @@ jobs:
         run: |
           set -euo pipefail
           BOOST_ROOT="$HOME/.cache/boost/${BOOST_SRC_DIR}"
-          BROTLI_INCLUDE_DIR="$(brew --prefix brotli)/include"
+          if [ "${{ matrix.arch }}" = "x86_64" ]; then
+            BROTLI_ROOT="$HOME/.cache/brotli/install-${BROTLI_VERSION}"
+            BROTLI_INCLUDE_DIR="${BROTLI_ROOT}/include"
+          else
+            BROTLI_INCLUDE_DIR="$(brew --prefix brotli)/include"
+          fi
           test -f "${BROTLI_INCLUDE_DIR}/brotli/decode.h"
+          BROTLI_CMAKE_ARGS=("-DBROTLI_INCLUDE_DIR=${BROTLI_INCLUDE_DIR}")
+          if [ "${{ matrix.arch }}" = "x86_64" ]; then
+            test -f "${BROTLI_ROOT}/lib/libbrotlidec.a"
+            test -f "${BROTLI_ROOT}/lib/libbrotlicommon.a"
+            BROTLI_CMAKE_ARGS+=("-DBROTLIDEC_LIBRARY=${BROTLI_ROOT}/lib/libbrotlidec.a")
+            BROTLI_CMAKE_ARGS+=("-DBROTLICOMMON_LIBRARY=${BROTLI_ROOT}/lib/libbrotlicommon.a")
+          fi
           LLVM_ROOT="$(brew --prefix "${{ matrix.llvm_formula }}")"
           OPENSSL_ROOT="$HOME/.cache/openssl/install-${OPENSSL_VERSION}"
           OPENSSL_CMAKE_DIR="${OPENSSL_ROOT}/lib64/cmake/OpenSSL"
@@ -466,7 +504,7 @@ jobs:
             -DBoost_NO_BOOST_CMAKE=ON \
             -DBoost_NO_SYSTEM_PATHS=ON \
             -DBOOST_ROOT="$BOOST_ROOT" \
-            -DBROTLI_INCLUDE_DIR="${BROTLI_INCLUDE_DIR}" \
+            "${BROTLI_CMAKE_ARGS[@]}" \
             -DOpenSSL_DIR="${OPENSSL_CMAKE_DIR}" \
             -DOPENSSL_ROOT_DIR="${OPENSSL_ROOT}" \
             -DCMAKE_PREFIX_PATH="$BOOST_ROOT;${OPENSSL_ROOT};${LLVM_ROOT}"
