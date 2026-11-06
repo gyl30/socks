@@ -475,6 +475,7 @@ jobs:
             BROTLI_CMAKE_ARGS+=("-DBROTLICOMMON_LIBRARY=${BROTLI_ROOT}/lib/libbrotlicommon.a")
           fi
           if [ "${{ matrix.arch }}" = "x86_64" ]; then
+            LLVM_ROOT=""
             CC_BIN="$(xcrun --find clang)"
             CXX_BIN="$(xcrun --find clang++)"
           else
