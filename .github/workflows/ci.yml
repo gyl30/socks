@@ -333,13 +333,28 @@ jobs:
           key: linux-${{ matrix.arch }}-${{ matrix.compiler }}-${{ matrix.libc }}-ccache-${{ env.CCACHE_CACHE_REV }}-${{ github.sha }}
 
   build-macos:
-    name: Build macOS (socks5)
-    runs-on: macos-15
+    name: Build macOS (${{ matrix.arch }},socks5)
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+            openssl_target: darwin64-arm64-cc
+          - runner: macos-15-intel
+            arch: x86_64
+            openssl_target: darwin64-x86_64-cc
 
     steps:
       - uses: actions/checkout@v5
         with:
           submodules: recursive
+
+      - name: Verify Runner Architecture
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = "${{ matrix.arch }}"
 
       - name: Restore macOS Boost Cache
         uses: actions/cache@v5
@@ -396,7 +411,7 @@ jobs:
             cd "${OPENSSL_SOURCE_DIR}"
             JOBS="$(sysctl -n hw.ncpu)"
             perl ./Configure \
-              darwin64-arm64-cc \
+              ${{ matrix.openssl_target }} \
               --prefix="${OPENSSL_ROOT}" \
               --openssldir="${OPENSSL_ROOT}/ssl" \
               shared
@@ -428,6 +443,7 @@ jobs:
           fi
           cmake -S . -B build -GNinja \
             -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES="${{ matrix.arch }}" \
             -DCMAKE_C_COMPILER="${LLVM_ROOT}/bin/clang" \
             -DCMAKE_CXX_COMPILER="${LLVM_ROOT}/bin/clang++" \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
@@ -452,6 +468,14 @@ jobs:
           export CCACHE_COMPRESS=1
           cmake --build build --target socks --parallel
           ccache -s
+
+      - name: Verify Binary Architecture and Smoke
+        run: |
+          set -euo pipefail
+          file build/socks
+          test "$(lipo -archs build/socks)" = "${{ matrix.arch }}"
+          ./build/socks x25519 | grep -q '^public key:'
+          ./build/socks config >/dev/null
 
       - name: Save macOS ccache
         if: always()
