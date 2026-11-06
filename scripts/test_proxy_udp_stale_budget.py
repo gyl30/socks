@@ -24,6 +24,11 @@ from testlib import (
 )
 
 
+# 客户端会话预算约 2 秒，各跳 idle 为 5 秒；过期数据报必须落在两者之间，才能验证"会话仍在但预算已耗尽"。
+STALE_SEND_DELAY_SECONDS = 3.0
+STALE_SEND_LATEST_SECONDS = 4.5
+
+
 def read_exact(sock, size):
     data = bytearray()
     while len(data) < size:
@@ -299,6 +304,7 @@ def main():
 
         udp_tcp_sock, udp_bind_host, udp_bind_port = open_socks5_udp_associate(client_socks_port)
         udp_peer_sock = open_udp_peer_socket()
+        fast_sent_at = time.monotonic()
         send_socks5_udp_datagram(udp_peer_sock, udp_bind_host, udp_bind_port, "127.0.0.1", 80, b"fast-open")
         try:
             wait_for_log_text(
@@ -318,7 +324,11 @@ def main():
                 server_b_log,
             )
 
-        time.sleep(3.0)
+        # 服务日志每 3 秒落盘一次，看到日志的时刻会滞后最多约 3 秒，因此以首包发送时刻为基准计时。
+        time.sleep(max(0.0, fast_sent_at + STALE_SEND_DELAY_SECONDS - time.monotonic()))
+        stale_send_offset = time.monotonic() - fast_sent_at
+        if stale_send_offset > STALE_SEND_LATEST_SECONDS:
+            raise RuntimeError(f"stale datagram sent too late offset={stale_send_offset:.2f}s, idle timeout may reset the session")
 
         udp_elapsed_start = time.monotonic()
         send_socks5_udp_datagram(udp_peer_sock, udp_bind_host, udp_bind_port, "127.0.0.2", 80, b"stale-budget")
