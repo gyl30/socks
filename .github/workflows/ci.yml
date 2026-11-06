@@ -347,7 +347,6 @@ jobs:
           - runner: macos-15-intel
             arch: x86_64
             openssl_target: darwin64-x86_64-cc
-            llvm_formula: llvm@18
             ccache_launcher: ''
 
     steps:
@@ -387,11 +386,11 @@ jobs:
         run: |
           set -euo pipefail
           if [ "${{ matrix.arch }}" = "x86_64" ]; then
-            # Homebrew does not provide new Intel bottles; use the runner's tools.
+            # Use preinstalled build tools and Xcode Clang to match the macOS C++ runtime.
             command -v cmake
             command -v ninja
             command -v wget
-            test -x "$(brew --prefix llvm@18)/bin/clang++"
+            xcrun --find clang++
           else
             brew update
             brew install brotli ccache cmake ninja llvm wget
@@ -475,7 +474,14 @@ jobs:
             BROTLI_CMAKE_ARGS+=("-DBROTLIDEC_LIBRARY=${BROTLI_ROOT}/lib/libbrotlidec.a")
             BROTLI_CMAKE_ARGS+=("-DBROTLICOMMON_LIBRARY=${BROTLI_ROOT}/lib/libbrotlicommon.a")
           fi
-          LLVM_ROOT="$(brew --prefix "${{ matrix.llvm_formula }}")"
+          if [ "${{ matrix.arch }}" = "x86_64" ]; then
+            CC_BIN="$(xcrun --find clang)"
+            CXX_BIN="$(xcrun --find clang++)"
+          else
+            LLVM_ROOT="$(brew --prefix llvm)"
+            CC_BIN="${LLVM_ROOT}/bin/clang"
+            CXX_BIN="${LLVM_ROOT}/bin/clang++"
+          fi
           OPENSSL_ROOT="$HOME/.cache/openssl/install-${OPENSSL_VERSION}"
           OPENSSL_CMAKE_DIR="${OPENSSL_ROOT}/lib64/cmake/OpenSSL"
           CCACHE_DIR="$HOME/.cache/ccache/macos-${{ runner.arch }}"
@@ -495,8 +501,8 @@ jobs:
           cmake -S . -B build -GNinja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_OSX_ARCHITECTURES="${{ matrix.arch }}" \
-            -DCMAKE_C_COMPILER="${LLVM_ROOT}/bin/clang" \
-            -DCMAKE_CXX_COMPILER="${LLVM_ROOT}/bin/clang++" \
+            -DCMAKE_C_COMPILER="${CC_BIN}" \
+            -DCMAKE_CXX_COMPILER="${CXX_BIN}" \
             -DCMAKE_C_COMPILER_LAUNCHER="${{ matrix.ccache_launcher }}" \
             -DCMAKE_CXX_COMPILER_LAUNCHER="${{ matrix.ccache_launcher }}" \
             -DENABLE_TSAN=OFF \
