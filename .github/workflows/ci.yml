@@ -409,6 +409,8 @@ jobs:
         run: |
           set -euo pipefail
           BOOST_ROOT="$HOME/.cache/boost/${BOOST_SRC_DIR}"
+          BROTLI_INCLUDE_DIR="$(brew --prefix brotli)/include"
+          test -f "${BROTLI_INCLUDE_DIR}/brotli/decode.h"
           LLVM_ROOT="$(brew --prefix llvm)"
           OPENSSL_ROOT="$HOME/.cache/openssl/install-${OPENSSL_VERSION}"
           OPENSSL_CMAKE_DIR="${OPENSSL_ROOT}/lib64/cmake/OpenSSL"
@@ -435,6 +437,7 @@ jobs:
             -DBoost_NO_BOOST_CMAKE=ON \
             -DBoost_NO_SYSTEM_PATHS=ON \
             -DBOOST_ROOT="$BOOST_ROOT" \
+            -DBROTLI_INCLUDE_DIR="${BROTLI_INCLUDE_DIR}" \
             -DOpenSSL_DIR="${OPENSSL_CMAKE_DIR}" \
             -DOPENSSL_ROOT_DIR="${OPENSSL_ROOT}" \
             -DCMAKE_PREFIX_PATH="$BOOST_ROOT;${OPENSSL_ROOT};${LLVM_ROOT}"
