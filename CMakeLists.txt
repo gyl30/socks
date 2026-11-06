@@ -400,6 +400,9 @@ endif()
 
 add_executable(proxy_reality_connection_regression scripts/test_proxy_reality_connection_regression.cpp)
 target_link_libraries(proxy_reality_connection_regression PRIVATE core)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  target_link_options(proxy_reality_connection_regression PRIVATE "-Wl,--wrap=setsockopt")
+endif()
 if(UNIX AND NOT APPLE AND NOT ENABLE_STATIC_LINK)
   target_link_options(proxy_reality_connection_regression PRIVATE "-Wl,--no-as-needed" "${BROTLICOMMON_LIBRARY}" "-Wl,--as-needed")
 endif()
@@ -605,6 +608,11 @@ if(BUILD_TESTING)
     NAME reality_vision_load
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_reality_vision_load.py --binary $<TARGET_FILE:socks>)
   set_tests_properties(reality_vision_load PROPERTIES TIMEOUT 240)
+
+  add_test(
+    NAME reality_vision_load_metrics
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_reality_vision_load_metrics.py)
+  set_tests_properties(reality_vision_load_metrics PROPERTIES TIMEOUT 30 LABELS unit)
 
   add_test(NAME socket_mark_regression COMMAND $<TARGET_FILE:socket_mark_regression>)
   set_tests_properties(socket_mark_regression PROPERTIES TIMEOUT 30)

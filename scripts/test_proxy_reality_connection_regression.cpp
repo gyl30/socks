@@ -1,4 +1,7 @@
 #include <span>
+#include <array>
+#include <cerrno>
+#include <optional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -12,12 +15,53 @@ extern "C"
 #include <openssl/evp.h>
 }
 
+#include <boost/asio/experimental/awaitable_operators.hpp>
+
 #include "config.h"
+#include "net_utils.h"
 #include "proxy_protocol.h"
 #include "proxy_reality_connection.h"
 #include "reality/session/record_context.h"
 #include "tls/core.h"
 #include "tls/record_layer.h"
+
+#if defined(__linux__)
+namespace
+{
+bool observe_no_delay = false;
+bool reject_no_delay = false;
+std::optional<int> actual_no_delay;
+}
+
+// 只拦截测试可执行文件的系统调用；验证真实选项值，并覆盖设置失败后继续握手的既有策略。
+extern "C" int __real_setsockopt(int socket, int level, int option, const void* value, socklen_t length);
+extern "C" int __wrap_setsockopt(int socket, int level, int option, const void* value, socklen_t length)
+{
+    if (!observe_no_delay || level != IPPROTO_TCP || option != TCP_NODELAY)
+    {
+        return __real_setsockopt(socket, level, option, value, length);
+    }
+    int result = 0;
+    if (reject_no_delay)
+    {
+        errno = ENOPROTOOPT;
+        result = -1;
+    }
+    else
+    {
+        result = __real_setsockopt(socket, level, option, value, length);
+    }
+    const int saved_errno = errno;
+    int enabled = -1;
+    socklen_t enabled_size = sizeof(enabled);
+    if (::getsockopt(socket, level, option, &enabled, &enabled_size) == 0)
+    {
+        actual_no_delay = enabled;
+    }
+    errno = saved_errno;
+    return result;
+}
+#endif
 
 namespace
 {
@@ -370,6 +414,69 @@ boost::asio::awaitable<bool> run_error_code_regression()
     co_return ok;
 }
 
+#if defined(__linux__)
+boost::asio::awaitable<bool> receive_client_hello(boost::asio::ip::tcp::acceptor& acceptor)
+{
+    boost::system::error_code ec;
+    auto socket = co_await acceptor.async_accept(boost::asio::redirect_error(boost::asio::use_awaitable, ec));
+    if (!require(!ec, "no_delay accept failed"))
+    {
+        co_return false;
+    }
+    std::array<uint8_t, 5> header{};
+    const auto count = co_await relay::net::wait_read_with_timeout(socket, boost::asio::buffer(header), 2, ec);
+    co_return require(!ec && count == header.size() && header[0] == tls::kContentTypeHandshake,
+                      "no_delay setting failure prevented the REALITY handshake");
+}
+
+boost::asio::awaitable<bool> run_no_delay_regression(const bool reject_setting)
+{
+    using namespace boost::asio::experimental::awaitable_operators;    // NOLINT
+    const auto executor = co_await boost::asio::this_coro::executor;
+    boost::system::error_code ec;
+    boost::asio::ip::tcp::acceptor acceptor(executor);
+    acceptor.open(boost::asio::ip::tcp::v4(), ec);
+    if (!require(!ec, "no_delay acceptor open failed"))
+    {
+        co_return false;
+    }
+    acceptor.bind({boost::asio::ip::address_v4::loopback(), 0}, ec);
+    if (!require(!ec, "no_delay acceptor bind failed"))
+    {
+        co_return false;
+    }
+    acceptor.listen(boost::asio::socket_base::max_listen_connections, ec);
+    if (!require(!ec, "no_delay acceptor listen failed"))
+    {
+        co_return false;
+    }
+    const auto endpoint = acceptor.local_endpoint(ec);
+    if (!require(!ec, "no_delay endpoint failed"))
+    {
+        co_return false;
+    }
+    relay::config cfg;
+    relay::config::outbound_entry_t entry;
+    entry.type = "reality";
+    entry.tag = "test";
+    entry.reality = relay::config::reality_outbound_t{};
+    entry.reality->host = "127.0.0.1";
+    entry.reality->port = endpoint.port();
+    entry.reality->sni = "vision.test";
+    entry.reality->public_key = std::string(64, '1');
+    cfg.outbounds.push_back(std::move(entry));
+    actual_no_delay.reset();
+    observe_no_delay = true;
+    reject_no_delay = reject_setting;
+    auto result = co_await (relay::proxy_reality_connection::connect(executor, cfg, "test", 0, 5, 2, ec) && receive_client_hello(acceptor));
+    observe_no_delay = false;
+    // 测试对端读到 ClientHello 后关闭，握手必须失败；不将可选性能设置错误当成建连失败。
+    co_return require(!std::get<0>(result) && ec && ec.value() != ENOPROTOOPT, "no_delay connect error policy changed") &&
+              std::get<1>(result) &&
+              require(actual_no_delay == (reject_setting ? 0 : 1), "REALITY outbound socket TCP_NODELAY state is incorrect");
+}
+#endif
+
 }    // namespace
 
 int main()
@@ -384,6 +491,12 @@ int main()
         io_context,
         []() -> boost::asio::awaitable<bool>
         {
+#if defined(__linux__)
+            if (!(co_await run_no_delay_regression(false)) || !(co_await run_no_delay_regression(true)))
+            {
+                co_return false;
+            }
+#endif
             const auto base_ok = co_await run_error_code_regression();
             if (!base_ok)
             {
